@@ -29,6 +29,11 @@ run --file "$tmp/blank"
 [ "$rc" -eq 1 ] && [ "$so" = "1 checked, 1 problems" ] && grep -q "^$tmp/blank:5: not a git trailer" <<<"$se" && ! grep -q ":7:" <<<"$se" \
   && ok "blank line before Co-Authored-By fails and names the line" || bad "blank" "rc=$rc so=$so se=$se"
 
+# The real past mistake (a project commit, 6868a8ffd20a): a blank line between Owner-approved: and Co-Authored-By:.
+msg real 'chore: name checker scripts check-<topic> (refs dotfiles#1123)\n\nOwner-approved: mingster 2026-11-16\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'
+run --file "$tmp/real"
+[ "$rc" -eq 1 ] && grep -q ":3: not a git trailer" <<<"$se" && ok "fails on the real past commit message" || bad "real mistake" "rc=$rc $se"
+
 msg lower 'feat: x\n\nBody.\n\nrefs: #1\n\nCloses: #2\n'
 run --file "$tmp/lower"
 [ "$rc" -eq 1 ] && grep -q ":5:" <<<"$se" && ok "keys match without regard to case" || bad "lower" "rc=$rc $se"

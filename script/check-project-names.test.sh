@@ -97,5 +97,11 @@ mf_pr_add 2 feat-body "Notes about plugh"
 out=$(bash "$here/ship.sh" --repo example/repo --pr 2 --dry-run 2>&1); rc=$?
 [ "$rc" -ne 0 ] && grep -q "pr-2-body.txt:1:" <<<"$out" && ok "ship refuses a PR body with a pattern word" || bad "ship body" "rc=$rc $out"
 
+# ship.sh also refuses a PR commit whose trailer git does not parse
+mf_pr_add 3 feat-trailer "Body"
+jq '.commits = [{sha:"0123456789abcdef", commit:{message:"feat: x\n\nOwner-approved: a 2026-11-16\n\nCo-Authored-By: A <a@b.c>\n"}}]' "$MF_GH_DIR/pr-3.json" >"$MF_GH_DIR/p.tmp" && mv "$MF_GH_DIR/p.tmp" "$MF_GH_DIR/pr-3.json"
+out=$(bash "$here/ship.sh" --repo example/repo --pr 3 --dry-run 2>&1); rc=$?
+[ "$rc" -ne 0 ] && grep -q "trailer git does not parse" <<<"$out" && grep -q "0123456789ab:3:" <<<"$out" && ok "ship refuses a PR commit with an unparsed trailer" || bad "ship trailer" "rc=$rc $out"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

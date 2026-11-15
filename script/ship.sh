@@ -108,6 +108,22 @@ name_out=$(bash "$ship_dir/check-project-names.sh" --show-match --file "$name_di
 rm -rf "$name_dir"
 [ "$name_rc" -eq 0 ] || refuse "PR $pr text names a private project or host: ${name_out//$'\n'/; }"
 
+# A trailer git does not parse (a blank line before Co-Authored-By) makes the guard and fleet-watch see the commit as unapproved.
+trailer_dir=$(mktemp -d)
+trailer_args=()
+commit_pages=$(gh api --paginate "repos/$repo/pulls/$pr/commits") || { rm -rf "$trailer_dir"; refuse "cannot read PR $pr commits"; }
+while IFS=$'\t' read -r sha msg; do
+  [ -n "$sha" ] || continue
+  base64 --decode <<<"$msg" >"$trailer_dir/$sha"
+  trailer_args+=(--file "$trailer_dir/$sha")
+done < <(jq -r '.[] | [.sha[0:12], (.commit.message | @base64)] | @tsv' <<<"$commit_pages")
+trailer_rc=0 trailer_out=""
+if [ "${#trailer_args[@]}" -gt 0 ]; then
+  trailer_out=$(bash "$ship_dir/check-commit-trailers.sh" "${trailer_args[@]}" 2>&1) || trailer_rc=$?
+fi
+rm -rf "$trailer_dir"
+[ "$trailer_rc" -eq 0 ] || refuse "PR $pr has a commit trailer git does not parse: ${trailer_out//$'\n'/; }"
+
 # 1. PR is open, not draft, mergeable (not CONFLICTING).
 # GitHub leaves mergeable UNKNOWN until it has calculated the merge. PRs 801 and 802
 # were MERGEABLE about 20s later, so reread a few times, then refuse.
