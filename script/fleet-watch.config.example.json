@@ -26,6 +26,9 @@
     "stuck_minutes": 30,
     "workflows": ["Checks", "Review", "ShellCheck", "Script tests"]
   },
+  "head_checks": {
+    "infra_reruns": 2
+  },
   "babysit": {
     "per_pass_cap": 2
   },

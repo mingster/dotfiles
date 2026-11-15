@@ -18,8 +18,10 @@ head_checks_gate_wrap() {
     *playwright*|*'next build'*|*'run build'*|*test:regression*)
       printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 2 --
       ;;
-    *head-checks-tsc*|*tsc\ *|*tsc.js*)
-      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 1 --
+    *)
+      if is_tsc_step "$command"; then
+        printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 1 --
+      fi
       ;;
   esac
 }

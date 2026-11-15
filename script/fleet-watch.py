@@ -2850,6 +2850,27 @@ def checks_receipt_at_head(pr):
     return newest_checks_kind(pr.get('comments'), pr.get('headRefOid') or '') in ('PASS', 'FAIL')
 
 
+HEAD_CHECKS_INFRA_RERUNS = 2
+
+
+def checks_infra_runs(pr):
+    """How many Checks: INFRA receipts sit at this PR's head. Each is one finished run."""
+    head = pr.get('headRefOid') or ''
+    count = 0
+    for comment in pr.get('comments') or []:
+        match = rs.HEAD_RECEIPT_RE.match(_receipt_first_line(comment.get('body')))
+        if match and match.group('label') == 'Checks' and match.group('status') == 'INFRA' and match.group('head') == head:
+            count += 1
+    return count
+
+
+def head_checks_infra_cap(config):
+    value = (config.get('head_checks') or {}).get('infra_reruns', HEAD_CHECKS_INFRA_RERUNS)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return HEAD_CHECKS_INFRA_RERUNS
+    return value
+
+
 def review_verdict_at_head(pr):
     head = pr.get('headRefOid') or ''
     comments = pr.get('comments') or []
@@ -5285,6 +5306,15 @@ def issue_scan_pass(
                 and not checks_receipt_at_head(pr_row)
                 and not pr_checks_all_success(pr_row)
             )
+            if needs_head_checks and checks_infra_runs(pr_row) > head_checks_infra_cap(config):
+                needs_head_checks = False
+                capped = state.setdefault('head_checks_infra_capped', {}).setdefault(repo, {})
+                if not capped.get(head):
+                    capped[head] = True
+                    notices.append('head checks INFRA on %s#%s at %s, rerun cap %d reached, no more reruns' % (
+                        repo, pr_num, head[:8], head_checks_infra_cap(config)))
+                    if persist_state:
+                        persist_state()
             if needs_head_checks and refused:
                 log_bits.append('head_checks_held=%s' % head[:8])
             elif needs_head_checks:
