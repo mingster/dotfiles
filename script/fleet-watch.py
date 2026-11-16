@@ -4401,6 +4401,63 @@ def live_verifier_for_pr(pr, workers):
     return live_verifier_worker(pr, workers) is not None
 
 
+UNREAD_NUDGE_IDLE_SECONDS = 300
+UNREAD_NUDGE_REPEAT_SECONDS = 300
+UNREAD_NUDGE_MAX = 2
+UNREAD_NUDGE_TEXT = 'You have an unread orchestration message: run orca orchestration check'
+
+
+def unread_nudge_pass(state, now, workers, term_times, messages, rpc_call):
+    """Type a short nudge into an idle worker that has an unread message addressed to it.
+
+    orchestration send only queues; an idle worker never sees it. Each message is nudged at most
+    twice, 5 minutes apart. A terminal that is not writable is logged and not retried.
+    """
+    log_bits = []
+    bucket = state.setdefault('unread_nudge', {})
+    unread = {}
+    for m in messages:
+        if not isinstance(m, dict) or m.get('read') or m.get('handled') or not m.get('id'):
+            continue
+        to = m.get('to')
+        if isinstance(to, str) and to:
+            unread.setdefault(to, []).append(m['id'])
+    live_ids = {i for ids in unread.values() for i in ids}
+    for mid in list(bucket):
+        if mid not in live_ids:
+            bucket.pop(mid, None)
+    for w in workers:
+        if not worker_row_is_live(w) or worker_liveness_verdict(w) == 'live':
+            continue
+        handle = worker_terminal_handle(w)
+        ids = unread.get(handle)
+        if not ids:
+            continue
+        last = _normalize_terminal_time_ms((term_times or {}).get(handle))
+        for mid in ids:
+            row = bucket.get(mid) or {'count': 0, 'at': 0}
+            if row['count'] >= UNREAD_NUDGE_MAX:
+                continue
+            if row['count'] == 0:
+                if last is None or now - last < UNREAD_NUDGE_IDLE_SECONDS:
+                    break
+            elif now - row['at'] < UNREAD_NUDGE_REPEAT_SECONDS:
+                continue
+            try:
+                rpc_call('terminal', 'send', '--terminal', handle, '--text', UNREAD_NUDGE_TEXT, '--enter')
+            except SEND_ERRORS as error:
+                if 'terminal_not_writable' in str(error) or 'terminal_not_writable' in str(orchestration_failure_log_code(error)):
+                    bucket[mid] = {'count': UNREAD_NUDGE_MAX, 'at': now}
+                    log_bits.append('nudge_not_writable=%s' % handle)
+                else:
+                    log_send_failed(handle, error)
+                break
+            bucket[mid] = {'count': row['count'] + 1, 'at': now}
+            log_bits.append('nudged=%s' % handle)
+            break
+    return log_bits
+
+
 def verifier_idle_seconds(worker, term_times, now):
     handle = worker_terminal_handle(worker)
     if not handle or not term_times:
@@ -6503,6 +6560,12 @@ def main():
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
         inventory_ok=inventory_ok)
     notices += stall_extra
+    nudge_log = []
+    if inventory_ok and terminal_list_ok:
+        try:
+            nudge_log = unread_nudge_pass(state, now, workers, term_times, inv['messages'], rpc)
+        except Exception as error:
+            print('fleet-watch: unread nudge skipped: %s' % (repr(error),), file=sys.stderr)
     notices += coordinator
     notices += drain_notices(config)
 
@@ -6524,6 +6587,8 @@ def main():
         parts.extend(wrap_log)
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
+    if nudge_log:
+        parts.append('nudge ' + ','.join(nudge_log))
     if babysit_log:
         parts.append('babysit ' + ','.join(babysit_log))
     if scan_log:
