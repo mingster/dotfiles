@@ -12,6 +12,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
 mkdir -p "$HOME" "$TMP/scratch"
+REAL_TPL="$ROOT/templates/agent-team/.claude/agents/elon.md"
+touch "$TMP/start-marker"
 git -C "$TMP/scratch" init -q
 git -C "$TMP/scratch" remote add origin https://github.com/example/scratch.git
 
@@ -39,17 +41,15 @@ timeout 120 bash "$SCRIPT" check "$TMP/scratch" >"$TMP/check.log" 2>&1 && ok "ch
 
 timeout 120 bash "$SCRIPT" machine >"$TMP/machine2.log" 2>&1 && ! grep -q '^\(wrote\|linked\)' "$TMP/machine2.log" && ok "machine rerun rewrites nothing" || bad "machine rerun not idempotent"
 
-# Stale copy: a template edit after machine must fail check; rerunning machine fixes it.
-# The template edit is undone by the EXIT trap.
-BAK="$TMP/elon.md.bak"
-TPL="$ROOT/templates/agent-team/.claude/agents/elon.md"
-cp "$TPL" "$BAK"
-trap 'cp "$BAK" "$TPL"; rm -rf "$TMP"' EXIT
-printf 'A new rule line.\n' >>"$TPL"
+# Stale copy: a user level copy that differs from its rendered template must fail check; rerunning machine fixes it.
+# #1129: edit the copy under the temp HOME, never the real template, which parallel tests read.
+printf 'A new rule line.\n' >>"$HOME/.claude/agents/elon.md"
 timeout 120 bash "$SCRIPT" check "$TMP/scratch" >"$TMP/check2.log" 2>&1 && bad "check passes with a stale user level copy" || { grep -q 'stale copy' "$TMP/check2.log" && ok "check reports a stale user level copy" || bad "check failed without naming the stale copy"; }
 timeout 120 bash "$SCRIPT" machine >"$TMP/machine3.log" 2>&1
 grep -q '^wrote' "$TMP/machine3.log" && ok "machine rewrites the stale copy" || bad "machine did not rewrite the stale copy"
 timeout 120 bash "$SCRIPT" check "$TMP/scratch" >"$TMP/check3.log" 2>&1 && ok "check passes after machine rerun" || bad "check still fails: $(tail -3 "$TMP/check3.log")"
+
+[ ! "$REAL_TPL" -nt "$TMP/start-marker" ] && ok "the real template was never touched (#1129)" || bad "the real template was touched (#1129)"
 
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
