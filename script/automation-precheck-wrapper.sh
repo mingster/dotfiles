@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Orca fleet automation precheck wrapper: one traceable start and end line per run.
 # Usage: automation-precheck-wrapper.sh <name> <log-path> -- <command...>
+# Orca keeps the precheck's stdout and exit code on the run record, so the wrapper prints one result
+# line ("ok ..." or "FAILED ...") on stdout and never exits 0 (0 would start the agent).
+# Exit 1: the job ran fine. Exit 2: the job failed (the tail of this run's log goes to stderr).
+# 143 or 130: the wrapper was stopped.
 set -uo pipefail
 name=${1:?automation name}
 log=${2:?log path}
@@ -28,6 +32,7 @@ export AUTOMATION_TRACE_SUMMARY_FILE="$summary_file"
 : >"$summary_file"
 
 inner_rc=0
+final_rc=1
 child_pid=""
 trace_done=0
 
@@ -72,12 +77,20 @@ if manual:
     sys.stdout.write(manual[:240])
     raise SystemExit
 
-def last_wrapup_summary(path: str) -> str:
+def this_run(path: str) -> list:
+    """Log lines written after this run's start line, so an older round never names this one."""
     try:
-        text = open(path, encoding="utf-8", errors="replace").read()
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
     except OSError:
-        return ""
-    for line in reversed(text.splitlines()):
+        return []
+    marker = f"run={rid} phase=start"
+    for idx in range(len(lines) - 1, -1, -1):
+        if marker in lines[idx]:
+            return lines[idx + 1:]
+    return []
+
+def last_wrapup_summary(path: str) -> str:
+    for line in reversed(this_run(path)):
         if "phase=" in line:
             continue
         if "wrap-up-scheduled" not in line:
@@ -91,16 +104,7 @@ if name == "wrap-up-scheduled":
         sys.stdout.write(s[:240])
         raise SystemExit
 
-try:
-    lines = open(log_path, encoding="utf-8", errors="replace").read().splitlines()
-except OSError:
-    lines = []
-marker = f"run={rid} phase=start"
-for idx in range(len(lines) - 1, -1, -1):
-    if marker in lines[idx]:
-        lines = lines[idx + 1:]
-        break
-for line in reversed(lines):
+for line in reversed(this_run(log_path)):
     m = re.search(r"((?:drift or check failure|team-audit findings|metrics failed|weekly-update failed) \(exit \d+\)|skip: [^\n]+)", line)
     if m:
         sys.stdout.write(m.group(1).strip()[:240])
@@ -119,6 +123,17 @@ PY
 
   trace_emit "phase=end exit=$inner_rc duration=${duration}s summary=$summary"
   rm -f "$summary_file"
+
+  local result=ok
+  case "$summary" in
+    'round failed'*|failed*|'drift or check failure'*|'team-audit findings'*|'metrics failed'*|'weekly-update failed'*) result=FAILED ;;
+  esac
+  [ "$inner_rc" -eq 0 ] || result=FAILED
+  printf '%s %s: %s (exit=%s, %ss, log=%s)\n' "$result" "$name" "$summary" "$inner_rc" "$duration" "$log"
+  if [ "$result" = FAILED ]; then
+    final_rc=2
+    awk -v m="run=$rid phase=start" 'index($0, m) { n = NR } { l[NR] = $0 } END { s = (n && NR - n > 20) ? NR - 20 : (n ? n : NR - 20); if (s < 1) s = 1; for (i = s; i <= NR; i++) print l[i] }' "$log" >&2
+  fi
 }
 
 # shellcheck disable=SC2329
@@ -149,4 +164,4 @@ wait "$child_pid"
 inner_rc=$?
 child_pid=""
 finish_trace
-exit 1
+exit "$final_rc"

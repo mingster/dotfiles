@@ -142,7 +142,7 @@ scheduled_round() {
   unset ORCA_CLI_COMMAND WRAP_UP_FLEET_CONFIG
   local started=$SECONDS repo_limit=${WRAP_UP_SCHEDULED_REPO_LIMIT:-${WRAP_UP_TOTAL_TIMEOUT:-900}} wrap_up=${WRAP_UP_SCHEDULED_WRAP_UP:-$here/wrap-up.sh}
   local kill_grace=${WRAP_UP_SCHEDULED_KILL_GRACE:-30} precheck_timeout=${WRAP_UP_PRECHECK_TIMEOUT:-600} round_limit
-  local detail_file orca_dir status_json load cores list_json repo_path code count=0 fails="" skipped="" seconds left child_limit kill_limit
+  local detail_file orca_dir status_json load cores list_json repo_path code count=0 fails="" skipped="" left child_limit kill_limit
   if [ -n "${WRAP_UP_SCHEDULED_ROUND_LIMIT:-}" ]; then
     round_limit=$WRAP_UP_SCHEDULED_ROUND_LIMIT
   elif [ "$precheck_timeout" -gt "$((kill_grace * 2))" ]; then
@@ -229,7 +229,6 @@ scheduled_round() {
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
 
-  seconds=$((SECONDS-started))
   if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
   guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
@@ -238,28 +237,28 @@ scheduled_round() {
   # that has been Done for 30 minutes, on the host named by its dispatch record. Each paired host is
   # reached with --environment; an unreachable host is skipped and tried again next round.
   if coordinator_runs_board_done; then
-    local board_bin board_mode board_limit board_code clean_bin clean_code
-    board_bin=${WRAP_UP_BOARD_DONE:-$here/board-done.py}
+    local board_mode step step_bin step_limit step_code
     board_mode=--apply
     [ "${scheduled_dry:-0}" = 1 ] && board_mode=--dry-run
-    board_limit=${WRAP_UP_SCHEDULED_BOARD_TIMEOUT:-120}
-    if [[ "$board_bin" == *.py ]]; then
-      run_limited "$board_limit" python3 "$board_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
-    else
-      run_limited "$board_limit" bash "$board_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
-    fi
-    board_code=$?
-    [ "$board_code" -eq 0 ] || round_log "board-done exit $board_code"
-    clean_bin=${WRAP_UP_BOARD_CLEAN:-$here/board-clean.py}
-    if [[ "$clean_bin" == *.py ]]; then
-      run_limited "$board_limit" python3 "$clean_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
-    else
-      run_limited "$board_limit" bash "$clean_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
-    fi
-    clean_code=$?
-    [ "$clean_code" -eq 0 ] || round_log "board-clean exit $clean_code"
+    for step in board-done board-clean; do
+      if [ "$step" = board-done ]; then step_bin=${WRAP_UP_BOARD_DONE:-$here/board-done.py}; else step_bin=${WRAP_UP_BOARD_CLEAN:-$here/board-clean.py}; fi
+      # Each step gets its own cap, never more than what is left before Orca's precheck limit less the kill grace.
+      step_limit=$((precheck_timeout - kill_grace - (SECONDS - started)))
+      [ "$step_limit" -le "${WRAP_UP_SCHEDULED_BOARD_TIMEOUT:-120}" ] || step_limit=${WRAP_UP_SCHEDULED_BOARD_TIMEOUT:-120}
+      if [ "$step_limit" -lt 10 ]; then
+        round_log "skip: $step (round budget spent)"
+        continue
+      fi
+      if [[ "$step_bin" == *.py ]]; then
+        run_limited "$step_limit" python3 "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+      else
+        run_limited "$step_limit" bash "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+      fi
+      step_code=$?
+      [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
+    done
   fi
-  round_log "round ok: repos=$count seconds=$seconds${skipped:+ skipped=$skipped}"
+  round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}"
   exit 0
 }
 coordinator_runs_board_done() {

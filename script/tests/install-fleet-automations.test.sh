@@ -168,6 +168,35 @@ echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator 
 echo "$coord_status" | grep -q 'daily-program-1900: enabled' && check 'coordinator status enabled daily-program-1900' true || check 'coordinator status enabled daily-program-1900' false
 echo "$coord_status" | grep -q 'sync-team-skills-drift: disabled' && check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' true || check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' false
 echo "$coord_status" | grep -q 'team-audit-weekly: disabled' && check 'coordinator creates team-audit-weekly disabled (owner opt-in)' true || check 'coordinator creates team-audit-weekly disabled (owner opt-in)' false
+
+# An owner opt-in survives a re-install: weekly-update turned on by hand stays on.
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+for a in d["automations"]:
+    if a["name"] == "weekly-update":
+        a["enabled"] = True
+json.dump(d, open(p, "w"))
+PY
+keep_out=$(bash "$script" --install 2>&1)
+echo "$keep_out" | grep -q 'weekly-update unchanged' && check 're-install leaves owner enabled weekly-update unchanged' true || check 're-install leaves owner enabled weekly-update unchanged' false
+keep_status=$(bash "$script" --status)
+echo "$keep_status" | grep -q 'weekly-update: enabled' && check 're-install keeps weekly-update enabled' true || check 're-install keeps weekly-update enabled' false
+
+# Run now skips the precheck, so the prompt carries the same command and asks for its result line.
+wrap_row=$(python3 -c '
+import json, os
+d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
+for a in d["automations"]:
+    if a["name"] == "wrap-up-scheduled":
+        print(json.dumps(a))
+')
+wrap_cmd=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["precheck"]["command"])')
+wrap_prompt=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["prompt"])')
+case "$wrap_cmd" in *' || exit $?; exit 1') check 'precheck passes the wrapper exit code to Orca' true ;; *) check 'precheck passes the wrapper exit code to Orca' false ;; esac
+case "$wrap_prompt" in *"$wrap_cmd"*) check 'manual run prompt carries the precheck command' true ;; *) check 'manual run prompt carries the precheck command' false ;; esac
+case "$wrap_prompt" in *'"ok wrap-up-scheduled" or "FAILED wrap-up-scheduled"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
 [ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 7 ] \
   && check 'coordinator install has seven automations' true || check 'coordinator install has seven automations' false

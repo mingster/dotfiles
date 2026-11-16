@@ -116,6 +116,8 @@ def cmd_automations(argv):
             return fail("Automation not found.")
         if "trigger" in flags:
             row["rrule"] = flags["trigger"]
+        if "prompt" in flags:
+            row["prompt"] = flags["prompt"]
         if "precheck" in flags:
             row["precheck"] = {
                 "command": flags["precheck"],

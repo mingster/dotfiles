@@ -94,7 +94,6 @@ FLEET_WATCH_AUTOMATION_LOG=${FLEET_WATCH_AUTOMATION_LOG:-$HOME/.orca/logs/fleet-
 FLEET_WATCH_PRECHECK_LOG=${FLEET_WATCH_PRECHECK_LOG:-$FLEET_WATCH_AUTOMATION_LOG}
 FLEET_AUTOMATIONS_TIMEZONE=${FLEET_AUTOMATIONS_TIMEZONE:-${TZ:-}}
 FLEET_AUTOMATIONS_PROVIDER=${FLEET_AUTOMATIONS_PROVIDER:-claude}
-AUTOMATION_PROMPT=${FLEET_AUTOMATIONS_PROMPT:-'Script only job, the precheck always stops it.'}
 FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
 WRAP_UP_SCHEDULED_REPO_LIMIT=${WRAP_UP_SCHEDULED_REPO_LIMIT:-300}
 WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-600}
@@ -153,7 +152,19 @@ automation_wrap() {
     printf ' %q' "$1"
     shift
   done
-  printf '; exit 1'
+  # The wrapper never exits 0. Its own code (1 ok, 2 failed) must reach Orca, and a 0 must never start the agent.
+  printf ' || exit $?; exit 1'
+}
+
+# Run now skips the precheck and starts the agent, so the prompt runs the same job and replies with its result line.
+manual_prompt() {
+  local name=$1 precheck=$2 timeout=$3
+  if [ -n "${FLEET_AUTOMATIONS_PROMPT:-}" ]; then
+    printf '%s' "$FLEET_AUTOMATIONS_PROMPT"
+    return 0
+  fi
+  printf 'Manual run of the %s script job. Run the shell command below once, exactly as written, with a timeout of %s seconds. It always exits non zero by design, so do not run it again or try to fix anything. Do not edit, commit or open anything. Then reply with only the line it printed that starts with "ok %s" or "FAILED %s".\n\n%s\n' \
+    "$name" "$timeout" "$name" "$name" "$precheck"
 }
 
 fleet_watch_precheck() {
@@ -277,22 +288,28 @@ print("path:" + os.environ["WANT"])
 '
 }
 
+# enabled: 1, 0, or keep (the owner's choice on an existing entry; a new entry starts disabled).
 ensure_automation() {
   local name=$1 trigger=$2 precheck=$3 timeout=$4 enabled=$5 tz=${6:-$FLEET_AUTOMATIONS_TIMEZONE}
-  local existing id
+  local existing id prompt
+  prompt=$(manual_prompt "$name" "$precheck" "$timeout")
+  [ "$enabled" = keep ] && enabled=0
   if existing=$(automation_by_name "$name" 2>/dev/null); then
     id=$(AUTOMATION_ROW="$existing" python3 - <<'PY'
 import json, os
 print(json.loads(os.environ["AUTOMATION_ROW"])["id"])
 PY
 )
-    if AUTOMATION_ROW="$existing" AUTOMATION_WANT_TRIGGER="$trigger" \
+    [ "$5" = keep ] && enabled=$(AUTOMATION_ROW="$existing" python3 -c 'import json, os; print(1 if json.loads(os.environ["AUTOMATION_ROW"]).get("enabled") else 0)')
+    if AUTOMATION_ROW="$existing" AUTOMATION_WANT_TRIGGER="$trigger" AUTOMATION_WANT_PROMPT="$prompt" \
       AUTOMATION_WANT_PRECHECK="$precheck" AUTOMATION_WANT_TIMEOUT="$timeout" \
       AUTOMATION_WANT_ENABLED="$enabled" AUTOMATION_WANT_TIMEZONE="$tz" python3 - <<'PY'
 import json, os
 cur = json.loads(os.environ["AUTOMATION_ROW"])
 want_enabled = os.environ["AUTOMATION_WANT_ENABLED"] == "1"
 if cur.get("rrule") != os.environ["AUTOMATION_WANT_TRIGGER"]:
+    raise SystemExit(1)
+if (cur.get("prompt") or "") != os.environ["AUTOMATION_WANT_PROMPT"]:
     raise SystemExit(1)
 pc = cur.get("precheck") or {}
 if pc.get("command") != os.environ["AUTOMATION_WANT_PRECHECK"]:
@@ -312,12 +329,14 @@ PY
     if [ "$enabled" = 1 ]; then
       FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations edit "$id" \
         --trigger "$trigger" \
+        --prompt "$prompt" \
         --precheck "$precheck" \
         --precheck-timeout "$timeout" \
         --enabled
     else
       FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations edit "$id" \
         --trigger "$trigger" \
+        --prompt "$prompt" \
         --precheck "$precheck" \
         --precheck-timeout "$timeout" \
         --disabled
@@ -333,7 +352,7 @@ PY
     FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations create \
       --name "$name" \
       --trigger "$trigger" \
-      --prompt "$AUTOMATION_PROMPT" \
+      --prompt "$prompt" \
       --provider "$FLEET_AUTOMATIONS_PROVIDER" \
       --repo "$repo_selector" \
       --setup skip \
@@ -344,7 +363,7 @@ PY
     FLEET_AUTOMATIONS_TIMEZONE="$tz" run_orca_json "$orca_cli" automations create \
       --name "$name" \
       --trigger "$trigger" \
-      --prompt "$AUTOMATION_PROMPT" \
+      --prompt "$prompt" \
       --provider "$FLEET_AUTOMATIONS_PROVIDER" \
       --repo "$repo_selector" \
       --setup skip \
@@ -406,10 +425,10 @@ case "$action" in
     repo_selector=$(dotfiles_repo_selector)
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
     ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" 1
-    # The owner turns these three on by hand; the installer only creates them disabled.
-    ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" 0
-    ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" 0
-    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" 0
+    # The owner turns these three on by hand; the installer creates them disabled and keeps the owner's choice after that.
+    ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" keep
+    ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" keep
+    ensure_automation weekly-update '0 8 * * 1' "$(weekly_update_precheck)" "$WEEKLY_UPDATE_PRECHECK_TIMEOUT" keep
     ensure_automation fleet-toolchain '0 5 * * *' "$(fleet_toolchain_precheck)" "$FLEET_TOOLCHAIN_PRECHECK_TIMEOUT" "$enabled"
     # Renamed from staging-daily-1900 (#834); drop the old entry when a host still has it.
     automation_by_name staging-daily-1900 >/dev/null 2>&1 && remove_by_name staging-daily-1900

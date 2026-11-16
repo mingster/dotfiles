@@ -482,6 +482,13 @@ check 'coordinator round still records round ok' has 'round ok: repos=2' "$log"
 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round --dry-run
 check 'coordinator dry run asks board-done not to set cards' has '--fleet --dry-run' "$BOARD_DONE_CALLS"
 check 'coordinator dry run asks board-clean not to delete cards' has '--fleet --dry-run' "$BOARD_CLEAN_CALLS"
+# The board steps share what is left of the precheck limit; with none left they are skipped and the round still ends itself.
+: > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"; rm -f "$log"
+PRECHECK_TIMEOUT=30 KILL_GRACE=25 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round
+check 'spent round budget skips board-done' test ! -s "$BOARD_DONE_CALLS"
+check 'spent round budget skips board-clean' test ! -s "$BOARD_CLEAN_CALLS"
+check 'spent round budget is logged' has 'skip: board-done (round budget spent)' "$log"
+check 'round still reports ok after skipping the board' has 'round ok: repos=' "$log"
 printf 'coordinator someone-else\n' > "$board_conf"
 : > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"
 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round

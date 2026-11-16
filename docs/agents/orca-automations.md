@@ -1,6 +1,6 @@
 # Orca fleet automations
 
-Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each job runs only a precheck shell command; the automation prompt is a placeholder and the precheck always exits with status 1 so no agent session starts. `wrap-up-scheduled` installs **enabled** (`*/10 * * * *`) on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` schedule (such as `0 */2 * * *`) or a disabled entry. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and worktree cleanup there stays manual.
+Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each scheduled job runs only a precheck shell command, which never exits 0, so no agent session starts. The automation prompt tells an agent to run that same command once, so a manual "Run now" (which skips the precheck) still does the job and replies with its result line. `wrap-up-scheduled` installs **enabled** (`*/10 * * * *`) on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` schedule (such as `0 */2 * * *`) or a disabled entry. `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` keep whatever enabled state the owner set (a new entry starts disabled), so a reinstall never turns them off or on. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and worktree cleanup there stays manual.
 
 Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds the hand-kept keys (`repo_roots`, `host_caps`, and the per-host monitor paths). The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
@@ -77,7 +77,20 @@ YYYY-MM-DDTHH:MM:SS±ZZZZ host=<short hostname> automation=<name> run=<pid> phas
 YYYY-MM-DDTHH:MM:SS±ZZZZ host=<short hostname> automation=<name> run=<pid> phase=end exit=<inner rc> duration=<seconds>s summary=<one line>
 ```
 
-`hostname -s` is read at runtime. `summary` is `no change` when nothing set, `failed inner exit N` on failure, the last `wrap-up-scheduled` round line for worktree cleanup, or `AUTOMATION_TRACE_SUMMARY` when the inner script exports it. Test: `bash script/tests/automation-precheck-wrapper.test.sh`.
+`hostname -s` is read at runtime. `summary` is `no change` when nothing set, `failed inner exit N` on failure, this run's `wrap-up-scheduled` round line for worktree cleanup (never an older round's), or `AUTOMATION_TRACE_SUMMARY` when the inner script exports it. Test: `bash script/tests/automation-precheck-wrapper.test.sh`.
+
+## Result in the Orca Automations view
+
+Orca keeps the precheck's exit code and output on each run record, so `orca automations runs --id <id> --json` (and the Automations view) shows the result. The wrapper prints one line on stdout:
+
+```text
+ok <name>: <summary> (exit=<inner rc>, <seconds>s, log=<path>)
+FAILED <name>: <summary> (exit=<inner rc>, <seconds>s, log=<path>)
+```
+
+A good run exits 1 ("Precheck exited with code 1"). A failed run exits 2 ("code 2") and puts the last 20 lines of that run's log section on stderr. The summary counts as failed when the inner command exits non zero or the summary starts with `round failed`, `failed`, `drift or check failure`, `team-audit findings`, `metrics failed` or `weekly-update failed`. 143 and 130 mean the wrapper was stopped (Orca's precheck timeout sends `TERM`).
+
+A run that shows "dispatching" in Orca is a precheck still running, not a stuck run. On the coordinator the wrap-up round gives `board-done` and `board-clean` each at most `WRAP_UP_SCHEDULED_BOARD_TIMEOUT` (120 s), never more than what is left of `WRAP_UP_PRECHECK_TIMEOUT` less the kill grace, and skips a step with `skip: <step> (round budget spent)` when under 10 s are left.
 
 Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unless overridden in `automations.env`.
 
