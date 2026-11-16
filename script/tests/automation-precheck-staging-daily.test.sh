@@ -253,6 +253,28 @@ check 'ignores fleet-config.json and fleet-watch repo_roots fallbacks (no repo-a
 check 'no configured repositories still wakes the coordinator' grep -q 'orchestration send' "$ORCA_LOG"
 check 'ignores non-fleet-pull fallbacks and logs no configured repositories' grep -q 'no configured repositories' "$log3e"
 
+# --- 3b. A scheduled run has no Orca terminal: the wake must pass --from and log why a send fails ---
+cat >"$tmp/bin/orca" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${ORCA_LOG:?}"
+case " $* " in
+  *" --from term_coord_1900 "*) printf '{"ok":true}\n'; exit 0 ;;
+esac
+echo 'error: no_active_sender_terminal: pass --from' >&2
+exit 1
+EOS
+log3f="$tmp/staging-daily-3f.log"
+: >"$ORCA_LOG"
+rc3f=0
+FLEET_STAGING_REPOS="$repo_a" STAGING_DAILY_LOG="$log3f" bash "$script" >/dev/null 2>&1 || rc3f=$?
+check 'wake without a sender terminal passes the coordinator terminal as --from' grep -q -- '--from term_coord_1900' "$ORCA_LOG"
+check 'wake with --from succeeds' test "$rc3f" -eq 0
+log3g="$tmp/staging-daily-3g.log"
+rc3g=0
+FLEET_WATCH_CONFIG="$fw_with_roots" FLEET_STAGING_REPOS="$repo_a" STAGING_DAILY_LOG="$log3g" bash "$script" >/dev/null 2>&1 || rc3g=$?
+check 'wake failure exits 1' test "$rc3g" -eq 1
+check 'wake failure logs the Orca error text' grep -q 'no_active_sender_terminal' "$log3g"
+
 # --- 4. Documentation in docs/agents/orca-automations.md ---
 check 'docs/agents/orca-automations.md documents daily-program-1900' grep -q 'daily-program-1900' "$doc"
 check 'docs/agents/orca-automations.md drops staging-daily-1900' bash -c '! grep -q "staging-daily-1900" "$1"' _ "$doc"

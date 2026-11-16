@@ -130,6 +130,27 @@ if path and os.path.isfile(path):
 PY
 }
 
+# A scheduled run has no Orca terminal, so `orchestration send` needs --from. Use the coordinator
+# run's own terminal from the config; without one, send as before and let Orca pick the sender.
+resolve_coordinator_terminal() {
+  FLEET_WATCH_CONFIG="$fleet_watch_cfg" python3 - <<'PY'
+import json
+import os
+
+path = os.environ.get("FLEET_WATCH_CONFIG") or ""
+if path and os.path.isfile(path):
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+        runs = data.get("runs") or []
+        if isinstance(runs, list) and runs and isinstance(runs[0], dict):
+            term = (runs[0].get("terminal") or "").strip()
+            if term:
+                print(term)
+    except Exception:
+        pass
+PY
+}
+
 emit "$(date '+%Y-%m-%dT%H:%M:%S%z') daily-program-1900"
 
 repos=()
@@ -231,12 +252,16 @@ fi
 run_id="${target#run:}"
 to_arg="run:$run_id"
 run_arg=("--run" "$run_id")
+from_terminal=$(resolve_coordinator_terminal)
+if [ -n "$from_terminal" ]; then
+  run_arg+=("--from" "$from_terminal")
+fi
 
 subject="daily-program-1900: run the standing program"
 body="Daily 19:00 Asia/Taipei: read ${kickoff} and run the standing program. ${staging_step} Production deploy remains gated on owner approval."
 
-if ! "$orca_cli" orchestration send --to "$to_arg" ${run_arg[@]+"${run_arg[@]}"} --type status --subject "$subject" --body "$body" --json >/dev/null 2>&1; then
-  emit "error: failed to send orchestration wake to $to_arg (${summary})"
+if ! send_err=$("$orca_cli" orchestration send --to "$to_arg" ${run_arg[@]+"${run_arg[@]}"} --type status --subject "$subject" --body "$body" --json 2>&1 >/dev/null); then
+  emit "error: failed to send orchestration wake to $to_arg: $(printf '%s' "$send_err" | head -c 300 | tr '\n' ' ') (${summary})"
   set_trace_summary "failed wake send (${summary})"
   exit 1
 fi
