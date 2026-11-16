@@ -11,7 +11,7 @@ mf_setup
 trap mf_teardown EXIT
 cd "$MF_REPO" || exit 1
 # ship.sh checks the PR text for private names and fails without a pattern file.
-echo xyzzynomatch >"$MF_DIR/names.pattern"
+printf 'xyzzynomatch\nzzprivproj\n' >"$MF_DIR/names.pattern"
 export NO_PROJECT_NAMES_FILE="$MF_DIR/names.pattern"
 
 # ship.sh calls Orca only to set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
@@ -1098,6 +1098,27 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1076:0:12}" <<<"$SH
 else
   bad "an edited Review PASS does not cover a Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
+
+# Private name check runs only on a public repo (visibility read from GitHub).
+name_scope_case() { # <pr> <repo> <visibility|fails> <expect ship|refuse> <label>
+  local n=$1 r=$2 vis=$3 expect=$4 label=$5 h
+  rm -f "$MF_GH_DIR/visibility-fails"
+  mf_pr_add "$n" "feat-name-$n" "Fix zzprivproj placement"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$h"
+  if [ "$vis" = fails ]; then : > "$MF_GH_DIR/visibility-fails"; else printf '%s\n' "$vis" >"$MF_GH_DIR/visibility-${r//\//__}"; fi
+  run_ship --repo "$r" --pr "$n" --dry-run
+  rm -f "$MF_GH_DIR/visibility-fails" "$MF_GH_DIR/visibility-${r//\//__}"
+  if [ "$expect" = ship ] && [ "$SHIP_RC" -eq 0 ] && grep -q "would ship" <<<"$SHIP_OUT"; then ok "$label"
+  elif [ "$expect" = refuse ] && [ "$SHIP_RC" -ne 0 ]; then ok "$label"
+  else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+name_scope_case 1201 example/repo PRIVATE ship "private repo PR naming a private project ships"
+name_scope_case 1202 example/repo INTERNAL ship "internal repo PR naming a private project ships"
+name_scope_case 1203 example/repo PUBLIC refuse "public repo PR naming a private project is refused"
+name_scope_case 1204 example/repo fails refuse "unreadable visibility refuses"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

@@ -100,13 +100,21 @@ read_pr() {
 read_pr
 field() { jq -r "$1" <<<"$info"; }
 
-# Public repo: a private project or host name in the PR title or body stays on GitHub after merge.
-name_dir=$(mktemp -d)
-field .title >"$name_dir/pr-$pr-title.txt"
-field .body >"$name_dir/pr-$pr-body.txt"
-name_out=$(bash "$ship_dir/check-project-names.sh" --show-match --file "$name_dir/pr-$pr-title.txt" --file "$name_dir/pr-$pr-body.txt" 2>&1) && name_rc=0 || name_rc=$?
-rm -rf "$name_dir"
-[ "$name_rc" -eq 0 ] || refuse "PR $pr text names a private project or host: ${name_out//$'\n'/; }"
+# Public repo only: a private project or host name in the PR title or body stays on GitHub after merge.
+# A private or internal repo may name its own project. Visibility is read once; unreadable refuses.
+visibility=$(gh repo view "$repo" --json visibility -q .visibility 2>/dev/null) || refuse "cannot read visibility of $repo"
+case "$visibility" in
+  PRIVATE|INTERNAL) ;;
+  PUBLIC)
+    name_dir=$(mktemp -d)
+    field .title >"$name_dir/pr-$pr-title.txt"
+    field .body >"$name_dir/pr-$pr-body.txt"
+    name_out=$(bash "$ship_dir/check-project-names.sh" --show-match --file "$name_dir/pr-$pr-title.txt" --file "$name_dir/pr-$pr-body.txt" 2>&1) && name_rc=0 || name_rc=$?
+    rm -rf "$name_dir"
+    [ "$name_rc" -eq 0 ] || refuse "PR $pr text names a private project or host: ${name_out//$'\n'/; }"
+    ;;
+  *) refuse "unexpected visibility '$visibility' for $repo" ;;
+esac
 
 # A trailer git does not parse (a blank line before Co-Authored-By) makes the guard and fleet-watch see the commit as unapproved.
 trailer_dir=$(mktemp -d)

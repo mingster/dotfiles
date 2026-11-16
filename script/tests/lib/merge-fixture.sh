@@ -129,6 +129,11 @@ case "$cmd" in
     [ ! -f "$MF_GH_DIR/main-run-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
     if [ -f "$MF_GH_DIR/main-run.json" ]; then jq -s '.' "$MF_GH_DIR/main-run.json"; else echo '[{"databaseId":1,"conclusion":"success","url":"https://example.test/runs/1"}]'; fi ;;
   "pr diff") jq -r '.files[].path' "$file" ;;
+  "repo view") # visibility: $MF_GH_DIR/visibility-<owner>__<name> holds PRIVATE, INTERNAL or PUBLIC (default); visibility-fails makes gh error
+    [ ! -f "$MF_GH_DIR/visibility-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+    vis=PUBLIC; [ ! -f "$MF_GH_DIR/visibility-${pr//\//__}" ] || vis=$(cat "$MF_GH_DIR/visibility-${pr//\//__}")
+    out=$(jq -n --arg v "$vis" '{visibility:$v}')
+    if [ -n "$jq_expr" ]; then jq -r "$jq_expr" <<<"$out"; else printf '%s\n' "$out"; fi ;;
   "pr merge")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }
     head=$(jq -r '.headRefOid' "$file"); branch=$(jq -r '.headRefName' "$file")
