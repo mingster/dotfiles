@@ -62,7 +62,7 @@ mkdir -p "$HOME"
 
 out=$(bash "$SCRIPT" machine --dry-run 2>&1)
 rc=$?
-if [ "$rc" -eq 0 ] && [ ! -e "$HOME/.claude" ] && echo "$out" | grep -q "would link"; then
+if [ "$rc" -eq 0 ] && [ ! -e "$HOME/.claude" ] && grep -q "would link" <<<"$out"; then
   check "machine --dry-run prints planned links without mutating HOME" ok
 else
   check "machine --dry-run prints planned links without mutating HOME" bad
