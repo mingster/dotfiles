@@ -114,6 +114,25 @@ cat > "$PROJ/.claude/hooks/guard-config.json" <<'JSON'
 }
 JSON
 
+# #1126: a quoted heredoc fed to a text sink is data; one fed to a shell, ssh or an unquoted opener is still scanned.
+HD_BODY=$'Fix the guard.\nbin/deploy-raw.sh runs only in the pipeline.\nbash bin/deploy-raw.sh was refused (it\'s odd).\nEOF'
+for sink in \
+  "git commit -F - <<'EOF'" \
+  "git add -A && git commit -F - <<'EOF'" \
+  "cat > notes.md <<'EOF'" \
+  "cat > ~/notes/issue-comment.md <<'EOF'" \
+  'cat > "$NOTE_FILE" <<'"'EOF'" \
+  "cd docs && cat >> notes.md <<'EOF'" \
+  "cat <<'EOF' > notes.md" \
+  "gh issue comment 5 --body-file - <<'EOF'" \
+  "gh pr create --title t --body-file - <<'EOF'"; do
+  check_bash "heredoc text to a text sink is data: $sink" "$PROJ" "$sink"$'\n'"$HD_BODY" allow
+done
+for src in "bash <<'EOF'" "sh <<'EOF'" "ssh host <<'EOF'" "python3 - <<'EOF'" "git commit -F - <<EOF" "cat > notes.md <<EOF"; do
+  check_bash "heredoc fed to $src is still scanned" "$PROJ" "$src"$'\n'"$HD_BODY" deny
+done
+check_bash "text sink heredoc after a guarded step is still refused" "$PROJ" "bash bin/deploy-raw.sh && cat > notes.md <<'EOF'"$'\n'"$HD_BODY" deny
+
 # production_hosts
 rm -f "$HOME_DIR/.config/acme/approval.json"
 check_bash "production_hosts blocks mutating ssh without approval" "$PROJ" "ssh root@prod.example.invalid 'systemctl restart app'" deny "owner-approve.sh"

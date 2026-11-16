@@ -3015,22 +3015,36 @@ def substitutions(command):
     return out
 
 
-# A quoted heredoc that only becomes a file or a commit message: `cat > f <<'EOF'`, or
-# `git commit -F - <<'EOF'` after plain `&&` steps (those steps are still checked).
-REPORT_HEREDOC = re.compile(
-    r"^\s*(?:cat\s+>\s*[A-Za-z0-9_./-]+"
-    r"|(?:[A-Za-z0-9_./=-]+(?:[ \t]+[A-Za-z0-9_./=-]+)*[ \t]*&&[ \t]*)*"
-    r"git[ \t]+commit(?:[ \t]+-[A-Za-z-]+)*[ \t]+(?:-F[ \t]*-|--file[ \t=]-))"
-    r"\s+<<(-?)\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2\s*$"
+# A quoted heredoc whose consumer is a text sink (`cat > f`, `cat <<'EOF' > f`, `git commit -F -`,
+# `gh ... --body-file -`), after plain `&&` steps (those steps are still checked). Its body is data.
+QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2")
+_WORD = r"[A-Za-z0-9_./=~-]+"
+_PATH = r"(?:[A-Za-z0-9_./~-]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\"(?:[^\"`$\\]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)*\"|'[^']*')+"
+TEXT_SINK = re.compile(
+    rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*&&[ \t]*)*"
+    rf"(?:cat[ \t]+>>?[ \t]*{_PATH}"
+    r"|git[ \t]+commit(?:[ \t]+-[A-Za-z-]+)*[ \t]+(?:-F[ \t]*-|--file[ \t=]-)"
+    rf"|gh(?:[ \t]+{_WORD})+[ \t]+(?:--body-file|-F)[ \t=]-)"
 )
 
 
+def text_sink_heredoc(line):
+    """The heredoc operator match when `line` only feeds a quoted heredoc to a text sink, else None."""
+    ops = list(QUOTED_HEREDOC.finditer(line))
+    if len(ops) != 1:
+        return None
+    rest = line[:ops[0].start()] + " " + line[ops[0].end():]
+    if "<<" in rest or not TEXT_SINK.fullmatch(" ".join(rest.split())):
+        return None
+    return ops[0]
+
+
 def report_command_text(command):
-    """Remove literal data only for a standalone quoted cat-to-file or commit message heredoc."""
+    """Remove literal data only for a standalone quoted heredoc that feeds a text sink."""
     lines = command.splitlines(keepends=True)
     out, i = [], 0
     while i < len(lines):
-        match = REPORT_HEREDOC.fullmatch(lines[i].rstrip("\r\n"))
+        match = text_sink_heredoc(lines[i].rstrip("\r\n"))
         out.append(lines[i])
         i += 1
         if not match:
