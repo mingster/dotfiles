@@ -365,6 +365,8 @@ git -C "$state1" push -q origin main
 git clone -q "$(git -C "$state1" remote get-url origin)" "$rem_home/agent-state"
 
 ssh_rem_bin="$tmp/ssh-rem"
+# jq is not in /usr/bin on every host (Intel macOS keeps it in /usr/local/bin), so keep its directory on the trimmed PATH.
+jq_dir=$(dirname "$(command -v jq)")
 mkdir -p "$ssh_rem_bin"
 cat >"$ssh_rem_bin/ssh" <<EOS
 #!/usr/bin/env bash
@@ -384,7 +386,7 @@ for hdir in "$local_home" "$rem_home"; do
 done
 
 set +e
-out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec8=$?
 set -e
 
@@ -428,7 +430,7 @@ git -C "$state1" commit -qam agent_host
 git -C "$state1" push -q origin main
 rm -f "$rem_home/agent-team-machine.log"
 set +e
-out9=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out9=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec9=$?
 set -e
 if [ "$ec9" -eq 0 ] && [ "$(cat "$rem_home/agent-team-machine.log" 2>/dev/null)" = machine ]; then
@@ -440,7 +442,7 @@ fi
 # 842: a failed render names the host and the last error line, and the run exits non-zero
 touch "$rem_home/agent-team-fail"
 set +e
-out10=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out10=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec10=$?
 set -e
 rm -f "$rem_home/agent-team-fail"

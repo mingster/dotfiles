@@ -38,7 +38,7 @@ case "$1 $2" in
 esac
 EOS
 chmod +x "$tmp/bin/gh" "$reader"
-export PATH="$tmp/bin:/usr/bin:/bin:/opt/homebrew/bin" HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+export PATH="$tmp/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin" HOME="$tmp/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
 export HEAVY_GATE_READER="$reader" HEAVY_GATE_POLL_SECONDS=0.02 HEAD_CHECKS_WAIT_SECONDS=0
 export HEAD_CHECKS_MEMORY_MB=512 HEAD_CHECKS_LOG_DIR="$tmp/logs" COMMENTS="$comments" TMP="$tmp"
 export GH_BASE GH_STALE_HEAD GH_FRESH_HEAD GH_VIEW_STATE="$tmp/gh-views"

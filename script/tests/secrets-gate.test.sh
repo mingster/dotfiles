@@ -181,18 +181,20 @@ mkdir -p "$TMP/atk/src1" "$TMP/atk/src2/evil" "$TMP/atk/out"
 ln -s "$TMP/atk/out" "$TMP/atk/src1/evil"
 printf 'pwn\n' >"$TMP/atk/src2/evil/pwn"
 APATH="$TMP/bin:/usr/bin:/bin"
+# timeout is not in /usr/bin on every host, so resolve it before PATH is trimmed.
+TIMEOUT_BIN=$(command -v timeout)
 # The receiver's fixed flags (no -l) disagree with a client that sends links, so on some rsync builds that push stalls
 # instead of failing. A stall counts as a refusal here: what matters is that nothing lands outside, which is asserted
 # on the files after each push. The short timeout keeps the stall cheap.
 PUSH_TMO=${SG_TEST_PUSH_TIMEOUT:-10}
-push() { PATH="$APATH" timeout "$PUSH_TMO" /usr/bin/rsync "$1" -e ssh "$2"/ "h:$R"/ >/dev/null 2>&1; }
+push() { PATH="$APATH" "$TIMEOUT_BIN" "$PUSH_TMO" /usr/bin/rsync "$1" -e ssh "$2"/ "h:$R"/ >/dev/null 2>&1; }
 # two push symlink then keep-dirlinks
 push -rl "$TMP/atk/src1"
 push -rK "$TMP/atk/src2"
 [[ -z "$(ls -A "$TMP/atk/out")" ]] && ok "symlink plus keep-dirlinks push wrote nothing outside the folder" || bad "ESCAPE: $(ls -A "$TMP/atk/out")"
 [[ -z "$(find "$R" -type l)" ]] && ok "no symlink landed in the folder" || bad "symlink in the folder: $(find "$R" -type l)"
 # option injection through the remote command: the forced command ignores it (the fake ssh does the same)
-PATH="$APATH" timeout "$PUSH_TMO" /usr/bin/rsync -rK -e ssh --rsync-path="/opt/x --server -rlK --delete" "$TMP/atk/src2"/ "h:$R"/ >/dev/null 2>&1
+PATH="$APATH" "$TIMEOUT_BIN" "$PUSH_TMO" /usr/bin/rsync -rK -e ssh --rsync-path="/opt/x --server -rlK --delete" "$TMP/atk/src2"/ "h:$R"/ >/dev/null 2>&1
 [[ -z "$(ls -A "$TMP/atk/out")" ]] && ok "an injected --rsync-path option changes nothing" || bad "ESCAPE with injected options: $(ls -A "$TMP/atk/out")"
 
 # a link planted in the folder before setup, leading dash directory: the gate refuses to receive at all

@@ -326,7 +326,7 @@ def _tool_bin(name, fallback):
 
 def antigravity_fetch():
     """Read local quota without persisting or displaying the server's CSRF token."""
-    import re, ssl, urllib.request
+    import re, urllib.request
     deadline = time.monotonic() + 7
     lsof = _tool_bin("lsof", "/usr/sbin/lsof")
     try:
@@ -353,6 +353,8 @@ def antigravity_fetch():
                              "X-Codeium-Csrf-Token": token.group(1)})
                 try:
                     # The local server uses a self-signed certificate. Never use a proxy.
+                    # Imported here: a Python built without its OpenSSL library must yield no reading, not raise.
+                    import ssl
                     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),
                         urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
                     with opener.open(request, timeout=min(2, remaining)) as response:
