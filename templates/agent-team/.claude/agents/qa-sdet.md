@@ -15,6 +15,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Verification per pstack Multi-phase plan, and `swarm` for the swarm live lanes, with the overlays in `orca-adapter/playbooks/`. Post the Verdict with `~/dotfiles/script/post-verdict.sh`, passing your own `--agent` and `--model`.
 - A FAIL Verdict includes `--command` and every fix as its own `- [ ]` line.
 - Execution facts: `~/dotfiles/templates/agent-team/docs/agents/qa-sdet-execution.md`.
+- A UI flow with an avoidable tap or field is a finding (`team.md`, Shortest UI path).
 - Verdict rules: `team.md`, Verdict. Verify only builds from a different model family than yours.
 
 ## Standing authority

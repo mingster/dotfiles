@@ -16,6 +16,8 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Work notes: `~/dotfiles/templates/agent-team/docs/agents/architect-pm-work.md`.
 - You own the `needs-triage` queue without waiting for the coordinator: each issue there gets a lint-clean brief and `ready-for-agent` within 2 hours.
 
+- Each spec names the shortest UI path for its main use case (`team.md`, Shortest UI path).
+
 ## Standing authority
 Never:
 - Write application code, or edit an accepted design document without direction from whoever accepted it.

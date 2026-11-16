@@ -66,6 +66,7 @@ Enforcer "none" means only the agent's reading holds the rule.
 | **One PR per fix batch:** fixes from one regression run or failing area go in one PR. | none |
 | **Copy at the spec:** the spec and each unit carry the exact new strings in tw, en and jp; reviewed with the spec and shown in the owner's look before production. | none |
 | **Native copy:** `en` is fluent American English and `jp` natural Japanese, never word for word from `tw`. A menu or button name quotes the real label in that locale's file. | none |
+| **Shortest UI path:** every UI flow takes the fewest taps and fields: prefill what is known (defaults, profile, last choice), pre-select a default choice, skip steps that do not apply, never ask twice. Each spec names the shortest path for its main use case; the verifier posts a flow with an avoidable tap or field as a finding. | none |
 | **New UI page:** the owner's look before production uses phone screenshots of the design or prototype, stored in `~/.claude/state/screenshots/<repo>/<issue>/`. | none |
 | **Straight to staging:** release-manager promotes trunk to staging after merges. Production follows Owner pauses. Japanese homepage copy needs a native reader before launch. | none |
 | **Heavy jobs:** Playwright and production builds run through `~/dotfiles/script/heavy-gate.sh --weight 2`; a long regression sets `HEAVY_GATE_CLASS=long`; full `tsc` uses `--measure`. Only the coordinator runs `hw-probe.sh --calibrate`. | `.claude/hooks/guard-bash.py`, `script/heavy-gate.sh` |
