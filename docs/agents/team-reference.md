@@ -264,7 +264,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/orca-reply.sh` | Sends `orca orchestration reply` to a worker and nudges its terminal so an idle session wakes up immediately. |
 | `script/fleet-pull.sh` | Fast-forwards clean `main` checkouts across configured fleet hosts (for hosts in `agent_hosts`, resets configured repositories to `origin/main` and cleans untracked files while keeping ignored files and fast-forwarding `~/agent-state` only) and triggers `secrets-sync.sh`. |
 | `script/fleet-watch.py` | Independent 5-minute watchdog: monitors inbox waiters, host caps, lead panes, stalled workers (`worker_stall`), backup freshness (`backup`), failed PR checks (`pr_watch`), `heavy_gate` wait medians, `wrap_up` freshness, `coordinator_watch` on backup hosts, and opt-in `issue_scan` auto-dispatch. |
-| `script/fleet-workers.py` | Lists active Orca workers and dispatches across local and remote fleet environments. |
+| `script/fleet-workers.py` | Counts live, in progress dispatched workers across local and remote fleet environments. |
 | `script/count-agents.sh` | Counts active coding agent CLI processes (`claude`, `agent`/`cursor-agent`, `agy`, `gemini`) from a process snapshot. |
 | `script/secrets-pack.sh` | Packs local secrets into an AES-256 encrypted `hdiutil` disk image for transfer between Macs. |
 | `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. |

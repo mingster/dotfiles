@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# fleet-workers.py with a fake orca, fake ssh and fake count-agents.
+# fleet-workers.py with a fake orca that answers environment list and worker-list.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 work=$(mktemp -d)
@@ -11,32 +11,34 @@ cat > "$work/bin/orca" <<'ORCA'
 #!/usr/bin/env bash
 case "$1 $2" in
   "environment list") cat "$FAKE_ENVS" ;;
-  "terminal list") cat "$FAKE_TERMS" ;;
+  "orchestration worker-list")
+    if [[ " $* " == *" --environment e1 "* ]]; then
+      [[ -z ${FAKE_REMOTE_FAIL:-} ]] || exit 1
+      cat "$FAKE_REMOTE"
+    else
+      cat "$FAKE_LOCAL"
+    fi ;;
 esac
 ORCA
-cat > "$work/bin/ssh" <<'SSH'
-#!/usr/bin/env bash
-cat > /dev/null
-[[ -z ${FAKE_SSH_FAIL:-} ]] || exit 255
-printf '%b' "$FAKE_SSH_OUT"
-SSH
-chmod +x "$work/bin/orca" "$work/bin/ssh"
-
-printf '#!/usr/bin/env bash\necho "$FAKE_LOCAL_COUNT"\n' > "$work/count.sh"
+chmod +x "$work/bin/orca"
 cp "$root/script/fleet-workers.py" "$work/fleet-workers.py"
 
-terms() {
-  local out='{"result":{"terminals":[' sep=''
-  for name in "$@"; do
-    out+="$sep{\"worktreePath\":\"/home/u/orca/workspaces/proj/$name\"}"
+# worker <host> <liveness> <outcome>: one worker-list row; outcome "-" leaves it out.
+rows() {
+  local out='{"result":{"workers":[' sep=''
+  for spec in "$@"; do
+    read -r host live outcome <<< "$spec"
+    out+="$sep{\"host\":\"$host\",\"liveness\":\"$live\""
+    [[ $outcome == - ]] || out+=",\"outcome\":\"$outcome\""
+    out+='}'
     sep=,
   done
   printf '%s]}}' "$out"
 }
 
 run() {
-  PATH="$work/bin:$PATH" COUNT_AGENTS="$work/count.sh" FAKE_ENVS="$work/envs.json" \
-    FAKE_TERMS="$work/terms.json" python3 "$work/fleet-workers.py"
+  PATH="$work/bin:$PATH" FAKE_ENVS="$work/envs.json" FAKE_LOCAL="$work/local.json" \
+    FAKE_REMOTE="$work/remote.json" python3 "$work/fleet-workers.py"
 }
 
 assert_line() {
@@ -51,24 +53,29 @@ assert_line() {
 
 no_envs='{"result":{"environments":[]}}'
 one_env='{"result":{"environments":[{"id":"e1","name":"host-a"}]}}'
-export FAKE_LOCAL_COUNT=5
 
 printf '%s' "$no_envs" > "$work/envs.json"
-terms lead-x elon-y lead-x worker-z > "$work/terms.json"
-assert_line 'agent sessions minus live coordinator worktrees' 3
+rows 'local live in_progress' 'local live in_progress' > "$work/local.json"
+assert_line 'live in progress dispatches' 2
 
-terms lead-x elon-y lead-z > "$work/terms.json"
-FAKE_LOCAL_COUNT=1 assert_line 'never below zero' 0
+rows 'local exited -' 'local exited failed' 'local unverifiable -' 'local live succeeded' > "$work/local.json"
+assert_line 'finished, failed and unverifiable rows are not busy' 0
+
+rows 'local live in_progress' 'miniu live in_progress' > "$work/local.json"
+assert_line 'rows observed from other servers are not local' 1
+
+printf '{"result":{}}' > "$work/local.json"
+assert_line 'no worker list answer' '?'
 
 printf '%s' "$one_env" > "$work/envs.json"
-terms > "$work/terms.json"
-FAKE_SSH_FAIL=1 assert_line 'unreachable host' '5 | host-a: ?'
-FAKE_SSH_OUT='Welcome\n3 updates\n7\n' assert_line 'login banner number before the count' '5 | host-a: 7'
-FAKE_SSH_OUT='7\n' assert_line 'bare count' '5 | host-a: 7'
+rows 'local live in_progress' > "$work/local.json"
+rows 'local live in_progress' 'local live in_progress' 'local exited succeeded' > "$work/remote.json"
+assert_line 'each environment is asked for its own list' '1 | host-a: 2'
+FAKE_REMOTE_FAIL=1 assert_line 'unreachable host' '1 | host-a: ?'
 
 printf '%s' '{"result":{"environments":[{"id":"e1","name":"203.0.113.9"}]}}' > "$work/envs.json"
-FAKE_SSH_OUT='7\n' assert_line 'address without an overlay' '5 | 203.0.113.9: 7'
+assert_line 'address without an overlay' '1 | 203.0.113.9: 2'
 printf '%s' '{"203.0.113.9":"host-b"}' > "$work/fleet-workers.local.json"
-FAKE_SSH_OUT='7\n' assert_line 'local overlay names the address' '5 | host-b: 7'
+assert_line 'local overlay names the address' '1 | host-b: 2'
 
 printf 'PASS: %s tests\n' "$tests"
