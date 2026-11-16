@@ -1,0 +1,6 @@
+git commit -F - <<'EOF'
+fix: stop reading prose as a command
+
+bin/deploy-raw.sh runs only in the pipeline.
+bash bin/deploy-raw.sh was refused by the guard.
+EOF

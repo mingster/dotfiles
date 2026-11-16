@@ -1,0 +1,5 @@
+cat > issue-comment.md <<'EOF'
+Seen on a worker run.
+bin/deploy-raw.sh was named in this comment, nothing ran it.
+bash bin/deploy-raw.sh is the line the guard refused.
+EOF

@@ -1,0 +1,1 @@
+New `script/check-guard-false-positives.sh` replays the allow and deny command fixtures under `templates/agent-team/.claude/hooks/tests/fixtures/` through the template guard and fails when one flips. `checks-local.sh` runs it, and each later false positive becomes one new allow fixture in the PR that fixes it. (#1135)

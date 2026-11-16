@@ -54,5 +54,6 @@ bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files, so any change can break them. Run all of them.
 python3 -m unittest discover -s templates/agent-team/.claude/hooks/tests -p 'test_*.py'
+bash script/check-guard-false-positives.sh
 bash script/shellcheck-dotfiles.sh
 skipped_note
