@@ -84,7 +84,10 @@ class GuardTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="guard-home-")
         # #960: a host with /usr/local/etc/agent-team would make the guard ignore the temp home approval.
-        self.enterContext(mock.patch.dict(os.environ, {"GUARD_APPROVAL_ROOT": os.path.join(self.home, "no-root")}))
+        # addCleanup, not enterContext: that needs Python 3.11 and the system python on some fleet hosts is 3.9 (#1129).
+        patcher = mock.patch.dict(os.environ, {"GUARD_APPROVAL_ROOT": os.path.join(self.home, "no-root")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def bash(self, command):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}
