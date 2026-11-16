@@ -410,13 +410,45 @@ class AdminMerge(GuardTest):
 
     def test_long_window_only_for_merge(self):
         self.approve("host", expires_in=8 * 3600)
-        self.assertDenied("ssh root@prod.example uptime; gh pr merge 1 --admin", "longer window")
+        self.assertDenied("gh pr merge 1 --admin", "bin/owner-approve.sh merge")
+        self.approve("promote", expires_in=8 * 3600)
+        self.assertDenied("gh pr merge 1 --admin", "longer window")
 
     def test_plain_merge_needs_no_record(self):
         for command in ("gh pr merge 12 --merge", "gh pr view 12 --json state", "gh pr merge 12 --auto --merge"):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+
+
+class HostWindow(GuardTest):
+    """`host <hours>` opens a host access window of up to 336 hours; no other scope but merge gets more than 30 minutes."""
+    SSH = "ssh prod.example rm -rf /x"
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"production_hosts": ["prod.example"]}, f)
+        self.approval = os.path.join(self.home, "approval.json")
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": self.approval}
+
+    def approve(self, scope, expires_in):
+        now = int(time.time())
+        with open(self.approval, "w") as f:
+            json.dump({"scope": scope, "target": None, "created_at": now, "expires_at": now + expires_in}, f)
+
+    def test_300_hour_host_record_allows_host_ssh(self):
+        self.approve("host", 300 * 3600)
+        self.assertAllowed(self.SSH)
+
+    def test_300_hour_promote_record_is_ignored(self):
+        self.approve("promote", 300 * 3600)
+        self.assertDenied(self.SSH, "longer window")
+
+    def test_337_hour_host_record_is_ignored(self):
+        self.approve("host", 337 * 3600)
+        self.assertDenied(self.SSH, "longer window")
 
 
 class ShellIndirection(GuardTest):

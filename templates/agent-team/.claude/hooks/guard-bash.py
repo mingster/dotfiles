@@ -135,6 +135,8 @@ ENV_PEEK = 'python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]'
 
 APPROVAL_TTL = 30 * 60
 MERGE_TTL_MAX = 24 * 60 * 60  # `merge <hours>` opens an admin merge window of up to 24 hours
+HOST_TTL_MAX = 336 * 60 * 60  # `host <hours>` opens a host access window of up to 14 days
+SCOPE_TTL_MAX = {"merge": MERGE_TTL_MAX, "host": HOST_TTL_MAX}
 APPROVE = "bin/owner-approve.sh"
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 VIEWERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "wc", "ls", "stat", "file", "diff",
@@ -1004,7 +1006,7 @@ def load_approval():
         if exp <= now:
             last_reason = "the last owner approval has expired"
             continue
-        if exp > now + (MERGE_TTL_MAX if a.get("scope") == "merge" else APPROVAL_TTL) + 60:
+        if exp > now + SCOPE_TTL_MAX.get(a.get("scope"), APPROVAL_TTL) + 60:
             last_reason = f"{path} claims a longer window than its scope allows, so it is ignored"
             continue
         return a, ""
