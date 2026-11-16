@@ -6,6 +6,8 @@
 # and nothing when it has none. It never prints the file's values.
 [ -n "${ZSH_VERSION:-}" ] && emulate -L sh
 export PATH="${FLEET_TOOLCHAIN_PATH:-$HOME/.local/bin:$HOME/.bun/bin:${ASDF_DATA_DIR:-$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH}"
+# Version managers read .tool-versions from the cwd; a checkout pinning a version this host lacks would break the shim
+cd "$HOME" 2>/dev/null || true
 stale="$HOME/.orca/cli/bin"
 orca_bin=""
 list="${FLEET_ORCA_APP_BIN:-${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}:$PATH:$HOME/.local/bin"

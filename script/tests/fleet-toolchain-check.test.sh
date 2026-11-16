@@ -588,4 +588,37 @@ check "1075 probe prints e2e_shard missing" "$(echo "$probe_miss" | grep -qx 'e2
 check "1075 probe prints nothing without runtime.conf" "$(echo "$probe_none" | grep -q e2e_shard && echo 1 || echo 0)"
 check "1075 probe never prints values" "$(echo "$probe_ok$probe_miss" | grep -q hunter2 && echo 1 || echo 0)"
 
+# 1142: --apply installs the coordinator's node on a peer below it, even when the peer's dotfiles pin is stale
+: > "$apply_log"
+node_bin=$peer_bin; node_home="$tmp/node-home"; mkdir -p "$node_home"
+printf '#!/usr/bin/env bash\necho "asdf $*" >> %q\n[ "${1:-}" = list ] && echo "  24.22.2"\nexit 0\n' "$apply_log" > "$node_bin/asdf"
+chmod +x "$node_bin/asdf"
+printf 'python 3.15.2\nnodejs 24.22.2\n' > "$node_home/.tool-versions"
+node_peer_apply() { # <worker node> <coordinator node> -> runs --apply against fake-dotfiles; asdf calls land in $apply_log
+  HOME="$node_home" PATH="$fake_bin:/usr/bin:/bin" FLEET_TOOLCHAIN_PATH="$node_bin:$fake_bin:/usr/bin:/bin" FLEET_ORCA_APP_BIN="$fake_bin" \
+    DOTFILES_DIR="$fake_dotfiles" FLEET_PULL_CONFIG="$tmp/fleet-peer.json" FLEET_TOOLCHAIN_RUN="$tmp/peer-ssh" \
+    FLEET_TOOLCHAIN_VERSIONS="{\"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"$2\"},
+      \"worker-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"$1\"}}" \
+    "$fake_dotfiles/script/fleet-toolchain-check.sh" --apply >/dev/null 2>&1
+}
+node_peer_apply 24.22.2 24.22.3
+check "1142 peer below the coordinator installs the coordinator's node" \
+  "$(grep -q '^asdf install nodejs 24.22.3' "$apply_log"; echo $?)"
+check "1142 peer below the coordinator gets its ~/.tool-versions node moved" \
+  "$(grep -qx 'nodejs 24.22.3' "$node_home/.tool-versions"; echo $?)"
+check "1142 other ~/.tool-versions lines are kept" "$(grep -qx 'python 3.15.2' "$node_home/.tool-versions"; echo $?)"
+: > "$apply_log"; printf 'nodejs 24.22.2\n' > "$node_home/.tool-versions"
+node_peer_apply 24.22.3 24.22.3
+check "1142 peer level with the coordinator installs no node" \
+  "$(grep -q '^asdf install' "$apply_log" && echo 1 || echo 0)"
+check "1142 peer level with the coordinator keeps its node line" "$(grep -qx 'nodejs 24.22.2' "$node_home/.tool-versions"; echo $?)"
+
+# 1142: the probe reads node from $HOME, so a repo checkout pinning a node the host lacks cannot make it unreadable
+probe_bin="$tmp/probe-bin"; mkdir -p "$probe_bin" "$tmp/probe-cwd"
+printf '#!/usr/bin/env bash\n[ -f .tool-versions ] && { echo "No version is set for command node" >&2; exit 1; }\necho v24.22.3\n' > "$probe_bin/node"
+chmod +x "$probe_bin/node"
+printf 'nodejs 24.99.9\n' > "$tmp/probe-cwd/.tool-versions"
+probe_node=$(cd "$tmp/probe-cwd" && FLEET_TOOLCHAIN_PATH="$probe_bin:/usr/bin:/bin" HOME="$tmp/orca-home" bash "$here/lib/toolchain-probe.sh" 2>/dev/null | grep '^node ')
+check "1142 probe reports node from a directory pinning a missing version" "$([ "$probe_node" = 'node ok 24.22.3' ]; echo $?)"
+
 echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

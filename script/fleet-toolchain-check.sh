@@ -4,6 +4,7 @@
 # Reuses .tool-versions via bootstrap-asdf-tools for node and python.
 # --apply upgrades Orca to the coordinator's version (latest on the coordinator) on a host with no live
 # claude, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
+# --apply also installs the coordinator's Node on a peer below it (bootstrap-asdf-tools --pin), whatever the peer's own pin file says.
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
 # A host with a regression runtime.conf and no E2E_SHARD line fails the check, because the regression fleet skips it.
@@ -301,8 +302,10 @@ orca_target() { # <host> -> the Orca version to install, empty when the host is 
   esac
 }
 
-apply_shell() { # <claude pin> <bun pin> <dotfiles path on the target> <orca target>
-  local claude_pin=$1 bun_pin=$2 dot=$3 orca_to=$4
+apply_shell() { # <claude pin> <bun pin> <dotfiles path on the target> <orca target> <node pin>
+  local claude_pin=$1 bun_pin=$2 dot=$3 orca_to=$4 node_pin=${5:-}
+  # A peer's checkout can lag the coordinator, so its bootstrap may carry an old node pin: install the coordinator's node after it
+  [ "$node_pin" = keep ] && node_pin=
   cat <<EOS
 [ -n "\${ZSH_VERSION:-}" ] && emulate -L sh
 export PATH="\${FLEET_TOOLCHAIN_PATH:-\$HOME/.local/bin:\$HOME/.bun/bin:\${ASDF_DATA_DIR:-\$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH}"
@@ -322,6 +325,14 @@ if command -v brew >/dev/null 2>&1; then
   try "brew upgrade" brew upgrade git gh jq shellcheck
 fi
 try bootstrap-asdf-tools bash "$dot/script/bootstrap-asdf-tools.sh" --dotfiles "$dot"
+if [ -n '$node_pin' ] && command -v asdf >/dev/null 2>&1; then
+  asdf list nodejs 2>/dev/null | tr -d ' *' | grep -qx '$node_pin' || try "asdf install nodejs $node_pin" asdf install nodejs '$node_pin'
+  if grep -q '^nodejs ' "\$HOME/.tool-versions" 2>/dev/null; then
+    sed -i.bak 's/^nodejs .*/nodejs $node_pin/' "\$HOME/.tool-versions" && rm -f "\$HOME/.tool-versions.bak"
+  else
+    echo 'nodejs $node_pin' >> "\$HOME/.tool-versions"
+  fi
+fi
 if command -v bun >/dev/null 2>&1; then
   case '$bun_pin' in
     keep) ;;
@@ -418,7 +429,7 @@ if [ "$apply" -eq 1 ]; then
         "$HOME"/*) dot="\$HOME${dotfiles#"$HOME"}" ;;
       esac
     fi
-    script=$(apply_shell "$(peer_pin "$h" claude)" "$(peer_pin "$h" bun)" "$dot" "$(orca_target "$h")")
+    script=$(apply_shell "$(peer_pin "$h" claude)" "$(peer_pin "$h" bun)" "$dot" "$(orca_target "$h")" "$(peer_pin "$h" node)")
     apply_rc=0
     if same_host "$h" "$me"; then
       out=$(bash -c "$script" 2>"$probe_dir/apply-err") || apply_rc=$?
