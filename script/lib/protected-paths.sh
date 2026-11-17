@@ -80,8 +80,9 @@ text_lane_role_path() { # <path>
     docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
   esac
   [[ "$1" == */.claude/agents/* || "$1" == .claude/agents/* ]] && return 0
-  [[ "$1" == *AGENTS.md ]] && return 0
-  [[ "$1" == *model-routing.md ]] && return 0
+  case "${1##*/}" in
+    AGENTS.md|model-routing.md) return 0 ;;
+  esac
   return 1
 }
 

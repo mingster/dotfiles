@@ -176,5 +176,12 @@ else
   bad "unfetched pull/<pr>/head and origin/main base are fetched before checking intent acceptance receipt" "rc=$rc out=$out"
 fi
 
+for p in .claude/model-routing.md templates/agent-team/.claude/model-routing.md model-routing.md web/AGENTS.md AGENTS.md; do
+  if text_lane_role_path "$p"; then ok "$p is owner-gated"; else bad "$p is owner-gated" "not matched"; fi
+done
+for p in changelog.d/mattpocock-sync-model-routing.md changelog.d/1-fix-AGENTS.md docs/notes-model-routing.md; do
+  if text_lane_role_path "$p"; then bad "$p is not owner-gated" "matched"; else ok "$p is not owner-gated"; fi
+done
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
