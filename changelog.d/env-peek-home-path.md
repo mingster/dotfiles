@@ -1,1 +1,0 @@
-* The team guard, `release-manager.md`, `release-manager-work.md` and `env-peek.py` now name the per machine tool, `python3 "$HOME/.claude/bin/env-peek.py"`, instead of the project copy that a project sync removes.

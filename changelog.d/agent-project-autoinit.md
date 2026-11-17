@@ -1,1 +1,0 @@
-- Matt Pocock skill setup is now automatic: a Claude Code SessionStart hook (script/agent-project-autoinit.sh) seeds docs/agents in any mingster GitHub repo that lacks them, and Cursor and Codex global instructions tell the agent to run init-agent-project.sh. The skills inventory no longer says the mattpocock-skills plugin is enabled.

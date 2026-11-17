@@ -1,1 +1,0 @@
-- Skills inventory for the <project-a>, <project-b> and template agent teams, with a dedupe and symlink migration plan (`docs/agents/skills-inventory.md`).

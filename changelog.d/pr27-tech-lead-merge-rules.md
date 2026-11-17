@@ -1,1 +1,0 @@
-- Tech lead template now spells out the merge criteria for PRs.

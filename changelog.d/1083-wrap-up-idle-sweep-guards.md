@@ -1,1 +1,0 @@
-- `wrap-up.sh` no longer proposes an idle Orca worktree whose branch has an open PR or whose commits no remote holds (the last copy); it names them as kept. A `peer_changed` error from `worker-show` is now reported and skipped like an unpaired host, so one stale peer no longer fails the host preview.

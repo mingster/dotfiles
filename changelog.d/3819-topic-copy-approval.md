@@ -1,1 +1,0 @@
-Require owner Copy approval for edits about sensitive topics and changed numbers or currency, even when term counts stay unchanged; preserve literal currency symbols to avoid treating ordinary words as NT$.

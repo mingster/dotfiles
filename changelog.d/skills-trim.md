@@ -1,1 +1,0 @@
-- Trimmed the shared skills tree from 60 to 31: removed copies of Cursor built in skills and four unused Matt Pocock skills, and synced Matt Pocock skills to upstream 49dd158.

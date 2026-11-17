@@ -1,1 +1,0 @@
-- setup-cursor.sh keeps the cursor-agent login (authInfo) when it copies the CLI config. A plain copy logged cursor-agent out on every run, including agent-team machine and the install scripts.

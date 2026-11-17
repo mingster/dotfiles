@@ -1,1 +1,0 @@
-Scheduled wrap-up: `script/wrap-up-scheduled.sh` runs one locked, load checked round every two hours from launchd, and wrap-up now closes stale throwaway Chrome Dev, Chromium and agent-browser processes (never stable Chrome or a profile outside temp).

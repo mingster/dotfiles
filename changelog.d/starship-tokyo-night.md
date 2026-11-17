@@ -1,1 +1,0 @@
-- Add Starship Tokyo Night preset configuration and link it in install.sh.

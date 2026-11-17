@@ -1,1 +1,0 @@
-lead-merge runs one preflight that reports every refusal needing no head-checks, a batch drops refused PRs and merges the rest, and head-checks posts a bounded receipt with the full log in a named file.

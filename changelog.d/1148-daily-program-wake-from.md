@@ -1,1 +1,0 @@
-- `automation-precheck-staging-daily.sh` passes the coordinator run's terminal as `--from` when it sends the wake, so the scheduled 19:00 run no longer fails with `no_active_sender_terminal`. A failed send now logs the Orca error text. (#1148)

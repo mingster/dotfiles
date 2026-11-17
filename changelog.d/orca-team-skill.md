@@ -1,1 +1,0 @@
-Move custom Orca worker panes, cleanup, monitoring helpers and tests into the `orca-team` skill so Orca can install and update its official `orchestration` skill. Update team instructions and audit checks to use the new helper paths.

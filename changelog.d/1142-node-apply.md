@@ -1,1 +1,0 @@
-* `fleet-toolchain-check.sh --apply` now upgrades Node.js on a peer to the coordinator's version through the host's asdf, even when that peer's dotfiles checkout still has the old pin, and the version probe reads Node from the home directory so a checkout pinning a Node the host lacks no longer shows "version unreadable".

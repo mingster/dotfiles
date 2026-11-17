@@ -1,1 +1,0 @@
-- Require unreaped-child identity before heavy-gate cleanup signals, revoke nested authorization independently of filesystem writes, and retain capacity for nested survivors and unknown inspection.

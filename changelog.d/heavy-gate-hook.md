@@ -1,1 +1,0 @@
-The team Bash guard now blocks direct heavy test, type check and build commands with a weighted heavy-gate rewrite. Team guidance requires at least 20% free memory and routes test commands through the gate.

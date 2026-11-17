@@ -1,1 +1,0 @@
-- start-codex-worker: the real Codex hooks prompt lists no file paths, so trust it by matching the "N hooks are new or changed" count to the commands in .codex/hooks.json, still only when those files match origin/main.

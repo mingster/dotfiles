@@ -1,1 +1,0 @@
-- Global CLAUDE.md and AGENTS.md send area notes to `docs/<area>/`, matching the five file rule for project `docs/agents/` (owner 2026-11-07).

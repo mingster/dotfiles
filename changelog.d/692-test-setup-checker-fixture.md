@@ -1,1 +1,0 @@
-- `test_setup.py` install fixture stubs `script/check-agent-startup.sh` so `install.sh` reaches the mocked `setup-check.sh` in unittest.

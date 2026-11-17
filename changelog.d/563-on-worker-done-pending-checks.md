@@ -1,1 +1,0 @@
-Start QA from the worker done hook when no Checks receipt exists yet at the exact head, and tell the reviewer that Checks are pending. A Checks FAIL at the head, an unreadable comment list and a bad receipt still refuse, and a reviewer who finds a FAIL receipt stops the review.

@@ -1,1 +1,0 @@
-QA admission now counts workers across every Run in the runtime (paginated run-list plus per-Run worker-list), so a Run-scoped worker-list no longer causes a false refusal. Incomplete pages, unknown scope, duplicate dispatches and unavailable remote inventory still refuse.

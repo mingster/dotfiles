@@ -1,1 +1,0 @@
-- `script/wrap-up.sh`: derive worktree paths from `projection.workspace.id` when `worker-list` rows omit `.workspace`, so Remote Dispatch skips still retain the path; `finish-worker` dispatch discovery matches the same shapes.

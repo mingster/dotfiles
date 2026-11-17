@@ -1,1 +1,0 @@
-Gate `head-checks.sh` `tsc` steps through `heavy-gate.py` (`--weight 1`) so they wait on slots, load, and free memory instead of running beside two other heavy jobs. When a `tsc` step is killed by the OS (exit 137), log it as a retryable infra failure, retry once when load drops, and report `Checks: INFRA` (not a code `FAIL`) if the retry is also killed (#1081).

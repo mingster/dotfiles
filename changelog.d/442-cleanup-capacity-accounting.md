@@ -1,1 +1,0 @@
-Keep heavy-gate capacity occupied for cleanup survivors or unverifiable groups until positive empty or zombie-only inspection permits reclaim, preserving completed child status and rejecting quarantined nested tokens.

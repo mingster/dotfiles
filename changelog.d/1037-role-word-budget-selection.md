@@ -1,1 +1,0 @@
-* `role-word-budget.test.sh` checks the current release-manager rollback guard (`A production rollback is a production deploy`), and CI now selects it whenever a `templates/agent-team/` file changes (#1037).

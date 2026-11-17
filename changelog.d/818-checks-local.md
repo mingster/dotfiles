@@ -1,1 +1,0 @@
-Add script/checks-local.sh, which runs the Checks workflow's script-tests selection and shellcheck for the files a branch changed under a temp HOME, and make brief-lint.sh require builder briefs' Verify to call it (#818).

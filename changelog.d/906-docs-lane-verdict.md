@@ -1,1 +1,0 @@
-The shipping script now lets a docs only PR land on a verifier Verdict PASS or PASS+NOTES at the exact head, with the same author and builder checks as the verdict lane. A FAIL Review or FAIL Verdict, or a Verdict at an older head, still refuses.

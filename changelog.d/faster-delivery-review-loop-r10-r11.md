@@ -1,1 +1,0 @@
-Faster delivery review loop: on-worker-done requires exact-head Checks PASS before QA, emits needs-author on FAIL, and reviewer briefs cite the receipt instead of rerunning tests; sync fullstack-dev, qa-sdet, team-audit, and engineering-integration templates from project-a #6730/#6731.

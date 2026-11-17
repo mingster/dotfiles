@@ -1,1 +1,0 @@
-- `head-checks.sh` replaces a check worktree whose gitfile points at a deleted repo, and posts no Checks receipt when that worktree still cannot be replaced because nothing was checked. (#999)

@@ -1,1 +1,0 @@
-The Bash guard no longer reads the body of a quoted heredoc as commands when it only feeds a text sink (`cat > file`, `cat <<'EOF' > file`, `git commit -F -`, `gh ... --body-file -`). Heredocs fed to a shell, ssh, python or an unquoted opener are still scanned. (#1126)

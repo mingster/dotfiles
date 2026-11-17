@@ -1,1 +1,0 @@
-* `team-audit` finds mistake classes with `workflow-from-chats` over the last 7 days of transcripts and fixes each one with `/correct`. The report names the gap that only the coordinator host's transcripts are read.

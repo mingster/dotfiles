@@ -1,1 +1,0 @@
-The usage gate marks an Antigravity pool blocked until its reset when a "quota reached, resets in" banner is piped to `usage-gate.py banner`, and treats a preset Antigravity model id missing from `agy models` as not eligible.

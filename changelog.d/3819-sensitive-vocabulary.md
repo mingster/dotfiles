@@ -1,1 +1,0 @@
-Expand copy-only owner approval vocabulary across English, Traditional/Simplified Chinese and Japanese price, cancellation, legal/privacy and promise topics, with grouped provenance and regression coverage.

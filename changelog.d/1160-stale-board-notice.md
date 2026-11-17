@@ -1,1 +1,0 @@
-fleet-watch (opt in with board_stale_check) reports a settled worktree that board-done would move to Done but that is still In progress or In review an hour later, one notice per worktree, at most five per pass (#1160).

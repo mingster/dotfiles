@@ -1,1 +1,0 @@
-* `worker-startup.sh` skips `bun install` for a brief with a `Setup: none` line and only fast-forwards the new worktree to `origin/main` (`worktree-setup.sh --git-only`). Remote hosts keep the install.

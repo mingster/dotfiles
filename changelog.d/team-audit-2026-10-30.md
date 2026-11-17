@@ -1,1 +1,0 @@
-Team audit: preserve Verdict history, count pending-push host slots, rearm inbox waiters, require partial-mock and reviewer-family evidence, and stop repeated failed premises. Shared role references retain owner policies while reducing duplicate context.

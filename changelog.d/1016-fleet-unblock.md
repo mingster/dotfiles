@@ -1,1 +1,0 @@
-fleet-watch keeps shipping and scanning when the local host is full: it skips a lint-failing issue, places the next one on a free host, releases a green succeeded worker, and does not recount a conflict-only rework (#1016).

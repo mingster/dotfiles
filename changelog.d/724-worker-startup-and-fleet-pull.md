@@ -1,1 +1,0 @@
-Route every worker start and stall restart through `script/worker-startup.sh`, fast forward the state directory in `script/fleet-pull.sh`, `script/elon-startup.sh`, `script/worker-startup.sh`, and `script/start-remote-worker.sh`, and fail `script/fleet-pull.sh` when any checkout is dirty, diverged, behind after pull, or unreachable.

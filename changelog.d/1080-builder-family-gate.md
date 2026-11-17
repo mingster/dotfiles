@@ -1,1 +1,0 @@
-Map builder models to their provider family by model prefix regardless of the agent field, stop verifier dispatch in `fleet-watch.py` when a pull request has an unknown builder family, and write the exact `Builder: agent=<agent> model=<model>` line into builder specs from `worker-startup.sh` (#1080).

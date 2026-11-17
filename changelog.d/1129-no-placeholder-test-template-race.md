@@ -1,1 +1,0 @@
-The agent-team no-placeholder test no longer edits the real elon.md template to fake a stale copy; it edits the copy under its temp HOME, so tests that run in parallel no longer race on the template. (#1129)

@@ -1,1 +1,0 @@
-Fix reviewer selection to exclude the author's provider as well as the existing model-family exclusions, including Cursor and Antigravity authors. Preserve the non-zero cross-family unavailable result when no other reviewer can start.

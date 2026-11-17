@@ -1,1 +1,0 @@
-- Agent team: team-audit.sh flags role-file commits from 2026-11-03 without an Owner-approved trailer (receipt check, test added); grill gate exemptions; heartbeat rule moved to the drain; worker-budget hook skips sessions without a worker brief.

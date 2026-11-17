@@ -1,1 +1,0 @@
-fleet-watch validates inbox message and worker list elements before `alerts()`, clears the Orca skip latch only after a successful `alerts()` return, and resilience tests assert workflow checks and one skip line over two passes on malformed records. (#7363)
