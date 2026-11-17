@@ -1,0 +1,1 @@
+Docs: orca-gaps.md records the verified cause of the remote worker_done rejection (#1159). The coordinator's server rejects the relayed worker_mail because it looks up remote dispatches in the local dispatch table; the coordinator releases the worker with worker-release. Upstream report: stablyai/orca#43618.
