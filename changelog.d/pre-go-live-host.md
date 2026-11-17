@@ -1,0 +1,1 @@
+Template guard honours an optional `pre_go_live_host.until` (ISO date, Asia/Taipei) in the project guard-config.json: the `host` approval is waived before that date. Without the key, or with a malformed value, nothing changes.
