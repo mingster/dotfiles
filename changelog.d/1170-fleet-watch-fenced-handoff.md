@@ -1,0 +1,1 @@
+* fleet-watch hands a worker start to the coordinator when Orca refuses it with `consumer_fenced`. The urgent notice reads `handoff <kind> <target>` and carries the ready `worker-startup.sh` command, instead of a bare `parked` line (#1170).

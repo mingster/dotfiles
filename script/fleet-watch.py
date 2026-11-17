@@ -4985,7 +4985,14 @@ def park_failure(state, key, reason, config, **meta):
     return True
 
 
-def park_notice(kind, target, reason):
+def park_notice(kind, target, reason, command=None):
+    """Urgent notice for a parked start. An Orca fence on fleet-watch's own terminal (#1170) is a handoff.
+
+    The notice carries the ready command so the coordinator, which Orca does accept, can run it.
+    """
+    if command and reason and 'consumer_fenced' in reason:
+        return Urgent('handoff %s %s: Orca refuses worker starts from fleet-watch, start it from the coordinator: %s'
+                      % (kind, target, shlex.join(str(part) for part in command)))
     text = 'parked %s %s' % (kind, target)
     if reason:
         text += ': ' + reason
@@ -5443,7 +5450,7 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
             log_bits.append('start_fail=%s%s' % (number, suffix))
             if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
-                notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason))
+                notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, command))
             continue
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
@@ -5683,7 +5690,7 @@ def issue_scan_pass(
             else:
                 pending.pop(head, None)
                 if park_failure(state, park_key, reason, config, repo=repo, pr=pr_num, head=head):
-                    notices.append(park_notice('rework', '%s#%s' % (repo, pr_num), reason))
+                    notices.append(park_notice('rework', '%s#%s' % (repo, pr_num), reason, command))
                 if persist_state:
                     persist_state()
                 suffix = ':%s' % reason if reason else ''
@@ -5824,7 +5831,7 @@ def issue_scan_pass(
             updated = row.get('updatedAt') or ''
             park_key = park_id('issue', repo, row['number'], updated)
             if park_failure(state, park_key, reason, config, repo=repo, issue=row['number']):
-                notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason))
+                notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason, command))
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))
