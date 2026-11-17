@@ -891,10 +891,6 @@ set -e
 [ "$(git -C "$rem_state" rev-parse HEAD)" = "$rem_state_tip" ] && ok || bad "remote state dir fast-forwarded"
 [ "$(git -C "$rem_app" rev-parse HEAD)" = "$rem_app_tip" ] && ok || bad "remote app checkout fast-forwarded"
 grep -q 'orchestration worker-start' "$tmp/orca-rem-ok.log" && ok || bad "remote start dispatches after target host check"
-# 1159: a remote worker's worker_done can hit its own server, which has no record of the coordinator's dispatch.
-# The brief it gets says what to do on that rejection. A local worker gets no such note.
-grep -q 'unknown dispatch' "$tmp/orca-rem-ok.log" && ok || bad "remote worker brief should name the unknown dispatch rejection (#1159)"
-grep -q 'unknown dispatch' "$tmp/orca-nofin.log" && bad "local worker brief must not carry the remote worker_done note (#1159)" || ok
 
 # --- Stall restart mode (--task + --retry-of + --worktree) ---
 : >"$tmp/orca-retry.log"

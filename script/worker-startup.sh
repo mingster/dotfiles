@@ -788,9 +788,6 @@ run_mode() {
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   board_status_set "path:$wt" in-progress "$environment"
   if [ -n "$environment" ]; then
-    # #1159: the dispatch lives on the coordinator's server, so the worker's own server can reject worker_done.
-    brief+=$'\n\n## If worker_done is rejected\n'
-    brief+='This worker runs on a remote Orca server. If `worker_done` fails with `unknown dispatch` (or `unknown_dispatch`), the dispatch is held by the coordinator server, not this one. Do not retry, change flags or message the user. Leave the PR open with its checks passing and the workspace status set, then stop. The coordinator reads the PR and this screen.'
     run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || exit $?
     surface_antigravity_screen "$agent" "$start_out"
