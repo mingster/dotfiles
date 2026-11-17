@@ -4,6 +4,7 @@ Run from the repo root: python3 -m unittest discover -s .claude/hooks/tests
 The hook runs as Claude Code does (JSON on stdin) with HOME pointed at a temporary folder.
 """
 import importlib.util
+import datetime
 import io
 import json
 import os
@@ -596,6 +597,29 @@ class ProjectConfigRules(GuardTest):
             with self.subTest(until=until):
                 self.go_live(until)
                 self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY", "--schema --apply")
+
+    def host_go_live(self, until):
+        cfg = dict(self.CONFIG, production_hosts=["prod.example"])
+        if until:
+            cfg["pre_go_live_host"] = {"until": until}
+        self.use_config(cfg)
+
+    def test_pre_go_live_host_command_needs_no_approval_before_the_date(self):
+        self.host_go_live("2999-12-31")
+        self.assertAllowed("ssh root@prod.example reboot")
+        self.assertAllowed("scp x.txt root@prod.example:/tmp/")
+
+    def test_pre_go_live_host_command_denied_on_and_after_the_date(self):
+        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+        for until in (today, "2000-01-01", None, "soon", "2999-1-1"):
+            with self.subTest(until=until):
+                self.host_go_live(until)
+                self.assertDenied("ssh root@prod.example reboot", "owner-approve.sh")
+
+    def test_pre_go_live_host_waiver_exempts_no_other_gate(self):
+        self.host_go_live("2999-12-31")
+        self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
+        self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 OTHER_KEY", "--schema --apply")
 
     def test_pre_go_live_date_exempts_no_other_apply_script(self):
         self.go_live("2999-12-31")

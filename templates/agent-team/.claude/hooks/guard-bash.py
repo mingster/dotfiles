@@ -44,6 +44,7 @@ backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
 from __future__ import annotations
 
+import datetime
 import fnmatch
 import glob
 import json
@@ -72,6 +73,9 @@ APPLY_SCRIPTS: set[str] = {"apply-production-sql.sh", "set-production-secret.sh"
 # `pre_go_live_secrets.until`. The script itself refuses to overwrite an existing key.
 PRE_GO_LIVE_SCRIPT = "set-production-secret.sh"
 PRE_GO_LIVE_UNTIL: str | None = None
+# `pre_go_live_host.until` (ISO date, compared with today in Asia/Taipei): the `host` approval is waived before
+# it. Absent or malformed means no waiver. Nothing else is waived.
+PRE_GO_LIVE_HOST_UNTIL: str | None = None
 
 
 def pre_go_live_command(script_args):
@@ -232,7 +236,7 @@ def load_guard_config(start_dir):
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
-    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS, PROMOTE_STEPS, PRE_GO_LIVE_UNTIL
+    global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS, PROMOTE_STEPS, PRE_GO_LIVE_UNTIL, PRE_GO_LIVE_HOST_UNTIL
 
     BLOCKED_SCRIPTS = set()
     GRILL_APPROVERS = set()
@@ -248,6 +252,7 @@ def load_guard_config(start_dir):
     ROLLBACK_SCRIPTS = {"rollback-production.sh"}
     APPLY_SCRIPTS = {"apply-production-sql.sh", "set-production-secret.sh", "run-production-data-step.sh"}
     PRE_GO_LIVE_UNTIL = None
+    PRE_GO_LIVE_HOST_UNTIL = None
     SCHEMA_OVERRIDE = "SCHEMA_APPROVED"
     APPROVAL_NAMESPACE = ""
     APPROVAL_FILE_OVERRIDE = os.environ.get("GUARD_APPROVAL_FILE") or ""
@@ -360,6 +365,11 @@ def load_guard_config(start_dir):
     until = (raw_go_live or {}).get("until")
     if isinstance(until, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", until):
         PRE_GO_LIVE_UNTIL = until
+
+    raw_host_go_live = cfg_expect("pre_go_live_host", dict, "object")
+    host_until = (raw_host_go_live or {}).get("until")
+    if isinstance(host_until, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", host_until):
+        PRE_GO_LIVE_HOST_UNTIL = host_until
 
     raw_schema = cfg_expect("schema_override", str, "string")
     if raw_schema and raw_schema.strip():
@@ -1013,7 +1023,17 @@ def load_approval():
     return None, last_reason
 
 
+def host_waived():
+    """True before `pre_go_live_host.until`, compared with today in Asia/Taipei (UTC+8, no DST)."""
+    if PRE_GO_LIVE_HOST_UNTIL is None:
+        return False
+    taipei = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    return taipei.strftime("%Y-%m-%d") < PRE_GO_LIVE_HOST_UNTIL
+
+
 def approval_for(scopes, target_ok=None):
+    if "host" in scopes and host_waived():
+        return True, ""
     a, why = load_approval()
     if not a:
         return False, why
