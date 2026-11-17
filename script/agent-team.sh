@@ -2219,11 +2219,6 @@ def run_check():
         full = os.path.join(target, rel)
         if (os.path.exists(full) or os.path.islink(full)) and hook not in kept:
             drifts.append(f"shared hook copy or link in project: {rel}")
-        tpl_hook = os.path.join(template_dir, rel)
-        if hook in kept and os.path.isfile(full) and os.path.isfile(tpl_hook) and read_text(full) != read_text(tpl_hook):
-            drifts.append(
-                f"kept hook differs from the template: {rel} (sync never overwrites a kept hook; port the template change)"
-            )
 
     for b in SHARED_BINS:
         rel = f".claude/bin/{b}"

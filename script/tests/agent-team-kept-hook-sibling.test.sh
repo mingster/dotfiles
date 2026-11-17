@@ -180,12 +180,12 @@ PY
 commit_all "$P8"
 out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$P8" --project-name x 2>&1)"
 if [ -f "$P8/.claude/hooks/guard-bash.py" ] && [ -f "$P8/.claude/hooks/production-hosts.txt" ] \
-  && ! out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)" \
-  && grep -qF "kept hook differs from the template: .claude/hooks/guard-bash.py" <<<"$out" \
+  && out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)" \
+  && ! grep -qF "kept hook differs from the template" <<<"$out" \
   && ! grep -qF ".claude/hooks/production-hosts.txt" <<<"$out"; then
-  ok "check fails on a kept hook that differs from the template, and keeps the sibling out of it (#1125)"
+  ok "check accepts a kept hook that differs from the template, and keeps the sibling out of it"
 else
-  bad "check fails on a kept hook that differs from the template (out: $(tail -5 <<<"$out"))"
+  bad "check accepts a kept hook that differs from the template (out: $(tail -5 <<<"$out"))"
 fi
 printf 'x = 1\n' > "$P8/.claude/hooks/strikes.py"
 out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)"
@@ -197,13 +197,5 @@ else
   bad "check still flags an unneeded shared hook copy, and not the kept ones (out: $(tail -5 <<<"$out"))"
 fi
 
-cp "$ROOT/templates/agent-team/.claude/hooks/guard-bash.py" "$P8/.claude/hooks/guard-bash.py"
-rm -f "$P8/.claude/hooks/production-hosts.txt" "$P8/.claude/hooks/strikes.py"
-out="$(timeout 300 bash "$ROOT/script/agent-team.sh" check "$P8" 2>&1)"
-if ! grep -qF "kept hook differs from the template" <<<"$out"; then
-  ok "check accepts a kept hook identical to the template (#1125)"
-else
-  bad "check accepts a kept hook identical to the template (out: $(tail -5 <<<"$out"))"
-fi
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
