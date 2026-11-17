@@ -1137,5 +1137,46 @@ big_case() { # <pr> <gh error text> <expect local|refuse> <label>
 big_case 1301 "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines (PullRequest.diff too_large)" local "too_large diff falls back to a local git diff"
 big_case 1302 "HTTP 500: server error" refuse "another gh pr diff failure still refuses"
 
+# After a dotfiles merge, ship.sh pulls the fleet in the background and logs the result (#1173). Other repos do not.
+fp_dir="$MF_DIR/fleet-pull"; mkdir -p "$fp_dir"
+cat > "$fp_dir/fake-fleet-pull" <<EOF
+#!/usr/bin/env bash
+echo called >> "$fp_dir/calls"
+if [ -f "$fp_dir/fail" ]; then echo "ok   hostA ~/dotfiles abc1234"; echo "fail hostB ~/dotfiles (unreachable host)"; exit 1; fi
+if [ -f "$fp_dir/hang" ]; then sleep 30; fi
+echo "ok   hostA ~/dotfiles abc1234"
+EOF
+chmod +x "$fp_dir/fake-fleet-pull"
+export SHIP_FLEET_PULL="$fp_dir/fake-fleet-pull" SHIP_FLEET_PULL_LOG="$fp_dir/log"
+fleet_case() { # <pr> <repo> <expect called|silent> [fail|hang]
+  local n=$1 r=$2 expect=$3 mode=${4:-} h i
+  rm -f "$fp_dir/calls" "$fp_dir/log" "$fp_dir/fail" "$fp_dir/hang"
+  [ -z "$mode" ] || : > "$fp_dir/$mode"
+  mf_pr_add "$n" "feat-fleet-$n" "Body"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"; set_checks "$n" "$green_checks"; post_verdict "$n" PASS "$h"
+  SHIP_FLEET_PULL_TIMEOUT=2 run_ship --repo "$r" --pr "$n"
+  for i in $(seq 1 100); do
+    grep -q '^fleet-pull ' "$fp_dir/log" 2>/dev/null && break
+    [ "$expect" = silent ] && [ "$i" -ge 10 ] && break
+    sleep 0.1
+  done
+  FP_LOG=$(cat "$fp_dir/log" 2>/dev/null || true)
+}
+fleet_case 1401 mingster/dotfiles called
+if [ "$SHIP_RC" -eq 0 ] && [ -f "$fp_dir/calls" ] && grep -q 'pr=1401 .*exit=0' <<<"$FP_LOG" && grep -q '^ok   hostA' <<<"$FP_LOG"; then ok "dotfiles merge triggers fleet-pull and logs ok"
+else bad "dotfiles merge triggers fleet-pull and logs ok" "rc=$SHIP_RC log=$FP_LOG out=$SHIP_OUT"; fi
+fleet_case 1402 example/repo silent
+if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$fp_dir/calls" ] && [ -z "$FP_LOG" ]; then ok "a non dotfiles merge does not trigger fleet-pull"
+else bad "a non dotfiles merge does not trigger fleet-pull" "rc=$SHIP_RC log=$FP_LOG"; fi
+fleet_case 1403 mingster/dotfiles called fail
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ shipped\ PR\ 1403 ]] && grep -q 'pr=1403 .*exit=1' <<<"$FP_LOG" && grep -q '^fail hostB' <<<"$FP_LOG"; then ok "a failing host does not fail ship and is logged"
+else bad "a failing host does not fail ship and is logged" "rc=$SHIP_RC out=$SHIP_OUT log=$FP_LOG"; fi
+fp_start=$SECONDS
+fleet_case 1404 mingster/dotfiles called hang
+if [ "$SHIP_RC" -eq 0 ] && [ $((SECONDS - fp_start)) -lt 20 ] && grep -q 'pr=1404 .*exit=124' <<<"$FP_LOG"; then ok "a hanging fleet-pull is cut off by the timeout"
+else bad "a hanging fleet-pull is cut off by the timeout" "rc=$SHIP_RC log=$FP_LOG"; fi
+unset SHIP_FLEET_PULL SHIP_FLEET_PULL_LOG
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

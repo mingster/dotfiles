@@ -76,6 +76,34 @@ board_environment_for_branch() { # <branch>
 # shellcheck disable=SC1091
 . "$ship_dir/lib/board-status.sh"
 
+# After a dotfiles merge, pull latest dotfiles to every fleet host (#1173). Runs detached, so the merge never waits
+# on it and a failure never reaches ship's exit code. One block per run lands in the log fleet-watch reads:
+# "fleet-pull <utc> pr=<n> sha=<sha> exit=<rc>" then the ok/fail line per host. exit=124 means the timeout cut it off.
+# fleet-pull.sh pulls every host and repo in the fleet config, so only a dotfiles merge triggers it, not a project repo.
+fleet_pull_after_merge() { # <pr> <merge sha>
+  local pr_n=$1 sha=$2
+  local log=${SHIP_FLEET_PULL_LOG:-$HOME/.claude/state/fleet-pull-after-ship.log}
+  local cmd=${SHIP_FLEET_PULL:-$ship_dir/fleet-pull.sh} limit=${SHIP_FLEET_PULL_TIMEOUT:-300}
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=300
+  mkdir -p "$(dirname "$log")" 2>/dev/null || return 0
+  (
+    trap - EXIT
+    tmp=$(mktemp) || exit 0
+    bash "$cmd" >"$tmp" 2>&1 &
+    pid=$!
+    # Take the children first: killing only a child lets fleet-pull carry on to the next host.
+    ( sleep "$limit"; kids=$(pgrep -P "$pid" 2>/dev/null || true); kill "$pid" $kids 2>/dev/null ) >/dev/null 2>&1 &
+    dog=$!
+    rc=0
+    wait "$pid" || rc=$?
+    kill "$dog" 2>/dev/null || true
+    [ "$rc" -lt 128 ] || rc=124
+    { printf 'fleet-pull %s pr=%s sha=%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pr_n" "$sha" "$rc"; cat "$tmp"; } >>"$log" 2>/dev/null || true
+    rm -f "$tmp"
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
 repo="" pr="" dry_run=false mechanical=false verdict_from="" ship_environment=""
 sync_dir=""
 trap '[ -z "$sync_dir" ] || rm -rf "$sync_dir"' EXIT
@@ -738,6 +766,7 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit) || refuse "can
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || refuse "MERGED read-back for PR $pr has no merge commit"
 echo "shipped PR $pr as $merge_sha"
+[ "$repo" != "${SHIP_FLEET_PULL_REPO:-mingster/dotfiles}" ] || fleet_pull_after_merge "$pr" "$merge_sha"
 # The merge is done; a board failure only warns. A failed merge refused above and never reaches this line.
 # The card lives on the host that holds the worktree. --environment wins; otherwise the dispatch record's host does.
 board_env=$ship_environment

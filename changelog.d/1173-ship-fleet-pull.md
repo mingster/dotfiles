@@ -1,0 +1,1 @@
+* `script/ship.sh` pulls the latest dotfiles to every fleet host in the background after it merges a `mingster/dotfiles` PR (`fleet-pull.sh`, 5 minute timeout, never fails the ship). Merges of other repos do not trigger it. The result goes to `~/.claude/state/fleet-pull-after-ship.log`, and `fleet-watch` reports a host that did not update.

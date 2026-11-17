@@ -1934,6 +1934,42 @@ def stale_board_notices(config, state, now, run=None):
     return notices
 
 
+FLEET_PULL_LOG_DEFAULT = os.path.expanduser('~/.claude/state/fleet-pull-after-ship.log')
+
+
+def fleet_pull_after_ship_notices(config, state, now, path=None):
+    """Report a fleet-pull that ship.sh ran after a dotfiles merge and that did not update every host (#1173).
+
+    ship.sh appends one block per run: a header 'fleet-pull <utc> pr=<n> sha=<sha> exit=<rc>' then the ok/fail line
+    per host. Each block is read once (by byte offset); a block with a failed host or a nonzero exit is one notice.
+    """
+    log = Path(path or os.environ.get('SHIP_FLEET_PULL_LOG') or FLEET_PULL_LOG_DEFAULT)
+    try:
+        data = log.read_bytes()
+    except OSError:
+        return []
+    block = state.setdefault('fleet_pull_log', {'offset': 0})
+    offset = block.get('offset', 0)
+    if offset > len(data):
+        offset = 0
+    block['offset'] = len(data)
+    runs = []
+    for text in data[offset:].decode('utf-8', 'replace').splitlines():
+        header = re.match(r'^fleet-pull \S+ pr=(\S+) sha=(\S+) exit=(\d+)$', text)
+        if header:
+            runs.append({'pr': header.group(1), 'exit': int(header.group(3)), 'failed': []})
+        elif runs and text.startswith('fail '):
+            runs[-1]['failed'].append(text[5:].strip())
+    notices = []
+    for run in runs:
+        if run['exit'] == 0 and not run['failed']:
+            continue
+        why = 'timed out' if run['exit'] == 124 else 'exit %d' % run['exit']
+        hosts = '; '.join(run['failed']) if run['failed'] else 'no host line'
+        notices.append('fleet-pull after the merge of PR %s did not finish clean (%s): %s' % (run['pr'], why, hosts))
+    return notices
+
+
 CHANGELOG_FRAGMENT_WARN = 50
 
 
@@ -6660,6 +6696,7 @@ def main():
     wrap_extra, wrap_log = wrap_up_notices(config, state, now)
     notices += heavy_extra + wrap_extra
     notices += stale_board_notices(config, state, now)
+    notices += fleet_pull_after_ship_notices(config, state, now)
     notices += changelog_fragment_notices(config, state)
 
     def persist_scan_state():
