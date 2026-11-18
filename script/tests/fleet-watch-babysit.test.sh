@@ -535,7 +535,7 @@ if run_pass "$tmp/state-cap.json" only "" "$tmp/cap2.out"; then
 else
   bad "cap second pass exits 0"
 fi
-if [ "$(starts)" = 3 ] && grep -q 'owner/lib#12' "$BABYSIT_STARTS"; then
+if [ "$(starts)" = 3 ] && grep -q -- '--title #12|qa-sdet .*--repo path:/tmp/lib' "$BABYSIT_STARTS"; then
   ok "next pass dispatches the capped PR"
 else
   bad "next pass dispatches the capped PR (starts $(starts))"
