@@ -48,17 +48,19 @@ class EmittedTitles(unittest.TestCase):
 
 class ParsedTitles(unittest.TestCase):
     def test_verifier_prs_read_both_forms(self):
-        for title, prs in (('#7|qa-sdet', [7]), ('qa-sdet - verify PR #7', [7]), ('qa-sdet verify o/r#7', [7]),
+        for title, prs in (('#7|qa-sdet', [7]), ('#7|qa-sdet|another try', [7]),('qa-sdet - verify PR #7', [7]), ('qa-sdet verify o/r#7', [7]),
                            ('#7|fullstack-dev', []), ('qa-sdet - verify PRs #7, #8', [7, 8])):
             self.assertEqual(fw.verifier_title_prs({'_task_title': title}), prs, title)
 
     def test_builder_role_reads_both_forms(self):
         self.assertEqual(fw._builder_role({'_task_title': '#42|fullstack-dev'}), 'fullstack-dev')
         self.assertEqual(fw._builder_role({'_task_title': 'fullstack-dev - #42'}), 'fullstack-dev')
+        self.assertEqual(fw._builder_role({'_task_title': '#42|fullstack-dev|second try'}), 'fullstack-dev')
 
     def test_worker_issue_number_reads_both_forms(self):
         self.assertEqual(fw._worker_issue_number({'_task_title': '#42|fullstack-dev'}), 42)
         self.assertEqual(fw._worker_issue_number({'_task_title': 'fullstack-dev - #42'}), 42)
+        self.assertEqual(fw._worker_issue_number({'_task_title': '#42|fullstack-dev|second try'}), 42)
 
     def test_rework_fix_and_verify_workers_are_not_issue_builders(self):
         for name in ('rework-9', 'fix-9', 'verify-9'):

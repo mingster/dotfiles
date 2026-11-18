@@ -24,7 +24,7 @@ except Exception: sys.exit(1)
 sys.exit(0 if ws.is_final(r) else 1)' "$here"
 }
 role_color() { # title -> 256-color number
-  local role; role=$(printf '%s' "$1" | sed -e 's/ - .*//' -e 's/^#[0-9]*|//' | tr 'A-Z' 'a-z' | tr -d '[:space:]')
+  local role; role=$(printf '%s' "$1" | sed -e 's/ - .*//' -e 's/^#[0-9]*|//' -e 's/|.*//' | tr 'A-Z' 'a-z' | tr -d '[:space:]')
   awk -F'\t' -v r="$role" '$1 == r { print $2; f = 1; exit } END { if (!f) print 240 }' "$here/role-colors.tsv"
 }
 if [ "$1" = "--role-color" ]; then role_color "${2:-}"; exit; fi

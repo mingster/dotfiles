@@ -4524,7 +4524,7 @@ def _worker_is_verifier(worker):
 
 
 _VERIFY_TITLE_RE = re.compile(r'^qa-sdet\b.*?\bverify\b(.*)$', re.I)
-_NEW_VERIFY_TITLE_RE = re.compile(r'^#(\d+)\|qa-sdet$')
+_NEW_VERIFY_TITLE_RE = re.compile(r'^#(\d+)\|qa-sdet(?:\|.*)?$')
 _TITLE_PR_RE = re.compile(r'#(\d+)|\bPRs?\s+(\d+)', re.I)
 
 
@@ -6385,7 +6385,7 @@ def _message_outcome(message, payload):
     return ''
 
 
-_NEW_TITLE_RE = re.compile(r'^#(\d+)\|([a-z][a-z-]*)$', re.I)
+_NEW_TITLE_RE = re.compile(r'^#(\d+)\|([a-z][a-z-]*)(?:\|.*)?$', re.I)
 
 
 def _builder_role(worker):

@@ -418,7 +418,7 @@ usage_run() {
 
 # Owner rule 2026-11-18: every worker title is "#<issue>|<role>".
 require_title_form() { # <title>
-  if ! [[ $1 =~ ^#[0-9]+\|[a-z][a-z-]*$ ]]; then
+  if ! [[ $1 =~ ^#[0-9]+\|[a-z][a-z-]*(\|.+)?$ ]]; then
     echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)" >&2
     exit 2
   fi
@@ -459,7 +459,7 @@ prepend_role_preamble() { # <spec_file> <title>
 role_from_title() { # "#<issue>|<role>" or the old "<role> - <job>" -> role; anything else prints nothing
   local title=$1 role
   case "$title" in
-    "#"[0-9]*"|"*) role=${title#*|} ;;
+    "#"[0-9]*"|"*) role=$(printf "%s" "${title#*|}" | cut -d"|" -f1) ;;
     *" - "*) role=${title%% - *} ;;
     *) return 0 ;;
   esac
@@ -686,7 +686,7 @@ run_mode() {
     "release-manager: merge"*)
       [ -z "$environment" ] || die "refused: a 'release-manager: merge' worker runs on the coordinator host only, not --on $environment"
       merge_worker=1 ;;
-    "#"[0-9]*"|release-manager")
+    "#"[0-9]*"|release-manager"|"#"[0-9]*"|release-manager|"*)
       # The new title form carries no job, so a merge brief is the one whose first heading names a merge.
       if grep -m1 '^# ' "$spec" | grep -qi 'merge'; then
         [ -z "$environment" ] || die "refused: a release-manager merge worker runs on the coordinator host only, not --on $environment"

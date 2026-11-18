@@ -559,7 +559,7 @@ grep -q 'worker-start' "$tmp/orca-merge.log" && bad "orca should not start a mer
 printf '%s\n' "$merge_spec_saved" >"$spec_file"
 
 # Owner rule 2026-11-18: --title must be "#<issue>|<role>"
-for bad_title in myjob "qa-sdet - verify #5" "#12" "#12|QA" "12|qa-sdet" "#12|qa-sdet extra"; do
+for bad_title in myjob "qa-sdet - verify #5" "#12" "#12|QA" "12|qa-sdet" "#12|qa-sdet extra" "#12|qa-sdet|"; do
   : >"$tmp/orca-title.log"
   set +e
   env -u BASH_ENV \
@@ -586,6 +586,18 @@ set -e
 grep -q -- "--task-title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "worker-start should carry the task title"
 grep -q -- "terminal rename --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "terminal should be renamed to the title ($(cat "$tmp/orca-title.log"))"
 grep -q -- "terminal set-pane-title --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "pane title should be set"
+# Optional suffix: "#<issue>|<role>|free text" starts, and the role is read from the second field.
+: >"$tmp/orca-title.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-title.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_title --spec "$spec_file" --title "#123|qa-sdet|another try" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_title --repo "path:$clean" 2>"$tmp/title.err"
+ec_title=$?
+set -e
+[ "$ec_title" = 0 ] && ok || bad "suffix title should start ($ec_title) $(cat "$tmp/title.err")"
+grep -q -- "--task-title #123|qa-sdet|another try" "$tmp/orca-title.log" && ok || bad "suffix title should reach worker-start"
 
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
