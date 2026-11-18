@@ -1,0 +1,1 @@
+Fixed three coordinator dispatch traps. Fleet-watch handoff lines no longer print `--from`, so the coordinator's own terminal is the sender. `worker-startup.sh` removes `ready-for-agent` from the issue of a builder it starts. A Checks FAIL that is a host fault, or whose database step ran no tests, prints a rerun line instead of a rework handoff. (#1192)

@@ -3309,6 +3309,17 @@ def rework_failure_excerpt(pr_row):
     return 'Rework after failure on head %s' % head
 
 
+_HOST_FAULT_RE = re.compile(r'host fault|^Tests executed: 0\s*$', re.IGNORECASE | re.MULTILINE)
+
+
+def checks_fail_is_host_fault(pr_row):
+    """True when the newest Checks FAIL at this head says host fault, or its database step ran no tests."""
+    comment = newest_comment_receipt(pr_row.get('comments') or [], 'Checks', pr_row.get('headRefOid') or '')
+    if not comment or not _receipt_first_line(comment.get('body')).startswith('Checks: FAIL'):
+        return False
+    return bool(_HOST_FAULT_RE.search(comment.get('body') or ''))
+
+
 def _repo_checks_lock_path(repo_root):
     try:
         output = subprocess.run(
@@ -5032,8 +5043,13 @@ def park_notice(kind, target, reason, command=None):
     The notice carries the ready command so the coordinator, which Orca does accept, can run it.
     """
     if command and reason and 'consumer_fenced' in reason:
+        # worker-startup defaults --from to the coordinator's own terminal handle, so the line leaves it out.
+        parts = [str(part) for part in command]
+        while '--from' in parts:
+            at = parts.index('--from')
+            del parts[at:at + 2]
         return Urgent('handoff %s %s: Orca refuses worker starts from fleet-watch, start it from the coordinator: %s'
-                      % (kind, target, shlex.join(str(part) for part in command)))
+                      % (kind, target, shlex.join(parts)))
     text = 'parked %s %s' % (kind, target)
     if reason:
         text += ': ' + reason
@@ -5669,6 +5685,20 @@ def issue_scan_pass(
                     count_failed()
                 continue
             if pr_class != 'needs_fix':
+                continue
+            if (checks_fail_is_host_fault(pr_row)
+                    and not pr_has_conflict(pr_row, repo_root=root)
+                    and not pr_has_unresolved_threads(pr_row)
+                    and not review_failed_at_head(pr_row)):
+                noticed = state.setdefault('checks_rerun_noticed', {}).setdefault(repo, {})
+                if not noticed.get(head):
+                    noticed[head] = True
+                    rerun = build_head_checks_command(config, repo, pr_row)
+                    notices.append(Urgent('rerun checks %s#%d at %s: host fault, the code was not judged, not a rework%s' % (
+                        repo, pr_num, head[:8], (': ' + shlex.join(rerun)) if rerun else '')))
+                    if persist_state:
+                        persist_state()
+                log_bits.append('checks_rerun_only=%d' % pr_num)
                 continue
             if seen.get(head) or pending.get(head):
                 continue

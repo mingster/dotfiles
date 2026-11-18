@@ -1420,6 +1420,38 @@ PICK_STUB_MODE=sonnet route_run "#7880|builder" claude claude-sonnet-5-5-medium
 printf 'Refs acme/app#7881\n\n# fullstack-dev - issue 7881\n\n%s\n' "$spec_saved" >"$spec_file"
 PICK_STUB_MODE=sonnet route_run "#7881|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "an issue no merged PR closed should start (ec=$route_ec) $(cat "$tmp/route.err")"
+
+# A started builder takes ready-for-agent off its issue; a verifier or a failed start leaves it (#1192).
+cat >"$ghbin/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+case "$1 $2" in
+  "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
+esac
+EOS
+printf 'Refs acme/app#7900\n\n# fullstack-dev - issue 7900\n\n%s\n' "$spec_saved" >"$spec_file"
+: >"$GH_STUB_LOG"
+PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "builder start for a ready issue should succeed (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
+: >"$GH_STUB_LOG"
+PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
+grep -q 'issue edit' "$GH_STUB_LOG" && bad "a verifier start must not touch the issue label" || ok
+
+# A handoff line has no --from: the coordinator's own handle is the sender (#1192).
+: >"$tmp/orca-route.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-route.log" ORCA_TERMINAL_HANDLE=term_coordinator_env \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  USAGE_GATE_PICK="$tmp/pick-stub.py" USAGE_GATE_PRESETS="$root/.orca/presets.json" \
+  PICK_STUB_MODE=sonnet PICK_STUB_LOG="$tmp/pick-stub.log" WORKER_STARTUP_STATE="$route_state" \
+  bash --noprofile --norc "$script" --run run_route --spec "$spec_file" --title "#7900|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+  --name nroute --repo "path:$clean" >"$tmp/route.out" 2>"$tmp/route.err"
+route_ec=$?
+set -e
+[ "$route_ec" = 0 ] && ok || bad "a start without --from should use ORCA_TERMINAL_HANDLE (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq -- '--from term_coordinator_env' "$tmp/orca-route.log" && ok || bad "worker-start should carry the env handle ($(cat "$tmp/orca-route.log"))"
 run_path=$run_path_saved
 printf '%s\n' "$spec_saved" >"$spec_file"
 

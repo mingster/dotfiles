@@ -603,6 +603,25 @@ require_grok_host() { # <environment>
     || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
+# A started builder takes the ready-for-agent label off its issue, so the issue scan does not start a second worker (#1192).
+# Best effort: a missing gh or a failed edit never fails a start that already succeeded.
+release_ready_label() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role kind btype ref repo num
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || return 0
+  [ "$kind" = builder ] || return 0
+  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
+  case "$btype" in rework|verify) return 0 ;; esac
+  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  [ -n "$ref" ] || return 0
+  num=${ref##*#}
+  repo=${ref%%#*}
+  command -v gh >/dev/null 2>&1 || return 0
+  gh issue edit "$num" ${repo:+-R "$repo"} --remove-label ready-for-agent >/dev/null 2>&1 \
+    || echo "worker-startup: could not remove ready-for-agent from $ref" >&2
+}
+
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
@@ -775,6 +794,7 @@ run_mode() {
       --from "$from" ${environment:+--on "$environment"} \
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
     apply_terminal_title "$title" "$start_out"
+    release_ready_label "$spec" "$title"
     return 0
   fi
 
@@ -836,6 +856,7 @@ run_mode() {
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
     surface_antigravity_screen "$agent" "$start_out"
     apply_terminal_title "$title" "$start_out"
+    release_ready_label "$spec" "$title"
     return 0
   fi
   run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
@@ -843,6 +864,7 @@ run_mode() {
     --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
   surface_antigravity_screen "$agent" "$start_out"
   apply_terminal_title "$title" "$start_out"
+  release_ready_label "$spec" "$title"
   return 0
 }
 
