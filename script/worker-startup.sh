@@ -259,6 +259,14 @@ apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACE
     echo 'worker-placement: skipped (no fleet config)' >&2
     return 0
   fi
+  if [[ "$repo_sel" == path:* ]]; then
+    local repo_dir=${repo_sel#path:} repo_json repo_id
+    if repo_json=$("$orca" repo list --json 2>/dev/null) && jq -e '.result.repos | type == "array"' >/dev/null 2>&1 <<<"$repo_json"; then
+      repo_id=$(jq -r --arg p "${repo_dir%/}" '.result.repos[] | select((.path | rtrimstr("/")) == $p) | .id // empty' <<<"$repo_json" | head -1)
+      [ -n "$repo_id" ] || die "refused: no Orca repo id for $repo_sel (add it in Orca, or pass --repo id:<id>)"
+      repo_sel="id:$repo_id"
+    fi
+  fi
   pick_args=(pick --spec "$spec_file" --json --config "$cfg")
   [ -z "$repo_sel" ] || pick_args+=(--repo "$repo_sel")
   set +e
