@@ -7,15 +7,21 @@
 # verifier. A command under Out of scope does not count. A verify brief names script/post-verdict.sh
 # or the exact first line (Verdict: PASS|PASS+NOTES|FAIL head=<40 hex> ...), since ship.sh parses only that (#1157). A rework brief links the Verdict
 # (a comment URL plus the word Verdict) and has a Self-check acceptance item.
-# Usage: brief-lint.sh <file>
+# Verify must name script/checks-local.sh unless a target repo dir is given that has no such script (#1195).
+# Usage: brief-lint.sh <file> [<target-repo-dir>]
 set -euo pipefail
 
 file="${1:-}"
 if [ -z "$file" ] || [ ! -f "$file" ] || [ ! -r "$file" ]; then
   file=/dev/null
 fi
+repo_dir="${2:-}"
+need_checks_local=1
+if [ -n "$repo_dir" ] && [ -d "$repo_dir" ] && [ ! -f "$repo_dir/script/checks-local.sh" ]; then
+  need_checks_local=0
+fi
 
-awk '
+awk -v need_checks_local="$need_checks_local" '
 function note_search(cmd,    key) {
   key = cmd
   gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
@@ -114,7 +120,7 @@ END {
   if (!has_acceptance) { print "brief-lint: missing Acceptance"; rc = 1 }
   if (!has_out_of_scope) { print "brief-lint: missing Out of scope"; rc = 1 }
   if (!has_verify) { print "brief-lint: missing Verify"; rc = 1 }
-  if (has_verify && !has_checks_local && !(qa_sdet && github_green)) { print "brief-lint: Verify must run script/checks-local.sh"; rc = 1 }
+  if (need_checks_local == 1 && has_verify && !has_checks_local && !(qa_sdet && github_green)) { print "brief-lint: Verify must run script/checks-local.sh"; rc = 1 }
   if (type_count > 1) {
     print "brief-lint: brief has more than one Type"; rc = 1
   } else if (type_count == 1 && brief_type != "build" && brief_type != "rework" && brief_type != "verify" && brief_type != "rule/guide" && brief_type != "rule/guide change") {
