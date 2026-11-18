@@ -671,12 +671,20 @@ run_mode() {
   require_title_form "$title"
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
-  local lint_out dispatch_log
+  local lint_out lint_dir dispatch_log
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
   spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
   spec=$(prepend_role_preamble "$spec" "$title")
-  lint_out=$(bash "$here/brief-lint.sh" "$spec" 2>&1) || die "$lint_out"
+  lint_dir=${wt:-}
+  if [ -z "$lint_dir" ] && [ "$agent" != cursor ] && [ -z "$environment" ]; then
+    case "$repo" in
+      id:*) lint_dir=$("$orca" repo list --json 2>/dev/null | jq -r --arg id "${repo#id:}" '.result.repos[]? | select(.id == $id) | .path // empty' 2>/dev/null | head -1) || lint_dir= ;;
+      path:*) lint_dir=${repo#path:} ;;
+      /*|.*|~*) lint_dir=$repo ;;
+    esac
+  fi
+  lint_out=$(bash "$here/brief-lint.sh" "$spec" "$lint_dir" 2>&1) || die "$lint_out"
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
   enforce_builder_provider "$title" "$agent" "$route_override"
 

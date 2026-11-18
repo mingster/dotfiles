@@ -605,5 +605,17 @@ Run bash script/checks-local.sh.
 EOF
 lint_exact "Allowed files / scope boundaries satisfies Out of scope" "$tmp/allowed-files.md" 0 ""
 
+# 1195. checks-local.sh is required only when the target repo has script/checks-local.sh.
+mkdir -p "$tmp/repo-without/script" "$tmp/repo-with/script"
+: >"$tmp/repo-with/script/checks-local.sh"
+set +e
+out=$(bash "$lint" "$tmp/no-checks-local.md" "$tmp/repo-without" 2>&1); ec=$?
+set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "repo without checks-local.sh should pass (ec=$ec, out=$out)"; fi
+set +e
+out=$(bash "$lint" "$tmp/no-checks-local.md" "$tmp/repo-with" 2>&1); ec=$?
+set -e
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "repo with checks-local.sh still needs it (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
