@@ -778,6 +778,7 @@ run_mode() {
     return 0
   fi
 
+  created_wt=0
   if [ -z "$wt" ]; then
     [ -n "$name" ] && [ -n "$repo" ] || usage_run
     case "$repo" in
@@ -808,26 +809,38 @@ run_mode() {
     wt=${wt//$'\r'/}
     wt="${wt#"${wt%%[![:space:]]*}"}"
     wt="${wt%"${wt##*[![:space:]]}"}"
+    [ -z "$wt" ] || created_wt=1
   fi
+  # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
+  start_failed() { # <exit code>
+    local ec=$1 rm_args
+    if [ "$created_wt" = 1 ]; then
+      rm_args=(worktree rm --worktree "path:$wt" --force)
+      [ -z "$environment" ] || rm_args+=(--environment "$environment")
+      "$orca" "${rm_args[@]}" >/dev/null 2>&1 || echo "worker-startup: could not remove the worktree $wt after a failed start" >&2
+    fi
+    exit "$ec"
+  }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
   if [ "${setup_mode:-}" = skip ]; then
-    (cd "$wt" && bash "$here/worktree-setup.sh" --git-only) || die "git-only setup failed in $wt"
+    (cd "$wt" && bash "$here/worktree-setup.sh" --git-only) || { echo "worker-startup: git-only setup failed in $wt" >&2; start_failed 1; }
   fi
 
   local brief
   brief=$(cat "$spec")
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   board_status_set "path:$wt" in-progress "$environment"
+  board_display_name_set "path:$wt" "$title" "$environment"
   if [ -n "$environment" ]; then
     run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-      --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || exit $?
+      --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
     surface_antigravity_screen "$agent" "$start_out"
     apply_terminal_title "$title" "$start_out"
     return 0
   fi
   run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
     --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-    --worktree "path:$wt" --task-title "$title" --from "$from" || exit $?
+    --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
   surface_antigravity_screen "$agent" "$start_out"
   apply_terminal_title "$title" "$start_out"
   return 0

@@ -662,6 +662,7 @@ dispatch_run "$tmp/spec-noref.txt"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq "worktree set --worktree path:$wt_proof --workspace-status in-progress" "$tmp/orca.log" && ok || bad "new worktree set in-progress on the board ($(cat "$tmp/orca.log"))"
+grep -Fq "worktree set --worktree path:$wt_proof --display-name myjob" "$tmp/orca.log" && ok || bad "card display name is the --title value ($(cat "$tmp/orca.log"))"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
 grep -q 'stub-gate-ran' "$run_order_log" && ok || bad "stub gate ran (logged)"
 grep 'stub-gate-ran' "$run_order_log" | head -1 >"$tmp/order.stub"
@@ -1630,6 +1631,30 @@ set -e
 [ "$ec_reason" = 0 ] && ok || bad "--force-host chrome-dev without --on exits 0 ($ec_reason) $(cat "$tmp/reason.err")"
 grep -q 'reason chrome-dev -> host=host-overflow' "$tmp/reason.err" && ok || bad "reason names the mapped host ($(cat "$tmp/reason.err"))"
 grep -q 'worker-placement: host=' "$tmp/reason.err" && bad "reason start must not run placement" || ok
+
+# A failed worker-start removes the worktree this run created, and only that one (#1184).
+orca_fail_stub="$tmp/orca-fail-stub"
+sed 's#^  \*" orchestration worker-start "\*)#  *" worktree rm "*) exit 0 ;;\n  *" orchestration worker-start "*) exit 7 ;;\n  *" orchestration worker-start-unused "*)#' "$orca_stub" >"$orca_fail_stub"
+chmod +x "$orca_fail_stub"
+fail_start() { # <log> [extra args...]
+  local log=$1; shift
+  : >"$log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_fail_stub" ORCA_STUB_LOG="$log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    WORKER_STARTUP_STATE="$launch_state" \
+    bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord "$@" >/dev/null 2>&1
+  fail_ec=$?
+  set -e
+}
+fail_start "$tmp/orca-fail.log" --name n1 --repo "path:$clean"
+[ "$fail_ec" = 7 ] && ok || bad "failed worker-start keeps its exit code ($fail_ec)"
+grep -Fq "worktree rm --worktree path:$wt_proof --force" "$tmp/orca-fail.log" && ok || bad "failed start removes the worktree it created ($(cat "$tmp/orca-fail.log"))"
+fail_start "$tmp/orca-fail-given.log" --worktree-path "$wt_proof"
+[ "$fail_ec" = 7 ] && ok || bad "failed start on a given worktree keeps its exit code ($fail_ec)"
+grep -Fq 'worktree rm' "$tmp/orca-fail-given.log" && bad "failed start removed a worktree it did not create" || ok
 
 rm -f "$bin/hostname"
 

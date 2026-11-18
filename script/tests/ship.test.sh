@@ -14,8 +14,9 @@ cd "$MF_REPO" || exit 1
 printf 'xyzzynomatch\nzzprivproj\n' >"$MF_DIR/names.pattern"
 export NO_PROJECT_NAMES_FILE="$MF_DIR/names.pattern"
 
-# ship.sh calls Orca only to set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\nexit "${ORCA_FAKE_RC:-0}"\n' "$MF_DIR" > "$MF_DIR/fake-orca"
+# ship.sh calls Orca only to list worktrees and set the board status after a merge: the stub logs every call and exits ORCA_FAKE_RC (default 0).
+# `worktree list` answers from $MF_DIR/orca-list when that file exists (the board lookup by path).
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\ncase "$*" in "worktree list"*) cat "%s/orca-list" 2>/dev/null; exit 0 ;; esac\nexit "${ORCA_FAKE_RC:-0}"\n' "$MF_DIR" "$MF_DIR" > "$MF_DIR/fake-orca"
 chmod +x "$MF_DIR/fake-orca"
 export ORCA_CLI_COMMAND="$MF_DIR/fake-orca"
 
@@ -357,23 +358,26 @@ set_checks 13 "$green_checks"
 post_verdict 13 PASS "$h13" ctx_never_seen ctx_unknown_author
 : > "$MF_GH_LOG"
 rm -f "$MF_DIR/orca-called"
+printf '%s\n' '{"ok":true,"result":{"worktrees":[{"path":"/wt/issue-13","branch":"refs/heads/feat-no-self-review"},{"path":"/wt/other","branch":"refs/heads/other"}]}}' > "$MF_DIR/orca-list"
 mkdir -p "$MF_DIR/elsewhere"
 SHIP_OUT=$(cd "$MF_DIR/elsewhere" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
 if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] \
-  && grep -Fxq 'worktree set --worktree branch:feat-no-self-review --workspace-status completed' "$MF_DIR/orca-called" \
+  && grep -Fxq 'worktree set --worktree path:/wt/issue-13 --workspace-status completed' "$MF_DIR/orca-called" \
+  && ! grep -q 'branch:' "$MF_DIR/orca-called" && ! grep -q '/wt/other' "$MF_DIR/orca-called" \
   && ! grep -q -- '--environment' "$MF_DIR/orca-called" \
   && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
-  ok "no Self-review or cwd check; sets the merged branch completed on the local Orca"
+  ok "no Self-review or cwd check; sets the merged branch's worktree completed by path on the local Orca"
 else
-  bad "no Self-review or cwd check; sets the merged branch completed on the local Orca" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
+  bad "no Self-review or cwd check; sets the merged branch's worktree completed by path on the local Orca" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
 fi
 
 # 13a. A failing board call warns and does not undo or fail the merge
 mf_pr_add 133 feat-board-fails "Body"
 h=$(jq -r .headRefOid "$MF_GH_DIR/pr-133.json"); mf_self_review 133 "$h"; set_checks 133 "$green_checks"
 post_verdict 133 PASS "$h"
+printf '%s\n' '{"ok":true,"result":{"worktrees":[{"path":"/wt/feat-board-fails","branch":"refs/heads/feat-board-fails"}]}}' > "$MF_DIR/orca-list"
 SHIP_OUT=$(ORCA_FAKE_RC=1 bash "$here/ship.sh" --repo example/repo --pr 133 2>&1); SHIP_RC=$?
-if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 133 ]] && grep -Fq "could not set completed on branch:feat-board-fails" <<<"$SHIP_OUT"; then
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 133 ]] && grep -Fq "could not set completed on path:/wt/feat-board-fails" <<<"$SHIP_OUT"; then
   ok "board failure after merge only warns"
 else
   bad "board failure after merge only warns" "rc=$SHIP_RC out=$SHIP_OUT"
@@ -412,7 +416,7 @@ chmod +x "$MF_DIR/fake-orca-988"
 : > "$MF_DIR/orca-called"
 SHIP_OUT=$(ORCA_LOG="$MF_DIR/orca-called" ORCA_CLI_COMMAND="$MF_DIR/fake-orca-988" bash "$here/ship.sh" --repo example/repo --pr 988 2>&1); SHIP_RC=$?
 if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 988 ]] \
-  && grep -Fxq 'worktree set --worktree branch:feat-988 --workspace-status completed --environment blueDevil' "$MF_DIR/orca-called" \
+  && grep -Fxq 'worktree set --worktree path:/remote/feat-988 --workspace-status completed --environment blueDevil' "$MF_DIR/orca-called" \
   && ! grep -Fq 'selector_not_found' <<<"$SHIP_OUT"; then
   ok "board status is set on the host from the dispatch record"
 else
@@ -425,14 +429,41 @@ h989=$(jq -r .headRefOid "$MF_GH_DIR/pr-989.json")
 mf_self_review 989 "$h989"
 set_checks 989 "$green_checks"
 post_verdict 989 PASS "$h989"
+printf '%s\n' '{"ok":true,"result":{"worktrees":[{"path":"/wt/feat-989","branch":"refs/heads/feat-989"}]}}' > "$MF_DIR/orca-list"
 : > "$MF_DIR/orca-called"
 SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 989 --environment other-host 2>&1); SHIP_RC=$?
 if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 989 ]] \
-  && [ "$(cat "$MF_DIR/orca-called")" = "worktree set --worktree branch:feat-989 --workspace-status completed --environment other-host" ]; then
+  && [ "$(cat "$MF_DIR/orca-called")" = "worktree list --environment other-host --json
+worktree set --worktree path:/wt/feat-989 --workspace-status completed --environment other-host" ]; then
   ok "--environment sets the card on that host without a lookup"
 else
   bad "--environment sets the card on that host without a lookup" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
 fi
+
+# 1184. Every worktree of the issue is completed: builder, verify, rework and their -2..-n copies. Others stay.
+mf_pr_add 1184 feat-1184 "Closes #4242"
+h1184=$(jq -r .headRefOid "$MF_GH_DIR/pr-1184.json")
+mf_self_review 1184 "$h1184"
+set_checks 1184 "$green_checks"
+post_verdict 1184 PASS "$h1184"
+printf '%s\n' '{"ok":true,"result":{"worktrees":[
+ {"path":"/wt/issue-4242","branch":"refs/heads/feat-1184"},
+ {"path":"/wt/issue-4242-2","branch":"refs/heads/feat-1184-2"},
+ {"path":"/wt/verify-4242","branch":"refs/heads/verify-x"},
+ {"path":"/wt/verify-4242-3","branch":""},
+ {"path":"/wt/rework-4242-2","branch":"refs/heads/rework-y"},
+ {"path":"/wt/verify-42420","branch":"refs/heads/z"},
+ {"path":"/wt/verify-9999","branch":"refs/heads/w"}]}}' > "$MF_DIR/orca-list"
+: > "$MF_DIR/orca-called"
+SHIP_OUT=$(bash "$here/ship.sh" --repo example/repo --pr 1184 2>&1); SHIP_RC=$?
+done_paths=$(grep -o 'path:[^ ]*' "$MF_DIR/orca-called" | sort | tr '\n' ' ')
+if [ "$SHIP_RC" -eq 0 ] \
+  && [ "$done_paths" = "path:/wt/issue-4242 path:/wt/issue-4242-2 path:/wt/rework-4242-2 path:/wt/verify-4242 path:/wt/verify-4242-3 " ]; then
+  ok "ship completes the builder, verify and rework worktrees of the issue, copies included"
+else
+  bad "ship completes the builder, verify and rework worktrees of the issue, copies included" "rc=$SHIP_RC paths=$done_paths out=$SHIP_OUT"
+fi
+rm -f "$MF_DIR/orca-list"
 
 # 13b. A Verdict without agent and model refuses; a PR without a Builder line refuses
 mf_pr_add 131 feat-old-verdict "Body"
