@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Rules for cleaning a Done card after 30 minutes."""
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import pathlib
@@ -377,6 +379,51 @@ class WorkerInventory(unittest.TestCase):
         rows, err = clean.workers_for_host("up")
         self.assertIsNone(rows)
         self.assertEqual(err, "unreachable")
+
+
+class OwnerPrefixedThrowaway(unittest.TestCase):
+    def test_owner_prefix_is_ignored_when_matching(self):
+        for branch in ("verify-8559", "me/verify-8559", "me/qa-2", "me/rm-4"):
+            self.assertTrue(clean.is_throwaway(branch), branch)
+        for branch in ("me/feature", "me/verify", "verified-1", ""):
+            self.assertFalse(clean.is_throwaway(branch), branch)
+
+    def test_released_owner_prefixed_verifier_is_cleaned_after_squash_merge(self):
+        card = tree(branch="refs/heads/me/verify-8559")
+        self.assertIsNone(decide(card, [released()], facts(unpushed=True)))
+
+
+class MetadataBeforeProbe(unittest.TestCase):
+    def run_consider(self, card, workers, since=OLD):
+        probed = []
+        real_facts, real_since = clean.facts_for, clean.resolve_since
+        clean.facts_for = lambda path, host, table: probed.append(path) or facts()
+        clean.resolve_since = lambda *a, **k: since
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                result = clean.consider(card, "", {card["path"]: workers}, [card], {}, None, False, NOW, WINDOW, set())
+        finally:
+            clean.facts_for, clean.resolve_since = real_facts, real_since
+        return result, probed, out.getvalue()
+
+    def test_metadata_kept_cards_are_never_probed(self):
+        cases = {
+            "Done for less than 30 minutes": (tree(), [released()], NOW),
+            "main checkout": (tree(isMainWorktree=True), [], OLD),
+            "protected branch": (tree(branch="refs/heads/main"), [], OLD),
+            "archive branch": (tree(branch="refs/heads/archive/x"), [], OLD),
+            "coordinator worktree": (tree(coordinator=True), [], OLD),
+            "lead worktree": (tree(path="/w/lead-1"), [], OLD),
+            "unreleased worker": (tree(), [working()], OLD),
+        }
+        for reason, (card, workers, since) in cases.items():
+            result, probed, out = self.run_consider(card, workers, since)
+            self.assertEqual((result, probed), ("keep", []), reason)
+            self.assertIn(reason, out)
+
+    def test_a_card_that_passes_the_metadata_guards_is_probed_once(self):
+        result, probed, _ = self.run_consider(tree(), [released()])
+        self.assertEqual((result, probed), ("clean", ["/w/a"]))
 
 
 class Report(unittest.TestCase):
