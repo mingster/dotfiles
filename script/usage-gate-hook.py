@@ -61,7 +61,7 @@ def starts(cmd):
             return None
         agent = option("--agent")
         title = option("--task-title") or ""
-        role_match = re.match(r"^([a-z][a-z0-9-]*)\s+-\s+\S", title)
+        role_match = re.match(r"^#\d+\|([a-z][a-z-]*)(?:\|.*)?$", title) or re.match(r"^([a-z][a-z0-9-]*)\s+-\s+\S", title)
         role = role_match.group(1) if role_match else None
         # Overrides are environment prefixes of this simple command only. A spec,
         # an echo argument, or an earlier command cannot grant the override.

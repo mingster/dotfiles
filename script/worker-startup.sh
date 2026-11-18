@@ -7,7 +7,9 @@
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
 #         [--route-override REASON] [--allow-delivered REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
-# A fullstack-dev or light-tier title ("<role> - <job>") started on antigravity, grok or cursor is refused
+# --title must be "#<issue>|<role>" (for example "#123|qa-sdet"; a verifier uses its PR number), else exit 2.
+# After start the title is also set on the worker terminal and pane.
+# A fullstack-dev or light-tier title ("#<issue>|<role>") started on antigravity, grok or cursor is refused
 # while usage-gate.py pick still returns claude (provider priority: claude, antigravity, grok, cursor).
 # --on ENV over its load limit, or naming the coordinator host, exits 4 unless --force-host REASON
 # is given (the coordinator host accepts only chrome-dev, line-desktop or host-file).
@@ -414,6 +416,25 @@ usage_run() {
   exit 2
 }
 
+# Owner rule 2026-11-18: every worker title is "#<issue>|<role>".
+require_title_form() { # <title>
+  if ! [[ $1 =~ ^#[0-9]+\|[a-z][a-z-]*(\|.+)?$ ]]; then
+    echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)" >&2
+    exit 2
+  fi
+}
+
+# Set the worker terminal and pane title (best effort; the task title is already set).
+apply_terminal_title() { # <title> <worker-start json>
+  local title=$1 start_json=$2 handle
+  handle=$(jq -r '.result.terminal | if type == "object" then .handle else . end // empty' <<<"$start_json" 2>/dev/null || true)
+  [ -n "$handle" ] || return 0
+  "$orca" terminal rename --terminal "$handle" --title "$title" >/dev/null 2>&1 \
+    || echo "worker-startup: could not rename terminal $handle" >&2
+  "$orca" terminal set-pane-title --terminal "$handle" --title "$title" >/dev/null 2>&1 \
+    || echo "worker-startup: could not set pane title on $handle" >&2
+}
+
 # Resolved poteto-mode, ORCA-ADAPTER, and role-file paths, ahead of the brief. Idempotent.
 prepend_role_preamble() { # <spec_file> <title>
   local spec_file=$1 title=$2 role out
@@ -435,9 +456,10 @@ prepend_role_preamble() { # <spec_file> <title>
   printf '%s\n' "$out"
 }
 
-role_from_title() { # "<role> - <job>" -> role; anything else prints nothing
+role_from_title() { # "#<issue>|<role>" or the old "<role> - <job>" -> role; anything else prints nothing
   local title=$1 role
   case "$title" in
+    "#"[0-9]*"|"*) role=$(printf "%s" "${title#*|}" | cut -d"|" -f1) ;;
     *" - "*) role=${title%% - *} ;;
     *) return 0 ;;
   esac
@@ -646,6 +668,7 @@ run_mode() {
     return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
+  require_title_form "$title"
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out dispatch_log
@@ -663,6 +686,12 @@ run_mode() {
     "release-manager: merge"*)
       [ -z "$environment" ] || die "refused: a 'release-manager: merge' worker runs on the coordinator host only, not --on $environment"
       merge_worker=1 ;;
+    "#"[0-9]*"|release-manager"|"#"[0-9]*"|release-manager|"*)
+      # The new title form carries no job, so a merge brief is the one whose first heading names a merge.
+      if grep -m1 '^# ' "$spec" | grep -qi 'merge'; then
+        [ -z "$environment" ] || die "refused: a release-manager merge worker runs on the coordinator host only, not --on $environment"
+        merge_worker=1
+      fi ;;
   esac
 
   host_check
@@ -742,9 +771,11 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       cursor_repo=$WORKER_STARTUP_PLACED_REPO
     fi
-    exec bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
+    run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
-      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"}
+      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
+    apply_terminal_title "$title" "$start_out"
+    return 0
   fi
 
   created_wt=0
@@ -804,12 +835,14 @@ run_mode() {
     run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
       --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
     surface_antigravity_screen "$agent" "$start_out"
+    apply_terminal_title "$title" "$start_out"
     return 0
   fi
   run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
     --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
     --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
   surface_antigravity_screen "$agent" "$start_out"
+  apply_terminal_title "$title" "$start_out"
   return 0
 }
 
