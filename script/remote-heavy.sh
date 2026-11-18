@@ -6,7 +6,7 @@
 #                   [--fetch <worktree-relative path/glob> ... --into <local dir>] -- <command>
 #
 # Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
-# detached in the remote worktree, reinstalls packages when the lockfile changed, and runs
+# detached in the remote worktree, reinstalls packages (with the project's postinstall) when the lockfile changed or node_modules is missing, and runs
 # the command under the remote heavy-gate. Exit status is the command's. A missing
 # --dir is created as a detached worktree of --repo-dir.
 # The caller declares the job's memory with --memory-mb or HEAVY_GATE_MEMORY_MB (the flag wins);
@@ -92,7 +92,10 @@ cd "./$sub"
 stamp=.remote-heavy-lock-sha
 if [ -f bun.lock ]; then
   lock_sum=$({ sha256sum 2>/dev/null || shasum -a 256; } < bun.lock | cut -d' ' -f1)
-  if [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
+  # A stamp without node_modules (or a changed lockfile) means the install is stale. The install runs the
+  # project's own postinstall (the generated database client lives under node_modules).
+  if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
+    rm -f "$stamp"
     DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
       bun install --frozen-lockfile >/tmp/remote-heavy-install.log 2>&1 \
       || { tail -20 /tmp/remote-heavy-install.log >&2; exit 1; }

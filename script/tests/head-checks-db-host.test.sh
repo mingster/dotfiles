@@ -130,5 +130,34 @@ else
   check "the remote step keeps the step variables and drops this host's PATH and HOME" bad
 fi
 
+# A remote step that only hit load errors (no failing test) is a host fault, not a verdict on the code.
+cat > "$tmp/remote-heavy-load.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'bun test v1.3.0\n\nerror: Cannot find module .prisma/client/default\n\n 0 pass\n 0 fail\n 3 errors\n'
+exit 1
+EOF2
+chmod +x "$tmp/remote-heavy-load.sh"
+printf 'bun test # db\n' > "$repo/.agents/head-checks.conf"
+git -C "$repo" add -A >/dev/null
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm load-errors
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-load.sh"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q '^Result: host fault; .*load errors' "$tmp/out" && ! grep -q '^Result: exit 1' "$tmp/out"; then
+  check "load errors with no failing test on the database host is a host fault" ok
+else
+  check "load errors with no failing test on the database host is a host fault" bad
+fi
+cat > "$tmp/remote-heavy-fail.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'bun test v1.3.0\n\n 4 pass\n 2 fail\n 1 error\n'
+exit 1
+EOF2
+chmod +x "$tmp/remote-heavy-fail.sh"
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-fail.sh"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q '^Result: exit 1' "$tmp/out" && ! grep -q 'host fault' "$tmp/out"; then
+  check "load errors next to failing tests stays a FAIL" ok
+else
+  check "load errors next to failing tests stays a FAIL" bad
+fi
+
 echo "head-checks-db-host: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
