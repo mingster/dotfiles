@@ -177,9 +177,8 @@ def failing_review_pr(number, head):
         'headRefName': 'feature/pr',
         'statusCheckRollup': [
             {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'},
-            {'name': 'review', 'status': 'COMPLETED', 'conclusion': 'FAILURE'},
         ],
-        'comments': [{'body': 'Checks: PASS head=%s' % head, 'createdAt': '2026-11-05T10:00:00Z'}],
+        'comments': [{'body': 'Checks: FAIL head=%s' % head, 'createdAt': '2026-11-05T10:00:00Z'}],
         'labels': [],
     }
 

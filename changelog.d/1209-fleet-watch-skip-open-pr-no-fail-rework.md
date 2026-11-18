@@ -1,0 +1,1 @@
+fleet-watch: an issue start is skipped when an open PR already closes, refs or is branched for the issue, and a Verdict or Review FAIL becomes a digest line (FAIL: send to architect-pm) instead of an automatic rework start (#1209). Checks FAIL reruns stay automatic.
