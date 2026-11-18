@@ -5269,6 +5269,18 @@ def babysit_pass(
         return notices, lines, log_bits
     if start_worker is None:
         start_worker = default_babysit_start
+    fenced = []
+    real_start = start_worker
+
+    def start_worker(command):
+        # Orca refuses every start from fleet-watch's terminal once it refuses one, so skip the doomed worktree setup.
+        if fenced:
+            return BabysitStartResult(1, fenced[0])
+        result = real_start(command)
+        reason = getattr(result, 'reason', '') or ''
+        if result != 0 and 'consumer_fenced' in reason:
+            fenced.append(reason)
+        return result
     if pick is None:
         pick = pick_role
     if owner_check is None:
@@ -6723,7 +6735,7 @@ def main():
 
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
-        now=now, term_times=term_times, closed_fetch=closed_from_pass,
+        now=now, term_times=term_times, pr_fetch=fetch_once, closed_fetch=closed_from_pass,
     )
     for line in babysit_lines:
         print(line)
