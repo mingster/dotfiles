@@ -610,14 +610,8 @@ class IssueScanPass(unittest.TestCase):
         head_a, head_b = 'a' * 40, 'b' * 40
         prs = {
             REPO: [
-                pr(1, head=head_a, checks=[
-                    {'context': 'head-checks', 'conclusion': 'SUCCESS'},
-                    {'context': 'review', 'conclusion': 'FAILURE'},
-                ]),
-                pr(2, head=head_b, checks=[
-                    {'context': 'head-checks', 'conclusion': 'SUCCESS'},
-                    {'context': 'review', 'conclusion': 'FAILURE'},
-                ]),
+                pr(1, head=head_a, comments=[{'body': 'Checks: FAIL head=%s' % head_a}]),
+                pr(2, head=head_b, comments=[{'body': 'Checks: FAIL head=%s' % head_b}]),
             ],
         }
         cfg = dict(self.CONFIG)
@@ -842,8 +836,7 @@ class IssueScanPass(unittest.TestCase):
         head = 'c' * 40
         prs = {
             REPO: [
-                pr(7, head=head, checks=[{'context': 'head-checks', 'conclusion': 'SUCCESS'},
-                                         {'context': 'review', 'conclusion': 'FAILURE'}]),
+                pr(7, head=head, comments=[{'body': 'Checks: FAIL head=%s' % head}]),
             ],
         }
         _, log, starts, _ = self.run_pass(state, prs_by_repo=prs)
@@ -853,44 +846,30 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(starts2, [])
         other = 'd' * 40
         prs[REPO][0]['headRefOid'] = other
+        prs[REPO][0]['comments'] = [{'body': 'Checks: FAIL head=%s' % other}]
         _, _, starts3, _ = self.run_pass(state, prs_by_repo=prs)
         self.assertEqual(len(starts3), 1)
 
-    def test_review_fail_status_context_or_comment_reworks_without_spawning_head_checks(self):
+    def test_review_fail_status_context_or_comment_digests_without_rework_or_head_checks(self):
         head = 'e' * 40
-        with tempfile.TemporaryDirectory() as td:
-            wt = os.path.join(td, 'wt')
-            subprocess.run(['git', 'init', '-q', wt], check=True)
-            subprocess.run(['git', '-C', wt, 'config', 'user.email', 't@example.com'], check=True)
-            subprocess.run(['git', '-C', wt, 'config', 'user.name', 't'], check=True)
-            subprocess.run(['git', '-C', wt, 'commit', '--allow-empty', '-m', 'init', '-q'], check=True)
-            cfg = json.loads(json.dumps(self.CONFIG))
-            cfg['issue_scan']['repo_roots'] = {REPO: wt}
-            status_fail = pr(
-                17, head=head,
-                checks=[
-                    {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'},
-                    {'context': 'review', 'state': 'FAILURE', 'description': 'review failed'},
-                ],
-            )
-            comment_fail = pr(
-                18, head=head,
-                checks=[{'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
-                comments=[{'body': 'Review: FAIL head=%s\nmissing test' % head}],
-            )
-            for row, expected_excerpt in (
-                (status_fail, 'statusCheckRollup FAILURE: review'),
-                (comment_fail, 'Review: FAIL head=%s' % head),
-            ):
-                with self.subTest(pr=row['number']):
-                    self.assertTrue(fw.review_failed_at_head(row))
-                    self.assertIn(expected_excerpt, fw.rework_failure_excerpt(row))
-                    _, log, starts, _ = self.run_pass(
-                        {}, prs_by_repo={REPO: [row]}, detached=True, config=cfg,
-                    )
-                    self.assertEqual(len(starts), 1, log)
-                    self.assertFalse(any('head-checks.sh' in ' '.join(cmd) for cmd in starts), starts)
-                    self.assertIn('rework', ' '.join(starts[0]).lower())
+        status_fail = pr(
+            17, head=head,
+            checks=[
+                {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'},
+                {'context': 'review', 'state': 'FAILURE', 'description': 'review failed'},
+            ],
+        )
+        comment_fail = pr(
+            18, head=head,
+            checks=[{'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
+            comments=[{'body': 'Review: FAIL head=%s\nmissing test' % head}],
+        )
+        for row in (status_fail, comment_fail):
+            with self.subTest(pr=row['number']):
+                self.assertTrue(fw.review_failed_at_head(row))
+                notices, log, starts, _ = self.run_pass({}, prs_by_repo={REPO: [row]}, detached=True)
+                self.assertEqual(starts, [], log)
+                self.assertTrue(any(str(n).startswith('FAIL: send to architect-pm') for n in notices), notices)
 
     def test_checks_fail_starts_rework(self):
         state = {}
@@ -903,8 +882,7 @@ class IssueScanPass(unittest.TestCase):
         state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
         head = '2' * 40
         prs = {REPO: [pr(10, head=head, comments=[
-            {'body': 'Checks: PASS head=%s' % head},
-            {'body': 'Review: FAIL head=%s' % head},
+            {'body': 'Checks: FAIL head=%s' % head},
         ])]}
         edits = []
 
@@ -928,8 +906,7 @@ class IssueScanPass(unittest.TestCase):
         state = {'issue_scan_rework_rounds': {REPO: {'10': 2}}}
         head = '2' * 40
         prs = {REPO: [pr(10, head=head, comments=[
-            {'body': 'Checks: PASS head=%s' % head},
-            {'body': 'Review: FAIL head=%s' % head},
+            {'body': 'Checks: FAIL head=%s' % head},
         ])]}
         notices, _ = fw.issue_scan_pass(
             self.CONFIG, state, NOW, [],

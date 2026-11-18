@@ -3002,6 +3002,18 @@ def issue_scan_eligible(issue):
     return any(issue_scan_has_acceptance(text) for text in texts)
 
 
+def open_pr_for_issue(prs, number):
+    """The open PR that closes or refs issue ``number`` or has the number in its branch name, else None."""
+    ref = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+(?:[\w.-]+/[\w.-]+)?#%d(?!\d)' % number, re.I)
+    branch = re.compile(r'(?<!\d)%d(?!\d)' % number)
+    for pr in prs or ():
+        if not pr_open_for_dispatch(pr):
+            continue
+        if ref.search(pr.get('body') or '') or branch.search(pr.get('headRefName') or ''):
+            return pr
+    return None
+
+
 def issue_scan_priority(issue):
     labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
     if 'P0' in labels:
@@ -5647,6 +5659,7 @@ def issue_scan_pass(
         pending = rework_pending.setdefault(repo, {})
         rounds = rework_rounds.setdefault(repo, {})
         escalated = rework_escalated.setdefault(repo, {})
+        fail_noted = state.setdefault('issue_scan_fail_noted', {}).setdefault(repo, {})
         for pr_row in prs:
             if not pr_open_for_dispatch(pr_row) or pr_row.get('isDraft'):
                 continue
@@ -5720,6 +5733,15 @@ def issue_scan_pass(
             if pr_class != 'needs_fix':
                 continue
             if seen.get(head) or pending.get(head):
+                continue
+            if review_failed_at_head(pr_row):
+                # A FAIL goes to architect-pm for redesign first, never to an automatic builder (#1209).
+                if not fail_noted.get(head):
+                    fail_noted[head] = True
+                    notices.append('FAIL: send to architect-pm: %s #%d %s' % (repo, pr_num, head[:8]))
+                    if persist_state:
+                        persist_state()
+                log_bits.append('rework_fail_digest=%d' % pr_num)
                 continue
             if pr_has_live_fix_worker(workers, pr_row):
                 log_bits.append('rework_live=%d' % pr_num)
@@ -5820,6 +5842,11 @@ def issue_scan_pass(
             if not issue_scan_eligible(row):
                 continue
             if issue_already_claimed(repo, row['number']):
+                continue
+            if repo not in listed:
+                listed[repo] = pr_fetch(repo)
+            if open_pr_for_issue(listed[repo], row['number']):
+                log_bits.append('issue_open_pr=%d' % row['number'])
                 continue
             updated = row.get('updatedAt') or ''
             if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
