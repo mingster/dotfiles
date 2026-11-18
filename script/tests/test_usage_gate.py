@@ -1,4 +1,4 @@
-import contextlib, importlib.util, io, json, os, shutil, sys, tempfile, time, unittest
+import contextlib, importlib.util, io, json, os, shutil, sys, tempfile, threading, time, unittest
 from datetime import timezone
 from unittest import mock
 
@@ -22,7 +22,14 @@ ug.antigravity_models = lambda: None  # tests never run the Antigravity CLI
 ug.BANNER_FILE = "/nonexistent/antigravity-banner.json"  # tests never read real banners
 ug.refresh_reading = lambda provider: None  # isolate provider refresh transport in legacy unit cases
 ug.CURSOR_SUMMARY = NO_CURSOR  # tests never reach the network
-real_live_workers = ug.live_workers
+cached_live_workers = ug.live_workers
+
+
+def real_live_workers(provider):
+    ug.ACTIVE_WORKERS.clear()  # each case reads its own worker list
+    return cached_live_workers(provider)
+
+
 ug.live_workers = lambda provider: []  # tests never run orca; the running count cases patch this
 real_active_pause = ug.active_pause
 ug.active_pause = lambda provider, model, now: None  # the committed grok pause must not leak into other cases
@@ -458,6 +465,43 @@ class Reserve(unittest.TestCase):
         with mock.patch.object(ug, "live_workers", real_live_workers), \
                 mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError):
             self.assertIsNone(ug.running_workers("claude"))
+
+
+class ActiveWorkers1199(unittest.TestCase):
+    """One --terminal-state active list call serves every provider in the process."""
+
+    def setUp(self):
+        ug.ACTIVE_WORKERS.clear()
+        self.addCleanup(ug.ACTIVE_WORKERS.clear)
+        self.rows = [{"agent": "claude", "liveness": "live"}, {"agent": "grok", "liveness": "live"},
+                     {"agent": "claude", "liveness": "exited"}]
+
+    def serve(self, source):
+        calls = []
+
+        def out(args, **kwargs):
+            calls.append(args)
+            if "run-list" in args:
+                return mock.Mock(stdout=json.dumps({"result": {"runs": [{"id": "run_a"}, {"id": "run_b"}]}}))
+            return mock.Mock(stdout=json.dumps({"result": {"workers": self.rows, "scope": {"source": source}}}))
+        return calls, mock.patch.object(ug.subprocess, "run", side_effect=out)
+
+    def test_one_call_counts_every_provider(self):
+        calls, patched = self.serve("all")
+        with patched:
+            counts = [len(cached_live_workers(p)) for p in ("claude", "grok", "cursor")]
+        self.assertEqual(counts, [1, 1, 0])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][calls[0].index("--terminal-state") + 1], "active")
+        self.assertNotIn("--run", calls[0])
+
+    def test_a_list_that_is_not_every_run_falls_back_to_each_run_with_active_only(self):
+        calls, patched = self.serve("flag")
+        with patched:
+            self.assertEqual(len(cached_live_workers("claude")), 2)  # one live row from each of two Runs
+        per_run = [c for c in calls if "--run" in c]
+        self.assertEqual(len(per_run), 2)
+        self.assertTrue(all(c[c.index("--terminal-state") + 1] == "active" for c in per_run))
 
 
 class DayStart(unittest.TestCase):
@@ -1331,13 +1375,14 @@ class Publish(unittest.TestCase):
         self.reading = {"pct": 42.0, "resets_at": FUT, "observed_at": NOW}
         self.sent = []
 
-    def publish(self, reading, hours_left=5, scp_code=0):
+    def publish(self, reading, hours_left=5, scp_code=0, orca=None):
         def scp(cmd, **kw):
             self.sent.append((cmd[-1], open(cmd[-2]).read()))
             return mock.Mock(returncode=scp_code)
         token = {"claudeAiOauth": {"accessToken": "secret", "expiresAt": (NOW + hours_left * 3600) * 1000}}
         self.run = mock.Mock(side_effect=scp)
         with mock.patch.object(ug, "refresh_reading", return_value=reading), \
+                mock.patch.object(ug, "claude_reading", return_value=orca), \
                 mock.patch.object(ug, "claude_credentials", return_value=token), \
                 mock.patch.object(ug.subprocess, "run", self.run), \
                 mock.patch.object(ug.time, "time", return_value=NOW), \
@@ -1367,6 +1412,27 @@ class Publish(unittest.TestCase):
     def test_renews_a_token_with_under_an_hour_left(self):
         self.publish(self.reading, hours_left=0.5)
         self.assertEqual(self.run.call_args_list[0].args[0][:2], ["claude", "-p"])
+
+    def test_a_fresh_orca_reading_skips_the_token_renewal(self):
+        self.assertEqual(self.publish(None, hours_left=0.5, orca=self.reading), 0)
+        self.assertEqual([c.args[0][0] for c in self.run.call_args_list], ["scp", "scp"])
+        self.assertEqual(json.loads(self.sent[0][1])["seven_day"]["used_percentage"], 42.0)
+
+    def test_a_stale_orca_reading_still_renews_the_token(self):
+        stale = {**self.reading, "observed_at": NOW - 2 * ug.MAX_AGE}
+        self.publish(self.reading, hours_left=0.5, orca=stale)
+        self.assertEqual(self.run.call_args_list[0].args[0][:2], ["claude", "-p"])
+
+    def test_copies_to_every_host_in_parallel(self):
+        both_started = threading.Barrier(2, timeout=5)
+
+        def scp(cmd, **kw):
+            both_started.wait()  # breaks unless the second copy starts while the first is running
+            return mock.Mock(returncode=0)
+        with mock.patch.object(ug, "claude_reading", return_value=self.reading), \
+                mock.patch.object(ug.subprocess, "run", side_effect=scp), \
+                mock.patch.object(ug.time, "time", return_value=NOW):
+            self.assertEqual(ug.publish(["runner-a", "runner-b"]), 0)
 
     def test_leaves_a_healthy_token_alone(self):
         self.publish(self.reading)

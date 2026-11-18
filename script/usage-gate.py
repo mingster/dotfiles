@@ -36,6 +36,7 @@ provider's configured ceiling. Cursor uses its provider billing cycle when verif
 Antigravity uses separate Flash, Pro/Argon and Claude provider model pools.
 """
 import argparse, re, json, math, os, shutil, subprocess, sys, tempfile, time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
 HOME = os.path.expanduser("~")
@@ -557,8 +558,10 @@ def renew_claude_token():
 def publish(hosts):
     """Copy the Claude reading, numbers only, to hosts that cannot read it themselves."""
     try:
-        renew_claude_token()
-        reading = fresh(refresh_reading("claude"), time.time())
+        reading = fresh(claude_reading(), time.time())
+        if not reading:
+            renew_claude_token()
+            reading = fresh(refresh_reading("claude"), time.time())
     except Exception as error:
         print(f"publish: no reading: {type(error).__name__}", file=sys.stderr)
         return 4
@@ -567,17 +570,19 @@ def publish(hosts):
         return 4
     body = {"_written_at": int(reading["observed_at"]),
             "seven_day": {"used_percentage": reading["pct"], "resets_at": reading["resets_at"]}}
-    code = 0
+    def copy(name, host):
+        failed = subprocess.run(["scp", "-q", "-o", "ConnectTimeout=10", name,
+                                 host + ":.claude/state/usage-gate/claude-rate-limits.json"],
+                                capture_output=True, timeout=30).returncode
+        if failed:
+            print(f"publish: copy to {host} failed", file=sys.stderr)
+        return failed
     with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
         json.dump(body, f)
         f.flush()
-        for host in hosts:
-            if subprocess.run(["scp", "-q", "-o", "ConnectTimeout=10", f.name,
-                               host + ":.claude/state/usage-gate/claude-rate-limits.json"],
-                              capture_output=True, timeout=30).returncode:
-                print(f"publish: copy to {host} failed", file=sys.stderr)
-                code = 1
-    return code
+        with ThreadPoolExecutor(max_workers=max(len(hosts), 1)) as pool:
+            failures = list(pool.map(lambda host: copy(f.name, host), hosts))
+    return 1 if any(failures) else 0
 
 
 def day_baseline(day_start, pct, resets):
@@ -688,26 +693,49 @@ def orca_pages(*command):
 FINAL_STATES = ("completed", "failed", "cancelled", "abandoned", "succeeded")
 
 
+ACTIVE_WORKERS = []  # one process reads the active worker list once, for every provider
+
+
+def active_workers():
+    """Rows of every non-terminal worker in every Run. One list call when Orca reports all Runs, else one per Run.
+
+    worker-list without --run shows only the caller's Run, unless its scope.source is "all".
+    """
+    if ACTIVE_WORKERS:
+        return ACTIVE_WORKERS[0]
+    rows = None
+    try:
+        pages = list(orca_pages("worker-list", "--terminal-state", "active"))
+        if all((page.get("scope") or {}).get("source") == "all" for page in pages):
+            rows = [worker for page in pages for worker in page["workers"]]
+    except Exception:
+        pass
+    if rows is None:
+        run_ids = [run["id"] for page in orca_pages("run-list") for run in page["runs"]]
+        rows = [worker for run_id in run_ids
+                for result in orca_pages("worker-list", "--run", run_id, "--terminal-state", "active")
+                for worker in result["workers"]]
+    ACTIVE_WORKERS.append(rows)
+    return rows
+
+
 def live_workers(provider):
     """Live worker rows on provider in every Run and on every page; None when any Run or page cannot be read.
 
-    worker-list without --run shows only the caller's Run. Today's rows carry agent, liveness, state and
-    terminalState at the top level; older Orca nested provider and liveness under projection.
+    Today's rows carry agent, liveness, state and terminalState at the top level; older Orca nested provider
+    and liveness under projection.
     """
     try:
-        run_ids = [run["id"] for page in orca_pages("run-list") for run in page["runs"]]
         live = []
-        for run_id in run_ids:
-            for result in orca_pages("worker-list", "--run", run_id):
-                for worker in result["workers"]:
-                    projection = worker.get("projection") or {}
-                    agent = worker.get("agent") or (projection.get("provider") or {}).get("id")
-                    liveness = worker.get("liveness") or (projection.get("liveness") or {}).get("verdict")
-                    if (agent == provider and liveness != "exited"
-                            and worker.get("terminalState") not in ("released", "reclaimable")
-                            and worker.get("dispatchStatus") not in FINAL_STATES
-                            and worker.get("state") not in FINAL_STATES):
-                        live.append(worker)
+        for worker in active_workers():
+            projection = worker.get("projection") or {}
+            agent = worker.get("agent") or (projection.get("provider") or {}).get("id")
+            liveness = worker.get("liveness") or (projection.get("liveness") or {}).get("verdict")
+            if (agent == provider and liveness != "exited"
+                    and worker.get("terminalState") not in ("released", "reclaimable")
+                    and worker.get("dispatchStatus") not in FINAL_STATES
+                    and worker.get("state") not in FINAL_STATES):
+                live.append(worker)
         return live
     except Exception:
         return None
