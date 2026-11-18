@@ -45,7 +45,7 @@ orphan_check_worktree() {
 }
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
-repo="" pr="" ref="" sha="" worktree="" lock="" refused="" train_heads=""
+repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
@@ -88,6 +88,7 @@ finish() {
   trap - EXIT
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
+  [ -z "$db_lock" ] || rm -rf "$db_lock"
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
   printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
@@ -422,6 +423,26 @@ db_step_runner() {
   fi
   printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --
 }
+# db_lock_acquire: one run at a time may use the remote database-step checkout, like the local _checks lock.
+# Waits up to HEAD_CHECKS_DB_WAIT_SECONDS (default HEAD_CHECKS_WAIT_SECONDS); returns 1 when it stays busy.
+db_lock_acquire() {
+  local key holder attempt=0 limit
+  db_remote_load # db_step_runner ran in a subshell, so load the host here for the lock key
+  limit="${HEAD_CHECKS_DB_WAIT_SECONDS:-$wait_seconds}"
+  [[ "$limit" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_DB_WAIT_SECONDS must be a whole number"
+  key=$(printf '%s_%s' "$db_remote_host" "$db_remote_dir" | tr -c 'A-Za-z0-9._\n' '_')
+  while :; do
+    db_lock="$HOME/orca/workspaces/$name/_db-$key.lock"
+    if mkdir "$db_lock" 2>/dev/null; then printf '%s\n' "$$" > "$db_lock/pid"; return 0; fi
+    holder=$(cat "$db_lock/pid" 2>/dev/null || true)
+    if [[ "$holder" =~ ^[0-9]+$ ]] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$db_lock"; continue
+    fi
+    db_lock=""
+    [ "$attempt" -lt $((limit * 2)) ] || return 1
+    attempt=$((attempt+1)); sleep 0.5
+  done
+}
 # An asdf shim looks for .tool-versions under the caller's HOME and exits 126 when a test sets its own, so steps get
 # the real python3 and node directories first. Resolved once, from the worktree; without asdf the PATH is unchanged.
 step_path="$PATH"
@@ -469,6 +490,12 @@ while IFS= read -r command || [ -n "$command" ]; do
     done <<<"$db_out"
     # The database host has its own PATH and HOME; this host's would break the step there.
     [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
+    if [ ${#db_prefix[@]} -gt 0 ] && ! db_lock_acquire; then
+      check_result=INFRA
+      printf 'Result: host busy; another run holds the database host checkout (%s) and the wait ran out, so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: 0s\n' "$db_remote_host" >> "$log"
+      rm -f "$output"
+      exit 1
+    fi
   else
     printf 'Result: host fault; this host has no reachable local Postgres (probe: %s) and no head_checks_remote database host is configured, so the database step did not run. Not a pass; run the head checks on the database host.\nDuration: 0s\n' "${HEAD_CHECKS_DB_PROBE:-pg_isready -q -t 2}" >> "$log"
     rm -f "$output"
@@ -485,6 +512,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
       [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
       rm -f "$output"
+      [ -z "$db_lock" ] || { rm -rf "$db_lock"; db_lock=""; }
       break
     else
       status=$?
@@ -507,8 +535,9 @@ while IFS= read -r command || [ -n "$command" ]; do
         exit 1
       fi
       # On the database host, a step that only hit load errors (no failing test) never ran the code: a host fault.
-      if [ ${#db_prefix[@]} -gt 0 ] && load_errors_only "$output"; then
-        printf 'Result: host fault; the step on the database host hit load errors (exit %s) and no test failed, so the host checkout is broken (missing install or generated files), not the code. Not a pass; fix the host and rerun Checks.\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
+      if [ ${#db_prefix[@]} -gt 0 ] && { load_errors_only "$output" || grep -qx 'Tests executed: 0' <<<"$summary"; }; then
+        check_result=INFRA
+        printf 'Result: host fault; the step on the database host ran no tests or hit load errors (exit %s) and no test failed, so the host checkout is broken or in use (missing install or generated files), not the code. Not a pass; fix the host and rerun Checks.\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
         [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
         rm -f "$output"
         exit 1

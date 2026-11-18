@@ -159,5 +159,60 @@ else
   check "load errors next to failing tests stays a FAIL" bad
 fi
 
+# A database step that executed 0 tests is a host fault (INFRA, no rework), even with a nonzero exit and no failing test.
+cat > "$tmp/remote-heavy-zero.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'bun test v1.3.0\n\n 0 pass\n 0 fail\n'
+exit 1
+EOF2
+chmod +x "$tmp/remote-heavy-zero.sh"
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-zero.sh"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q '^Checks: INFRA' "$tmp/out" && grep -q '^Result: host fault' "$tmp/out" && ! grep -q '^Result: exit 1' "$tmp/out"; then
+  check "a database step with 0 tests executed is a host fault" ok
+else
+  check "a database step with 0 tests executed is a host fault" bad
+fi
+
+# Two runs at once share one remote checkout: the second waits for the first, and each reports its own result.
+cat > "$tmp/remote-heavy-slow.sh" <<'EOF2'
+#!/usr/bin/env bash
+echo "start $$" >> "$SLOW_LOG"
+sleep 2
+echo "end $$" >> "$SLOW_LOG"
+exec true
+EOF2
+chmod +x "$tmp/remote-heavy-slow.sh"
+printf 'bash -c true # db\n' > "$repo/.agents/head-checks.conf"
+git -C "$repo" add -A >/dev/null
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm concurrent
+rm -f "$tmp/slow.log"
+conc_env=(env -u LEAD_MERGE_REMOTE_HOST HEAD_CHECKS_DB_PROBE=no-such-db-client-849 HEAD_CHECKS_WAIT_SECONDS=30 SLOW_LOG="$tmp/slow.log"
+  LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-slow.sh")
+"${conc_env[@]}" bash "$runner" --repo "$repo" --ref HEAD --base "$base" >"$tmp/out1" 2>&1 & pid1=$!
+sleep 0.5
+"${conc_env[@]}" bash "$runner" --repo "$repo" --ref HEAD --base "$base" >"$tmp/out2" 2>&1 & pid2=$!
+wait "$pid1"; rc1=$?; wait "$pid2"; rc2=$?
+order=$(awk '{print $1}' "$tmp/slow.log" 2>/dev/null | paste -sd, -)
+if [ "$rc1" -eq 0 ] && [ "$rc2" -eq 0 ] && [ "$order" = start,end,start,end ] \
+  && grep -q '^Checks: PASS' "$tmp/out1" && grep -q '^Checks: PASS' "$tmp/out2"; then
+  check "two concurrent runs use the remote checkout one after the other and each passes" ok
+else
+  check "two concurrent runs use the remote checkout one after the other and each passes" bad
+fi
+
+# When the wait runs out the run reports host busy (INFRA), not FAIL, and the holder is untouched.
+mkdir -p "$HOME/orca/workspaces/repo"
+held="$HOME/orca/workspaces/repo/"
+sleep 300 & holder=$!
+key=$(printf '%s_%s' db-host-849 /srv/checks | tr -c 'A-Za-z0-9._\n' '_')
+mkdir -p "${held}_db-$key.lock"; echo "$holder" > "${held}_db-$key.lock/pid"
+"${conc_env[@]}" HEAD_CHECKS_DB_WAIT_SECONDS=1 bash "$runner" --repo "$repo" --ref HEAD --base "$base" >"$tmp/out3" 2>&1; rc3=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+if [ "$rc3" -ne 0 ] && grep -q '^Checks: INFRA' "$tmp/out3" && grep -q '^Result: host busy' "$tmp/out3" && ! grep -q '^Checks: FAIL' "$tmp/out3"; then
+  check "a busy remote checkout reports host busy, not FAIL" ok
+else
+  check "a busy remote checkout reports host busy, not FAIL" bad
+fi
+
 echo "head-checks-db-host: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
