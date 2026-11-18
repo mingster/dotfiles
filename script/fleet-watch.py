@@ -3518,7 +3518,7 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         'Self-review, push, open the PR, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip(), verify),
         role))
-    title = '%s - #%d' % (role, issue_row['number'])
+    title = '#%d|%s' % (issue_row['number'], role)
     command = [
         'bash', _issue_scan_startup_script(config),
         '--run', scan['run'],
@@ -3561,7 +3561,7 @@ def build_rework_start_command(config, repo, pr_row):
         'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify),
         'fullstack-dev'))
-    title = 'rework #%d' % pr_row['number']
+    title = '#%d|fullstack-dev' % pr_row['number']
     agent = scan.get('rework_agent') or scan.get('agent') or 'claude'
     model = scan.get('rework_model') or scan.get('model') or ''
     command = [
@@ -3625,7 +3625,7 @@ def build_backlog_sweep_command(config, repo, role):
         'bash', _issue_scan_startup_script(config),
         '--run', scan['run'],
         '--spec', spec_path,
-        '--title', '%s backlog-sweep' % role,
+        '--title', '#0|%s' % role,  # a sweep has no issue, so it uses #0
         '--agent', agent,
         '--model', model,
         '--from', scan['from_terminal'],
@@ -4524,6 +4524,7 @@ def _worker_is_verifier(worker):
 
 
 _VERIFY_TITLE_RE = re.compile(r'^qa-sdet\b.*?\bverify\b(.*)$', re.I)
+_NEW_VERIFY_TITLE_RE = re.compile(r'^#(\d+)\|qa-sdet$')
 _TITLE_PR_RE = re.compile(r'#(\d+)|\bPRs?\s+(\d+)', re.I)
 
 
@@ -4533,7 +4534,11 @@ def verifier_title_prs(worker):
 
     Real worker-list rows carry no role, PR number or branch, only a taskId; fetch_workers joins the task title.
     """
-    match = _VERIFY_TITLE_RE.match(str(worker.get('_task_title') or '').strip())
+    text = str(worker.get('_task_title') or '').strip()
+    new_form = _NEW_VERIFY_TITLE_RE.match(text)
+    if new_form:
+        return [int(new_form.group(1))]
+    match = _VERIFY_TITLE_RE.match(text)
     if not match:
         return []
     return [int(a or b) for a, b in _TITLE_PR_RE.findall(match.group(1))]
@@ -5209,10 +5214,10 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     if not agent or not model:
         return None
     if kind == 'verifier':
-        title = 'qa-sdet verify %s#%s' % (repo, pr_row['number'])
+        title = '#%s|qa-sdet' % pr_row['number']
         name = 'verify-%s' % pr_row['number']
     else:
-        title = 'fullstack-dev fix %s#%s' % (repo, pr_row['number'])
+        title = '#%s|fullstack-dev' % pr_row['number']
         name = 'fix-%s' % pr_row['number']
     command = [
         'bash', startup,
@@ -6380,8 +6385,14 @@ def _message_outcome(message, payload):
     return ''
 
 
+_NEW_TITLE_RE = re.compile(r'^#(\d+)\|([a-z][a-z-]*)$', re.I)
+
+
 def _builder_role(worker):
     title = str(worker.get('_task_title') or worker.get('title') or '').strip()
+    new_form = _NEW_TITLE_RE.match(title)
+    if new_form:
+        return new_form.group(2).lower()
     if ' - ' in title:
         return title.split(' - ', 1)[0].strip().lower()
     proj = worker.get('projection') or {}
@@ -6470,6 +6481,14 @@ def _worker_issue_number(worker):
     for key in ('_task_title', 'title', 'name'):
         text = w.get(key)
         if not isinstance(text, str) or not text:
+            continue
+        new_form = _NEW_TITLE_RE.match(text.strip())
+        if new_form:
+            # A rework, fix or verify worker also carries "#<PR>|role": its name tells it apart from an issue builder.
+            if re.match(r'^(rework|fix|verify)-', str(w.get('name') or '')):
+                continue
+            if new_form.group(1) != '0':
+                return int(new_form.group(1))
             continue
         match = _WORKER_ISSUE_TITLE_RE.search(text.strip())
         if match:

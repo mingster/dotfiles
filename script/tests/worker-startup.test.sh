@@ -464,7 +464,7 @@ unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-lint.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$script" --run run_bad_spec --spec "$bad_spec" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_bad_spec --spec "$bad_spec" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run-lint.err"
 ec_lint=$?
 set -e
@@ -493,7 +493,7 @@ ws968_run() { # <log> <run id> <spec> -> exit code in ec_968, stderr in $tmp/run
   env -u BASH_ENV \
     PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$1" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-    bash --noprofile --norc "$script" --run "$2" --spec "$3" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    bash --noprofile --norc "$script" --run "$2" --spec "$3" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run-968.err"
   ec_968=$?
   set -e
@@ -543,17 +543,49 @@ grep -q 'orchestration worker-start' "$tmp/orca-noacc.log" && bad "no-Acceptance
 
 # 849: a "release-manager: merge" worker never starts on an overflow host
 : >"$tmp/orca-merge.log"
+merge_spec_saved=$(cat "$spec_file")
+printf '# release-manager merge #849\n\n%s\n' "$merge_spec_saved" >"$spec_file"
 set +e
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-merge.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$script" --run run_merge --spec "$spec_file" --title "release-manager: merge #849" --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_merge --spec "$spec_file" --title "#849|release-manager" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on host-overflow --name n_merge --repo "path:$clean" 2>"$tmp/run-merge.err"
 ec_merge=$?
 set -e
 [ "$ec_merge" -ne 0 ] && ok || bad "merge worker --on an overflow host should exit non-zero"
 grep -q 'coordinator host only' "$tmp/run-merge.err" && ok || bad "merge worker refusal should name the coordinator host ($(cat "$tmp/run-merge.err"))"
 grep -q 'worker-start' "$tmp/orca-merge.log" && bad "orca should not start a merge worker on an overflow host" || ok
+printf '%s\n' "$merge_spec_saved" >"$spec_file"
+
+# Owner rule 2026-11-18: --title must be "#<issue>|<role>"
+for bad_title in myjob "qa-sdet - verify #5" "#12" "#12|QA" "12|qa-sdet" "#12|qa-sdet extra"; do
+  : >"$tmp/orca-title.log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-title.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    bash --noprofile --norc "$script" --run run_title --spec "$spec_file" --title "$bad_title" --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --name n_title --repo "path:$clean" 2>"$tmp/title.err"
+  ec_title=$?
+  set -e
+  [ "$ec_title" = 2 ] && ok || bad "title '$bad_title' should exit 2 ($ec_title)"
+  grep -q "#<issue>|<role>" "$tmp/title.err" && ok || bad "title '$bad_title' refusal should show the expected form ($(cat "$tmp/title.err"))"
+  [ ! -s "$tmp/orca-title.log" ] && ok || bad "title '$bad_title' must not reach orca"
+done
+: >"$tmp/orca-title.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-title.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_title --spec "$spec_file" --title "#123|qa-sdet" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_title --repo "path:$clean" 2>"$tmp/title.err"
+ec_title=$?
+set -e
+[ "$ec_title" = 0 ] && ok || bad "title '#123|qa-sdet' should start ($ec_title) $(cat "$tmp/title.err")"
+grep -q -- "--task-title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "worker-start should carry the task title"
+grep -q -- "terminal rename --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "terminal should be renamed to the title ($(cat "$tmp/orca-title.log"))"
+grep -q -- "terminal set-pane-title --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "pane title should be set"
 
 # Non-cursor: after host-check, worktree create + worker-start
 set +e
@@ -564,7 +596,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   WORKER_STARTUP_STATE="$launch_state" \
-  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run.err"
 ec=$?
 set -e
@@ -584,7 +616,7 @@ dispatch_run() { # <spec_file> [repo selector]
     PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-dispatch.log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
     WORKER_STARTUP_STATE="$launch_state" \
-    bash --noprofile --norc "$script" --run run_x --spec "$1" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    bash --noprofile --norc "$script" --run run_x --spec "$1" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord --name n1 --repo "${2:-path:$clean}" >/dev/null 2>&1
   set -e
 }
@@ -668,7 +700,7 @@ env -u BASH_ENV -u ASDF_DATA_DIR -u AGENT_STATE_DIR -u REMOTE_REPO \
   PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   WORKER_STARTUP_STATE="$launch_state" \
   bash --noprofile --norc "$script" --run run_shim --spec "$spec_file" \
-  --title myjob --agent claude --model claude-sonnet-5-5-medium \
+  --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name nshim --repo "path:$shimrepo" 2>"$tmp/run-shim.err"
 ec_shim=$?
 set -e
@@ -698,7 +730,7 @@ unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   HOME="$badbun_home" PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-bad.log" \
   FLEET_PULL_CONFIG="$tmp/fleet-badbun.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" CURL="$bin/curl" \
-  bash --noprofile --norc "$script" --run run_bad --spec "$spec_file" --title bad --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_bad --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n1 --repo "path:$badbun" 2>"$tmp/run-bad.err"
 ec_bad=$?
 set -e
@@ -715,6 +747,7 @@ cp "$here/../lib/automation-path.sh" "$helper_dir/lib/automation-path.sh"
 cp "$here/../lib/board-status.sh" "$helper_dir/lib/board-status.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 cp "$here/../worker-placement.py" "$helper_dir/worker-placement.py"
+cp "$here/../usage-gate.py" "$helper_dir/usage-gate.py"
 chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"
 cat >"$helper_dir/start-cursor-worker.sh" <<EOS
 #!/usr/bin/env bash
@@ -727,7 +760,7 @@ unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_y --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_y --spec "$spec_file" --title "#1|release-manager" --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor.err"
 ec=$?
 set -e
@@ -740,7 +773,7 @@ set +e
 env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_fin --spec "$nofin_spec" --title cjob --agent cursor --model composer-2.5 \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_fin --spec "$nofin_spec" --title "#1|release-manager" --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-fin.err"
 ec_cfin=$?
 set -e
@@ -867,7 +900,7 @@ unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-rem-fail.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$script" --run run_rem_dirty --spec "$spec_file" --title remjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_rem_dirty --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" 2>"$tmp/rem-dirty.err"
 ec_rem_dirty=$?
 set -e
@@ -882,7 +915,7 @@ unset -f python3 2>/dev/null || true
 env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-rem-ok.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$script" --run run_rem_ok --spec "$spec_file" --title remjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_rem_ok --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" 2>"$tmp/rem-ok.err"
 ec_rem_ok=$?
 set -e
@@ -960,7 +993,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-explicit-on.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
-  bash --noprofile --norc "$script" --run run_explicit_on --spec "$spec_file" --title remjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_explicit_on --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" 2>"$tmp/explicit-on.err"
 ec_explicit=$?
 set -e
@@ -1029,7 +1062,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-repo-map.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
-  bash --noprofile --norc "$script" --run run_repo_map --spec "$spec_file" --title mapjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_repo_map --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n_map --repo "id:local-app-id" 2>"$tmp/repo-map.err"
 ec_repo_map=$?
 set -e
@@ -1044,7 +1077,7 @@ env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
-  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_map --spec "$spec_file" --title cjob --agent cursor --model composer-2.5 \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_cursor_map --spec "$spec_file" --title "#1|release-manager" --agent cursor --model composer-2.5 \
   --from term_coord --name n_cmap --repo "id:local-app-id" 2>"$tmp/cursor-map.err"
 ec_cmap=$?
 set -e
@@ -1075,7 +1108,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-nocfg.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$no_cfg_path" \
-  bash --noprofile --norc "$script" --run run_nocfg --spec "$spec_file" --title nocfg --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_nocfg --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n_nc --repo "path:$clean" 2>"$tmp/run-nocfg.err"
 ec_run_nocfg=$?
 set -e
@@ -1091,7 +1124,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-wtpath.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
-  bash --noprofile --norc "$script" --run run_wtpath --spec "$spec_file" --title wtjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_wtpath --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --worktree-path "$clean" --repo "id:local-app-id" 2>"$tmp/wtpath.err"
 ec_wtpath=$?
 set -e
@@ -1106,7 +1139,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-wtpath-norepo.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
-  bash --noprofile --norc "$script" --run run_wtpath2 --spec "$spec_file" --title wtjob2 --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_wtpath2 --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --worktree-path "$clean" 2>"$tmp/wtpath-norepo.err"
 ec_wtpath2=$?
 set -e
@@ -1140,7 +1173,7 @@ set +e
 env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate --spec "$spec_file" --title cgate --agent cursor --model composer-2.5 \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate --spec "$spec_file" --title "#1|release-manager" --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-gate.err"
 set -e
 grep -q 'stub-gate-ran' "$PYTHON3_RUN_ORDER_LOG" && ok || bad "cursor run must pass the usage gate before exec"
@@ -1155,7 +1188,7 @@ set +e
 env -u BASH_ENV \
   PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$tmp/deny-python3" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate2 --spec "$spec_file" --title cgate2 --agent cursor --model composer-2.5 \
+  bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_gate2 --spec "$spec_file" --title "#1|release-manager" --agent cursor --model composer-2.5 \
   --from term_coord --worktree-path /abs/wt 2>"$tmp/cursor-deny.err"
 ec_cdeny=$?
 set -e
@@ -1254,32 +1287,32 @@ route_run() { # <title> <agent> <model> [extra args...]
   route_ec=$?
   set -e
 }
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" cursor grok-4.7-high
+PICK_STUB_MODE=sonnet route_run "#5|fullstack-dev" cursor grok-4.7-high
 [ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on cursor should be refused while claude is allowed (ec=$route_ec)"
 grep -Fq -- '--agent claude --model sonnet' "$tmp/route.err" && ok || bad "refusal should print the pick ($(cat "$tmp/route.err"))"
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
-PICK_STUB_MODE=haiku route_run "fullstack-dev-small - chore" antigravity gemini-3.8-flash
+PICK_STUB_MODE=haiku route_run "#5|fullstack-dev-small" antigravity gemini-3.8-flash
 [ "$route_ec" -ne 0 ] && ok || bad "light unit on antigravity should be refused while claude is allowed (ec=$route_ec)"
 grep -Fq -- '--agent claude --model haiku' "$tmp/route.err" && ok || bad "light refusal should print the pick ($(cat "$tmp/route.err"))"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" grok grok-4.7
+PICK_STUB_MODE=sonnet route_run "#5|fullstack-dev" grok grok-4.7
 [ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev on grok should be refused while claude is allowed (ec=$route_ec)"
 rm -f "$route_state/route-override.log"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" cursor grok-4.7-high --route-override "claude is rate limited"
+PICK_STUB_MODE=sonnet route_run "#5|fullstack-dev" cursor grok-4.7-high --route-override "claude is rate limited"
 [ "$route_ec" = 0 ] && ok || bad "route override should let cursor through (ec=$route_ec) $(cat "$route_state/../route.err" 2>/dev/null)$(cat "$tmp/route.err")"
 grep -Fq 'claude is rate limited' "$route_state/route-override.log" && ok || bad "route override should log the reason ($(cat "$route_state/route-override.log" 2>/dev/null))"
 grep -q 'worker-start' "$tmp/orca-route.log" && ok || bad "route override should still start the worker"
-PICK_STUB_MODE=cursor route_run "fullstack-dev - feature" cursor grok-4.7-high
+PICK_STUB_MODE=cursor route_run "#5|fullstack-dev" cursor grok-4.7-high
 [ "$route_ec" = 0 ] && ok || bad "cursor is allowed when pick says claude is blocked (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -q 'refused' "$tmp/route.err" && bad "claude-blocked pick must not refuse cursor" || ok
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - feature" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#5|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "claude builder is never refused by the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
 : >"$tmp/pick-stub.log"
-PICK_STUB_MODE=sonnet route_run "elon - think" antigravity gemini-4-argon-medium
+PICK_STUB_MODE=sonnet route_run "#5|elon" antigravity gemini-4-argon-medium
 [ "$route_ec" = 0 ] && ok || bad "strong role must not hit the builder gate (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to yield to claude" || ok
 
 # Grok (#1097): grok starts locally and --on only for hosts the fleet config lists in grok_hosts.
-PICK_STUB_MODE=grok route_run "fullstack-dev - feature" grok grok-4.7
+PICK_STUB_MODE=grok route_run "#5|fullstack-dev" grok grok-4.7
 [ "$route_ec" = 0 ] && ok || bad "local grok start exits 0 (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -Fq -- '--agent grok --model grok-4.7' "$tmp/orca-route.log" && ok || bad "local grok start should reach worker-start ($(cat "$tmp/orca-route.log"))"
 cat >"$helper_dir/start-remote-worker.sh" <<EOS
@@ -1301,7 +1334,7 @@ grok_on() { # <fleet config> <environment>
   env -u BASH_ENV \
     PATH="$helper_dir:$run_path" ORCA_CLI_COMMAND="$orca_stub" \
     FLEET_PULL_CONFIG="$1" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-    bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_grok --spec "$spec_file" --title gjob --agent grok --model grok-4.7 \
+    bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_grok --spec "$spec_file" --title "#1|release-manager" --agent grok --model grok-4.7 \
     --from term_coord --on "$2" --worktree-path /abs/wt >"$tmp/grok-on.out" 2>"$tmp/grok-on.err"
   grok_ec=$?
   set -e
@@ -1332,17 +1365,17 @@ run_path_saved=$run_path
 run_path="$ghbin:$run_path"
 export GH_STUB_LOG="$tmp/gh-stub.log"
 : >"$GH_STUB_LOG"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - build-7298-l103" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7298|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "merged backlog line should be refused (ec=$route_ec)"
 grep -q 'L103 already merged in PR #8111' "$tmp/route.err" && ok || bad "refusal should name the merged PR ($(cat "$tmp/route.err"))"
 grep -q -- '-R acme/app' "$GH_STUB_LOG" && ok || bad "lookup should use the Refs repo ($(cat "$GH_STUB_LOG"))"
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused builder must not reach worker-start" || ok
 printf 'Refs acme/app#7298\n\n# fullstack-dev - #7298 L10: titles\n\n%s\n' "$spec_saved" >"$spec_file"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - build-7298-l10" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7298|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "L10 is not L103 or L1030 (ec=$route_ec) $(cat "$tmp/route.err")"
 : >"$GH_STUB_LOG"
 printf 'Refs acme/app#7298\n\n# qa-sdet - verify #7298 L103\n\n%s\n' "$spec_saved" >"$spec_file"
-PICK_STUB_MODE=sonnet route_run "qa-sdet - verify #7298 L103" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7298|qa-sdet" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a verifier for a merged line is not refused (ec=$route_ec) $(cat "$tmp/route.err")"
 [ -s "$GH_STUB_LOG" ] && bad "non-builder must not look up merged PRs" || ok
 
@@ -1356,22 +1389,22 @@ printf '[{"number":8280,"body":"Part one.\\nCloses #7880"},{"number":8288,"body"
 EOS
 printf 'Refs acme/app#7880\n\n# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved" >"$spec_file"
 : >"$GH_STUB_LOG"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - issue 7880" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "an issue closed by merged PRs should be refused (ec=$route_ec)"
 grep -q 'already delivered by merged PR #8280, #8288, #8349' "$tmp/route.err" && ok || bad "refusal should name only the closing PRs ($(cat "$tmp/route.err"))"
 grep -q '#9\b' "$tmp/route.err" && bad "a longer number must not count" || ok
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused delivered issue must not reach worker-start" || ok
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - issue 7880" claude claude-sonnet-5-5-medium --allow-delivered "follow-up slice"
+PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "follow-up slice"
 [ "$route_ec" = 0 ] && ok || bad "--allow-delivered should start anyway (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -q 'allow-delivered.*follow-up slice' "$tmp/route.err" && ok || bad "the override reason should be logged ($(cat "$tmp/route.err"))"
-GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "fullstack-dev - issue 7880" claude claude-sonnet-5-5-medium
+GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh call must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
 # fleet-watch issue scan default title "builder - #<n>" is a builder too.
 printf 'Refs acme/app#7880\n\n# builder - #7880\n\n%s\n' "$spec_saved" >"$spec_file"
-PICK_STUB_MODE=sonnet route_run "builder - #7880" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7880|builder" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "the scan default builder title should be refused (ec=$route_ec)"
 printf 'Refs acme/app#7881\n\n# fullstack-dev - issue 7881\n\n%s\n' "$spec_saved" >"$spec_file"
-PICK_STUB_MODE=sonnet route_run "fullstack-dev - issue 7881" claude claude-sonnet-5-5-medium
+PICK_STUB_MODE=sonnet route_run "#7881|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "an issue no merged PR closed should start (ec=$route_ec) $(cat "$tmp/route.err")"
 run_path=$run_path_saved
 printf '%s\n' "$spec_saved" >"$spec_file"
@@ -1401,7 +1434,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-link" ORCA_STUB_LOG="$tmp/orca-link.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   WORKER_STARTUP_STATE="$tmp/link-state" \
-  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model sonnet \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model sonnet \
   --from term_coord --name nlink --repo "path:$tmp/link-repo" >"$tmp/link.out" 2>"$tmp/link.err"
 ec_link=$?
 set -e
@@ -1451,7 +1484,7 @@ agy_run() { # <screen file> <stderr>
     FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" \
     PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
     AGY_WT="$wt_proof" AGY_SCREEN="$1" \
-    bash --noprofile --norc "$script" --run run_agy --spec "$spec_file" --title myjob \
+    bash --noprofile --norc "$script" --run run_agy --spec "$spec_file" --title "#1|fullstack-dev" \
     --agent antigravity --model gemini-4-argon-medium \
     --from term_coord --name nagy --repo "path:$clean" >"$tmp/agy.out" 2>"$2"
   agy_ec=$?
@@ -1482,7 +1515,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-own-host.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
-  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on thishost --force-host chrome-dev --name n_own --repo "path:$clean" 2>"$tmp/own-host.err"
 ec_own=$?
 set -e
@@ -1497,7 +1530,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-own-host-case.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-all-over.sh" \
-  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title ownjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_own_host --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --on THISHOST --force-host host-file --name n_own_case --repo "path:$clean" 2>"$tmp/own-host-case.err"
 ec_case=$?
 set -e
@@ -1523,7 +1556,7 @@ forced_start() { # <load script> <--on host> [extra args...] -> sets forced_ec, 
     PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-forced.log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
     FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$load" \
-    bash --noprofile --norc "$script" --run run_forced --spec "$spec_file" --title forcedjob --agent claude --model claude-sonnet-5-5-medium \
+    bash --noprofile --norc "$script" --run run_forced --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord --on "$on" --name n_forced --repo "path:$rem_app" "$@" 2>"$tmp/forced.err"
   forced_ec=$?
   set -e
@@ -1555,7 +1588,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-noon.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-forced-ok.sh" \
-  bash --noprofile --norc "$script" --run run_noon --spec "$spec_file" --title noonjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_noon --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --name n_noon --repo "path:$clean" >"$tmp/noon.out" 2>"$tmp/noon.err"
 set -e
 grep -q 'worker-placement: host=' "$tmp/noon.err" "$tmp/noon.out" && ok || bad "no --on goes through placement ($(cat "$tmp/noon.err"))"
@@ -1578,7 +1611,7 @@ env -u BASH_ENV \
   PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-reason.log" \
   FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
   FLEET_WATCH_CONFIG="$tmp/fleet-reasons.json" FLEET_LOAD_SCRIPT="$tmp/load-forced-ok.sh" \
-  bash --noprofile --norc "$script" --run run_reason --spec "$spec_file" --title reasonjob --agent claude --model claude-sonnet-5-5-medium \
+  bash --noprofile --norc "$script" --run run_reason --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
   --from term_coord --force-host chrome-dev --name n_reason --repo "path:$rem_app" 2>"$tmp/reason.err"
 ec_reason=$?
 set -e
