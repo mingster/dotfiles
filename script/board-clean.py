@@ -82,7 +82,8 @@ def plain_branch(tree: dict) -> str:
 
 
 def is_throwaway(branch: str) -> bool:
-    return any(branch.startswith(prefix) for prefix in THROWAWAY_PREFIXES)
+    name = branch.split("/")[-1]
+    return any(name.startswith(prefix) for prefix in THROWAWAY_PREFIXES)
 
 
 def leaf(path: str) -> str:
@@ -140,15 +141,14 @@ def resolve_since(tree: dict, environment: str, stamps: dict[str, int], now: int
     return now
 
 
-def keep_reason(
+def metadata_keep_reason(
     tree: dict,
     workers: list[dict],
-    facts: dict,
     now_ms: int,
     done_since_ms: int,
     limit_ms: int,
 ) -> str | None:
-    """Why this Done card stays. None means clean it."""
+    """Why this Done card stays from its board data alone, before any git probe."""
     if now_ms - done_since_ms < limit_ms:
         minutes = max(1, limit_ms // 60000)
         return "Done for less than %s minutes" % minutes
@@ -167,6 +167,24 @@ def keep_reason(
     kinds = [board().worker_kind(row) for row in workers]
     if any(kind in ("working", "other") for kind in kinds):
         return "unreleased worker"
+    return None
+
+
+def keep_reason(
+    tree: dict,
+    workers: list[dict],
+    facts: dict,
+    now_ms: int,
+    done_since_ms: int,
+    limit_ms: int,
+) -> str | None:
+    """Why this Done card stays. None means clean it."""
+    early = metadata_keep_reason(tree, workers, now_ms, done_since_ms, limit_ms)
+    if early:
+        return early
+    branch = plain_branch(tree)
+    name = leaf(str(tree.get("path") or ""))
+    kinds = [board().worker_kind(row) for row in workers]
     dirty = facts.get("dirty")
     unpushed = facts.get("unpushed")
     if dirty is None:
@@ -613,10 +631,12 @@ def consider(tree: dict, listed: str, grouped: dict[str, list[dict]] | None, tre
     elif host in unreachable:
         reason = "host unreachable, retry next round"
     else:
-        card_facts = facts_for(path, host, table)
-        if card_facts.get("unmerged") and "pr" not in card_facts:
-            card_facts["pr"] = pr_state(board().github_repo(tree.get("projectId")), plain_branch(tree))
-        reason = keep_reason(tree, workers, card_facts, now, since, limit)
+        reason = metadata_keep_reason(tree, workers, now, since, limit)
+        if reason is None:
+            card_facts = facts_for(path, host, table)
+            if card_facts.get("unmerged") and "pr" not in card_facts:
+                card_facts["pr"] = pr_state(board().github_repo(tree.get("projectId")), plain_branch(tree))
+            reason = keep_reason(tree, workers, card_facts, now, since, limit)
     if reason:
         print(report_line(apply, "keep", path, reason, host))
         if apply:

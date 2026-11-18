@@ -50,14 +50,14 @@ cp "$tmp/bin/gh" "$tmp/nobin/gh"
 # Fake wrap-up: records its arguments, the env vars it must see and the orca it finds; FAKE_BLOCK waits for a release file.
 cat > "$tmp/wrap-up.sh" <<'FAKE'
 #!/usr/bin/env bash
-printf 'child=%s args=%s fleet_config=%s orca_cmd=%s budget=%s orca=%s\n' "${WRAP_UP_SCHEDULED_CHILD-<unset>}" "$*" "${WRAP_UP_FLEET_CONFIG-<unset>}" "${ORCA_CLI_COMMAND-<unset>}" "${WRAP_UP_TOTAL_TIMEOUT-<unset>}" "$(command -v orca)" >> "$FAKE_CALLS"
+printf 'child=%s args=%s fleet_config=%s orca_cmd=%s budget=%s orca=%s skip=[%s]\n' "${WRAP_UP_SCHEDULED_CHILD-<unset>}" "$*" "${WRAP_UP_FLEET_CONFIG-<unset>}" "${ORCA_CLI_COMMAND-<unset>}" "${WRAP_UP_TOTAL_TIMEOUT-<unset>}" "$(command -v orca)" "${WRAP_UP_SKIP_HOST_WIDE-}" >> "$FAKE_CALLS"
 echo "Kept worktree $*-wt (unpushed commits)"
 if [ -n "${FAKE_BLOCK:-}" ]; then
   : > "$FAKE_BLOCK.started"
   i=0; while [ ! -e "$FAKE_BLOCK.release" ] && [ "$i" -lt 2000000 ]; do i=$((i+1)); done
 fi
 [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
-case "$*" in *"--repo $FAKE_FAIL_REPO"*) exit 3 ;; esac
+case "$*" in *"--repo $FAKE_FAIL_REPO"*) exit "${FAKE_FAIL_CODE:-3}" ;; esac
 exit 0
 FAKE
 chmod +x "$tmp/bin/orca" "$tmp/nobin/gh" "$tmp/bin/gh" "$tmp/wrap-up.sh"
@@ -84,7 +84,7 @@ round() {
     WRAP_UP_SCHEDULED_WRAP_UP="$tmp/wrap-up.sh" WRAP_UP_ISSUE_REPO="${ISSUE_REPO-o/r}" WRAP_UP_CALL_TIMEOUT="${CALL_TIMEOUT:-20}" \
     ${ROUND_LIMIT:+WRAP_UP_SCHEDULED_REPO_LIMIT="$ROUND_LIMIT"} ${KILL_GRACE:+WRAP_UP_SCHEDULED_KILL_GRACE="$KILL_GRACE"} \
     ${PRECHECK_TIMEOUT:+WRAP_UP_PRECHECK_TIMEOUT="$PRECHECK_TIMEOUT"} \
-    FAKE_CALLS="$calls" FAKE_FAIL_REPO="${FAIL_REPO:-none}" FAKE_ORCA="${FAKE_ORCA:-ready}" FAKE_BLOCK="${FAKE_BLOCK:-}" \
+    FAKE_CALLS="$calls" FAKE_FAIL_CODE="${FAKE_FAIL_CODE:-3}" FAKE_FAIL_REPO="${FAIL_REPO:-none}" FAKE_ORCA="${FAKE_ORCA:-ready}" FAKE_BLOCK="${FAKE_BLOCK:-}" \
     FAKE_REPOS="${FAKE_REPOS:-ok}" FAKE_REPO_LIST="$tmp/repos.json" FAKE_SLEEP="${FAKE_SLEEP:-}" \
     FAKE_GH_LOG="$ghlog" FAKE_GH_OPEN="$tmp/gh-open.json" FAKE_GH_LIST_FAIL="${FAKE_GH_LIST_FAIL:-}" FAKE_GH_PUBLIC="${FAKE_GH_PUBLIC:-}" \
     ORCA_CLI_COMMAND=/nonexistent/orca WRAP_UP_FLEET_CONFIG=/caller/fleet.json \
@@ -494,6 +494,27 @@ printf 'coordinator someone-else\n' > "$board_conf"
 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" round
 check 'a non-coordinator round leaves the board alone' test ! -s "$BOARD_DONE_CALLS"
 check 'a non-coordinator round leaves Done cards alone' test ! -s "$BOARD_CLEAN_CALLS"
+
+# Host-wide sweeps run once per round: the first repo runs them, every later repo is told to skip them.
+reset
+round >/dev/null
+check 'the first repo runs the host-wide sweeps' has "args=--apply --repo $repo_a fleet_config=<unset> orca_cmd=<unset> budget=" "$calls"
+check 'the first repo is not asked to skip them' test "$(grep -F -- "--repo $repo_a" "$calls" | grep -c 'skip=\[\]')" -eq 1
+check 'a later repo skips the host-wide sweeps' test "$(grep -F -- "--repo $repo_b" "$calls" | grep -c 'skip=\[1\]')" -eq 1
+# A repo that held the lock (exit 75) did not run them, so the next repo still does.
+reset
+FAKE_FAIL_CODE=75 FAIL_REPO="$repo_a" round >/dev/null
+check 'a locked first repo hands the host-wide sweeps to the next repo' test "$(grep -F -- "--repo $repo_b" "$calls" | grep -c 'skip=\[\]')" -eq 1
+# One repo failing does not stop the board steps; the round is still recorded as failed.
+reset
+board_conf="$tmp/home/coordinator.conf"; board_stub="$tmp/board-done-stub"; clean_stub="$tmp/board-clean-stub"
+export BOARD_DONE_CALLS="$tmp/board-done-calls" BOARD_CLEAN_CALLS="$tmp/board-clean-calls"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+: > "$BOARD_DONE_CALLS"; : > "$BOARD_CLEAN_CALLS"
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$clean_stub" FAIL_REPO="$repo_a" round
+check 'a failed repo still runs board-done' has '--fleet --apply' "$BOARD_DONE_CALLS"
+check 'a failed repo still runs board-clean' has '--fleet --apply' "$BOARD_CLEAN_CALLS"
+check 'a failed repo still logs a failed round' has 'round failed:' "$log"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

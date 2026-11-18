@@ -192,6 +192,7 @@ scheduled_round() {
   # Per repo, each with its own budget, while keeping the multi-repo round inside WRAP_UP_PRECHECK_TIMEOUT.
   child_mode=--apply
   [ "${scheduled_dry:-0}" = 1 ] && child_mode=--dry-run
+  host_wide_done=
   while IFS= read -r repo_path; do
     [ -n "$repo_path" ] || continue
     [ -f "$repo_path/.agents/head-checks.conf" ] || continue
@@ -210,7 +211,7 @@ scheduled_round() {
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
     # Each slow step has its own cap so one fetch, release, pane sweep or main update cannot spend the round.
     repo_mark=$SECONDS
-    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=$child_limit \
+    WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_SKIP_HOST_WIDE=$host_wide_done WRAP_UP_TOTAL_TIMEOUT=$child_limit \
       WRAP_UP_CALL_TIMEOUT=${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30} \
       WRAP_UP_PANE_TIMEOUT=${WRAP_UP_SCHEDULED_PANE_TIMEOUT:-20} \
       WRAP_UP_MAIN_TIMEOUT=${WRAP_UP_SCHEDULED_MAIN_TIMEOUT:-20} \
@@ -225,12 +226,12 @@ scheduled_round() {
       skipped="${skipped:+$skipped, }$repo_path"
       continue
     fi
+    host_wide_done=1
     count=$((count+1))
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
 
-  if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
-  guarded_round_rm f "$streak"
+  [ -n "$fails" ] || guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
   # round is already the one that reads workspaceStatus. Only the coordinator runs it, after cleanup,
   # so this round does not delete a card that just became Done. The clean pass then removes a card
@@ -258,6 +259,7 @@ scheduled_round() {
       [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
     done
   fi
+  if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
   round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}"
   exit 0
 }
@@ -949,6 +951,9 @@ main_path=$(git worktree list --porcelain | sed -n '1s/^worktree //p'); main_pat
 : > "$tmp/closing"
 : > "$tmp/removed-paths"
 terminals_read=0
+# A scheduled round sets WRAP_UP_SKIP_HOST_WIDE for every repo after the first: terminals, dispatch release, browsers, idle
+# worktrees, Chrome clones, agent temp files and worker panes cover the whole host, so one pass per round is enough.
+host_wide=1; [ -z "${WRAP_UP_SKIP_HOST_WIDE:-}" ] || host_wide=0
 : > "$tmp/kept-terminals"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; printf '%s %s\n' "$2" "$1" >> "$tmp/kept-terminals"; term_kept=$((term_kept+1)); }
 close_terminal_err='close failed'
@@ -1268,7 +1273,7 @@ release_finished_workers() {
       | [(if $env == "" then "-" else $env end), .dispatchId, $act]]
     | unique_by([.[0], .[1]])[] | @tsv' "$tmp/h-release-rows")
 }
-if command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
+if [ "$host_wide" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1 && terminal_dispatches; then
   terminals_read=1
   close_finished_terminals ''
   while IFS= read -r env_id; do
@@ -2112,7 +2117,7 @@ sweep_browsers() {
   done < "$tmp/procs"
   printf 'browsers closed=%s kept=%s\n' "$browser_closed" "$browser_kept"
 }
-sweep_browsers
+[ "$host_wide" -eq 0 ] || sweep_browsers
 # Grayed-out workspaces (issue 953): every non-main Orca worktree with no terminal attached goes, with its branch kept.
 # Uncommitted tracked changes keep it, named in the report. Runs on a fleet host too, ahead of its early exit below.
 idle_worktree_guard() { # <path>: prints the Kept line and returns 0 when the worktree must stay
@@ -2165,7 +2170,7 @@ sweep_idle_worktrees() {
   done < <(jq -r '.result.worktrees[]? | select((.isMainWorktree == true or .git.isMainWorktree == true) | not) | [.id // "", (.path // .workspacePath // "")] | @tsv' "$wt_json")
   printf 'idle worktrees %s=%s kept dirty=%s\n' "$([ "$apply" -eq 0 ] && echo 'to remove' || echo removed)" "$gone" "$dirty"
 }
-sweep_idle_worktrees
+[ "$host_wide" -eq 0 ] || sweep_idle_worktrees
 # A fleet host runs worktrees and local branches only: the coordinator run deletes remote branches once. With
 # --main-update it also fast forwards a clean main checkout and installs the merged preset.
 if [ "$worktrees_only" -eq 1 ]; then
@@ -2211,7 +2216,7 @@ flush_remote
 clone_removed=0; clone_kept=0
 clone_root=${WRAP_UP_CLONE_ROOT-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)}
 clone_dirs=()
-if [ -n "$clone_root" ]; then
+if [ -n "$clone_root" ] && [ "$host_wide" -eq 1 ]; then
   clone_root=${clone_root%/}
   clone_dirs=("$clone_root")
   case "$clone_root" in */T) clone_dirs+=("${clone_root%/T}/X") ;; esac
@@ -2233,6 +2238,7 @@ done
 temp_removed=0; temp_kept=0; temp_bytes=0
 scratch_root=${WRAP_UP_SCRATCH_ROOT-/tmp/claude-$(id -u)}
 loose_root=${WRAP_UP_LOOSE_ROOT-/tmp}
+if [ "$host_wide" -eq 0 ]; then scratch_root=''; loose_root=''; fi
 state_dir=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
 # Slug of a path as the Claude Code scratch tree names it: every non alphanumeric character becomes a dash.
 # Pure bash, no fork: the walk below can visit tens of thousands of entries. Letters are listed, since a locale range matches é.
@@ -2416,7 +2422,7 @@ printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
 missing_lsof_summary
 pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
-if [ -f "$pane_script" ]; then
+if [ "$host_wide" -eq 1 ] && [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
   if [ "$apply" -eq 1 ]; then
     pane_left=${WRAP_UP_PANE_TIMEOUT:-1800}
