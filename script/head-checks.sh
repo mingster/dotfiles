@@ -381,6 +381,18 @@ if re.search(r"^bun test v", text, re.M):
     print(f"Tests executed: {executed}\nLoad errors: {errors}")
 PYTEST
 }
+# True when a bun test run printed load errors and zero failing tests.
+load_errors_only() {
+  python3 - "$1" <<'PYLOAD'
+import re, sys
+text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1]).read())
+if not re.search(r"^bun test v", text, re.M): sys.exit(1)
+fails = sum(int(n) for n in re.findall(r"^\s*(\d+) fail\s*$", text, re.M))
+errors = sum(int(n) for n in re.findall(r"^\s*(\d+) errors?\s*$", text, re.M))
+errors = max(errors, len(re.findall(r"^# Unhandled error between tests$", text, re.M)))
+sys.exit(0 if errors > 0 and fails == 0 else 1)
+PYLOAD
+}
 # A step that needs Postgres runs against the database host (head_checks_remote), never a host without it.
 # Without a reachable local Postgres server and no remote host, the step is a host fault: FAIL, never a pass.
 db_step_re='(^|[^[:alnum:]_-])(createdb|dropdb|psql|pg_dump|pg_restore)([^[:alnum:]_-]|$)'
@@ -490,6 +502,13 @@ while IFS= read -r command || [ -n "$command" ]; do
         fi
         check_result=INFRA
         printf 'Result: exit 137; retryable infra failure; remaining checks stopped; interrupted by a kill signal, the code was not judged, rerun Checks\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+        [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+        rm -f "$output"
+        exit 1
+      fi
+      # On the database host, a step that only hit load errors (no failing test) never ran the code: a host fault.
+      if [ ${#db_prefix[@]} -gt 0 ] && load_errors_only "$output"; then
+        printf 'Result: host fault; the step on the database host hit load errors (exit %s) and no test failed, so the host checkout is broken (missing install or generated files), not the code. Not a pass; fix the host and rerun Checks.\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
         [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
         rm -f "$output"
         exit 1

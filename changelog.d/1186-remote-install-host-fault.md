@@ -1,0 +1,1 @@
+Fixed: head-checks no longer reports a false FAIL when the database host checkout has a stale or missing install. remote-heavy.sh now reinstalls (with the project's postinstall) when node_modules is missing as well as when the lockfile changes, and a database host step that hits load errors with zero failing tests is reported as a host fault (#1186).
