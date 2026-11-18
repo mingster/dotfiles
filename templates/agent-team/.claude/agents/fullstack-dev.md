@@ -15,6 +15,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - pstack Feature, Bug fix and Refactoring, with the overlays in `orca-adapter/playbooks/`.
 - Stack and standards: `AGENTS.md` and `docs/agents/team-facts.md`.
 - PR body: put a `Builder: agent=<agent> model=<model>` line in it. `ship.sh` compares it with the verifier.
+- Performance: when `docs/agents/team-facts.md` names a performance checklist, run it before opening the PR and add a `Perf:` line to the PR body. A speedup claim carries before and after numbers checked with the `benchmark-checklist` skill.
 
 ## Finish
 Before `worker_done`, meet `~/dotfiles/templates/agent-team/docs/agents/team.md`, Acceptance checklist, in the PR body. Run the project's full local check, not only the tests the brief names, and check each item yourself before calling it already done.
