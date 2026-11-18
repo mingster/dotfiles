@@ -393,7 +393,7 @@ printf '%s\n' "\$0 \$*" >>"\$log"
 printf 'orca-after-gate\n' >>"$run_order_log"
 case " \$* " in
   *" repo list "*)
-    printf '%s\n' "{\"ok\":true,\"result\":{\"repos\":[{\"id\":\"repo_gh\",\"path\":\"\$GH_REPO_DIR\"}]}}"
+    { printf '%s\n' "{\"id\":\"repo_gh\",\"path\":\"\$GH_REPO_DIR\"}"; for d in "$tmp"/*/; do printf '{"id":"repo_fx_%s","path":"%s"}\n' "\$(basename "\$d")" "\${d%/}"; done; } | jq -cs '{ok:true,result:{repos:.}}'
     exit 0
     ;;
   *" worktree create "*)
@@ -870,6 +870,10 @@ set -e
 log="\${ORCA_STUB_LOG:-/dev/null}"
 printf '%s\n' "\$0 \$*" >>"\$log"
 case " \$* " in
+  *" repo list "*)
+    for d in "$tmp"/*/; do printf '{"id":"repo_fx_%s","path":"%s"}\n' "\$(basename "\$d")" "\${d%/}"; done | jq -cs '{ok:true,result:{repos:.}}'
+    exit 0
+    ;;
   *" worktree create "*)
     printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"$wt_proof\"}}}"
     exit 0
@@ -1083,6 +1087,31 @@ set -e
 [ "$ec_repo_map" = 0 ] && ok || bad "remote repo map run exits 0 ($ec_repo_map) $(cat "$tmp/repo-map.err")"
 grep -q 'worktree create' "$tmp/orca-repo-map.log" && ok || bad "repo map worktree create logged"
 grep -q 'id:remote-app-id' "$tmp/orca-repo-map.log" && ok || bad "worktree create uses mapped remote repo id ($(cat "$tmp/orca-repo-map.log"))"
+
+# --repo path:<dir> resolves to its Orca repo id before placement, so it places like id:.
+mkdir -p "$tmp/pathapp"
+sed 's/"local-app-id"/"repo_fx_pathapp"/' "$tmp/fleet-placement.json" >"$tmp/fleet-placement-path.json"
+for case_dir in pathapp:0 pathunknown:1; do
+  cd_name=${case_dir%%:*}
+  : >"$tmp/orca-path-$cd_name.log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-path-$cd_name.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    FLEET_WATCH_CONFIG="$tmp/fleet-placement-path.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+    bash --noprofile --norc "$script" --run "run_$cd_name" --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --name "n_$cd_name" --repo "path:$tmp/$cd_name" >"$tmp/path-$cd_name.out" 2>"$tmp/path-$cd_name.err"
+  ec_path=$?
+  set -e
+  if [ "$cd_name" = pathapp ]; then
+    [ "$ec_path" = 0 ] && ok || bad "path: repo run exits 0 ($ec_path) $(cat "$tmp/path-$cd_name.err")"
+    grep -q 'worker-placement: host=host-remote' "$tmp/path-$cd_name.out" && ok || bad "path: repo is placed on the remote host ($(cat "$tmp/path-$cd_name.out"))"
+    grep -q 'id:remote-app-id' "$tmp/orca-path-$cd_name.log" && ok || bad "path: repo uses the mapped remote repo id ($(cat "$tmp/orca-path-$cd_name.log"))"
+  else
+    [ "$ec_path" != 0 ] && ok || bad "unknown path: repo must be refused"
+    grep -q 'refused: no Orca repo id for path:' "$tmp/path-$cd_name.err" && ok || bad "unknown path: names the refusal ($(cat "$tmp/path-$cd_name.err"))"
+  fi
+done
 
 # Cursor on a placed remote host must receive that host's repo selector, not the caller's.
 rm -f "$tmp/cursor.args"

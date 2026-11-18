@@ -1,0 +1,1 @@
+`worker-startup.sh` resolves `--repo path:<dir>` to its Orca repo id (`orca repo list`) before placement, so a path places by `worker_placement.repos` the same as `id:`. A path with no repo id is refused with one line (#1197).
