@@ -2000,6 +2000,27 @@ def changelog_fragment_notices(config, state, origin_of=None):
     return notices
 
 
+def stale_worktree_notices(config, run=None):
+    """One notice per stale worktree in each repo_roots checkout on this host (#1188), from check-stale-worktrees.sh."""
+    run = run or subprocess.run
+    script = str(Path(__file__).with_name('check-stale-worktrees.sh'))
+    notices = []
+    for path in iter_repo_root_paths(config.get('repo_roots')):
+        if not os.path.isdir(path):
+            continue
+        try:
+            result = run(['bash', script, path], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode != 1:
+            continue
+        for line in result.stdout.splitlines():
+            if line.strip():
+                notices.append('%s: stale worktree %s; remove it with worker-release or git worktree remove' % (
+                    os.path.basename(path.rstrip('/')) or path, line.strip()))
+    return notices
+
+
 def wrap_up_notices(config, state, now, stamp_age=None, act=None, issue_exists=None):
     """Open one issue per host when the last wrap-up round line is older than the stale limit."""
     block = config.get('wrap_up') or {}
@@ -6751,6 +6772,7 @@ def main():
     notices += stale_board_notices(config, state, now)
     notices += fleet_pull_after_ship_notices(config, state, now)
     notices += changelog_fragment_notices(config, state)
+    notices += stale_worktree_notices(config)
 
     def persist_scan_state():
         save_state(args.state, state)
