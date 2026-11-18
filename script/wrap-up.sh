@@ -2415,6 +2415,11 @@ printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kep
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
 missing_lsof_summary
+# Leftover worktrees whose work is merged or abandoned (#1188). Read only; prints nothing when clean.
+if [ -x "$here/check-stale-worktrees.sh" ]; then
+  stale_out=$(run_limited "${WRAP_UP_STALE_CHECK_TIMEOUT:-120}" "$here/check-stale-worktrees.sh" "$repo" 2>/dev/null) || true
+  [ -z "$stale_out" ] || { echo 'Stale worktrees left behind (path reason dirty-count):'; echo "$stale_out"; }
+fi
 pane_script=${WORKER_PANE_CLOSE:-$HOME/.claude/skills/orca-team/worker-pane-close.sh}
 if [ -f "$pane_script" ]; then
   echo 'Close ended worker panes'
