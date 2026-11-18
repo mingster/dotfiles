@@ -22,6 +22,7 @@ unset -f python3 2>/dev/null || true
 # shellcheck source=lib/git-identity.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"
 use_test_git_identity "$tmp"
+export USAGE_GATE_PRESETS="${USAGE_GATE_PRESETS:-$root/.orca/presets.json}"
 export WORKER_STARTUP_STATE="$tmp/state" TEAM_AUDIT_DISPATCHES="$tmp/team-dispatches.tsv"
 mkdir -p "$WORKER_STARTUP_STATE"
 
@@ -662,7 +663,7 @@ dispatch_run "$tmp/spec-noref.txt"
 grep -Fq "path:$wt_proof" "$tmp/orca.log" && ok || bad "worktree path with space passed to orchestration ($wt_proof)"
 grep -q 'orchestration worker-start' "$tmp/orca.log" && ok || bad "orca log has worker-start"
 grep -Fq "worktree set --worktree path:$wt_proof --workspace-status in-progress" "$tmp/orca.log" && ok || bad "new worktree set in-progress on the board ($(cat "$tmp/orca.log"))"
-grep -Fq "worktree set --worktree path:$wt_proof --display-name myjob" "$tmp/orca.log" && ok || bad "card display name is the --title value ($(cat "$tmp/orca.log"))"
+grep -Fq "worktree set --worktree path:$wt_proof --display-name #1|fullstack-dev" "$tmp/orca.log" && ok || bad "card display name is the --title value ($(cat "$tmp/orca.log"))"
 grep -Fq 'usage-gate check' "$gate_invoked" && ok || bad "usage gate check recorded"
 grep -q 'stub-gate-ran' "$run_order_log" && ok || bad "stub gate ran (logged)"
 grep 'stub-gate-ran' "$run_order_log" | head -1 >"$tmp/order.stub"
@@ -1644,7 +1645,7 @@ fail_start() { # <log> [extra args...]
     PATH="$run_path" ORCA_CLI_COMMAND="$orca_fail_stub" ORCA_STUB_LOG="$log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
     WORKER_STARTUP_STATE="$launch_state" \
-    bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title myjob --agent claude --model claude-sonnet-5-5-medium \
+    bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord "$@" >/dev/null 2>&1
   fail_ec=$?
   set -e
