@@ -1,0 +1,1 @@
+Added `script/fleet-watch-loop.sh`, a pid-guarded 5 minute loop started from the coordinator terminal so fleet-watch's own worker starts pass the Orca fence. Its starts now drop `--from`, use `--repo id:`, and skip an issue or rework start when a live worker already has the same title.

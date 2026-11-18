@@ -26,6 +26,8 @@ Read before your first dispatch. Worker accounting follows pstack Orchestrate, S
 
 `script/fleet-watch.py` from dotfiles (`docs/agents/fleet-watch.md`) watches the inbox each minute, independent of your waiter. Schedule it on the coordinators' host and repoint its private config at every new Run (and `leads` whenever a lead restarts); both are explicit activation steps.
 
+Once per coordinator session, start the loop from this terminal so fleet-watch's own worker starts pass the Orca fence: `FLEET_WATCH_CONFIG=<private-json> FLEET_WATCH_STATE=<private-state> nohup bash ~/dotfiles/script/fleet-watch-loop.sh >/dev/null 2>&1 & disown`. Check it with `bash ~/dotfiles/script/fleet-watch-loop.sh --status`; a second start exits at once (`docs/agents/fleet-watch.md`, Loop from the coordinator terminal).
+
 The waiter script and its output live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), never `/tmp`. Briefs tell workers to write temp files only in their scratch dir or worktree.
 
 ## User asks

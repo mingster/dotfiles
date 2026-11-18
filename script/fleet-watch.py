@@ -3501,6 +3501,26 @@ def checks_local_verify_text(root, present):
     return 'checks-local.sh does not apply to this repo'
 
 
+def local_repo_selector(root):
+    """--repo id:<id> for the Orca repo at root (#1204), else path:<root> when Orca cannot name it."""
+    try:
+        repos = rpc('repo', 'list').get('repos') or []
+    except Exception:
+        repos = []
+    for repo in repos:
+        if isinstance(repo, dict) and repo.get('id') and repo.get('path') == root:
+            return 'id:' + repo['id']
+    return 'path:' + root
+
+
+def live_start_title(command, workers):
+    """True when a live worker already carries this start's --title (#<issue or PR>|<role>)."""
+    title = command[command.index('--title') + 1] if '--title' in command else ''
+    return bool(title) and any(
+        isinstance(w, dict) and w.get('_task_title') == title and worker_row_is_live(w) for w in workers or []
+    )
+
+
 def build_issue_start_command(config, repo, issue_row, placement=None):
     """placement is (host, repo_id) to start on a remote host instead of the local checkout."""
     scan = config['issue_scan']
@@ -3526,9 +3546,8 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         '--title', title,
         '--agent', scan.get('agent') or 'claude',
         '--model', scan.get('model') or '',
-        '--from', scan['from_terminal'],
         '--name', 'issue-%d' % issue_row['number'],
-        '--repo', 'path:' + root,
+        '--repo', local_repo_selector(root),
     ]
     if placement:
         command[command.index('--repo') + 1] = 'id:' + placement[1]
@@ -3571,9 +3590,8 @@ def build_rework_start_command(config, repo, pr_row):
         '--title', title,
         '--agent', agent,
         '--model', model,
-        '--from', scan['from_terminal'],
         '--name', 'rework-%d' % pr_row['number'],
-        '--repo', 'path:' + root,
+        '--repo', local_repo_selector(root),
     ]
     branch = pr_row.get('headRefName')
     if branch:
@@ -3628,9 +3646,8 @@ def build_backlog_sweep_command(config, repo, role):
         '--title', '#0|%s' % role,  # a sweep has no issue, so it uses #0
         '--agent', agent,
         '--model', model,
-        '--from', scan['from_terminal'],
         '--name', 'backlog-%s' % role,
-        '--repo', 'path:' + root,
+        '--repo', local_repo_selector(root),
     ]
     return [part for part in command if part]
 
@@ -5226,9 +5243,8 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
         '--title', title,
         '--agent', agent,
         '--model', model,
-        '--from', from_terminal,
         '--name', name,
-        '--repo', 'path:' + root,
+        '--repo', local_repo_selector(root),
     ]
     branch = pr_row.get('headRefName') or ''
     if branch:
@@ -5710,6 +5726,9 @@ def issue_scan_pass(
             if command is None:
                 log_bits.append('rework_skip=%d' % pr_num)
                 continue
+            if live_start_title(command, workers):
+                log_bits.append('rework_live=%d' % pr_num)
+                continue
             pending[head] = True
             if persist_state:
                 persist_state()
@@ -5834,6 +5853,9 @@ def issue_scan_pass(
         command = build_issue_start_command(config, repo, row, placement)
         if command is None:
             log_bits.append('issue_scan_skip')
+            return notices, log_bits
+        if live_start_title(command, workers):
+            log_bits.append('issue_live=%d' % row['number'])
             return notices, log_bits
         spec_path = command[command.index('--spec') + 1]
         missing = brief_lint_missing(spec_path)
