@@ -293,6 +293,12 @@ check "--release with a PR leaves the status alone" "$([ ! -s "$tmp/board.log" ]
 printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
 "$here/worker-pane-close.sh" --release dnopr >/dev/null 2>&1
 check "--release with gh failing leaves the status alone" "$([ ! -s "$tmp/board.log" ]; echo $?)"
+# A verifier on a detached HEAD has no branch to look up: the release completes it without asking gh.
+: > "$tmp/board.log"
+git -C "$tmp/gitwt" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m c && git -C "$tmp/gitwt" checkout -q --detach
+printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/gh"
+"$here/worker-pane-close.sh" --release dnopr >/dev/null 2>&1
+check "--release of a detached HEAD worktree sets completed" "$([ "$(cat "$tmp/board.log")" = "worktree set --worktree path:$tmp/gitwt --workspace-status completed" ]; echo $?)"
 rm -f "$tmp/bin/gh" "$tmp/show.dnopr" "$tmp/terminals.json" "$tmp/closes.log"
 
 # Leftover terminals: a validated worker leaves its agent and setup terminals, a shell in its worktree and

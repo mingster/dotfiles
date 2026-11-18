@@ -16,8 +16,8 @@
 # terminals are not errors. Release closes at most the agent terminal; after a confirmed release the remaining
 # handles are closed here (never the agent terminal or the caller's own $ORCA_TERMINAL_HANDLE). State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
-# --release also sets the worktree board status to completed when its branch has no PR in any state (a PR sets it
-# through ship.sh). Best effort: a missing worktree, branch or gh answer leaves the status alone.
+# --release also sets the worktree board status to completed unless its branch has an open PR (a merge sets it
+# through ship.sh). A detached HEAD counts as no PR. Best effort: a missing worktree or gh answer leaves the status alone.
 set -u
 orca="${ORCA_CLI_COMMAND:-orca}"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -93,7 +93,7 @@ if not path:
   if option.startswith("path:"): path=option[len("path:"):]
 sys.exit(0 if path and not os.path.exists(path) else 1)'
 }
-complete_if_no_pr() { # $1 worker-show json -> board status completed when the worker's branch never had a PR
+complete_if_no_pr() { # $1 worker-show json -> board status completed unless the worker's branch has an open PR (ship.sh completes it on merge)
   local path branch count
   path=$(SHOW="$1" python3 -c '
 import os,json
@@ -105,9 +105,11 @@ for e in w.get("effects") or []:
 if not path: path=(w.get("worktreeId") or "").split("::",1)[-1]
 print(path if path and os.path.isfile(os.path.join(path,".git")) else "")') || return 0
   [ -n "$path" ] || return 0
-  branch=$(git -C "$path" symbolic-ref --short -q HEAD) || return 0
-  count=$(cd "$path" && gh pr list --head "$branch" --state all --json number --jq length 2>/dev/null) || return 0
-  [ "$count" = 0 ] || return 0
+  # A detached HEAD (a verifier on a PR head) has no branch and no PR of its own: it is done with the release.
+  if branch=$(git -C "$path" symbolic-ref --short -q HEAD); then
+    count=$(cd "$path" && gh pr list --head "$branch" --state open --json number --jq length 2>/dev/null) || return 0
+    [ "$count" = 0 ] || return 0
+  fi
   board_status_set "path:$path" completed
 }
 run_coordinators() { # -> every Run's coordinator handle (the caller, leads, other Runs); rc 1 if the Run list cannot be read

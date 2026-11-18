@@ -773,4 +773,5 @@ board_env=$ship_environment
 if [ -z "$board_env" ]; then
   board_env=$(board_environment_for_branch "$(field .headRefName)") || board_env=""
 fi
-board_status_set "branch:$(field .headRefName)" completed "$board_env"
+issue_n=$(field .body | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?) +([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' | head -1 | grep -oE '[0-9]+$') || issue_n=""
+board_status_complete_issue "$board_env" "$(field .headRefName)" "$issue_n" "$pr"
