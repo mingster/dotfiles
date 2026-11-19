@@ -255,4 +255,46 @@ picked=$(trial_picks false)
 [ "$(distinct "$picked")" -ge 3 ] || fail "four starts must reach at least 3 hosts (inventory failed):$picked"
 grep -Fq 'worker count unavailable' "$tmp/trial.err" || fail "failed inventory must warn: $(cat "$tmp/trial.err")"
 
+# 6. Burst guard (#1235): back to back starts at equal load must not pile builders on a small host.
+# A 4 core host takes at most cores / cores_per_worker (2) = 2 workers even though host_caps says 4,
+# and free memory minus the memory the recent starts will take gates it too.
+cat >"$tmp/burst.json" <<'EOF2'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-small": 4, "host-big": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-small": 12, "host-big": 12},
+  "worker_placement": {"order": ["host-primary", "host-small", "host-big"], "recent_start_seconds": 300}
+}
+EOF2
+cat >"$tmp/load-burst.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0 memfree=24\n'
+printf 'host-small cores=4 load=1.0 1.0 1.0 memfree=12\n'
+printf 'host-big cores=8 load=1.0 1.0 1.0 memfree=24\n'
+EOF2
+chmod +x "$tmp/load-burst.sh"
+burst_picks() { # <load script> <count>: recorded picks, prints each host on its own line
+  local load=$1 n=$2 out
+  rm -f "$tmp/recent.json"
+  workers_for
+  for _ in $(seq "$n"); do
+    out=$(WORKER_PLACEMENT_COUNT_WORKERS=1 ORCA_CLI_COMMAND="$tmp/fake-orca.sh" FAKE_WORKERS="$tmp/workers.json" \
+      WORKER_PLACEMENT_RECENT_FILE="$tmp/recent.json" FLEET_LOAD_SCRIPT="$load" \
+      FLEET_WATCH_CONFIG="$tmp/burst.json" python3 "$py" pick --record --json 2>/dev/null) || break
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["host"])' <<<"$out"
+  done
+}
+small=$(burst_picks "$tmp/load-burst.sh" 8 | grep -c '^host-small$' || true)
+[ "$small" -le 2 ] || fail "8 burst picks put $small workers on the 4 core host (scaled cap 2)"
+# Memory gate: 5 GB free with 4 GB per worker leaves room for one start, not two.
+cat >"$tmp/load-lowmem.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0 memfree=24\n'
+printf 'host-small cores=16 load=1.0 1.0 1.0 memfree=5\n'
+printf 'host-big cores=8 load=1.0 1.0 1.0 memfree=24\n'
+EOF2
+chmod +x "$tmp/load-lowmem.sh"
+small=$(burst_picks "$tmp/load-lowmem.sh" 8 | grep -c '^host-small$' || true)
+[ "$small" -le 1 ] || fail "8 burst picks put $small workers on a host with 5 GB free (budget 4 GB each)"
+
 echo "worker-placement.test.sh passed"
