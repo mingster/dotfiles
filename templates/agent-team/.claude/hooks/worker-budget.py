@@ -14,13 +14,27 @@ user message introduces a new `--dispatch-id ctx_<id2>`. Past STOP turns, denies
 tool except reading and the `orca` commands a worker needs to send worker_done or ask.
 Exit 0 always; anything it cannot parse is let through.
 """
-import json, os, re, sys
+import json, os, re, subprocess, sys
 
 WARN, STOP = 120, 200
 WORKSPACES = os.path.realpath(os.path.expanduser("~/orca/workspaces"))
 STATE_DIR = os.path.expanduser("~/.claude/state/worker-budget")
 DISPATCH_RE = re.compile(r"--dispatch-id[=\s]+(ctx_[A-Za-z0-9_-]+)")
 WORKER_DONE_RE = re.compile(r"(?:^|[\r\n]|&&|\|\||;)\s*orca(?:-dev)?\s+orchestration\s+send\b[^\n]*--type(?:=|\s+)['\"]?worker_done\b")
+
+
+def unread_messages():
+    """Unread orchestration mail for this worker's terminal, [] when none or when it cannot be read."""
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "")
+    if not handle:
+        return []
+    try:
+        out = subprocess.run(["orca", "orchestration", "check", "--terminal", handle, "--json"],
+                             capture_output=True, text=True, timeout=20).stdout
+        msgs = json.loads(out).get("result", {}).get("messages", [])
+    except Exception:
+        return []
+    return msgs if isinstance(msgs, list) else []
 
 
 def user_message_text(obj):
@@ -243,6 +257,12 @@ def main():
 
     if event == "PreToolUse":
         if tool == "Bash" and is_worker_done_cmd(cmd, active_ctx):
+            msgs = unread_messages()
+            if msgs:
+                body = "\n".join(json.dumps(m)[:500] for m in msgs[:5])
+                print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                    "permissionDecisionReason": "You have unread orchestration messages. Handle them, then send worker_done again, "
+                    "or Orca opens a 'New messages' follow-up dispatch on your finished terminal.\n" + body}}))
             return
         if is_done:
             if tool in ("Read", "Grep", "Glob"):

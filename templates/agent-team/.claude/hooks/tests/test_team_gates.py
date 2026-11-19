@@ -111,6 +111,33 @@ class Gate(unittest.TestCase):
         self.assertIsNone(self.bash(command, cwd), f"expected allow: {command}")
 
 
+class SettledRecipientGate(Gate):
+    def fake_orca(self, workers):
+        with open(os.path.join(self.bin, "orca"), "w") as f:
+            f.write("#!/bin/sh\ncat <<'JSON'\n" + json.dumps({"ok": True, "result": {"workers": workers}}) + "\nJSON\n")
+        os.chmod(os.path.join(self.bin, "orca"), 0o755)
+
+    def row(self, state, terminal_state, terminal="term_w"):
+        return {"state": state, "terminalState": terminal_state, "terminal": terminal}
+
+    def test_send_to_settled_worker_denied(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("succeeded", "released")])
+        self.assertDenied("orca orchestration send --to term_w --subject s --body b", "fresh dispatch")
+
+    def test_orca_reply_to_settled_worker_denied(self):
+        self.fake_orca([self.row("failed", "active")])
+        self.assertDenied("script/orca-reply.sh --to term_w --subject s --body b", "fresh dispatch")
+
+    def test_send_to_live_worker_allowed(self):
+        self.fake_orca([self.row("ready", "active")])
+        self.assertAllowed("orca orchestration send --to term_w --subject s --body b")
+
+    def test_send_to_unknown_terminal_allowed(self):
+        self.fake_orca([self.row("succeeded", "released", "term_other")])
+        self.assertAllowed("orca orchestration send --to term_w --subject s --body b")
+
+
 class RoleFileGate(Gate):
     def setUp(self):
         super().setUp()

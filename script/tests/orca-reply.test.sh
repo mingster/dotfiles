@@ -15,6 +15,7 @@ echo "$*" >> "$ORCA_LOG"
 case "$1 $2" in
   "orchestration reply") [ -z "${FAKE_REPLY_FAIL:-}" ] || exit 1 ;;
   "terminal send") [ -z "${FAKE_SEND_FAIL:-}" ] || exit 1 ;;
+  "orchestration worker-list") [ -z "${FAKE_WORKERS:-}" ] || { echo "$FAKE_WORKERS"; exit 0; } ;;
 esac
 echo '{"ok":true}'
 EOS
@@ -25,10 +26,10 @@ run() { : > "$ORCA_LOG"; bash "$script" "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >
 # 1. replies, then nudges the recipient terminal with Enter
 run --to term_a --id msg_1 --body "approved"
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "success exit 0"
-[ "$(sed -n 1p "$ORCA_LOG" | cut -d' ' -f1-2)" = "orchestration reply" ] && ok || bad "reply runs first"
+[ "$(grep -v worker-list "$ORCA_LOG" | sed -n 1p | cut -d' ' -f1-2)" = "orchestration reply" ] && ok || bad "reply runs first"
 grep -q -- "orchestration reply.*--id msg_1.*--body approved" "$ORCA_LOG" && ok || bad "reply carries id and body"
 grep -q -- "terminal send --terminal term_a --text .*inbox.* --enter" "$ORCA_LOG" && ok || bad "nudge to recipient with --enter"
-[ "$(wc -l < "$ORCA_LOG" | tr -d ' ')" = 2 ] && ok || bad "exactly two orca calls"
+[ "$(grep -vc worker-list "$ORCA_LOG")" = 2 ] && ok || bad "exactly two orca calls"
 
 # 2. --from is passed to the reply
 run --to term_a --id msg_1 --body hi --from term_me
@@ -71,3 +72,15 @@ run --to term_b --id msg_1 --subject x --body hi
 
 echo "orca-reply: $pass passed, $fail failed"
 [ "$fail" = 0 ]
+
+# 7. a settled or released recipient is refused, nothing sent
+FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_a","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
+[ "$(cat "$tmp/rc")" = 2 ] && ok || bad "settled recipient exit 2"
+! grep -qE "orchestration reply|terminal send" "$ORCA_LOG" && ok || bad "settled recipient sends nothing"
+grep -q "settled" "$tmp/err" && ok || bad "settled recipient message"
+
+# 8. a live recipient (or an unknown one) is still served
+FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"ready","terminal":"term_a","terminalState":"active"}]}}' run --to term_a --id msg_1 --body hi
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "live recipient served"
+FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_b","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "unknown recipient served"
