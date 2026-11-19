@@ -7,7 +7,9 @@
 dotfiles_fresh() {
   [ -z "${DOTFILES_FRESH_DONE:-}" ] || return 0
   export DOTFILES_FRESH_DONE=1
-  bash "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/session-sync.sh" --dotfiles-only >&2 || true
+  local sync
+  sync="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/session-sync.sh"
+  [ ! -f "$sync" ] || bash "$sync" --dotfiles-only >&2 || true
   return 0
 }
 
