@@ -621,6 +621,33 @@ class ProjectConfigRules(GuardTest):
         self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
         self.assertDenied(f"bin/set-production-secret.sh {self.SHA} --host prod-1 OTHER_KEY", "--schema --apply")
 
+    def promote_go_live(self, until):
+        cfg = dict(self.CONFIG, production_branches=["production"], promote_scripts=["promote-production.sh"],
+                   rollback_scripts=["rollback-production.sh"])
+        if until:
+            cfg["pre_go_live_host"] = {"until": until}
+        self.use_config(cfg)
+
+    def test_pre_go_live_promote_and_schema_need_no_approval_before_the_date(self):
+        self.promote_go_live("2999-12-31")
+        self.assertAllowed(f"bin/promote-production.sh {self.SHA}")
+        self.assertAllowed(f"SCHEMA_APPROVED=1 bin/promote-production.sh {self.SHA}")
+
+    def test_pre_go_live_promote_and_schema_denied_on_and_after_the_date(self):
+        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+        for until in (today, "2000-01-01", None, "soon"):
+            with self.subTest(until=until):
+                self.promote_go_live(until)
+                self.assertDenied(f"bin/promote-production.sh {self.SHA}", "owner-approve.sh")
+                self.assertDenied(f"SCHEMA_APPROVED=1 bin/promote-production.sh {self.SHA}", "--schema")
+
+    def test_pre_go_live_promote_waiver_exempts_no_other_gate(self):
+        self.promote_go_live("2999-12-31")
+        self.assertDenied(f"git push origin {self.SHA}:production", "owner-approve.sh")
+        self.assertDenied("git push origin --delete production", "never an agent")
+        self.assertDenied(f"bin/rollback-production.sh {self.SHA}", "rollback")
+        self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
+
     def test_pre_go_live_date_exempts_no_other_apply_script(self):
         self.go_live("2999-12-31")
         self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")

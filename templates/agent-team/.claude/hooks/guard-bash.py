@@ -74,7 +74,9 @@ APPLY_SCRIPTS: set[str] = {"apply-production-sql.sh", "set-production-secret.sh"
 PRE_GO_LIVE_SCRIPT = "set-production-secret.sh"
 PRE_GO_LIVE_UNTIL: str | None = None
 # `pre_go_live_host.until` (ISO date, compared with today in Asia/Taipei): the `host` approval is waived before
-# it. Absent or malformed means no waiver. Nothing else is waived.
+# it. Absent or malformed means no waiver. The same date also waives approval for the promote script and the
+# SCHEMA_APPROVED schema check. Nothing else is waived: a hand push to a production branch, rollback, force
+# push, deletion, the apply scripts and credential writes keep their gates.
 PRE_GO_LIVE_HOST_UNTIL: str | None = None
 
 
@@ -1031,8 +1033,8 @@ def host_waived():
     return taipei.strftime("%Y-%m-%d") < PRE_GO_LIVE_HOST_UNTIL
 
 
-def approval_for(scopes, target_ok=None):
-    if "host" in scopes and host_waived():
+def approval_for(scopes, target_ok=None, pre_go_live=False):
+    if ("host" in scopes or pre_go_live) and host_waived():
         return True, ""
     a, why = load_approval()
     if not a:
@@ -2158,9 +2160,10 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
     if any(t == SCHEMA_OVERRIDE or (t.startswith(SCHEMA_OVERRIDE + "=") and t != SCHEMA_OVERRIDE + "=0")
            for t in settings) and not (script in PROMOTE_RULES and promo is None):
         sha = resolve(sha_arg) or sha_arg or "<sha>"
-        ok, why = approval_for({"promote"}, (lambda t: same_commit(sha_arg, t)) if sha_arg else None)
+        ok, why = approval_for({"promote"}, (lambda t: same_commit(sha_arg, t)) if sha_arg else None,
+                              pre_go_live=True)
         a, _ = load_approval()
-        if not ok or not (a or {}).get("schema"):
+        if not ok or not (host_waived() or (a or {}).get("schema")):
             owner_go(f"{SCHEMA_OVERRIDE}=1 (a production schema push)", f"{APPROVE} promote {sha} --schema",
                      why or "the approval on file does not cover the schema")
 
@@ -2170,7 +2173,7 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
             deny(f"Pass {script} the literal sha, so it can be matched against the owner's "
                  f"approval: {script} <sha>. The owner approves it with `{APPROVE} promote <sha>`.")
         sha = resolve(sha_arg) or sha_arg or "<sha>"
-        ok, why = approval_for({"promote", "rollback"}, lambda t: same_commit(sha_arg, t))
+        ok, why = approval_for({"promote", "rollback"}, lambda t: same_commit(sha_arg, t), pre_go_live=True)
         if not ok:
             owner_go(f"Promoting {sha} to production", f"{APPROVE} promote {sha}", why)
 
