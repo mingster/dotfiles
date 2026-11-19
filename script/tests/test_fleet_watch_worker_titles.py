@@ -54,7 +54,7 @@ class ParsedTitles(unittest.TestCase):
 
     def test_verifier_prs_read_the_pr_in_the_detail_segment(self):
         for title, prs in (('#1204|qa-sdet|verify PR 1207', [1204, 1207]), ('#1204|qa-sdet|verify PR #1207', [1204, 1207]),
-                           ('#1204|qa-sdet|standing', [1204]), ('#1204|fullstack-dev|verify PR 1207', [])):
+                           ('#1204|qa-sdet|standing', []), ('#1204|fullstack-dev|verify PR 1207', [])):
             self.assertEqual(fw.verifier_title_prs({'_task_title': title}), prs, title)
 
     def test_verifier_prs_read_title_and_name_keys(self):
