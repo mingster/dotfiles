@@ -617,5 +617,22 @@ out=$(bash "$lint" "$tmp/no-checks-local.md" "$tmp/repo-with" 2>&1); ec=$?
 set -e
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: Verify must run script/checks-local.sh" ]; then ok; else bad "repo with checks-local.sh still needs it (ec=$ec, out=$out)"; fi
 
+set +e
+# 1201. Refs: #n, Closes #n and the other closing words count. --issue-body skips the Refs check.
+write_full_brief "$tmp/refs-base.md"
+for form in 'Refs: #12' 'Closes #12' 'Fixes mingster/dotfiles#12' 'Resolves #12'; do
+  sed "s|^Refs dotfiles#717\$|$form|" "$tmp/refs-base.md" >"$tmp/refs-form.md"
+  out=$(bash "$lint" "$tmp/refs-form.md" 2>&1); ec=$?
+  if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "'$form' should count as Refs (ec=$ec, out=$out)"; fi
+done
+sed '/^Refs dotfiles#717$/d' "$tmp/refs-base.md" >"$tmp/no-refs.md"
+out=$(bash "$lint" "$tmp/no-refs.md" 2>&1); ec=$?
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Refs" ]; then ok; else bad "no Refs still fails (ec=$ec, out=$out)"; fi
+out=$(bash "$lint" --issue-body "$tmp/no-refs.md" 2>&1); ec=$?
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "--issue-body needs no Refs (ec=$ec, out=$out)"; fi
+sed '/^## Out of scope/,/^$/d' "$tmp/no-refs.md" >"$tmp/no-refs-no-scope.md"
+out=$(bash "$lint" --issue-body "$tmp/no-refs-no-scope.md" 2>&1); ec=$?
+if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Out of scope" ]; then ok; else bad "--issue-body still checks the other parts (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

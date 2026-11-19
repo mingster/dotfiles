@@ -3872,6 +3872,9 @@ _HEAD_CHECK_NAMES = ('checks', 'script-tests', 'script tests', 'shellcheck')
 _BUILDER_LINE_RE = re.compile(
     r'^Builder: agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+)\s*$'
 )
+# "Builder: claude/sonnet (host)", the form some builders write instead (#1201).
+_BUILDER_SLASH_RE = re.compile(r'^Builder:\s*([A-Za-z0-9._-]+)/([A-Za-z0-9._:-]+)(?:\s.*)?$')
+_AGENT_ALIASES = {'agy': 'antigravity'}
 BABYSIT_PASS_CAP = 2
 
 
@@ -4749,9 +4752,9 @@ def builder_pair(pr, workers=None):
     """Builder agent and model from the PR body, else a matching dispatch record."""
     found = None
     for line in (pr.get('body') or '').splitlines():
-        match = _BUILDER_LINE_RE.match(line.strip())
+        match = _BUILDER_LINE_RE.match(line.strip()) or _BUILDER_SLASH_RE.match(line.strip())
         if match:
-            found = (match.group(1), match.group(2))
+            found = (_AGENT_ALIASES.get(match.group(1).lower(), match.group(1)), match.group(2))
     if found:
         return found
     number = pr.get('number')
