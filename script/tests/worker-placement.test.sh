@@ -143,7 +143,7 @@ set -e
 grep -Fq 'refused (all eligible hosts at worker cap) host-primary=2/2 host-remote=2/2 host-remote-2=2/2' <<<"$out" \
   || fail "cap refusal names each host count: $out"
 
-# 2. Score is max(workers/cap, load_5m/ceiling): a 1 minute dip does not hide a high 5 minute load.
+# 2. Rank key is (workers/cap, load_5m per core): at equal worker share a 1 minute dip does not hide a high 5 minute load.
 cat >"$tmp/load-5m.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'host-primary cores=8 load=9.0 9.0 9.0\n'
@@ -213,5 +213,46 @@ out=$(WORKER_PLACEMENT_COUNT_WORKERS=1 ORCA_CLI_COMMAND=false WORKER_PLACEMENT_R
   python3 "$py" pick 2>"$tmp/noinv.err") || fail "no inventory pick failed: $out"
 grep -Fq 'worker count unavailable' "$tmp/noinv.err" || fail "no inventory must warn: $(cat "$tmp/noinv.err")"
 grep -Fq 'host=host-remote load_1m=0.5' <<<"$out" || fail "no inventory places on load: $out"
+
+# 5. Spread under load ratio (trial #1232): a quiet host must not take every back to back start
+# while other hosts with free slots sit at a high load ratio.
+cat >"$tmp/spread-trial.json" <<'EOF2'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-small": 4, "host-a": 4, "host-b": 4},
+  "host_load_ceilings": {"host-primary": 12, "host-small": 4, "host-a": 8, "host-b": 8},
+  "worker_placement": {"order": ["host-primary", "host-small", "host-a", "host-b"], "recent_start_seconds": 300}
+}
+EOF2
+cat >"$tmp/load-trial.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=1.0 1.0 1.0\n'
+printf 'host-small cores=4 load=0.5 0.5 0.5\n'
+printf 'host-a cores=8 load=6.0 6.0 6.0\n'
+printf 'host-b cores=8 load=6.0 6.0 6.0\n'
+EOF2
+chmod +x "$tmp/load-trial.sh"
+trial_picks() { # [ORCA_CLI_COMMAND override]: four recorded picks, prints the hosts
+  local cli=${1:-$tmp/fake-orca.sh} hosts= out h
+  rm -f "$tmp/recent.json"
+  for _ in 1 2 3 4; do
+    out=$(WORKER_PLACEMENT_COUNT_WORKERS=1 ORCA_CLI_COMMAND="$cli" FAKE_WORKERS="$tmp/workers.json" \
+      WORKER_PLACEMENT_RECENT_FILE="$tmp/recent.json" FLEET_LOAD_SCRIPT="$tmp/load-trial.sh" \
+      FLEET_WATCH_CONFIG="$tmp/spread-trial.json" python3 "$py" pick --record --json 2>>"$tmp/trial.err") \
+      || fail "trial pick failed: $out"
+    h=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["host"])' <<<"$out")
+    hosts="$hosts $h"
+  done
+  echo "$hosts"
+}
+distinct() { tr ' ' '\n' <<<"$1" | sed '/^$/d' | sort -u | wc -l | tr -d ' '; }
+workers_for
+: >"$tmp/trial.err"
+picked=$(trial_picks)
+[ "$(distinct "$picked")" -ge 3 ] || fail "four starts must reach at least 3 hosts (inventory ok):$picked"
+grep -Fq 'host-primary' <<<"$picked" && fail "coordinator host must not be picked while others have room:$picked"
+picked=$(trial_picks false)
+[ "$(distinct "$picked")" -ge 3 ] || fail "four starts must reach at least 3 hosts (inventory failed):$picked"
+grep -Fq 'worker count unavailable' "$tmp/trial.err" || fail "failed inventory must warn: $(cat "$tmp/trial.err")"
 
 echo "worker-placement.test.sh passed"

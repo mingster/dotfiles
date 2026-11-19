@@ -19,7 +19,9 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 tmp=$(mktemp -d)
-export WORKER_PLACEMENT_RECENT_FILE="$tmp/placement-recent.json"
+# Starts here are fake and never counted as live workers; an unusable recent file keeps them from filling host caps.
+export WORKER_PLACEMENT_RECENT_FILE="$tmp/no-such-dir/placement-recent.json"
+mkdir -p "$tmp" && : >"$tmp/no-such-dir"
 trap 'rm -rf "$tmp"' EXIT
 unset -f python3 2>/dev/null || true
 # shellcheck source=lib/git-identity.sh

@@ -261,7 +261,7 @@ def load_fleet_watch():
 def live_worker_counts(config: dict, hosts: list[str]) -> dict[str, int] | None:
     """Occupied workers per host, counted the way fleet-watch admit counts them.
 
-    None when the inventory cannot be read; the caller then places on load alone.
+    None when the inventory cannot be read; the caller then counts 0 live workers (recent starts still count).
     WORKER_PLACEMENT_COUNT_WORKERS=0 skips the inventory (tests without an orca fake), the same as a failed read.
     """
     if os.environ.get('WORKER_PLACEMENT_COUNT_WORKERS') == '0':
@@ -350,7 +350,7 @@ def pick_host(
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read_recent(path, window, time.time())
         result = _pick_host(config, spec_path, repo_selector, rows)
-        if result.get('ok') and result.get('workers') is not None:
+        if result.get('ok'):
             rows.append({'host': result['host'], 'at': time.time(), 'workers': result['workers'] + 1})
             tmp = path.with_name(path.name + '.tmp')
             try:
@@ -380,7 +380,7 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     claims = recent_claims(recent)
     considered: dict[str, float] = {}
     full: dict[str, str] = {}
-    candidates: list[tuple[bool, float, int, str, float, float, int | None, int]] = []
+    candidates: list[tuple[bool, float, float, int, str, float, float, int, int]] = []
     unmapped = 0
     for index, host in enumerate(hosts):
         if not host_has_repo_mapping(config, host, local_host, repo_selector):
@@ -400,20 +400,18 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
             continue
         considered[host] = load
         cap = caps.get(host, 0)
-        workers = None if live is None else max(live.get(host, 0), claims.get(host, 0))
-        if workers is not None and cap > 0 and workers >= cap:
+        workers = max(0 if live is None else live.get(host, 0), claims.get(host, 0))
+        if cap > 0 and workers >= cap:
             full[host] = '%d/%d' % (workers, cap)
             continue
         if host_over_load(host, load, cores, ceiling, local_host):
             continue
-        score = load5 / ceiling if ceiling > 0 else 0.0
-        if workers is not None and cap > 0:
-            score = max(score, workers / cap)
-        candidates.append((False, score, index, host, load, ceiling, workers, cap))
+        share = workers / cap if cap > 0 else 0.0
+        candidates.append((False, share, load5 / cores if cores > 0 else 0.0, index, host, load, ceiling, workers, cap))
     if candidates:
-        has_remote = any(c[3] != local_host for c in candidates)
-        ranked = [(c[3] == local_host and has_remote,) + c[1:] for c in candidates]
-        _, _, _, host, load, ceiling, workers, cap = min(ranked)
+        has_remote = any(c[4] != local_host for c in candidates)
+        ranked = [(c[4] == local_host and has_remote,) + c[1:] for c in candidates]
+        _, _, _, _, host, load, ceiling, workers, cap = min(ranked)
         is_local = host == local_host
         result: dict = {
             'ok': True,
@@ -500,8 +498,7 @@ def format_check_line(result: dict) -> str:
 def format_line(result: dict) -> str:
     if result.get('ok'):
         line = 'worker-placement: host=%s load_1m=%s' % (result['host'], result['load_1m'])
-        if result.get('workers') is not None:
-            line += ' workers=%s/%s' % (result['workers'], result['cap'])
+        line += ' workers=%s/%s' % (result['workers'], result['cap'])
         return line
     reason = result.get('reason') or 'unknown'
     if 'worker cap' in reason and not result.get('loads'):
