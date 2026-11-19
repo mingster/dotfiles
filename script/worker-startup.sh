@@ -419,6 +419,20 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
   printf '%s\n' "$out"
 }
 
+# A title "#<issue>|<role>" already names the issue, so a brief without a Refs line gets "Refs #<issue>" in a copy (#1201).
+# Prints the spec path to use.
+with_refs_line() { # <spec_file> <title>
+  local spec_file=$1 issue out
+  case "$2" in "#"[0-9]*"|"*) issue=${2#\#}; issue=${issue%%|*} ;; *) printf '%s\n' "$spec_file"; return 0 ;; esac
+  if grep -qE '(Refs|Closes|Fixes|Resolves):?[[:space:]]+[A-Za-z0-9_./-]*#[0-9]+' "$spec_file"; then
+    printf '%s\n' "$spec_file"
+    return 0
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+  { printf 'Refs #%s\n' "$issue"; cat "$spec_file"; } >"$out"
+  printf '%s\n' "$out"
+}
+
 usage_run() {
   echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
@@ -704,6 +718,7 @@ run_mode() {
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
   spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
+  spec=$(with_refs_line "$spec" "$title")
   spec=$(prepend_role_preamble "$spec" "$title")
   lint_dir=${wt:-}
   if [ -z "$lint_dir" ] && [ "$agent" != cursor ] && [ -z "$environment" ]; then

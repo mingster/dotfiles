@@ -41,7 +41,6 @@ The waiter script and its output live in `~/.local/state/agent-team/` (`elon-wai
 Run on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed only after it fires; re-arm an empty timeout wake once, then the next wake is whatever fleet-watch or a worker sends.
 
 - After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`; exit 1 (failed, or not accepted in 2 minutes) means restart once from the same brief. Do not open worker panes.
-- `~/dotfiles/script/fleet-pull.sh`; report skipped dirty checkouts.
 - `usage-gate.py show`, `worker-list` on your run, the `ready-for-agent` count, open PRs per project, and the release-manager screen.
 - **GitHub budget:** 5000 REST calls an hour for the whole fleet. Before any `gh` call, read `gh api rate_limit --jq .resources.core.remaining`; below 500, use local git, `.orca` state and files only, and start no regression round or status post until it recovers. A script reading commit statuses fetches each sha once per process.
 - `gh pr list --label needs-redesign`: apply `team.md`, Redesign.
@@ -50,7 +49,7 @@ Run on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed onl
 - A user ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its user in the ask's ledger row.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending user asks as one numbered batch before the user leaves; one answer holds at most one unit.
 - A screen on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate this wake.
-- **Sweep finished workers** (PR merged, `worker_done` for a settled task, or over 8 hours): match agent processes on every fleet host (`ps`, `lsof` for the working folder) to dispatches and merged PRs. For each finished one, `worker-release` the dispatch, `kill <pid>` from `ps` (never `pkill`), and remove its worktree when nothing is uncommitted or unmerged. A process under 8 hours with no dispatch and no PR: report it and ask the user. Finished workers count against host caps (`.claude/model-routing.md`, Starting a worker, step 5).
+- Finished workers are swept by `wrap-up.sh --scheduled`. A process under 8 hours with no dispatch and no PR: report it and ask the user. Finished workers count against host caps (`.claude/model-routing.md`, Starting a worker, step 5).
 
 ## Production job order
 

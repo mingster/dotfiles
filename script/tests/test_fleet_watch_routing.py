@@ -211,18 +211,18 @@ class BodyGate(unittest.TestCase):
             'PR body needs ## Self-check with a command and its output',
         )
         self.assertIsNone(gate.finish_block_reason(
-            '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+            '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\n'
         ))
 
     def test_unlinked_acceptance_issue_and_issue_arg(self):
         body = (
             '## Acceptance\n#42 acceptance:\n- [x] done\n\n'
-            '## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+            '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\n'
         )
         self.assertEqual(gate.finish_block_reason(body), 'PR body needs Closes #42 or Refs #42')
         self.assertIsNone(gate.finish_block_reason('Closes #42\n\n' + body))
         self.assertIsNone(gate.finish_block_reason('Refs o/r#42\n\n' + body))
-        plain = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+        plain = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\n'
         self.assertEqual(gate.finish_block_reason(plain, issue=42), 'PR body needs Closes #42 or Refs #42')
         self.assertIsNone(gate.finish_block_reason('Fixes #42\n\n' + plain, issue=42))
 
@@ -657,7 +657,7 @@ class Bounce(unittest.TestCase):
         self.assertEqual(sent, [])
 
     def test_issue_builder_without_closes_or_refs_bounces(self):
-        body = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+        body = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\n'
         lines, sent, _state = self.bounce(body, worker=self.worker('fullstack-dev - #42'))
         self.assertIn('PR body needs Closes #42 or Refs #42', lines[0])
         self.assertTrue(sent)

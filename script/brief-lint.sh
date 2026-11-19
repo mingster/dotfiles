@@ -8,8 +8,16 @@
 # or the exact first line (Verdict: PASS|PASS+NOTES|FAIL head=<40 hex> ...), since ship.sh parses only that (#1157). A rework brief links the Verdict
 # (a comment URL plus the word Verdict) and has a Self-check acceptance item.
 # Verify must name script/checks-local.sh unless a target repo dir is given that has no such script (#1195).
-# Usage: brief-lint.sh <file> [<target-repo-dir>]
+# Refs is "Refs #<n>", "Refs: #<n>", "Closes #<n>", "Fixes #<n>" or "Resolves #<n>", each with an optional owner/repo before the #.
+# --issue-body lints a draft issue body: the issue has no number yet, so Refs is not required (#1201).
+# Usage: brief-lint.sh [--issue-body] <file> [<target-repo-dir>]
 set -euo pipefail
+
+need_refs=1
+if [ "${1:-}" = --issue-body ]; then
+  need_refs=0
+  shift
+fi
 
 file="${1:-}"
 if [ -z "$file" ] || [ ! -f "$file" ] || [ ! -r "$file" ]; then
@@ -21,7 +29,7 @@ if [ -n "$repo_dir" ] && [ -d "$repo_dir" ] && [ ! -f "$repo_dir/script/checks-l
   need_checks_local=0
 fi
 
-awk -v need_checks_local="$need_checks_local" '
+awk -v need_checks_local="$need_checks_local" -v need_refs="$need_refs" '
 function note_search(cmd,    key) {
   key = cmd
   gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
@@ -67,7 +75,7 @@ function harvest_searches(line,    rest, chunk, bare) {
   sub(/[[:space:]]+$/, "", brief_type)
   next
 }
-/Refs [A-Za-z0-9_.\/-]*#[0-9]+/ {
+/(Refs|Closes|Fixes|Resolves):?[[:space:]]+[A-Za-z0-9_.\/-]*#[0-9]+/ {
   has_refs = 1
 }
 # Bold labels from the triage Agent Brief template: **Acceptance criteria:**, **Out of scope:**.
@@ -116,7 +124,7 @@ END {
   rc = 0
   nsearch = 0
   for (s in searches) nsearch++
-  if (!has_refs) { print "brief-lint: missing Refs"; rc = 1 }
+  if (need_refs == 1 && !has_refs) { print "brief-lint: missing Refs"; rc = 1 }
   if (!has_acceptance) { print "brief-lint: missing Acceptance"; rc = 1 }
   if (!has_out_of_scope) { print "brief-lint: missing Out of scope"; rc = 1 }
   if (!has_verify) { print "brief-lint: missing Verify"; rc = 1 }

@@ -470,7 +470,8 @@ env -u BASH_ENV \
 ec_lint=$?
 set -e
 [ "$ec_lint" -ne 0 ] && ok || bad "bad brief --run should exit non-zero"
-grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && ok || bad "bad brief stderr should include brief-lint output ($(cat "$tmp/run-lint.err"))"
+grep -q 'brief-lint: missing Acceptance' "$tmp/run-lint.err" && ok || bad "bad brief stderr should include brief-lint output ($(cat "$tmp/run-lint.err"))"
+grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && bad "the title #1 supplies the Refs line, so lint must not report it missing" || ok
 grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should not worker-start when brief-lint fails" || ok
 
 # 968: a brief with no Finish starts, and the spec the worker gets carries the fixed Finish block
@@ -512,6 +513,19 @@ grep -q 'Builder: agent=<agent>' "$tmp/orca-nofin.log" && bad "builder spec Fini
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
 grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
 grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
+
+# 1201: a brief with no Refs line gets "Refs #<issue>" from the title, in a copy. A written Refs form is left alone.
+norefs_spec="$tmp/norefs-spec.txt"
+sed '/^Refs #968$/d' "$nofin_spec" >"$norefs_spec"
+ws968_run "$tmp/orca-norefs.log" run_norefs "$norefs_spec"
+[ "$ec_968" = 0 ] && ok || bad "a brief with no Refs should start from the title ($ec_968) $(cat "$tmp/run-968.err")"
+grep -q '^Refs #1$' "$tmp/orca-norefs.log" && ok || bad "worker spec should carry Refs #1 from the title"
+grep -q 'Refs' "$norefs_spec" && bad "the original brief file should be untouched by the Refs injection" || ok
+for form in 'Refs: #7' 'Closes #7' 'Refs a/b#7'; do
+  sed "s|^Refs #968\$|$form|" "$nofin_spec" >"$tmp/refsform.txt"
+  ws968_run "$tmp/orca-refsform.log" run_refsform "$tmp/refsform.txt"
+  [ "$ec_968" = 0 ] && ! grep -q '^Refs #1$' "$tmp/orca-refsform.log" && ok || bad "'$form' is a Refs line, so none is injected ($ec_968) $(cat "$tmp/run-968.err")"
+done
 
 # 968: a brief with its own Finish is not given a second one, and a builder with its own Finish still gets the exact Builder line
 ownfin_builder="$tmp/ownfin-builder.txt"

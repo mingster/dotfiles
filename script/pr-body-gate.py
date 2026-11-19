@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """PR body gate shared by fleet-watch and ship.sh.
 
-A builder may finish only when Acceptance has no unchecked box and ## Self-check
-names a command and a line of output.
+A builder may finish only when Acceptance has no unchecked box, ## Self-check
+names a command and a line of output, and the body has a valid
+"Builder: agent=<provider> model=<model>" line (#1201).
 """
 import re
 import sys
@@ -19,6 +20,10 @@ _ACCEPT_ISSUE = re.compile(
     r'(?:^|\b)#([0-9]+)\s+acceptance\b|^##\s+Acceptance(?: criteria)?\s*\(\s*#([0-9]+)\s*\)',
     re.I | re.M,
 )
+_BUILDER_LINE = re.compile(r'^Builder: agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+)\s*$')
+_PROVIDERS = ('claude', 'antigravity', 'agy', 'grok', 'cursor', 'codex')
+# Model prefixes of the families in usage-gate.py family(). A role name or a host fails here.
+_MODEL_PREFIXES = ('claude-', 'sonnet', 'opus', 'haiku', 'gpt-', 'composer', 'grok', 'gemini-')
 _ISSUE_LINK_FMT = (
     r'\b(?:Closes|Closed|Close|Fixes|Fixed|Fix|Resolves|Resolved|Resolve|Refs)\s+(?:[A-Za-z0-9_./-]+)?#%s\b'
 )
@@ -66,6 +71,18 @@ def self_check_has_command_and_output(body):
     return bool(commands and other)
 
 
+def has_valid_builder_line(body):
+    """True when the last Builder: line names a known provider and a model of a known family."""
+    found = None
+    for line in (body or '').splitlines():
+        match = _BUILDER_LINE.match(line.strip())
+        if match:
+            found = match.groups()
+    if not found:
+        return False
+    return found[0].lower() in _PROVIDERS and found[1].lower().startswith(_MODEL_PREFIXES)
+
+
 def has_issue_link(body, issue_number):
     if not issue_number:
         return True
@@ -89,6 +106,8 @@ def finish_block_reason(body, issue=None):
     missing = int(issue) if (issue and not has_issue_link(body, issue)) else unlinked_acceptance_issue(body)
     if missing:
         return 'PR body needs Closes #%d or Refs #%d' % (missing, missing)
+    if not has_valid_builder_line(body):
+        return "PR body needs a 'Builder: agent=<provider> model=<model>' line (provider claude, antigravity, grok or cursor, never a role or host)"
     return None
 
 
