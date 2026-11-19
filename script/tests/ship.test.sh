@@ -365,6 +365,7 @@ if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] \
   && grep -Fxq 'worktree set --worktree path:/wt/issue-13 --workspace-status completed' "$MF_DIR/orca-called" \
   && ! grep -q 'branch:' "$MF_DIR/orca-called" && ! grep -q '/wt/other' "$MF_DIR/orca-called" \
   && ! grep -q -- '--environment' "$MF_DIR/orca-called" \
+  && ! grep -q 'worker-list' "$MF_DIR/orca-called" \
   && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
   ok "no Self-review or cwd check; sets the merged branch's worktree completed by path on the local Orca"
 else
@@ -1028,6 +1029,21 @@ if [ "$SHIP_RC" -ne 0 ] && [ "$unknown_views" -ge 2 ] && [ "$unknown_views" -le 
   ok "UNKNOWN mergeable rereads a few times and then refuses"
 else
   bad "UNKNOWN mergeable rereads a few times and then refuses" "rc=$SHIP_RC views=$unknown_views out=$SHIP_OUT"
+fi
+
+# 1200. The default wait is 4 s and 15 rereads (60 s in all), not 20 s and 3.
+mergeable_pr 3021 feat-unknown-default-wait
+: > "$MF_GH_LOG"
+mkdir -p "$MF_DIR/sleepbin"
+printf '#!/usr/bin/env bash\necho "$1" >> "%s/sleeps"\n' "$MF_DIR" > "$MF_DIR/sleepbin/sleep"
+chmod +x "$MF_DIR/sleepbin/sleep"
+: > "$MF_DIR/sleeps"
+SHIP_OUT=$(env -u SHIP_MERGEABLE_WAIT -u SHIP_MERGEABLE_REREADS PATH="$MF_DIR/sleepbin:$PATH" bash "$here/ship.sh" --repo example/repo --pr 3021 2>&1)
+SHIP_RC=$?
+if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <"$MF_DIR/sleeps" | tr -d ' ')" = 15 ] && [ "$(sort -u "$MF_DIR/sleeps")" = 4 ]; then
+  ok "default mergeable wait is 4 s with 15 rereads"
+else
+  bad "default mergeable wait is 4 s with 15 rereads" "rc=$SHIP_RC sleeps=$(tr '\n' ' ' <"$MF_DIR/sleeps") out=$SHIP_OUT"
 fi
 
 # A Review: FAIL at the merge head blocks the merge. A later Verdict: PASS does not

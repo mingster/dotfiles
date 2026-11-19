@@ -10,9 +10,10 @@ trap 'rm -rf "$tmp"' EXIT
 
 fail=0
 r="$tmp/repo"
-mkdir -p "$r/script/tests/lib"
+mkdir -p "$r/script/tests/lib" "$r/script/lib"
 cp "$src/script/checks-local.sh" "$src/script/select-changed-script-tests.sh" "$r/script/"
 cp "$src/script/tests/lib/asdf-pin.sh" "$r/script/tests/lib/"
+cp "$src/script/lib/hooks-changed.sh" "$r/script/lib/"
 git -C "$r" init -q -b main
 git -C "$r" -c user.email=t@t -c user.name=t add -A
 git -C "$r" -c user.email=t@t -c user.name=t commit -qm base
@@ -42,5 +43,18 @@ else
 fi
 got=$(NO_PROJECT_NAMES_FILE="$tmp/some.pattern" bash "$r/script/checks-local.sh" --list-only --base main 2>&1)
 if grep -q SKIPPED <<<"$got"; then echo "FAIL: SKIPPED shown with a pattern file"; fail=1; else echo "ok: no SKIPPED with a pattern file"; fi
+
+# 1200. The hook tests run only when a hook, brief-lint.sh or checks-local.sh changed.
+. "$src/script/lib/hooks-changed.sh"
+hc() { hooks_changed "$@" && echo yes || echo no; }
+for c in "docs/readme.md script/ship.sh:no" "templates/agent-team/.claude/hooks/guard.py:yes" ".claude/hooks/x.sh docs/a.md:yes" "script/brief-lint.sh:yes" "script/checks-local.sh:yes" ":no"; do
+  files=${c%:*}; want=${c##*:}
+  # shellcheck disable=SC2086
+  got=$(hc $files)
+  if [ "$got" = "$want" ]; then echo "ok: hooks_changed '$files' is $want"; else echo "FAIL: hooks_changed '$files' got $got want $want"; fail=1; fi
+done
+if grep -q '^if hooks_changed ' "$src/script/checks-local.sh" && ! grep -B1 'unittest discover' "$src/script/checks-local.sh" | grep -qv 'hooks_changed\|unittest'; then
+  echo "ok: checks-local gates the hook tests on hooks_changed"
+else echo "FAIL: checks-local does not gate the hook tests"; fail=1; fi
 
 [ "$fail" -eq 0 ]

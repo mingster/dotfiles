@@ -202,6 +202,16 @@ if [ "$code" = 1 ] && echo "$out" | grep -q '(unapproved edit)$' && [ "$(echo "$
   pass=$((pass+1)); echo "ok   only unapproved commits after the baseline are findings"
 else fail=$((fail+1)); echo "FAIL receipt after baseline (exit $code)"; echo "$out"; fi
 
+# 1200. A squash merge puts a blank line before Co-authored-by:, so Owner-approved: is no git trailer. It still counts.
+echo squash >> "$D/templates/agent-team/.claude/agents/dev.md"
+( cd "$D" && git add -A && git -c user.name=t -c user.email=t@t commit -qm "squash edit" -m "Owner-approved: yes" -m "Co-authored-by: A B <ab@example.com>" )
+echo none >> "$D/templates/agent-team/.claude/agents/dev.md"
+( cd "$D" && git add -A && git -c user.name=t -c user.email=t@t commit -qm "blank only" -m "Owner-approved:" -m "Co-authored-by: A B <ab@example.com>" )
+out=$(ROLE_RECEIPT_BASE="$base" DOTFILES="$D" "$here/team-audit.sh" "$P" 2>&1)
+if ! echo "$out" | grep -q '(squash edit)' && echo "$out" | grep -q '(blank only)'; then
+  pass=$((pass+1)); echo "ok   Owner-approved: above a blank line before Co-authored-by: is a receipt; an empty one is not"
+else fail=$((fail+1)); echo "FAIL squash receipt"; echo "$out"; fi
+
 # --report: checks plus metrics (fake gh counts the calls), real bun runs team-audit-metrics.ts
 if ! command -v bun >/dev/null 2>&1; then fail=$((fail+1)); echo "FAIL --report tests need bun on PATH"
 else
