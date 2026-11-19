@@ -7276,13 +7276,31 @@ def worker_is_settled_remote(worker):
                 and w.get('pushed') is not False)
 
 
+_UNKNOWN_DISPATCH_BODY = 'Orca rejected this worker_done: worker_done references unknown dispatch'
+
+
+def worker_done_rejected(message):
+    """True for the copy of a relayed worker_done that the coordinator's Orca rejected as unknown_dispatch (#1228).
+
+    The full inbox view carries _orcaLifecycleRejection in the payload; the concise view keeps only ids,
+    so the rejection shows only in the body Orca writes.
+    """
+    if not isinstance(message, dict) or message.get('type') != 'worker_done':
+        return False
+    rejection = _message_payload(message).get('_orcaLifecycleRejection')
+    if isinstance(rejection, dict):
+        return rejection.get('code') == 'unknown_dispatch'
+    return str(message.get('body') or '').startswith(_UNKNOWN_DISPATCH_BODY)
+
+
 def reconcile_remote_completions(config, state, workers, messages, rpc_call):
-    """Turn a settled remote worker into the worker_done the coordinator server rejected (#1220).
+    """Turn a settled remote worker into the worker_done the coordinator server rejected (#1220, #1228).
 
     The remote host accepts worker_done, but the coordinator reconciles the relayed mail against local
-    dispatches only and answers unknown_dispatch. So a settled remote row with no worker_done in messages
-    gets one synthesized here, once per dispatch. A task with no PR, or a failed one, is released at once
-    and announced in one line. A succeeded PR task is left to release_green_successes.
+    dispatches only and answers unknown_dispatch (inside Orca, so not fixable here). The rejected copy is
+    not an accepted worker_done, so a settled remote row with no accepted one gets one synthesized here,
+    once per dispatch. A task with no PR, or a failed one, is released at once and announced in one line.
+    A succeeded PR task is left to release_green_successes.
     Returns the notice lines.
     """
     done = state.setdefault('remote_reconciled', [])
@@ -7290,12 +7308,12 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
         done = []
         state['remote_reconciled'] = done
     seen = set(done)
-    arrived = set()
+    arrived, rejected = set(), set()
     for message in messages or []:
         if isinstance(message, dict) and message.get('type') == 'worker_done':
             dispatch = _message_payload(message).get('dispatchId')
             if isinstance(dispatch, str):
-                arrived.add(dispatch)
+                (rejected if worker_done_rejected(message) else arrived).add(dispatch)
     notices = []
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_is_remote(worker, config):
@@ -7328,7 +7346,11 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
         except SEND_ERRORS:
             pass
         _mark_worker_released(worker)
-        notices.append('remote worker %s finished %s' % (dispatch, outcome))
+        if dispatch in rejected:
+            notices.append('remote worker %s finished %s; its rejected worker_done (unknown_dispatch) is settled '
+                           'and released, no hand release needed' % (dispatch, outcome))
+        else:
+            notices.append('remote worker %s finished %s' % (dispatch, outcome))
     return notices
 
 
