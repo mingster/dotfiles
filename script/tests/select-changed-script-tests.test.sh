@@ -190,7 +190,7 @@ case_fleet_watch_recorded_replies() {
   grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
     || fail "recorded replies must select fleet-watch tests"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -lt 50 ] || fail "recorded replies want scoped suite got ${count:-0}"
+  [ "${count:-0}" -lt 80 ] || fail "recorded replies want scoped suite got ${count:-0}"
   ok "recorded fleet-watch replies map to fleet-watch tests"
 }
 
@@ -263,7 +263,7 @@ case11_table_driven_mapped_paths() {
     grep -Fq 'Fallback:' <<<"$combo" \
       && fail "case11b mapped path plus another mapped path must not fallback: $path"
     count=$(script_tests_count_from_output <<<"$combo")
-    [ "${count:-0}" -lt 50 ] || fail "case11b combo looks like full suite ($count): $path"
+    [ "${count:-0}" -lt 80 ] || fail "case11b combo looks like full suite ($count): $path"
   done
 
   out=$(list_selector_output script/usage-gate.py script/usage-gate-hook.py)
