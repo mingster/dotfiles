@@ -52,6 +52,20 @@ class ParsedTitles(unittest.TestCase):
                            ('#7|fullstack-dev', []), ('qa-sdet - verify PRs #7, #8', [7, 8])):
             self.assertEqual(fw.verifier_title_prs({'_task_title': title}), prs, title)
 
+    def test_verifier_prs_read_the_pr_in_the_detail_segment(self):
+        for title, prs in (('#1204|qa-sdet|verify PR 1207', [1204, 1207]), ('#1204|qa-sdet|verify PR #1207', [1204, 1207]),
+                           ('#1204|qa-sdet|standing', [1204]), ('#1204|fullstack-dev|verify PR 1207', [])):
+            self.assertEqual(fw.verifier_title_prs({'_task_title': title}), prs, title)
+
+    def test_verifier_prs_read_title_and_name_keys(self):
+        self.assertEqual(fw.verifier_title_prs({'title': '#5|qa-sdet|verify PR 9'}), [5, 9])
+        self.assertEqual(fw.verifier_title_prs({'name': 'qa-sdet verify o/r#9'}), [9])
+
+    def test_verifier_prs_read_the_worktree_basename(self):
+        for path, prs in (('/w/dotfiles/verify-7', [7]), ('/w/dotfiles/v7', [7]), ('/w/dotfiles/verify-7-b', [7]),
+                          ('/w/dotfiles/vd-7', [7]), ('/w/dotfiles/d1222', []), ('/w/dotfiles/verify-standing-x', [])):
+            self.assertEqual(fw.verifier_title_prs({'workspace': 'wt::' + path}), prs, path)
+
     def test_builder_role_reads_both_forms(self):
         self.assertEqual(fw._builder_role({'_task_title': '#42|fullstack-dev'}), 'fullstack-dev')
         self.assertEqual(fw._builder_role({'_task_title': 'fullstack-dev - #42'}), 'fullstack-dev')

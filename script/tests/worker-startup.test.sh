@@ -1790,6 +1790,44 @@ fail_start "$tmp/orca-fail-given.log" --worktree-path "$wt_proof"
 [ "$fail_ec" = 7 ] && ok || bad "failed start on a given worktree keeps its exit code ($fail_ec)"
 grep -Fq 'worktree rm' "$tmp/orca-fail-given.log" && bad "failed start removed a worktree it did not create" || ok
 
+# A qa-sdet start for a PR that already has a live verifier warns on stderr and still starts (#1222).
+orca_live_stub="$tmp/orca-live"
+cat >"$orca_live_stub" <<EOS
+#!/usr/bin/env bash
+case " \$* " in
+  *" orchestration worker-list "*)
+    echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"}]}}'
+    exit 0 ;;
+  *" orchestration task-list "*)
+    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"}]}}'
+    exit 0 ;;
+esac
+exec "$orca_stub" "\$@"
+EOS
+chmod +x "$orca_live_stub"
+live_verifier_run() { # <title> [extra args...]
+  : >"$tmp/orca-live.log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_live_stub" ORCA_STUB_LOG="$tmp/orca-live.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    USAGE_GATE_PICK="$tmp/pick-stub.py" USAGE_GATE_PRESETS="$root/.orca/presets.json" \
+    PICK_STUB_MODE=sonnet PICK_STUB_LOG="$tmp/pick-stub.log" WORKER_STARTUP_STATE="$route_state" \
+    bash --noprofile --norc "$script" --run run_route --spec "$spec_file" --title "$1" --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --repo "path:$clean" "${@:2}" >"$tmp/live.out" 2>"$tmp/live.err"
+  live_ec=$?
+  set -e
+}
+live_verifier_run "#9|qa-sdet|verify PR 77" --name verify-77
+[ "$live_ec" = 0 ] && ok || bad "a duplicate verifier start still goes on (ec=$live_ec) $(cat "$tmp/live.err")"
+grep -Fq 'worker-startup: warning: live verifier ctx_live1 (#9|qa-sdet|verify PR 77) is already running for PR #77' "$tmp/live.err" && ok || bad "duplicate verifier should warn naming the live dispatch ($(cat "$tmp/live.err"))"
+grep -q 'ctx_live2' "$tmp/live.err" && bad "a live builder must not be named" || ok
+grep -q 'worker-start' "$tmp/orca-live.log" && ok || bad "the duplicate verifier should still reach worker-start"
+live_verifier_run "#9|qa-sdet|standing" --name verify-78
+grep -q 'warning: live verifier' "$tmp/live.err" && bad "a verifier for another PR must not warn ($(cat "$tmp/live.err"))" || ok
+live_verifier_run "#79|fullstack-dev" --name verify-77
+grep -q 'warning: live verifier' "$tmp/live.err" && bad "a builder start must not warn" || ok
+
 rm -f "$bin/hostname"
 
 echo "worker-startup: $pass passed, $fail failed"
