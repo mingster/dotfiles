@@ -3,6 +3,8 @@
 # Red-green: failure modes and orca stubs before the happy path.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+# Placement tests use fake hosts; only the worker count tests below read an orca fake.
+export WORKER_PLACEMENT_COUNT_WORKERS=0
 root=$(cd "$here/../.." && pwd -P)
 # shellcheck source=lib/asdf-pin.sh
 . "$here/lib/asdf-pin.sh"
@@ -17,6 +19,9 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 tmp=$(mktemp -d)
+# Starts here are fake and never counted as live workers; an unusable recent file keeps them from filling host caps.
+export WORKER_PLACEMENT_RECENT_FILE="$tmp/no-such-dir/placement-recent.json"
+mkdir -p "$tmp" && : >"$tmp/no-such-dir"
 trap 'rm -rf "$tmp"' EXIT
 unset -f python3 2>/dev/null || true
 # shellcheck source=lib/git-identity.sh
@@ -1010,7 +1015,7 @@ out_skip=$(FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" FLEET_WATCH_CONFIG="$tmp/fleet
 ec_skip=$?
 set -e
 [ "$ec_skip" = 0 ] && ok || bad "placement skips unreadable host ($ec_skip)"
-grep -q 'host=host-primary' <<<"$out_skip" && ok || bad "skipped unreadable host, chose primary ($out_skip)"
+grep -q 'host=host-overflow' <<<"$out_skip" && ok || bad "skipped unreadable host, coordinator host last, chose overflow ($out_skip)"
 
 set +e
 out_pickonly=$(FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" \
@@ -1018,7 +1023,7 @@ out_pickonly=$(FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" FLEET_WATCH_CONFIG="$tmp/f
 ec_pickonly=$?
 set -e
 [ "$ec_pickonly" = 0 ] && ok || bad "--pick-host-only exits 0 ($ec_pickonly)"
-grep -q 'worker-placement: host=host-primary' <<<"$out_pickonly" && ok || bad "pick-host-only output ($out_pickonly)"
+grep -q 'worker-placement: host=host-overflow' <<<"$out_pickonly" && ok || bad "pick-host-only output ($out_pickonly)"
 
 # Explicit --on: remote start still uses the given environment (placement not applied)
 : >"$tmp/orca-explicit-on.log"
@@ -1059,7 +1064,7 @@ out_secrets=$(FLEET_LOAD_SCRIPT="$tmp/fleet-load.sh" FLEET_WATCH_CONFIG="$tmp/fl
 ec_secrets=$?
 set -e
 [ "$ec_secrets" = 0 ] && ok || bad "secrets prose stays code ($ec_secrets)"
-grep -q 'host=host-primary' <<<"$out_secrets" && ok || bad "code host for secrets prose ($out_secrets)"
+grep -q 'host=host-overflow' <<<"$out_secrets" && ok || bad "code host for secrets prose ($out_secrets)"
 browser_spec="$tmp/browser-spec.txt"
 printf 'Host role: browser\n\nOpen staging and check UI.\n' >"$browser_spec"
 cat >"$tmp/load-browser.sh" <<'EOS'
@@ -1104,6 +1109,24 @@ set -e
 [ "$ec_repo_map" = 0 ] && ok || bad "remote repo map run exits 0 ($ec_repo_map) $(cat "$tmp/repo-map.err")"
 grep -q 'worktree create' "$tmp/orca-repo-map.log" && ok || bad "repo map worktree create logged"
 grep -q 'id:remote-app-id' "$tmp/orca-repo-map.log" && ok || bad "worktree create uses mapped remote repo id ($(cat "$tmp/orca-repo-map.log"))"
+
+# Explicit --on (#1230): a local repo id maps through worker_placement.repos; a remote id passes as given.
+for on_case in local-app-id remote-app-id; do
+  : >"$tmp/orca-on-$on_case.log"
+  set +e
+  unset -f python3 2>/dev/null || true
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-on-$on_case.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+    bash --noprofile --norc "$script" --run "run_on_$on_case" --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --on host-remote --name "n_on_$on_case" --repo "id:$on_case" 2>"$tmp/on-$on_case.err"
+  ec_on=$?
+  set -e
+  [ "$ec_on" = 0 ] && ok || bad "--on host-remote --repo id:$on_case exits 0 ($ec_on) $(cat "$tmp/on-$on_case.err")"
+  grep 'worktree create' "$tmp/orca-on-$on_case.log" | grep -q -- '--repo id:remote-app-id' && ok \
+    || bad "--on with id:$on_case creates the worktree from id:remote-app-id ($(grep 'worktree create' "$tmp/orca-on-$on_case.log"))"
+done
 
 # --repo path:<dir> resolves to its Orca repo id before placement, so it places like id:.
 mkdir -p "$tmp/pathapp"

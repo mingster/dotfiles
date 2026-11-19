@@ -3,21 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 NON_WORKER_ROLES = frozenset({'heavy', 'release'})
 BROWSER_ROLE = 'browser'
 CODE_ROLES = frozenset({'code', ''})
 LOCAL_MAX_LOAD_PER_CORE = 0.7
+DEFAULT_RECENT_START_SECONDS = 300
 BROWSER_ROLE_LINE = re.compile(r'^Host role:\s*browser\s*$', re.IGNORECASE | re.MULTILINE)
 LOAD_LINE = re.compile(
     r'^(?P<host>[A-Za-z0-9._-]+)\s+.*\bcores=(?P<cores>[0-9]+).*'
-    r'\bload=(?P<load>[0-9]+(?:\.[0-9]+)?)',
+    r'\bload=(?P<load>[0-9]+(?:\.[0-9]+)?)(?:\s+(?P<load5>[0-9]+(?:\.[0-9]+)?))?',
 )
 UNREACHABLE = re.compile(r'\bunreachable\b', re.IGNORECASE)
 
@@ -73,7 +77,7 @@ def load_sensor_path(config: dict) -> Path:
     return Path(expand('~/.claude/state/fleet-load.sh'))
 
 
-def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int] | None]:
+def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int, float] | None]:
     if not sensor.is_file():
         raise LoadSensorError(f'missing load sensor {sensor}')
     try:
@@ -88,7 +92,7 @@ def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int] | No
         raise LoadSensorError(f'load sensor failed ({exc})') from exc
     if proc.returncode != 0:
         raise LoadSensorError('load sensor failed')
-    out: dict[str, tuple[float, int] | None] = {}
+    out: dict[str, tuple[float, int, float] | None] = {}
     for line in proc.stdout.splitlines():
         if UNREACHABLE.search(line):
             host = line.split(None, 1)[0] if line.split() else ''
@@ -101,24 +105,27 @@ def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int] | No
         host = match.group('host')
         try:
             load = float(match.group('load'))
+            load5 = float(match.group('load5')) if match.group('load5') else load
             cores = int(match.group('cores'))
             if cores < 1:
                 cores = 1
-            out[host] = (load, cores)
+            out[host] = (load, cores, load5)
         except ValueError:
             out[host] = None
     return out
 
 
 def placement_order(config: dict) -> list[str]:
+    """Every host_caps host. worker_placement.order only ranks them for ties."""
+    host_caps = config.get('host_caps') or {}
+    if not isinstance(host_caps, dict) or not host_caps:
+        return []
     placement = config.get('worker_placement') or {}
     if isinstance(placement, dict):
         order = placement.get('order')
         if isinstance(order, list) and all(isinstance(h, str) and h for h in order):
-            return order
-    host_caps = config.get('host_caps') or {}
-    if not isinstance(host_caps, dict) or not host_caps:
-        return []
+            ranked = [h for h in order if h in host_caps]
+            return ranked + [h for h in host_caps if h not in ranked]
     local_host = config.get('local_host')
     local = local_host if isinstance(local_host, str) and local_host in host_caps else None
     others = [h for h in host_caps if h != local]
@@ -231,7 +238,130 @@ def eligible_hosts(order: list[str], config: dict, kind: str, roles: dict[str, s
     return picked
 
 
-def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = None) -> dict:
+def host_caps_of(config: dict) -> dict[str, int]:
+    raw = config.get('host_caps') or {}
+    out: dict[str, int] = {}
+    if isinstance(raw, dict):
+        for host, cap in raw.items():
+            try:
+                out[str(host)] = int(cap)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def load_fleet_watch():
+    path = Path(__file__).resolve().parent / 'fleet-watch.py'
+    spec = importlib.util.spec_from_file_location('fleet_watch_for_placement', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def live_worker_counts(config: dict, hosts: list[str]) -> dict[str, int] | None:
+    """Occupied workers per host, counted the way fleet-watch admit counts them.
+
+    None when the inventory cannot be read; the caller then counts 0 live workers (recent starts still count).
+    WORKER_PLACEMENT_COUNT_WORKERS=0 skips the inventory (tests without an orca fake), the same as a failed read.
+    """
+    if os.environ.get('WORKER_PLACEMENT_COUNT_WORKERS') == '0':
+        return None
+    try:
+        fw = load_fleet_watch()
+        workers = fw.deduplicate_workers(fw.fetch_workers(config))
+        env_names = fw._resolve_env_names(workers, config, None)
+        counts: dict[str, int] = {}
+        for host in hosts:
+            receipt = fw.admit(host, config, workers=workers, env_names=env_names)
+            counts[host] = int(receipt.get('occupied') or 0)
+        return counts
+    except Exception as exc:  # inventory is advisory; never block placement on it
+        print('worker-placement: worker count unavailable (%s); placing on load only' % exc, file=sys.stderr)
+        return None
+
+
+def recent_start_seconds(config: dict) -> float:
+    placement = config.get('worker_placement') or {}
+    raw = placement.get('recent_start_seconds') if isinstance(placement, dict) else None
+    try:
+        return float(raw) if raw is not None else float(DEFAULT_RECENT_START_SECONDS)
+    except (TypeError, ValueError):
+        return float(DEFAULT_RECENT_START_SECONDS)
+
+
+def recent_file_path(config: dict) -> Path:
+    env = os.environ.get('WORKER_PLACEMENT_RECENT_FILE')
+    if env:
+        return Path(expand(env))
+    placement = config.get('worker_placement') or {}
+    raw = placement.get('recent_file') if isinstance(placement, dict) else None
+    if isinstance(raw, str) and raw.strip():
+        return Path(expand(raw.strip()))
+    return Path(expand('~/.claude/state/worker-placement-recent.json'))
+
+
+def read_recent(path: Path, window: float, now: float) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return []
+    rows = data.get('starts') if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    keep = []
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get('host'), str):
+            continue
+        try:
+            at = float(row.get('at'))
+            claimed = int(row.get('workers'))
+        except (TypeError, ValueError):
+            continue
+        if now - at <= window:
+            keep.append({'host': row['host'], 'at': at, 'workers': claimed})
+    return keep
+
+
+def recent_claims(rows: list[dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for row in rows:
+        out[row['host']] = max(out.get(row['host'], 0), row['workers'])
+    return out
+
+
+def pick_host(
+    config: dict,
+    spec_path: Path | None,
+    repo_selector: str | None = None,
+    record: bool = False,
+) -> dict:
+    """Pick a host. With record, hold a lock and remember the start for the recent window."""
+    if not record:
+        return _pick_host(config, spec_path, repo_selector, [])
+    path = recent_file_path(config)
+    window = recent_start_seconds(config)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock = open(str(path) + '.lock', 'a', encoding='utf-8')
+    except OSError as exc:
+        print('worker-placement: recent starts unavailable (%s)' % exc, file=sys.stderr)
+        return _pick_host(config, spec_path, repo_selector, [])
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read_recent(path, window, time.time())
+        result = _pick_host(config, spec_path, repo_selector, rows)
+        if result.get('ok'):
+            rows.append({'host': result['host'], 'at': time.time(), 'workers': result['workers'] + 1})
+            tmp = path.with_name(path.name + '.tmp')
+            try:
+                tmp.write_text(json.dumps({'starts': rows}), encoding='utf-8')
+                os.replace(tmp, path)
+            except OSError as exc:
+                print('worker-placement: could not record start (%s)' % exc, file=sys.stderr)
+    return result
+
+
+def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, recent: list[dict]) -> dict:
     kind = task_kind(spec_path)
     roles = host_roles(config)
     order = placement_order(config)
@@ -245,10 +375,14 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
     except LoadSensorError as exc:
         return {'ok': False, 'reason': str(exc), 'loads': {}}
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
+    caps = host_caps_of(config)
+    live = live_worker_counts(config, hosts)
+    claims = recent_claims(recent)
     considered: dict[str, float] = {}
-    candidates: list[tuple[float, str, float, float]] = []
+    full: dict[str, str] = {}
+    candidates: list[tuple[bool, float, float, int, str, float, float, int, int]] = []
     unmapped = 0
-    for host in hosts:
+    for index, host in enumerate(hosts):
         if not host_has_repo_mapping(config, host, local_host, repo_selector):
             unmapped += 1
             print(
@@ -260,21 +394,32 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
         sample = loads.get(host)
         if sample is None:
             continue
-        load, cores = sample
+        load, cores, load5 = sample
         ceiling = ceiling_for(host, config)
         if ceiling is None:
             continue
         considered[host] = load
-        if not host_over_load(host, load, cores, ceiling, local_host):
-            candidates.append((load / ceiling if ceiling > 0 else 0.0, host, load, ceiling))
+        cap = caps.get(host, 0)
+        workers = max(0 if live is None else live.get(host, 0), claims.get(host, 0))
+        if cap > 0 and workers >= cap:
+            full[host] = '%d/%d' % (workers, cap)
+            continue
+        if host_over_load(host, load, cores, ceiling, local_host):
+            continue
+        share = workers / cap if cap > 0 else 0.0
+        candidates.append((False, share, load5 / cores if cores > 0 else 0.0, index, host, load, ceiling, workers, cap))
     if candidates:
-        _, host, load, ceiling = min(candidates, key=lambda c: c[0])
+        has_remote = any(c[4] != local_host for c in candidates)
+        ranked = [(c[4] == local_host and has_remote,) + c[1:] for c in candidates]
+        _, _, _, _, host, load, ceiling, workers, cap = min(ranked)
         is_local = host == local_host
         result: dict = {
             'ok': True,
             'host': host,
             'load_1m': load,
             'ceiling': ceiling,
+            'workers': workers,
+            'cap': cap,
             'local': is_local,
             'environment': None if is_local else host,
             'task_kind': kind,
@@ -294,7 +439,10 @@ def pick_host(config: dict, spec_path: Path | None, repo_selector: str | None = 
         return {'ok': False, 'reason': 'no host has a repo mapping', 'loads': considered}
     if not considered:
         return {'ok': False, 'reason': 'no readable load for any eligible host', 'loads': {}}
-    return {'ok': False, 'reason': 'all eligible hosts over load ceiling', 'loads': considered}
+    if full and len(full) == len(considered):
+        return {'ok': False, 'reason': 'all eligible hosts at worker cap', 'workers': full}
+    return {'ok': False, 'reason': 'all eligible hosts over load ceiling or worker cap', 'loads': considered,
+            'workers': full}
 
 
 def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: str | None = None) -> dict:
@@ -311,7 +459,7 @@ def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: s
     sample = loads.get(name)
     if sample is None:
         return {'ok': True, 'host': name, 'reason': 'no readable load'}
-    load, cores = sample
+    load, cores, _ = sample
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     if not host_over_load(name, load, cores, ceiling, local_host):
         return {'ok': True, 'host': name, 'load_1m': load, 'ceiling': ceiling}
@@ -349,8 +497,13 @@ def format_check_line(result: dict) -> str:
 
 def format_line(result: dict) -> str:
     if result.get('ok'):
-        return 'worker-placement: host=%s load_1m=%s' % (result['host'], result['load_1m'])
+        line = 'worker-placement: host=%s load_1m=%s' % (result['host'], result['load_1m'])
+        line += ' workers=%s/%s' % (result['workers'], result['cap'])
+        return line
     reason = result.get('reason') or 'unknown'
+    if 'worker cap' in reason and not result.get('loads'):
+        parts = ' '.join('%s=%s' % (h, v) for h, v in sorted((result.get('workers') or {}).items()))
+        return 'worker-placement: refused (%s) %s' % (reason, parts)
     loads = result.get('loads') or {}
     if loads and 'repo mapping' not in reason:
         parts = ' '.join('%s=%s' % (h, loads[h]) for h in sorted(loads))
@@ -373,7 +526,7 @@ def cmd_pick(args: argparse.Namespace) -> int:
     except FleetConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    result = pick_host(cfg, spec, args.repo)
+    result = pick_host(cfg, spec, args.repo, record=args.record)
     if args.json:
         print(json.dumps(result, separators=(',', ':')))
     else:
@@ -434,6 +587,7 @@ def main() -> int:
     pick.add_argument('--repo', default=None, help='Repo selector for remote placement (id: or path:)')
     pick.add_argument('--config', default=None, help='Fleet-watch JSON config')
     pick.add_argument('--json', action='store_true', help='Emit JSON instead of one line')
+    pick.add_argument('--record', action='store_true', help='Remember this start so the next pick counts it')
     pick.set_defaults(func=cmd_pick)
     check = sub.add_parser('check-host', help='Judge a host chosen with --on against its load limit')
     check.add_argument('--host', required=True)
