@@ -178,7 +178,7 @@ pr_review_gates_worker_list_row() { # <dispatch> -> json row or fails
   local id=$1 orca cursor="" page m row
   orca=$(pr_review_gates_orca)
   for m in $(seq 1 50); do
-    page=$("$orca" orchestration worker-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) || return 1
+    page=$("$orca" orchestration worker-list --include-remote --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) || return 1
     row=$(jq -r --arg id "$id" '[.result.workers[]? | select(.dispatchId==$id)] | .[0] // empty | @json' <<<"$page")
     [ -n "$row" ] && [ "$row" != null ] && { printf '%s' "$row"; return 0; }
     cursor=$(jq -r '.result.nextCursor // .result.page.nextCursor // empty' <<<"$page")
@@ -247,7 +247,7 @@ pr_review_gates_resolve_builder_dispatch() { # <verdict author> <head_branch> <r
   want=$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')
   orca=$(pr_review_gates_orca)
   for _ in $(seq 1 50); do
-    page=$("$orca" orchestration worker-list --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) || break
+    page=$("$orca" orchestration worker-list --include-remote --limit 100 ${cursor:+--cursor "$cursor"} --json 2>/dev/null) || break
     while IFS= read -r row; do
       [ -n "$row" ] || continue
       id=$(jq -r '.dispatchId // empty' <<<"$row")

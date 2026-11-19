@@ -507,7 +507,8 @@ grep -q '## Finish' "$tmp/orca-nofin.log" && ok || bad "worker spec should carry
 grep -q 'workspace-status in-review' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set in-review when there is a PR"
 grep -q 'workspace-status completed' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should set completed when there is no PR"
 grep -q 'no pull request' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the no-PR case"
-grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should name the run for worker_done"
+grep -q 'to run run_nofin' "$tmp/orca-nofin.log" && bad "worker spec Finish must not name the home run for worker_done (#1220)" || ok
+grep -q 'without a `--run` flag' "$tmp/orca-nofin.log" && ok || bad "worker spec Finish should tell workers to send worker_done without --run (#1220)"
 grep -q 'Builder: agent=claude model=claude-sonnet-5-5-medium' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should write the exact Builder agent and model line"
 grep -q 'Builder: agent=<agent>' "$tmp/orca-nofin.log" && bad "builder spec Finish must not leave <agent> placeholder" || ok
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok

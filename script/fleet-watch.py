@@ -776,6 +776,16 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
         }
         return True, info, False
 
+    if status == 'completed' and worker_is_settled_remote(worker):
+        info = {
+            'dispatchId': dispatch_id,
+            'host': host,
+            'category': 'freed',
+            'role': role,
+            'evidence': {'status': status, 'pushed': pushed, 'released': False, 'settled_remote': True}
+        }
+        return False, info, False
+
     if status == 'completed':
         # A released terminal frees the seat; a worker that pushed nothing (verifier, auditor) has nothing to keep.
         if released:
@@ -5353,9 +5363,15 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     return command
 
 
-def _default_release_worker(dispatch_id):
+def _default_release_worker(dispatch_id, environment=None):
+    """Release a dispatch. A remote one is released on its host first, then on the coordinator."""
     if not dispatch_id:
         return
+    if environment:
+        try:
+            rpc('orchestration', 'worker-release', '--dispatch', dispatch_id, '--environment', environment)
+        except SEND_ERRORS:
+            pass
     try:
         rpc('orchestration', 'worker-release', '--dispatch', dispatch_id)
     except SEND_ERRORS:
@@ -6603,6 +6619,88 @@ def _mark_worker_released(worker):
         projection['released'] = True
 
 
+def remote_environment(worker):
+    """Environment id or name to pass as --environment for a remote worker row."""
+    server = (worker or {}).get('server')
+    if isinstance(server, dict):
+        for key in ('environmentId', 'name', 'id'):
+            value = server.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    host = projection_host_id(worker)
+    return '' if host == 'local' else host
+
+
+def worker_is_remote(worker, config):
+    if _remote_server_row(worker):
+        return True
+    return projection_host_id(worker) != 'local' and not worker_on_local_machine(worker, config, {})
+
+
+def worker_is_settled_remote(worker):
+    """A remote row whose dispatch has settled. It holds no seat on the remote host."""
+    w = worker or {}
+    return bool(_remote_server_row(w)
+                and (worker_settled_kind(w) is not None or worker_inventory_status(w) == 'completed')
+                and w.get('pushed') is not False)
+
+
+def reconcile_remote_completions(config, state, workers, messages, rpc_call):
+    """Turn a settled remote worker into the worker_done the coordinator server rejected (#1220).
+
+    The remote host accepts worker_done, but the coordinator reconciles the relayed mail against local
+    dispatches only and answers unknown_dispatch. So a settled remote row with no worker_done in messages
+    gets one synthesized here, once per dispatch. A task with no PR, or a failed one, is released at once
+    and announced in one line. A succeeded PR task is left to release_green_successes.
+    Returns the notice lines.
+    """
+    done = state.setdefault('remote_reconciled', [])
+    if not isinstance(done, list):
+        done = []
+        state['remote_reconciled'] = done
+    seen = set(done)
+    arrived = set()
+    for message in messages or []:
+        if isinstance(message, dict) and message.get('type') == 'worker_done':
+            dispatch = _message_payload(message).get('dispatchId')
+            if isinstance(dispatch, str):
+                arrived.add(dispatch)
+    notices = []
+    for worker in workers or []:
+        if not isinstance(worker, dict) or not worker_is_remote(worker, config):
+            continue
+        settled = worker_settled_kind(worker)
+        if settled is None and worker_inventory_status(worker) != 'completed':
+            continue
+        dispatch = worker.get('dispatchId')
+        if not isinstance(dispatch, str) or not dispatch or dispatch in seen:
+            continue
+        seen.add(dispatch)
+        done.append(dispatch)
+        if dispatch in arrived:
+            continue
+        outcome = 'succeeded' if settled in (None, 'succeeded') else 'failed'
+        messages.append({
+            'id': 'remote-reconciled:' + dispatch,
+            'type': 'worker_done',
+            'payload': {'dispatchId': dispatch, 'outcome': outcome, 'synthesized': True},
+        })
+        if outcome == 'succeeded' and worker_pr_number(worker):
+            continue
+        environment = remote_environment(worker)
+        try:
+            if worker_inventory_status(worker) not in ('completed', 'failed', 'cancelled', 'abandoned', 'stopped'):
+                rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch)
+            if environment:
+                rpc_call('orchestration', 'worker-release', '--dispatch', dispatch, '--environment', environment)
+            rpc_call('orchestration', 'worker-release', '--dispatch', dispatch)
+        except SEND_ERRORS:
+            pass
+        _mark_worker_released(worker)
+        notices.append('remote worker %s finished %s' % (dispatch, outcome))
+    return notices
+
+
 def release_green_successes(messages, workers, config, state, release, pr_of):
     """Release a worker once when worker_done succeeded and its PR checks are green.
 
@@ -6822,6 +6920,10 @@ def main():
             inv['messages'], workers, inv['alive'], inv['leads'],
         )
         state.pop('orca_inventory_skip_latched', None)
+        try:
+            notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
+        except Exception as error:
+            print('fleet-watch: remote reconcile skipped: %s' % (repr(error),), file=sys.stderr)
     except Exception as error:
         inventory_ok = False
         workers = []
@@ -6869,8 +6971,13 @@ def main():
 
     if inventory_ok:
         try:
+            env_of = {
+                w.get('dispatchId'): remote_environment(w)
+                for w in workers if isinstance(w, dict) and worker_is_remote(w, config)
+            }
             freed = release_green_successes(
-                inv['messages'], workers, config, state, _default_release_worker,
+                inv['messages'], workers, config, state,
+                lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),
                 lambda repo, number: next(
                     (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
                     None,
