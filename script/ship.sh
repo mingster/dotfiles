@@ -17,6 +17,8 @@
 set -euo pipefail
 
 ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/dotfiles-fresh.sh
+. "$ship_dir/lib/dotfiles-fresh.sh"
 refuse() { echo "ship: refused: $*" >&2; exit 1; }
 die() { refuse "$*"; }
 

@@ -9,6 +9,8 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/dotfiles-fresh.sh
+. "$here/lib/dotfiles-fresh.sh"
 dir=${FLEET_WATCH_LOOP_DIR:-$HOME/.local/state/fleet-watch}
 pidfile=$dir/loop.pid
 python3=${PYTHON:-python3}

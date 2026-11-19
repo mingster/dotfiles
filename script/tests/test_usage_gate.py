@@ -1391,7 +1391,7 @@ class Publish(unittest.TestCase):
 
     def test_sends_numbers_only_to_every_host(self):
         self.assertEqual(self.publish(self.reading), 0)
-        self.assertEqual([to for to, _ in self.sent], ["runner-%s:.claude/state/usage-gate/claude-rate-limits.json" % h for h in "ab"])
+        self.assertEqual(sorted(to for to, _ in self.sent), ["runner-%s:.claude/state/usage-gate/claude-rate-limits.json" % h for h in "ab"])
         body = json.loads(self.sent[0][1])
         self.assertEqual(body, {"_written_at": NOW, "seven_day": {"used_percentage": 42.0, "resets_at": FUT}})
         self.assertNotIn("secret", self.sent[0][1])

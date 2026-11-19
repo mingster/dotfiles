@@ -2,6 +2,8 @@
 # Tests for script/check-stale-worktrees.sh (#1188). A fake gh answers from files; git is real.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$ROOT/script/tests/lib/asdf-pin.sh"
 SCRIPT="$ROOT/script/check-stale-worktrees.sh"
 TMP="$(cd -P "$(mktemp -d)" && pwd)"
 trap 'rm -rf "$TMP"' EXIT
