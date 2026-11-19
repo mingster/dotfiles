@@ -20,6 +20,8 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/dotfiles-fresh.sh
+. "$here/lib/dotfiles-fresh.sh"
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"
 # shellcheck source=lib/automation-path.sh

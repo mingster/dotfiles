@@ -5,6 +5,8 @@
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/dotfiles-fresh.sh
+. "$script_dir/lib/dotfiles-fresh.sh"
 is_tsc_step() {
   case "$1" in
     *head-checks-tsc*|*tsc\ *|*tsc.js*) return 0 ;;
