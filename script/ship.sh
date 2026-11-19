@@ -28,6 +28,17 @@ die() { refuse "$*"; }
 board_environment_for_branch() { # <branch>
   local branch=$1 orca page cursor hosts_file hosts host pages=0
   orca=${ORCA_CLI_COMMAND:-orca}
+  branch_on_host() { # <host> <branch> -> 0 when that Orca lists the branch
+    local args=(worktree list --json) listed
+    [ -z "$1" ] || args=(worktree list --environment "$1" --json)
+    listed=$("$orca" "${args[@]}" 2>/dev/null) || return 1
+    printf '%s' "$listed" | jq -e --arg b "$2" '
+      [.result.worktrees[]? | (.branch // "") | sub("^refs/heads/"; "")] | index($b) != null' >/dev/null 2>&1
+  }
+  # The branch is on the local Orca: no remote lookup (#1200).
+  if branch_on_host "" "$branch"; then
+    return 0
+  fi
   hosts_file=$(mktemp)
   cursor=""
   while [ "$pages" -lt 10 ]; do
@@ -46,13 +57,6 @@ board_environment_for_branch() { # <branch>
     cursor=$(printf '%s' "$page" | jq -r '.result.nextCursor // .result.page.nextCursor // empty' 2>/dev/null) || cursor=""
     [ -n "$cursor" ] || break
   done
-  branch_on_host() { # <host> <branch> -> 0 when that Orca lists the branch
-    local args=(worktree list --json) listed
-    [ -z "$1" ] || args=(worktree list --environment "$1" --json)
-    listed=$("$orca" "${args[@]}" 2>/dev/null) || return 1
-    printf '%s' "$listed" | jq -e --arg b "$2" '
-      [.result.worktrees[]? | (.branch // "") | sub("^refs/heads/"; "")] | index($b) != null' >/dev/null 2>&1
-  }
   # No remote host in the dispatch record: the local set is the whole lookup.
   if [ ! -s "$hosts_file" ]; then
     rm -f "$hosts_file"
@@ -60,9 +64,6 @@ board_environment_for_branch() { # <branch>
   fi
   hosts=$(sort -u "$hosts_file")
   rm -f "$hosts_file"
-  if branch_on_host "" "$branch"; then
-    return 0
-  fi
   while IFS= read -r host; do
     [ -n "$host" ] || continue
     if branch_on_host "$host" "$branch"; then
@@ -167,10 +168,10 @@ rm -rf "$trailer_dir"
 # were MERGEABLE about 20s later, so reread a few times, then refuse.
 [ "$(field .state)" = OPEN ] || refuse "PR $pr is not open (state=$(field .state))"
 [ "$(field '.isDraft // false')" = false ] || refuse "PR $pr is a draft"
-mergeable_wait=${SHIP_MERGEABLE_WAIT:-20}
-mergeable_rereads=${SHIP_MERGEABLE_REREADS:-3}
-[[ "$mergeable_wait" =~ ^[0-9]+$ ]] || mergeable_wait=20
-[[ "$mergeable_rereads" =~ ^[0-9]+$ ]] || mergeable_rereads=3
+mergeable_wait=${SHIP_MERGEABLE_WAIT:-4}
+mergeable_rereads=${SHIP_MERGEABLE_REREADS:-15}
+[[ "$mergeable_wait" =~ ^[0-9]+$ ]] || mergeable_wait=4
+[[ "$mergeable_rereads" =~ ^[0-9]+$ ]] || mergeable_rereads=15
 reread=0
 while [ "$(field .mergeable)" = UNKNOWN ] && [ "$reread" -lt "$mergeable_rereads" ]; do
   reread=$((reread + 1))

@@ -313,6 +313,11 @@ for root in "$TEMPLATE" "${PROJECTS[@]}"; do
 done
 
 # receipt: commits touching role files carry the Owner-approved: trailer.
+# GitHub's squash merge can put a blank line before Co-authored-by:, which pushes Owner-approved: out of
+# git's trailer block. The line is still a receipt (#1200).
+owner_approved_line() { # <repo root> <sha>
+  git -C "$1" log -1 --format=%B "$2" 2>/dev/null | grep -Eq '^Owner-approved:[[:space:]]*[^[:space:]]'
+}
 receipt_check() { # <repo root> <role path inside it>
   local top rows sha receipt subject base range=() b
   top=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 0
@@ -324,7 +329,7 @@ receipt_check() { # <repo root> <role path inside it>
   rows=$(git -C "$1" log --no-merges "${range[@]}" \
     --format='%h%x1f%(trailers:key=Owner-approved,valueonly,separator=%x2C)%x1f%s' -- "$2" 2>/dev/null)
   while IFS=$'\x1f' read -r sha receipt subject; do
-    [ -n "$sha" ] && [ -z "$receipt" ] && finding receipt "$1: $sha touches $2 without an Owner-approved: trailer ($subject)"
+    [ -n "$sha" ] && [ -z "$receipt" ] && ! owner_approved_line "$1" "$sha" && finding receipt "$1: $sha touches $2 without an Owner-approved: trailer ($subject)"
   done <<< "$rows"
 }
 receipt_check "$DOTFILES" templates/agent-team/.claude/agents
