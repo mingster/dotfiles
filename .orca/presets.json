@@ -219,6 +219,21 @@
           "effort": "high"
         }
       ]
+    },
+    "fullstack-dev-strong": {
+      "tier": "strong",
+      "description": "Builder unit labelled size:L: cross cutting, concurrency, money, auth, tenancy or schema (dotfiles#1216)",
+      "chain": [
+        {
+          "provider": "claude",
+          "model": "opus",
+          "effort": "high"
+        },
+        {
+          "provider": "antigravity",
+          "model": "gemini-4-argon-high"
+        }
+      ]
     }
   },
   "tiers": {

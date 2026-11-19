@@ -1435,7 +1435,7 @@ PICK_STUB_MODE=sonnet route_run "#7298|fullstack-dev" claude claude-sonnet-5-5-m
 printf 'Refs acme/app#7298\n\n# qa-sdet - verify #7298 L103\n\n%s\n' "$spec_saved" >"$spec_file"
 PICK_STUB_MODE=sonnet route_run "#7298|qa-sdet" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a verifier for a merged line is not refused (ec=$route_ec) $(cat "$tmp/route.err")"
-[ -s "$GH_STUB_LOG" ] && bad "non-builder must not look up merged PRs" || ok
+grep -q '^pr list' "$GH_STUB_LOG" && bad "non-builder must not look up merged PRs" || ok
 
 # A builder brief whose Refs issue a merged PR already closed is refused unless --allow-delivered REASON (#1158).
 cat >"$ghbin/gh" <<'EOS'
@@ -1465,7 +1465,7 @@ printf 'Refs acme/app#7881\n\n# fullstack-dev - issue 7881\n\n%s\n' "$spec_saved
 PICK_STUB_MODE=sonnet route_run "#7881|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "an issue no merged PR closed should start (ec=$route_ec) $(cat "$tmp/route.err")"
 
-# A started builder takes ready-for-agent off its issue; a verifier or a failed start leaves it (#1192).
+# A started worker of any role takes ready-for-agent off its issue; a verify or rework start or a failed start leaves it (#1192, #1216).
 cat >"$ghbin/gh" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_STUB_LOG"
@@ -1480,7 +1480,7 @@ PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-sonnet-5-5-m
 grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
-grep -q 'issue edit' "$GH_STUB_LOG" && bad "a verifier start must not touch the issue label" || ok
+grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "a non-builder start should also drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
 
 # A handoff line has no --from: the coordinator's own handle is the sender (#1192).
 : >"$tmp/orca-route.log"

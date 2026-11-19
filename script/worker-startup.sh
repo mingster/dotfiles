@@ -627,14 +627,12 @@ require_grok_host() { # <environment>
     || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
-# A started builder takes the ready-for-agent label off its issue, so the issue scan does not start a second worker (#1192).
+# A started worker of any role takes the ready-for-agent label off its issue, so the issue scan does not start a second worker (#1192, #1216).
 # Best effort: a missing gh or a failed edit never fails a start that already succeeded.
 release_ready_label() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role kind btype ref repo num
+  local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
-  kind=$(role_class "$role") || return 0
-  [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
   ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)

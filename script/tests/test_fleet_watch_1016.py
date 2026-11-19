@@ -94,7 +94,9 @@ class HeadOfLineLint(unittest.TestCase):
             act=act,
         )
         edits = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'edit']]
-        self.assertEqual(len(edits), 1, gh_calls)
+        self.assertEqual(len(edits), 2, gh_calls)
+        self.assertEqual(edits[1][3], '2')
+        self.assertNotIn('--add-label', edits[1])
         self.assertIn('--remove-label', edits[0])
         self.assertIn('ready-for-agent', edits[0])
         self.assertIn('needs-triage', edits[0])
