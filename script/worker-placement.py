@@ -18,6 +18,9 @@ BROWSER_ROLE = 'browser'
 CODE_ROLES = frozenset({'code', ''})
 LOCAL_MAX_LOAD_PER_CORE = 0.7
 DEFAULT_RECENT_START_SECONDS = 300
+DEFAULT_CORES_PER_WORKER = 2.0
+DEFAULT_MEM_GB_PER_WORKER = 4.0
+MEMFREE = re.compile(r'\bmemfree=(?P<gb>[0-9]+(?:\.[0-9]+)?)')
 BROWSER_ROLE_LINE = re.compile(r'^Host role:\s*browser\s*$', re.IGNORECASE | re.MULTILINE)
 LOAD_LINE = re.compile(
     r'^(?P<host>[A-Za-z0-9._-]+)\s+.*\bcores=(?P<cores>[0-9]+).*'
@@ -77,7 +80,7 @@ def load_sensor_path(config: dict) -> Path:
     return Path(expand('~/.claude/state/fleet-load.sh'))
 
 
-def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int, float] | None]:
+def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int, float, float | None] | None]:
     if not sensor.is_file():
         raise LoadSensorError(f'missing load sensor {sensor}')
     try:
@@ -92,7 +95,7 @@ def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int, floa
         raise LoadSensorError(f'load sensor failed ({exc})') from exc
     if proc.returncode != 0:
         raise LoadSensorError('load sensor failed')
-    out: dict[str, tuple[float, int, float] | None] = {}
+    out: dict[str, tuple[float, int, float, float | None] | None] = {}
     for line in proc.stdout.splitlines():
         if UNREACHABLE.search(line):
             host = line.split(None, 1)[0] if line.split() else ''
@@ -109,7 +112,8 @@ def read_loads(sensor: Path, timeout: float) -> dict[str, tuple[float, int, floa
             cores = int(match.group('cores'))
             if cores < 1:
                 cores = 1
-            out[host] = (load, cores, load5)
+            mem = MEMFREE.search(line)
+            out[host] = (load, cores, load5, float(mem.group('gb')) if mem else None)
         except ValueError:
             out[host] = None
     return out
@@ -289,6 +293,30 @@ def recent_start_seconds(config: dict) -> float:
         return float(DEFAULT_RECENT_START_SECONDS)
 
 
+def placement_float(config: dict, key: str, default: float) -> float:
+    placement = config.get('worker_placement') or {}
+    raw = placement.get(key) if isinstance(placement, dict) else None
+    try:
+        value = float(raw) if raw is not None else default
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def scaled_cap(cap: int, cores: int, cores_per_worker: float) -> int:
+    """host_caps never goes up; a host with few cores takes fewer workers than its cap."""
+    if cap <= 0:
+        return cap
+    return max(1, min(cap, int(cores // cores_per_worker)))
+
+
+def memory_full(mem_free: float | None, recent_starts: int, gb_per_worker: float) -> bool:
+    """Free memory the sensor read, less what the recent starts have yet to take, leaves no room."""
+    if mem_free is None:
+        return False
+    return mem_free - recent_starts * gb_per_worker < gb_per_worker
+
+
 def recent_file_path(config: dict) -> Path:
     env = os.environ.get('WORKER_PLACEMENT_RECENT_FILE')
     if env:
@@ -378,6 +406,8 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     caps = host_caps_of(config)
     live = live_worker_counts(config, hosts)
     claims = recent_claims(recent)
+    cores_per_worker = placement_float(config, 'cores_per_worker', DEFAULT_CORES_PER_WORKER)
+    mem_per_worker = placement_float(config, 'mem_gb_per_worker', DEFAULT_MEM_GB_PER_WORKER)
     considered: dict[str, float] = {}
     full: dict[str, str] = {}
     candidates: list[tuple[bool, float, float, int, str, float, float, int, int]] = []
@@ -394,15 +424,18 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
         sample = loads.get(host)
         if sample is None:
             continue
-        load, cores, load5 = sample
+        load, cores, load5, mem_free = sample
         ceiling = ceiling_for(host, config)
         if ceiling is None:
             continue
         considered[host] = load
-        cap = caps.get(host, 0)
+        cap = scaled_cap(caps.get(host, 0), cores, cores_per_worker)
         workers = max(0 if live is None else live.get(host, 0), claims.get(host, 0))
         if cap > 0 and workers >= cap:
             full[host] = '%d/%d' % (workers, cap)
+            continue
+        if memory_full(mem_free, sum(1 for row in recent if row['host'] == host), mem_per_worker):
+            full[host] = 'memory'
             continue
         if host_over_load(host, load, cores, ceiling, local_host):
             continue
@@ -459,7 +492,7 @@ def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: s
     sample = loads.get(name)
     if sample is None:
         return {'ok': True, 'host': name, 'reason': 'no readable load'}
-    load, cores, _ = sample
+    load, cores, _, _ = sample
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     if not host_over_load(name, load, cores, ceiling, local_host):
         return {'ok': True, 'host': name, 'load_1m': load, 'ceiling': ceiling}
