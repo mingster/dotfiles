@@ -2917,7 +2917,15 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             )
             return
         try:
-            result = rpc_call(*start_args)
+            try:
+                result = rpc_call(*start_args)
+            except SEND_ERRORS as first:
+                first_reason, first_code = exception_start_failure(first)
+                if (first_code in BABYSIT_DEFERRED_EXITS or not startup_failure_text(first_reason)
+                        or not startup_retry_taken(state, key)):
+                    raise
+                log_bits.append('startup_retry=%s' % did)
+                result = rpc_call(*start_args)
         except SEND_ERRORS as exc:
             reason, exit_code = exception_start_failure(exc)
             if exit_code in BABYSIT_DEFERRED_EXITS:
@@ -2931,12 +2939,47 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             return
         _record_stall_restart(state, did, result, now, log_bits, pending)
 
+    def retry_startup_failed(w, did):
+        """An own worker that died at startup is released and started once more, then parked (#1221).
+        Needs a startup stage or error on the row (worker-list rows carry no lastError); without one nothing fires."""
+        row = _own_row(state, did)
+        if row is None or row.get('startup_handled') or _retry_recorded(state, did):
+            return
+        row['startup_handled'] = True
+        repo = label_target(w) or fault_target()
+        pr_num = worker_pr_number(w)
+        if row.get('retry_of'):
+            _park_own_stall(state, did, now, 'failed at startup after a retry', notices, log_bits, config,
+                            repo=repo, pr=pr_num)
+            return
+        run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
+        if not start_args:
+            _park_own_stall(state, did, now, 'startup retry failed (no start args)', notices, log_bits, config,
+                            repo=repo, pr=pr_num)
+            return
+        try:
+            rpc_call('orchestration', 'worker-release', '--dispatch', did)
+        except SEND_ERRORS:
+            pass
+        try:
+            result = rpc_call(*start_args)
+        except SEND_ERRORS as exc:
+            reason, _exit_code = exception_start_failure(exc)
+            _park_own_stall(state, did, now, _stall_notice_reason(reason, orchestration_failure_log_code(exc)),
+                            notices, log_bits, config, repo=repo, pr=pr_num)
+            return
+        _record_stall_restart(state, did, result, now, log_bits, pending)
+        log_bits.append('startup_retry=%s' % did)
+
     local_handles = set(term_times.keys())
     for w in workers:
         did = w.get('dispatchId')
         if not isinstance(did, str) or not did:
             continue
         if not worker_row_is_live(w):
+            if worker_startup_failed(w):
+                retry_startup_failed(w, did)
             continue
         term = worker_terminal_handle(w)
         host_id = worker_execution_host_id(w)
@@ -4604,6 +4647,56 @@ def babysit_mark(state, repo, number, head, action):
     }
 
 
+STARTUP_FAIL_DETAILS = ('agent_readiness', 'dispatch_input', 'process_exited')
+STARTUP_FAIL_RE = re.compile(r'terminal_exited|agent_not_in_foreground|agent_readiness|dispatch_input')
+
+
+def startup_failure_text(text):
+    return bool(STARTUP_FAIL_RE.search(str(text or '')))
+
+
+def worker_startup_failed(worker):
+    """True when a failed dispatch died while the agent was starting (readiness or the first input)."""
+    w = worker or {}
+    if worker_inventory_status(w) != 'failed':
+        return False
+    proj = w.get('projection') or {}
+    stage = proj.get('stage')
+    detail = stage.get('detail') if isinstance(stage, dict) else ''
+    evidence = proj.get('evidence') if isinstance(proj.get('evidence'), dict) else {}
+    err = ' '.join(str(v) for v in (w.get('lastError'), proj.get('lastError'), evidence.get('lastError')) if v)
+    return detail in STARTUP_FAIL_DETAILS or startup_failure_text(err)
+
+
+def startup_retry_taken(state, key):
+    """Claim the one startup retry for this park key. False when it was already used (#1221)."""
+    bucket = state.setdefault('startup_retried', {})
+    if not isinstance(bucket, dict):
+        bucket = {}
+        state['startup_retried'] = bucket
+    if bucket.get(key):
+        return False
+    bucket[key] = True
+    return True
+
+
+def failed_startup_verifier(state, workers, repo, number, head):
+    """Dispatch id of the verifier recorded for this head that failed at startup with no Verdict, else ''.
+
+    Design limit: worker-list rows carry no lastError. This fires only when Orca exposes a startup stage
+    or error on the row. A failed row with neither is left alone (no release, no retry)."""
+    for did, row in (state.get('own_dispatches') or {}).items():
+        if not isinstance(row, dict) or row.get('kind') != 'verifier' or row.get('startup_handled'):
+            continue
+        if (row.get('repo'), row.get('pr'), row.get('head')) != (repo, number, head):
+            continue
+        if _retry_recorded(state, did):
+            continue
+        if any(w.get('dispatchId') == did and worker_startup_failed(w) for w in workers or []):
+            return did
+    return ''
+
+
 def _projection_agent_model(worker):
     proj = worker.get('projection') or {}
     provider = proj.get('provider') if isinstance(proj, dict) else None
@@ -5521,8 +5614,28 @@ def babysit_pass(
         record = babysit_record(state, repo, number)
         reported = record.get('head') == head and record.get('action') == 'report'
         if record.get('head') == head and record.get('action') and not reported:
-            lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
-            continue
+            failed_did = (failed_startup_verifier(state, workers, repo, number, head)
+                          if record.get('action') == 'verifier' and not dry_run else '')
+            if failed_did:
+                # The verifier vanished at startup: release it, then start one fresh verifier. A second
+                # startup failure parks the PR (#1221).
+                _own_row(state, failed_did)['startup_handled'] = True
+                release_worker(failed_did)
+                park_key = park_id('verifier', repo, number, head)
+                if startup_retry_taken(state, park_key):
+                    state['babysit'][repo].pop(str(number), None)
+                    log_bits.append('verifier_startup_retry=%s' % number)
+                else:
+                    reason = 'verifier failed at startup twice'
+                    lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
+                    if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
+                        notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, None))
+                    if persist_state:
+                        persist_state()
+                    continue
+            else:
+                lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
+                continue
         root = roots.get(repo) if isinstance(roots.get(repo), str) else ''
         repo_root = root if root and os.path.isdir(root) else None
         try:
@@ -5626,6 +5739,11 @@ def babysit_pass(
             continue
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
+        if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)
+                and startup_retry_taken(state, park_key)):
+            log_bits.append('startup_retry=%s' % number)
+            started_worker = start_worker(command)
+            code, reason = start_result_parts(started_worker)
         if code != 0:
             suffix = ':' + reason if reason else ''
             if code in BABYSIT_DEFERRED_EXITS:
@@ -5641,6 +5759,9 @@ def babysit_pass(
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
             remember_started_dispatch(state, started_worker, 'verifier')
+            own = _own_row(state, dispatch_id_from_start(started_worker))
+            if own is not None:
+                own.update(repo=repo, pr=number, head=head)
             _verifier_head_bucket(state, repo)[str(number)] = head
         started += 1
         count_started()
@@ -6746,6 +6867,48 @@ def release_green_successes(messages, workers, config, state, release, pr_of):
     return done
 
 
+def _followup_parent(worker):
+    w = worker or {}
+    proj = w.get('projection') if isinstance(w.get('projection'), dict) else {}
+    for source in (w, proj):
+        for key in ('follow_up_of_dispatch_id', 'followUpOfDispatchId'):
+            value = source.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return ''
+
+
+def release_dead_followups(workers, state, release):
+    """Release a "New messages" follow-up that failed on the dead terminal of a worker that already succeeded (#1221).
+
+    Orca opens it when mail reaches a worker as it finishes. The parent's work is done, so there is nothing to retry.
+    """
+    released = state.setdefault('followup_released', [])
+    if not isinstance(released, list):
+        released = []
+        state['followup_released'] = released
+    by_dispatch = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict)}
+    done = []
+    for worker in workers or []:
+        if not isinstance(worker, dict):
+            continue
+        dispatch = worker.get('dispatchId')
+        parent = by_dispatch.get(_followup_parent(worker))
+        if not dispatch or dispatch in released or parent is None:
+            continue
+        if worker_inventory_status(worker) != 'failed' or worker_terminal_released(worker):
+            continue
+        if not (worker_startup_failed(worker) or worker_liveness_verdict(worker) == 'exited'):
+            continue
+        if worker_settled_kind(parent) != 'succeeded' and worker_inventory_status(parent) != 'completed':
+            continue
+        release(dispatch)
+        _mark_worker_released(worker)
+        released.append(dispatch)
+        done.append(dispatch)
+    return done
+
+
 _WORKER_ISSUE_TITLE_RE = re.compile(
     r'^(?!rework\b)(?:[a-z0-9-]+)\s+-\s+#([0-9]+)\b|\bissue-([0-9]+)\b', re.I
 )
@@ -6982,6 +7145,9 @@ def main():
                     (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
                     None,
                 ),
+            )
+            freed += release_dead_followups(
+                workers, state, lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),
             )
             for dispatch_id in freed:
                 print('fleet-watch: released %s' % dispatch_id)

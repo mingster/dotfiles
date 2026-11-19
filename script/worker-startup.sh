@@ -532,6 +532,46 @@ run_captured() { # command... ; print its stdout, return its status. start_out i
   return "$ec"
 }
 
+# A worker that vanishes at startup (terminal_exited at agent_readiness, agent_not_in_foreground at dispatch_input)
+# is started once more in the same worktree before the start counts as failed (#1221).
+STARTUP_EXIT_RE='terminal_exited|agent_not_in_foreground|agent_readiness|dispatch_input'
+
+startup_exit_failure() { # <dispatch id> ; true when the dispatch failed at startup within the readiness wait
+  local d=$1 end out state
+  end=$((SECONDS + ${WORKER_STARTUP_READINESS_WAIT:-6}))
+  while :; do
+    out=$("$orca" orchestration worker-show --dispatch "$d" --json 2>/dev/null) || out=
+    state=$(jq -r '.result.state // .result.dispatch.state // empty' <<<"$out" 2>/dev/null || true)
+    case "$state" in
+      failed|stopped|abandoned|rejected) grep -Eq "$STARTUP_EXIT_RE" <<<"$out"; return ;;
+      running|ready|accepted|succeeded|completed) return 1 ;;
+    esac
+    [ "$SECONDS" -lt "$end" ] || return 1
+    sleep 1
+  done
+}
+
+start_with_startup_retry() { # worker-start wrapper args...; sets start_out like run_captured
+  local ec=0 errf dispatch
+  errf=$(mktemp)
+  run_captured "$@" 2>"$errf" || ec=$?
+  cat "$errf" >&2
+  if [ "$ec" -ne 0 ] && grep -Eq "$STARTUP_EXIT_RE" <<<"$start_out"$'\n'"$(cat "$errf")"; then
+    echo "worker-startup: worker-start failed at startup, retrying once" >&2
+    ec=0
+    run_captured "$@" || ec=$?
+  elif [ "$ec" -eq 0 ]; then
+    dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+    if [ -n "$dispatch" ] && startup_exit_failure "$dispatch"; then
+      echo "worker-startup: $dispatch failed at startup, retrying once" >&2
+      ec=0
+      run_captured "$@" || ec=$?
+    fi
+  fi
+  rm -f "$errf"
+  return "$ec"
+}
+
 surface_antigravity_screen() { # <agent> <worker-start json>
   local agent=$1 start_json=$2 dispatch msg ec check
   [ "$agent" = antigravity ] || return 0
@@ -890,7 +930,7 @@ run_mode() {
     release_ready_label "$spec" "$title"
     return 0
   fi
-  run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
+  start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
     --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
     --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
   surface_antigravity_screen "$agent" "$start_out"

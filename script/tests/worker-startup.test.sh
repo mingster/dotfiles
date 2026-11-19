@@ -24,6 +24,7 @@ unset -f python3 2>/dev/null || true
 use_test_git_identity "$tmp"
 export USAGE_GATE_PRESETS="${USAGE_GATE_PRESETS:-$root/.orca/presets.json}"
 export WORKER_STARTUP_STATE="$tmp/state" TEAM_AUDIT_DISPATCHES="$tmp/team-dispatches.tsv"
+export WORKER_STARTUP_READINESS_WAIT=0
 mkdir -p "$WORKER_STARTUP_STATE"
 
 # --- stubs: fake jq forwards to the real binary; python3 runs USAGE_GATE_CLI or real python ---
@@ -1588,6 +1589,61 @@ grep -q 'orchestration worker-start' "$tmp/orca-agy.log" && ok || bad "sign-in f
 agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 [ "$agy_ec" = 0 ] && ok || bad "normal antigravity screen should exit 0 ($agy_ec) $(cat "$tmp/agy-ok.err")"
 grep -q 'sign-in step' "$tmp/agy-ok.err" && bad "normal antigravity screen must not report sign-in" || ok
+
+# 1221: a worker that vanishes at startup is started once more; a healthy or non-startup failure is not retried.
+cat >"$tmp/orca-retry" <<'EOS'
+#!/usr/bin/env bash
+set -e
+printf '%s\n' "$*" >>"$RETRY_LOG"
+case "$*" in
+  *"worktree create"*)
+    printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"${AGY_WT:?}\"}}}"
+    ;;
+  *"orchestration worker-start"*)
+    n=$(grep -c 'orchestration worker-start' "$RETRY_LOG")
+    if [ "$RETRY_MODE" = exit_first ] && [ "$n" = 1 ]; then
+      echo 'terminal_exited at agent_readiness' >&2
+      exit 1
+    fi
+    printf '{"ok":true,"result":{"dispatchId":"ctx_r%s","taskId":"task_r","runId":"run_r","state":"ready","terminal":"term_r"}}\n' "$n"
+    ;;
+  *"orchestration worker-show"*)
+    if [ "$RETRY_MODE" = vanish_first ] && [[ "$*" == *ctx_r1* ]]; then
+      echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"failed","stage":{"detail":"agent_readiness"},"lastError":"terminal_exited"}}'
+    elif [ "$RETRY_MODE" = other_failure ]; then
+      echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"failed","lastError":"budget exhausted"}}'
+    else
+      echo '{"ok":true,"result":{"state":"ready","liveness":"live","terminal":"term_r"}}'
+    fi
+    ;;
+  *"terminal read"*) echo '{"ok":true,"result":{"terminal":{"tail":[]}}}' ;;
+  *) printf 'unexpected orca: %s\n' "$*" >&2; exit 99 ;;
+esac
+EOS
+chmod +x "$tmp/orca-retry"
+retry_run() { # <mode>
+  : >"$tmp/orca-retry.log"
+  set +e
+  unset -f python3 2>/dev/null || true
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-retry" RETRY_LOG="$tmp/orca-retry.log" RETRY_MODE="$1" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" WORKER_STARTUP_READINESS_WAIT=2 \
+    PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" AGY_WT="$wt_proof" \
+    bash --noprofile --norc "$script" --run run_r --spec "$spec_file" --title "#1|fullstack-dev" \
+    --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --name nretry --repo "path:$clean" >"$tmp/retry.out" 2>"$tmp/retry.err"
+  retry_ec=$?
+  set -e
+  retry_starts=$(grep -c 'orchestration worker-start' "$tmp/orca-retry.log" || true)
+}
+retry_run vanish_first
+[ "$retry_ec" = 0 ] && [ "$retry_starts" = 2 ] && ok || bad "dispatch that failed at startup is started once more (ec=$retry_ec starts=$retry_starts) $(cat "$tmp/retry.err")"
+retry_run exit_first
+[ "$retry_ec" = 0 ] && [ "$retry_starts" = 2 ] && ok || bad "worker-start exiting with terminal_exited is retried once (ec=$retry_ec starts=$retry_starts)"
+retry_run healthy
+[ "$retry_ec" = 0 ] && [ "$retry_starts" = 1 ] && ok || bad "healthy start is not retried (ec=$retry_ec starts=$retry_starts)"
+retry_run other_failure
+[ "$retry_starts" = 1 ] && ok || bad "failure that is not a startup exit is not retried (starts=$retry_starts)"
 
 # 1019: --on this host starts locally. --on another host still passes --environment.
 cat >"$bin/hostname" <<'EOS'

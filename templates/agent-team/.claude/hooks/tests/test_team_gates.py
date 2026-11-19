@@ -111,6 +111,47 @@ class Gate(unittest.TestCase):
         self.assertIsNone(self.bash(command, cwd), f"expected allow: {command}")
 
 
+class SettledRecipientGate(Gate):
+    def fake_orca(self, workers):
+        with open(os.path.join(self.bin, "orca"), "w") as f:
+            f.write("#!/bin/sh\ncat <<'JSON'\n" + json.dumps({"ok": True, "result": {"workers": workers}}) + "\nJSON\n")
+        os.chmod(os.path.join(self.bin, "orca"), 0o755)
+
+    def row(self, state, terminal_state, terminal="term_w"):
+        return {"state": state, "terminalState": terminal_state, "terminal": terminal, "dispatchId": "ctx_w"}
+
+    def test_settled_worker_denied_in_every_target_form(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("succeeded", "released")])
+        for target in ("term_w", "dispatch:ctx_w", "ctx_w"):
+            self.assertDenied(f"orca orchestration send --to {target} --subject s --body b", "fresh dispatch")
+            self.assertDenied(f"script/orca-reply.sh --to {target} --subject s --body b", "fresh dispatch")
+
+    def test_live_worker_allowed_in_every_target_form(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("ready", "active")])
+        for target in ("term_w", "dispatch:ctx_w", "ctx_w"):
+            self.assertAllowed(f"orca orchestration send --to {target} --subject s --body b")
+            self.assertAllowed(f"script/orca-reply.sh --to {target} --subject s --body b")
+
+    def test_send_to_settled_worker_denied(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("succeeded", "released")])
+        self.assertDenied("orca orchestration send --to term_w --subject s --body b", "fresh dispatch")
+
+    def test_orca_reply_to_settled_worker_denied(self):
+        self.fake_orca([self.row("failed", "active")])
+        self.assertDenied("script/orca-reply.sh --to term_w --subject s --body b", "fresh dispatch")
+
+    def test_send_to_live_worker_allowed(self):
+        self.fake_orca([self.row("ready", "active")])
+        self.assertAllowed("orca orchestration send --to term_w --subject s --body b")
+
+    def test_send_to_unknown_terminal_allowed(self):
+        self.fake_orca([self.row("succeeded", "released", "term_other")])
+        self.assertAllowed("orca orchestration send --to term_w --subject s --body b")
+
+
 class RoleFileGate(Gate):
     def setUp(self):
         super().setUp()

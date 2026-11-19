@@ -2735,9 +2735,36 @@ def check_test_identity(base, args):
              "Unset GIT_AUTHOR_EMAIL and GIT_COMMITTER_EMAIL (and any `-c user.email=`), or fix `git config user.email`, then retry.")
 
 
+SETTLED_STATES = ("succeeded", "failed", "stopped", "abandoned", "rejected")
+
+
+def check_settled_recipient(base, args):
+    """Refuse mail to a terminal whose every dispatch is settled or released: Orca would open a
+    "New messages" follow-up dispatch on that dead terminal and it would fail with terminal_exited (#1221).
+    Fails open when the worker list cannot be read."""
+    if base == "orca" and args[:2] == ["orchestration", "send"]:
+        pass
+    elif base != "orca-reply.sh":
+        return
+    target = option_value(args, "--to")
+    if not target or not target.startswith(("term_", "ctx_", "dispatch:")):
+        return
+    dispatch = target.removeprefix("dispatch:")
+    out = gate_run(["orca", "orchestration", "worker-list", "--json", "--limit", "100"], None)
+    try:
+        workers = json.loads(out)["result"]["workers"]
+    except Exception:
+        return
+    rows = [w for w in workers if isinstance(w, dict) and (w.get("terminal") == target or w.get("dispatchId") == dispatch)]
+    if rows and all(w.get("terminalState") == "released" or w.get("state") in SETTLED_STATES for w in rows):
+        deny(f"{target} belongs to a settled or released dispatch, so mail to it would open a 'New messages' follow-up "
+             "that fails with terminal_exited. Start a fresh dispatch for the new work instead.")
+
+
 def check_team_gates(base, args):
     check_test_identity(base, args)
     check_role_file_gate(base, args)
+    check_settled_recipient(base, args)
     if base == "orca" and args[:2] == ["orchestration", "worker-start"]:
         check_worker_start(args)
     elif base == "start-cursor-worker.sh":

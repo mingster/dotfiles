@@ -1191,6 +1191,7 @@ close_finished_terminals() {
         and (.lastOutputAt | type) == "number" and .lastOutputAt <= (now * 1000 - ($idle_ms | tonumber))
         then [$h, "no dispatch, no agent, idle", "close"]
       elif ($exited | not) and (.lastOutputAt > now * 1000 - 600000 or (.agentIdentity != null and .lastOutputAt == null)) then [$h, "recent output", "keep"]
+      elif ($exited | not) and has("lastOutputAt") and .lastOutputAt == null and .agentIdentity == null and ($mine | length) == 0 and ($onpath | length) == 0 then [$h, "starting up", "keep"]
       elif ($mine | length) > 0 then [$h, "settled dispatch", "close"]
       elif $exited then [$h, "exited", "close"]
       elif ($onpath | length) > 0 and ((.title // "") | test("worker-pane")) then [$h, "settled worker pane", "close"]

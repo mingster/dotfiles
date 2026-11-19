@@ -134,6 +134,50 @@ class Stall(unittest.TestCase):
         self.assertIn('stall_parked=disp1', log)
         self.assertIn('backup_stale', log)
 
+    def test_startup_failed_own_worker_is_retried_once(self):
+        calls = []
+        failed = live_worker()
+        failed['dispatchStatus'] = 'failed'
+        failed['terminalState'] = 'released'
+        failed['projection'] = dict(failed['projection'], stage={'detail': 'agent_readiness'}, outcome='failed')
+
+        def rpc(*args):
+            calls.append(args)
+            if args[1] == 'inbox':
+                return {'messages': []}
+            if args[1] == 'worker-list':
+                return {'workers': [failed], 'page': {'hasMore': False}}
+            if args[:2] == ('terminal', 'list'):
+                return {'terminals': []}
+            return {}
+
+        config = self.home / 'config.json'
+        state = self.home / 'state.json'
+        config.write_text(json.dumps({
+            'runs': [{'id': 'r1', 'terminal': 'tcoord', 'waiter_pattern': 'waiter-r1'}],
+            'worker_stall': {'label_repo': 'owner/repo', 'label_cooldown_seconds': 0},
+        }))
+        state.write_text(json.dumps({'own_dispatches': {'disp1': {'kind': 'verifier'}}}))
+
+        with isolated_main_env(str(self.home)), \
+                patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                patch.object(watch, 'rpc', side_effect=rpc), \
+                patch.object(watch, 'run_gh', return_value=0), \
+                patch.object(watch, 'pr_notices', return_value=[]), \
+                patch.object(watch, 'usage_notices', return_value=[]), \
+                patch.object(watch, 'deliver_notices', return_value=None), \
+                patch.object(watch.time, 'time', return_value=T0 + 4000):
+            watch.main()
+            watch.main()
+            watch.main()
+
+        releases = [c for c in calls if c[:4] == ('orchestration', 'worker-release', '--dispatch', 'disp1')]
+        starts = [c for c in calls if len(c) >= 2 and c[0] == 'bash' and str(c[1]).endswith('worker-startup.sh')]
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(len(starts), 1, 'one retry, a repeat pass does not fire it again')
+        self.assertIn('--retry-of', starts[0])
+        self.assertEqual(self.log_path.read_text().count('startup_retry=disp1'), 1)
+
     def test_no_worker_stop_without_stall_config(self):
         calls = []
 
