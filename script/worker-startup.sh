@@ -799,7 +799,7 @@ run_mode() {
   spec=$(with_refs_line "$spec" "$title")
   spec=$(prepend_role_preamble "$spec" "$title")
   lint_dir=${wt:-}
-  if [ -z "$lint_dir" ] && [ "$agent" != cursor ] && [ -z "$environment" ]; then
+  if [ -z "$lint_dir" ] && [ "$agent" != cursor ]; then
     case "$repo" in
       id:*) lint_dir=$("$orca" repo list --json 2>/dev/null | jq -r --arg id "${repo#id:}" '.result.repos[]? | select(.id == $id) | .path // empty' 2>/dev/null | head -1) || lint_dir= ;;
       path:*) lint_dir=${repo#path:} ;;
