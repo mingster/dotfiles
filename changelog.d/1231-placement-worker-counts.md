@@ -1,0 +1,1 @@
+Worker placement counts live and recently started workers per host, skips a host at its cap, scores by the larger of worker share and 5 minute load, considers every host in host_caps, and picks the coordinator host last. worker-startup.sh --on <host> now maps a local repo id through worker_placement.repos (#1231, #1230).

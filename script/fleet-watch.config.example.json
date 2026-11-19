@@ -14,6 +14,7 @@
   "worker_placement": {
     "load_sensor": "~/.claude/state/fleet-load.sh",
     "order": ["primary-code-host", "overflow-host-a", "overflow-host-b"],
+    "recent_start_seconds": 300,
     "roles": {
       "browser-secrets-host": "browser",
       "database-heavy-host": "heavy",

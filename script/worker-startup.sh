@@ -237,11 +237,17 @@ placement_line_from_json() { # <json>
 import json, sys
 r = json.load(sys.stdin)
 if r.get("ok"):
-    print("worker-placement: host=%s load_1m=%s" % (r["host"], r["load_1m"]))
+    line = "worker-placement: host=%s load_1m=%s" % (r["host"], r["load_1m"])
+    if r.get("workers") is not None:
+        line += " workers=%s/%s" % (r["workers"], r["cap"])
+    print(line)
 else:
     reason = r.get("reason") or "unknown"
     loads = r.get("loads") or {}
-    if loads and "repo mapping" not in reason:
+    if "worker cap" in reason and not loads:
+        parts = " ".join("%s=%s" % (h, v) for h, v in sorted((r.get("workers") or {}).items()))
+        print("worker-placement: refused (%s) %s" % (reason, parts))
+    elif loads and "repo mapping" not in reason:
         parts = " ".join("%s=%s" % (h, loads[h]) for h in sorted(loads))
         print("worker-placement: refused %s" % parts)
     elif loads:
@@ -252,8 +258,8 @@ else:
 ' <<<"$1"
 }
 
-apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
-  local spec_file=$1 repo_sel=${2:-} json line env_name placed_repo pick_args=() cfg
+apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
+  local spec_file=$1 repo_sel=${2:-} record=${3:-} json line env_name placed_repo pick_args=() cfg
   WORKER_STARTUP_PLACED_ENV=
   WORKER_STARTUP_PLACED_REPO=
   cfg=$(resolve_placement_config)
@@ -271,6 +277,8 @@ apply_worker_placement() { # <spec_file> [repo_selector] -> WORKER_STARTUP_PLACE
   fi
   pick_args=(pick --spec "$spec_file" --json --config "$cfg")
   [ -z "$repo_sel" ] || pick_args+=(--repo "$repo_sel")
+  # A real start records itself so the next pick counts it before its load shows.
+  [ "$record" != --record ] || pick_args+=(--record)
   set +e
   json=$("$python3" "$here/worker-placement.py" "${pick_args[@]}")
   local ec=$?
@@ -829,12 +837,6 @@ run_mode() {
       echo "worker-placement: reason $force_host -> host=$reason_target" >&2
       if [ "$(printf '%s' "$reason_target" | tr '[:upper:]' '[:lower:]')" != "$(this_host_name)" ]; then
         environment=$reason_target
-        if [ -n "$repo" ]; then
-          local mapped_repo
-          if mapped_repo=$("$python3" "$here/worker-placement.py" translate-repo --environment "$reason_target" --repo "$repo" --config "$reason_cfg" 2>/dev/null); then
-            repo=$mapped_repo
-          fi
-        fi
       fi
     fi
   fi
@@ -843,8 +845,18 @@ run_mode() {
     check_forced_host "$on_raw" "$spec" "$repo" "$force_host"
   fi
 
+  # An explicit remote host (--on or a --force-host reason) maps a local repo id through
+  # worker_placement.repos like auto placement does. An id with no mapping passes as given.
+  if [ "$explicit_on" = 1 ] && [ -n "$environment" ] && [ -n "$repo" ] && [ -z "$merge_worker" ]; then
+    local on_cfg mapped_repo
+    on_cfg=$(resolve_placement_config)
+    if [ -f "$on_cfg" ] && mapped_repo=$("$python3" "$here/worker-placement.py" translate-repo --environment "$environment" --repo "$repo" --config "$on_cfg" 2>/dev/null); then
+      repo=$mapped_repo
+    fi
+  fi
+
   if [ "$explicit_on" != 1 ] && [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
-    apply_worker_placement "$spec" "$repo"
+    apply_worker_placement "$spec" "$repo" --record
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
   fi
 
