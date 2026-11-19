@@ -414,7 +414,7 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
       printf -- '- Open a PR with the issue closing line, a line `%s`.\n' "${builder_line:-Builder: agent=<agent> model=<model>}"
       printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
     fi
-    printf -- '- When this work has a pull request, run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. When it has no pull request, run `orca worktree set --worktree active --workspace-status completed` before `worker_done`. Then send `worker_done` to run %s. Never wait for a reply. Never contact the user.\n' "$run_id"
+    printf -- '- When this work has a pull request, run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. When it has no pull request, run `orca worktree set --worktree active --workspace-status completed` before `worker_done`. Then send `worker_done` with the send command from your preamble, without a `--run` flag. Never wait for a reply. Never contact the user.\n'
   } >>"$out"
   printf '%s\n' "$out"
 }

@@ -32,6 +32,7 @@ if [ "${1:-} ${2:-}" = "orchestration worker-show" ]; then
   exit 0
 fi
 if [ "${1:-} ${2:-}" = "orchestration worker-list" ]; then
+  printf '%s\n' "$*" >>"${PRG_WORKER_LIST_LOG:-/dev/null}"
   [ -n "${PRG_FAKE_WORKERS:-}" ] && { cat "$PRG_FAKE_WORKERS"; exit 0; }
   echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_slug_builder","agent":"claude","workspace":"repo::'"$tmp"'/dot-760"}],"nextCursor":null}}'
   exit 0
@@ -176,6 +177,18 @@ if PRG_FAKE_WORKERS="$tmp/workers-771.json" pr_review_gates_resolve_builder_disp
 else
   ok "unknown author ignores a same-named worktree in another repo"
 fi
+
+# 1220: both worker-list lookups include remote rows, or a remote builder is never found.
+export PRG_WORKER_LIST_LOG="$tmp/worker-list-1220.log"
+: >"$PRG_WORKER_LIST_LOG"
+pr_review_gates_worker_list_row ctx_slug_builder >/dev/null 2>&1 || true
+pr_review_gates_resolve_builder_dispatch unknown mingster/dot-771 refuse mingster/dotfiles >/dev/null 2>&1 || true
+if [ "$(wc -l <"$PRG_WORKER_LIST_LOG" | tr -d ' ')" -ge 2 ] && ! grep -qv -- '--include-remote' "$PRG_WORKER_LIST_LOG"; then
+  ok "worker-list lookups pass --include-remote"
+else
+  bad "worker-list lookups must pass --include-remote: $(cat "$PRG_WORKER_LIST_LOG")"
+fi
+unset PRG_WORKER_LIST_LOG
 
 echo "passed $pass failed $fail"
 [ "$fail" -eq 0 ]
