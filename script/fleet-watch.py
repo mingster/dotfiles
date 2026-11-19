@@ -2917,7 +2917,15 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             )
             return
         try:
-            result = rpc_call(*start_args)
+            try:
+                result = rpc_call(*start_args)
+            except SEND_ERRORS as first:
+                first_reason, first_code = exception_start_failure(first)
+                if (first_code in BABYSIT_DEFERRED_EXITS or not startup_failure_text(first_reason)
+                        or not startup_retry_taken(state, key)):
+                    raise
+                log_bits.append('startup_retry=%s' % did)
+                result = rpc_call(*start_args)
         except SEND_ERRORS as exc:
             reason, exit_code = exception_start_failure(exc)
             if exit_code in BABYSIT_DEFERRED_EXITS:
@@ -2931,12 +2939,47 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             return
         _record_stall_restart(state, did, result, now, log_bits, pending)
 
+    def retry_startup_failed(w, did):
+        """An own worker that died at startup is released and started once more, then parked (#1221).
+        Needs a startup stage or error on the row (worker-list rows carry no lastError); without one nothing fires."""
+        row = _own_row(state, did)
+        if row is None or row.get('startup_handled') or _retry_recorded(state, did):
+            return
+        row['startup_handled'] = True
+        repo = label_target(w) or fault_target()
+        pr_num = worker_pr_number(w)
+        if row.get('retry_of'):
+            _park_own_stall(state, did, now, 'failed at startup after a retry', notices, log_bits, config,
+                            repo=repo, pr=pr_num)
+            return
+        run_for_start = run_id_for_stall_restart(w, '') or default_list_run_id(config)
+        start_args = worker_stall_restart_start_args(w, did, run_for_start, config)
+        if not start_args:
+            _park_own_stall(state, did, now, 'startup retry failed (no start args)', notices, log_bits, config,
+                            repo=repo, pr=pr_num)
+            return
+        try:
+            rpc_call('orchestration', 'worker-release', '--dispatch', did)
+        except SEND_ERRORS:
+            pass
+        try:
+            result = rpc_call(*start_args)
+        except SEND_ERRORS as exc:
+            reason, _exit_code = exception_start_failure(exc)
+            _park_own_stall(state, did, now, _stall_notice_reason(reason, orchestration_failure_log_code(exc)),
+                            notices, log_bits, config, repo=repo, pr=pr_num)
+            return
+        _record_stall_restart(state, did, result, now, log_bits, pending)
+        log_bits.append('startup_retry=%s' % did)
+
     local_handles = set(term_times.keys())
     for w in workers:
         did = w.get('dispatchId')
         if not isinstance(did, str) or not did:
             continue
         if not worker_row_is_live(w):
+            if worker_startup_failed(w):
+                retry_startup_failed(w, did)
             continue
         term = worker_terminal_handle(w)
         host_id = worker_execution_host_id(w)
@@ -4638,20 +4681,20 @@ def startup_retry_taken(state, key):
 
 
 def failed_startup_verifier(state, workers, repo, number, head):
-    """True when the verifier recorded for this head failed at startup with no Verdict, so one fresh start is due."""
-    key = park_id('verifier', repo, number, head)
-    if (state.get('startup_retried') or {}).get(key):
-        return False
+    """Dispatch id of the verifier recorded for this head that failed at startup with no Verdict, else ''.
+
+    Design limit: worker-list rows carry no lastError. This fires only when Orca exposes a startup stage
+    or error on the row. A failed row with neither is left alone (no release, no retry)."""
     for did, row in (state.get('own_dispatches') or {}).items():
-        if not isinstance(row, dict) or row.get('kind') != 'verifier':
+        if not isinstance(row, dict) or row.get('kind') != 'verifier' or row.get('startup_handled'):
             continue
         if (row.get('repo'), row.get('pr'), row.get('head')) != (repo, number, head):
             continue
         if _retry_recorded(state, did):
             continue
         if any(w.get('dispatchId') == did and worker_startup_failed(w) for w in workers or []):
-            return startup_retry_taken(state, key)
-    return False
+            return did
+    return ''
 
 
 def _projection_agent_model(worker):
@@ -5571,11 +5614,25 @@ def babysit_pass(
         record = babysit_record(state, repo, number)
         reported = record.get('head') == head and record.get('action') == 'report'
         if record.get('head') == head and record.get('action') and not reported:
-            if (record.get('action') == 'verifier' and not dry_run
-                    and failed_startup_verifier(state, workers, repo, number, head)):
-                # The verifier vanished at startup: forget the mark so this pass starts one fresh verifier (#1221).
-                state['babysit'][repo].pop(str(number), None)
-                log_bits.append('verifier_startup_retry=%s' % number)
+            failed_did = (failed_startup_verifier(state, workers, repo, number, head)
+                          if record.get('action') == 'verifier' and not dry_run else '')
+            if failed_did:
+                # The verifier vanished at startup: release it, then start one fresh verifier. A second
+                # startup failure parks the PR (#1221).
+                _own_row(state, failed_did)['startup_handled'] = True
+                release_worker(failed_did)
+                park_key = park_id('verifier', repo, number, head)
+                if startup_retry_taken(state, park_key):
+                    state['babysit'][repo].pop(str(number), None)
+                    log_bits.append('verifier_startup_retry=%s' % number)
+                else:
+                    reason = 'verifier failed at startup twice'
+                    lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
+                    if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
+                        notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, None))
+                    if persist_state:
+                        persist_state()
+                    continue
             else:
                 lines.append(_babysit_line(repo, number, head, 'skip', 'already'))
                 continue

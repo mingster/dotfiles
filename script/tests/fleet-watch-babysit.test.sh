@@ -643,5 +643,72 @@ else
   bad "no coordinator run keeps the queue and exits 0 (rc=$noruns_rc stderr=$(cat "$tmp/noruns.err") log=$(cat "$noruns_log" 2>/dev/null || true) state=$(cat "$tmp/state-noruns.json" 2>/dev/null || true))"
 fi
 
+# --- a verifier that failed at startup is released once, restarted once, then parked (#1221) ---
+# Design limit: worker-list rows carry no lastError, so only a startup stage or error on the row triggers this.
+cat > "$tmp/bin/orca-release" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$BABYSIT_ORCA_LOG"
+echo '{"ok":true,"result":{}}'
+EOF
+chmod +x "$tmp/bin/orca-release"
+export BABYSIT_ORCA_LOG="$tmp/orca-release.log"
+empty_repos
+HEAD_F=$(python3 -c 'print("f"*40)')
+green 9 "$HEAD_F"
+state=$tmp/state-startup-fail.json
+python3 - "$state" "$HEAD_F" <<'PY'
+import json, sys
+json.dump({"babysit": {"owner/app": {"9": {"head": sys.argv[2], "action": "verifier"}}},
+           "own_dispatches": {"ctx_v1": {"kind": "verifier", "repo": "owner/app", "pr": 9, "head": sys.argv[2]}}},
+          open(sys.argv[1], "w", encoding="utf-8"))
+PY
+failed_row() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+path, did, detail = sys.argv[1:]
+stage = {"detail": detail} if detail != "none" else {}
+json.dump([{"dispatchId": did, "dispatchStatus": "failed", "terminalState": "released",
+            "projection": {"stage": stage}}], open(path, "w", encoding="utf-8"))
+PY
+}
+startup_pass() {
+  : > "$BABYSIT_ORCA_LOG"
+  ORCA_CLI_COMMAND="$tmp/bin/orca-release" run_pass "$state" only "$1" "$2"
+}
+# a failed row with no stage and no error is neither released nor retried
+: > "$BABYSIT_STARTS"
+failed_row "$tmp/w-none.json" ctx_v1 none
+startup_pass "$tmp/w-none.json" "$tmp/startup0.out"
+if [ "$(starts)" = 0 ] && ! grep -q worker-release "$BABYSIT_ORCA_LOG" && grep -q 'action=skip already' "$tmp/startup0.out"; then
+  ok "failed row without a startup stage is left alone"
+else
+  bad "failed row without a startup stage is left alone (starts=$(starts) out=$(cat "$tmp/startup0.out"))"
+fi
+# failed at startup: one release, one new start, no skip already
+failed_row "$tmp/w-fail1.json" ctx_v1 agent_readiness
+startup_pass "$tmp/w-fail1.json" "$tmp/startup1.out"
+if [ "$(grep -c 'worker-release --dispatch ctx_v1' "$BABYSIT_ORCA_LOG")" = 1 ] && [ "$(starts)" = 1 ] && ! grep -q 'action=skip already' "$tmp/startup1.out"; then
+  ok "startup-failed verifier is released and restarted once"
+else
+  bad "startup-failed verifier is released and restarted once (starts=$(starts) log=$(cat "$BABYSIT_ORCA_LOG") out=$(cat "$tmp/startup1.out"))"
+fi
+# the retry verifier also dies at startup: park, no second start
+python3 - "$state" <<'PY'
+import json, sys
+st = json.load(open(sys.argv[1], encoding="utf-8"))
+st["own_dispatches"]["ctx_v2"] = {"kind": "verifier", "repo": "owner/app", "pr": 9, "head": st["babysit"]["owner/app"]["9"]["head"]}
+st["babysit"]["owner/app"]["9"]["action"] = "verifier"
+json.dump(st, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+failed_row "$tmp/w-fail2.json" ctx_v2 dispatch_input
+startup_pass "$tmp/w-fail2.json" "$tmp/startup2.out"
+if [ "$(starts)" = 1 ] && grep -q 'start-failed' "$tmp/startup2.out" && grep -q 'ctx_v2' "$BABYSIT_ORCA_LOG"; then
+  ok "second startup failure parks the PR"
+else
+  bad "second startup failure parks the PR (starts=$(starts) out=$(cat "$tmp/startup2.out"))"
+fi
+startup_pass "$tmp/w-fail2.json" "$tmp/startup3.out"
+if [ "$(starts)" = 1 ]; then ok "parked PR is not started again"; else bad "parked PR is not started again (starts=$(starts))"; fi
+
 echo "babysit-dispatch: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

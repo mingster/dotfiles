@@ -118,7 +118,21 @@ class SettledRecipientGate(Gate):
         os.chmod(os.path.join(self.bin, "orca"), 0o755)
 
     def row(self, state, terminal_state, terminal="term_w"):
-        return {"state": state, "terminalState": terminal_state, "terminal": terminal}
+        return {"state": state, "terminalState": terminal_state, "terminal": terminal, "dispatchId": "ctx_w"}
+
+    def test_settled_worker_denied_in_every_target_form(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("succeeded", "released")])
+        for target in ("term_w", "dispatch:ctx_w", "ctx_w"):
+            self.assertDenied(f"orca orchestration send --to {target} --subject s --body b", "fresh dispatch")
+            self.assertDenied(f"script/orca-reply.sh --to {target} --subject s --body b", "fresh dispatch")
+
+    def test_live_worker_allowed_in_every_target_form(self):
+        os.makedirs(self.bin, exist_ok=True)
+        self.fake_orca([self.row("ready", "active")])
+        for target in ("term_w", "dispatch:ctx_w", "ctx_w"):
+            self.assertAllowed(f"orca orchestration send --to {target} --subject s --body b")
+            self.assertAllowed(f"script/orca-reply.sh --to {target} --subject s --body b")
 
     def test_send_to_settled_worker_denied(self):
         os.makedirs(self.bin, exist_ok=True)

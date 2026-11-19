@@ -31,7 +31,8 @@ if [ -n "$id" ] && [ -n "$subject" ] || [ -z "$id$subject" ]; then echo "orca-re
 # Mail to a settled or released dispatch makes Orca open a "New messages" follow-up on a dead terminal (#1221).
 # Fails open when the worker list cannot be read.
 settled=$(bounded "$orca_cli" orchestration worker-list --json --limit 100 2> /dev/null | jq -r --arg t "$to" '
-  [.result.workers[]? | select(.terminal == $t)] as $rows
+  ($t | sub("^dispatch:"; "")) as $d
+  | [.result.workers[]? | select(.terminal == $t or .dispatchId == $d)] as $rows
   | if ($rows | length) > 0 and ($rows | all(.terminalState == "released" or ((.state // "") | IN("succeeded", "failed", "stopped", "abandoned", "rejected")))) then "settled" else "" end' 2> /dev/null || true)
 if [ "$settled" = settled ]; then
   echo "orca-reply: refusing, $to belongs to a settled or released dispatch. Start a fresh dispatch instead of mailing it." >&2

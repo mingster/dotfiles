@@ -70,17 +70,22 @@ run --to term_b --id msg_1 --subject x --body hi
 [ "$(cat "$tmp/rc")" = 2 ] && ok || bad "both id and subject exit 2"
 [ ! -s "$ORCA_LOG" ] && ok || bad "both id and subject call nothing"
 
+
+# 9. a settled or released recipient is refused in every form, nothing sent
+settled_row() { printf '{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_a","dispatchId":"ctx_a","terminalState":"released"}]}}'; }
+live_row() { printf '{"ok":true,"result":{"workers":[{"state":"ready","terminal":"term_a","dispatchId":"ctx_a","terminalState":"active"}]}}'; }
+for target in term_a dispatch:ctx_a ctx_a; do
+  FAKE_WORKERS=$(settled_row) run --to "$target" --id msg_1 --body hi
+  [ "$(cat "$tmp/rc")" = 2 ] && ok || bad "settled recipient $target exit 2"
+  ! grep -qE "orchestration reply|terminal send" "$ORCA_LOG" && ok || bad "settled recipient $target sends nothing"
+  grep -q "settled" "$tmp/err" && ok || bad "settled recipient $target message"
+  FAKE_WORKERS=$(live_row) run --to "$target" --id msg_1 --body hi
+  [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "live recipient $target served"
+done
+
+# 10. an unknown recipient is still served
+FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_b","dispatchId":"ctx_b","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "unknown recipient served"
+
 echo "orca-reply: $pass passed, $fail failed"
 [ "$fail" = 0 ]
-
-# 7. a settled or released recipient is refused, nothing sent
-FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_a","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
-[ "$(cat "$tmp/rc")" = 2 ] && ok || bad "settled recipient exit 2"
-! grep -qE "orchestration reply|terminal send" "$ORCA_LOG" && ok || bad "settled recipient sends nothing"
-grep -q "settled" "$tmp/err" && ok || bad "settled recipient message"
-
-# 8. a live recipient (or an unknown one) is still served
-FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"ready","terminal":"term_a","terminalState":"active"}]}}' run --to term_a --id msg_1 --body hi
-[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "live recipient served"
-FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_b","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
-[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "unknown recipient served"

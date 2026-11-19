@@ -2747,14 +2747,15 @@ def check_settled_recipient(base, args):
     elif base != "orca-reply.sh":
         return
     target = option_value(args, "--to")
-    if not target or not target.startswith("term_"):
+    if not target or not target.startswith(("term_", "ctx_", "dispatch:")):
         return
+    dispatch = target.removeprefix("dispatch:")
     out = gate_run(["orca", "orchestration", "worker-list", "--json", "--limit", "100"], None)
     try:
         workers = json.loads(out)["result"]["workers"]
     except Exception:
         return
-    rows = [w for w in workers if isinstance(w, dict) and w.get("terminal") == target]
+    rows = [w for w in workers if isinstance(w, dict) and (w.get("terminal") == target or w.get("dispatchId") == dispatch)]
     if rows and all(w.get("terminalState") == "released" or w.get("state") in SETTLED_STATES for w in rows):
         deny(f"{target} belongs to a settled or released dispatch, so mail to it would open a 'New messages' follow-up "
              "that fails with terminal_exited. Start a fresh dispatch for the new work instead.")
