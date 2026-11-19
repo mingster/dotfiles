@@ -43,8 +43,9 @@ run --bogus
 
 # Fixture repo: checker, hook, checks-local
 r="$tmp/repo"
-mkdir -p "$r/script/tests/lib" "$r/.githooks"
+mkdir -p "$r/script/tests/lib" "$r/script/lib" "$r/.githooks"
 cp "$chk" "$here/check-commit-trailers.sh" "$src/script/checks-local.sh" "$src/script/select-changed-script-tests.sh" "$r/script/"
+cp "$src/script/lib/hooks-changed.sh" "$r/script/lib/"
 cp "$src/script/tests/lib/asdf-pin.sh" "$r/script/tests/lib/"
 cp "$src/.githooks/commit-msg" "$r/.githooks/"
 git -C "$r" init -q -b main

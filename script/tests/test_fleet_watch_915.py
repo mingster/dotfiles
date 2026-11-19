@@ -229,6 +229,36 @@ class BabysitLiveVerifier(unittest.TestCase):
         self.assertTrue(any('verifier-live' in line for line in lines), lines)
         self.assertNotIn('o/r', state.get('babysit', {}))
 
+    def test_hand_dispatched_verifier_naming_the_pr_in_its_detail_blocks(self):
+        starts, lines, _state = self.run_pass([self.live_verifier(title='#1204|qa-sdet|verify PR 7')])
+        self.assertEqual(starts, [])
+        self.assertTrue(any('verifier-live' in line for line in lines), lines)
+
+    def test_verify_worktree_names_block(self):
+        for path in ('verify-7', 'v7', 'verify-7-b'):
+            row = self.live_verifier(title='whatever', workspace='wt::/Users/x/orca/workspaces/dotfiles/' + path)
+            starts, lines, _state = self.run_pass([row])
+            self.assertEqual(starts, [], path)
+            self.assertTrue(any('verifier-live' in line for line in lines), lines)
+
+    def test_verifier_on_the_pr_number_or_head_branch_blocks(self):
+        for extra in ({'prNumber': 7}, {'branch': 'b'}):
+            row = self.live_verifier(title='qa-sdet - hand started', **extra)
+            row['projection']['workspace'] = {'id': 'wt::/x/other'}
+            starts, _lines, _state = self.run_pass([row])
+            self.assertEqual(starts, [], extra)
+
+    def test_builder_on_the_same_branch_does_not_block(self):
+        row = self.live_verifier(title='#3|fullstack-dev', branch='b', prNumber=7)
+        row['projection']['workspace'] = {'id': 'wt::/x/other'}
+        starts, _lines, _state = self.run_pass([row])
+        self.assertEqual(len(starts), 1)
+
+    def test_verifier_on_another_pr_worktree_does_not_block(self):
+        row = self.live_verifier(title='whatever', workspace='wt::/x/verify-8')
+        starts, _lines, _state = self.run_pass([row])
+        self.assertEqual(len(starts), 1)
+
     def test_babysit_title_form_blocks_too(self):
         starts, _lines, _state = self.run_pass([self.live_verifier(title='qa-sdet verify o/r#7')])
         self.assertEqual(starts, [])

@@ -4740,33 +4740,75 @@ def _worker_is_verifier(worker):
 
 
 _VERIFY_TITLE_RE = re.compile(r'^qa-sdet\b.*?\bverify\b(.*)$', re.I)
-_NEW_VERIFY_TITLE_RE = re.compile(r'^#(\d+)\|qa-sdet(?:\|.*)?$')
-_TITLE_PR_RE = re.compile(r'#(\d+)|\bPRs?\s+(\d+)', re.I)
+_NEW_VERIFY_TITLE_RE = re.compile(r'^#(\d+)\|qa-sdet(?:\|(.*))?$')
+_TITLE_PR_RE = re.compile(r'#(\d+)|\bPRs?\s+#?(\d+)', re.I)
+_VERIFY_WORKTREE_RE = re.compile(r'^(?:verify|vd|v)-?(\d+)(?:-[a-z0-9]+)?$')
+_VERIFIER_TITLE_KEYS = ('_task_title', 'title', 'name')
 
 
-def verifier_title_prs(worker):
-    """PR numbers named by a verifier task title ("qa-sdet - verify PR #7", "qa-sdet verify o/r#7" or a batch
-    "qa-sdet - verify PRs #7, #8 and o/r#9"), else an empty list.
-
-    Real worker-list rows carry no role, PR number or branch, only a taskId; fetch_workers joins the task title.
-    """
-    text = str(worker.get('_task_title') or '').strip()
+def _verifier_text_prs(text):
     new_form = _NEW_VERIFY_TITLE_RE.match(text)
     if new_form:
-        return [int(new_form.group(1))]
+        prs = [int(new_form.group(1))]
+        prs += [int(a or b) for a, b in _TITLE_PR_RE.findall(new_form.group(2) or '')]
+        return prs
     match = _VERIFY_TITLE_RE.match(text)
     if not match:
         return []
     return [int(a or b) for a, b in _TITLE_PR_RE.findall(match.group(1))]
 
 
+def _verifier_worktree_pr(worker):
+    """PR number from a verifier worktree basename (verify-7, v7, verify-7-b), else None."""
+    selector = worker_worktree_selector(worker)
+    for raw in (worker_checkout_path(worker), selector.split('::', 1)[-1] if isinstance(selector, str) else ''):
+        base = os.path.basename(str(raw or '').rstrip('/'))
+        found = _VERIFY_WORKTREE_RE.match(base)
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def verifier_title_prs(worker):
+    """PR numbers a verifier worker is on, from its task title ("qa-sdet - verify PR #7", "qa-sdet verify o/r#7",
+    a batch "qa-sdet - verify PRs #7, #8 and o/r#9" or "#4|qa-sdet|verify PR 7", which names the issue and the PR)
+    or its worktree basename (verify-7, v7, verify-7-b), else an empty list.
+
+    Real worker-list rows carry no role, PR number or branch, only a taskId; fetch_workers joins the task title.
+    """
+    prs = []
+    for key in _VERIFIER_TITLE_KEYS:
+        prs += _verifier_text_prs(str(worker.get(key) or '').strip())
+    from_tree = _verifier_worktree_pr(worker)
+    if from_tree is not None:
+        prs.append(from_tree)
+    return list(dict.fromkeys(prs))
+
+
+def _worker_titled_verifier(worker):
+    if _worker_is_verifier(worker):
+        return True
+    for key in _VERIFIER_TITLE_KEYS:
+        text = str(worker.get(key) or '').strip()
+        if re.match(r'^(?:#\d+\|)?qa-sdet\b', text):
+            return True
+    return False
+
+
 def live_verifier_worker(pr, workers):
     """The live verifier worker on this PR, hand dispatched or not, else None."""
     number = pr.get('number')
+    head = pr.get('headRefName')
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_row_is_live(worker):
             continue
         if number is not None and number in verifier_title_prs(worker):
+            return worker
+        if not _worker_titled_verifier(worker):
+            continue
+        if number is not None and worker_pr_number(worker) == number:
+            return worker
+        if head and worker_branch_name(worker) == head:
             return worker
     return None
 

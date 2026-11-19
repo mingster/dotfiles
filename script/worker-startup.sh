@@ -684,6 +684,37 @@ release_ready_label() { # <spec_file> <title>
     || echo "worker-startup: could not remove ready-for-agent from $ref" >&2
 }
 
+# A qa-sdet start for a PR that already has a live verifier dispatch warns on stderr and goes on (#1222).
+# Best effort: a failed orca call or a missing jq never blocks a start.
+warn_live_verifier() { # <spec_file> <title> <name> <run>
+  local spec_file=$1 title=$2 name=$3 run=$4 role btype prs pr workers tasks
+  role=$(role_from_title "$title")
+  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
+  [ "$role" = qa-sdet ] || [ "$btype" = verify ] || return 0
+  [ -n "$run" ] || return 0
+  prs=$({
+    printf '%s\n' "${title#*|qa-sdet}" | grep -oiE '(#|\bPRs? #?)[0-9]+' | grep -oE '[0-9]+'
+    printf '%s\n' "$name" | sed -nE 's/^(verify|vd|v)-?([0-9]+)(-[a-z0-9]+)?$/\2/p'
+    grep -oE '(^Refs [A-Za-z0-9_./-]*#|pull/)[0-9]+' "$spec_file" | grep -oE '[0-9]+$'
+  } | sort -un) || prs=
+  [ -n "$prs" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  workers=$("$orca" orchestration worker-list --run "$run" --include-remote --terminal-state active --json 2>/dev/null) || return 0
+  tasks=$("$orca" orchestration task-list --run "$run" --json 2>/dev/null) || tasks='{}'
+  for pr in $prs; do
+    printf '%s\n%s\n' "$workers" "$tasks" | jq -rs --arg pr "$pr" '
+      (.[0].result.workers // .[0].workers // []) as $w
+      | ((.[1].result.tasks // .[1].tasks // []) | map({(.id): .title}) | add // {}) as $t
+      | $w[]
+      | select((.liveness // .projection.liveness.verdict // "live") == "live")
+      | select((.terminalState // "active") == "active")
+      | {id: .dispatchId, title: ($t[.taskId] // .title // "")}
+      | select(.title | test("^(#[0-9]+\\|)?qa-sdet"))
+      | select(.title | test("(#|PRs? #?)" + $pr + "([^0-9]|$)") or test("verify-?" + $pr + "([^0-9]|$)"))
+      | "worker-startup: warning: live verifier \(.id) (\(.title)) is already running for PR #" + $pr' >&2 2>/dev/null || true
+  done
+}
+
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
@@ -755,6 +786,7 @@ run_mode() {
   local lint_out lint_dir dispatch_log
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
+  warn_live_verifier "$spec" "$title" "$name" "$run"
   spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
   spec=$(with_refs_line "$spec" "$title")
   spec=$(prepend_role_preamble "$spec" "$title")
