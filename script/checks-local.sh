@@ -60,5 +60,6 @@ if hooks_changed ${changed[@]+"${changed[@]}"}; then
   python3 -m unittest discover -s templates/agent-team/.claude/hooks/tests -p 'test_*.py'
   bash script/check-guard-false-positives.sh
 fi
+bash script/check-dotfiles-fresh.sh
 bash script/shellcheck-dotfiles.sh
 skipped_note
