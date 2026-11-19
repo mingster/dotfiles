@@ -31,7 +31,16 @@
     "infra_reruns": 2
   },
   "babysit": {
-    "per_pass_cap": 2
+    "per_pass_cap": 2,
+    "standing_verifier": {
+      "enabled": false,
+      "hosts": ["primary-code-host"],
+      "agent": "antigravity",
+      "model": "gemini-4-argon-high",
+      "max_prs": 5,
+      "wake_timeout_seconds": 90,
+      "max_context_percent": 70
+    }
   },
   "worker_stall": {
     "label_repo": "owner/name",

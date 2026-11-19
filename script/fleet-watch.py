@@ -3959,6 +3959,7 @@ def default_issue_scan_start(command, run=subprocess.run):
         done.returncode,
         _start_reason(done.stderr, getattr(done, 'stdout', '') or ''),
         dispatch_id_from_text(getattr(done, 'stdout', None) or ''),
+        terminal_from_text(getattr(done, 'stdout', None) or ''),
     )
 
 
@@ -4749,6 +4750,8 @@ _VERIFIER_TITLE_KEYS = ('_task_title', 'title', 'name')
 def _verifier_text_prs(text):
     new_form = _NEW_VERIFY_TITLE_RE.match(text)
     if new_form:
+        if (new_form.group(2) or '').strip() == 'standing':
+            return []
         prs = [int(new_form.group(1))]
         prs += [int(a or b) for a, b in _TITLE_PR_RE.findall(new_form.group(2) or '')]
         return prs
@@ -4795,10 +4798,16 @@ def _worker_titled_verifier(worker):
     return False
 
 
-def live_verifier_worker(pr, workers):
+def live_verifier_worker(pr, workers, state=None, repo=None):
     """The live verifier worker on this PR, hand dispatched or not, else None."""
     number = pr.get('number')
     head = pr.get('headRefName')
+    for rec in ((state or {}).get('standing_verifiers') or {}).values():
+        if isinstance(rec, dict) and number is not None and rec.get('current_pr') == number \
+                and (repo is None or rec.get('repo') == repo):
+            worker = _standing_worker(rec, workers)
+            if worker is not None and worker_row_is_live(worker):
+                return worker
     for worker in workers or []:
         if not isinstance(worker, dict) or not worker_row_is_live(worker):
             continue
@@ -4813,9 +4822,9 @@ def live_verifier_worker(pr, workers):
     return None
 
 
-def live_verifier_for_pr(pr, workers):
+def live_verifier_for_pr(pr, workers, state=None, repo=None):
     """True when a live verifier worker, hand dispatched or not, is already on this PR."""
-    return live_verifier_worker(pr, workers) is not None
+    return live_verifier_worker(pr, workers, state, repo) is not None
 
 
 UNREAD_NUDGE_IDLE_SECONDS = 300
@@ -5132,7 +5141,7 @@ def pr_touches_no_package(pr_row, root):
     return True
 
 
-def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
+def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standing=False):
     number = pr_row['number']
     head = pr_row.get('headRefOid') or ''
     verify = checks_local_verify_text(root, 'bash script/checks-local.sh')
@@ -5179,6 +5188,13 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
             '## Finish\n'
             'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
         ) % (repo, number, setup_line, head, who, extra_scope, head, verify)
+        if standing:
+            text = text.split('## Finish')[0] + (
+                '## Finish\n'
+                'You are a standing verifier. After you post the Verdict, stay at your idle prompt and do not send worker_done. '
+                'fleet-watch sends the next PR as a prompt. When a prompt says it is your last PR, post the Verdict, run '
+                'orca worktree set --worktree active --workspace-status completed, then send worker_done.\n'
+            )
         return _write_issue_scan_spec(_with_preamble(text, 'qa-sdet'))
     else:
         text = (
@@ -5199,10 +5215,11 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag=''):
 class BabysitStartResult(int):
     """A start exit code that also carries the failing command's last stderr line and dispatch id."""
 
-    def __new__(cls, code, reason='', dispatch_id=''):
+    def __new__(cls, code, reason='', dispatch_id='', terminal=''):
         self = super().__new__(cls, code)
         self.reason = reason
         self.dispatch_id = dispatch_id or ''
+        self.terminal = terminal or ''
         return self
 
 
@@ -5469,14 +5486,17 @@ def default_babysit_start(command, run=subprocess.run):
     )
 
 
-def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, verdict_tag=''):
+def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, verdict_tag='', standing_host=None):
     startup, run_id, from_terminal, roots = babysit_settings(config)
     root = roots.get(repo)
     if not startup or not run_id or not from_terminal or not isinstance(root, str) or not root:
         return None
     if not agent or not model:
         return None
-    if kind == 'verifier':
+    if kind == 'verifier' and standing_host:
+        title = '#%s|qa-sdet|standing' % pr_row['number']
+        name = 'verify-standing-%s' % re.sub(r'[^a-z0-9]+', '-', repo.lower()).strip('-')
+    elif kind == 'verifier':
         title = '#%s|qa-sdet' % pr_row['number']
         name = 'verify-%s' % pr_row['number']
     else:
@@ -5485,13 +5505,15 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     command = [
         'bash', startup,
         '--run', run_id,
-        '--spec', build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag),
+        '--spec', build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag, standing=bool(standing_host)),
         '--title', title,
         '--agent', agent,
         '--model', model,
         '--name', name,
         '--repo', local_repo_selector(root),
     ]
+    if standing_host:
+        command += ['--on', standing_host]
     branch = pr_row.get('headRefName') or ''
     if branch:
         command += ['--base-branch', pr_base_ref(root, branch)]
@@ -5522,11 +5544,421 @@ def _default_notify_worker(terminal, text):
         log_send_failed(terminal, error)
 
 
+STANDING_DEFAULTS = {
+    'enabled': False, 'hosts': [], 'agent': 'antigravity', 'model': 'gemini-4-argon-high',
+    'max_prs': 5, 'wake_timeout_seconds': 90, 'max_context_percent': 70, 'max_turns': 120,
+}
+STANDING_BUSY_RE = re.compile(r'[⠁-⣿]|\b(?:Running|Thinking)\b|esc to interrupt', re.I)
+STANDING_CTX_RE = re.compile(r'ctx:\s*(\d+)%')
+STANDING_STOP_RE = re.compile(
+    r'Context limit reached|Run /compact|Individual quota reached|usage limit reached|hit your usage limit'
+    r'|There was a network issue connecting|\bSTOPPED\b', re.I)
+STANDING_TURNS_RE = re.compile(r'\b(\d+)\s+turns?\b|\bturns?\s*[:=]\s*(\d+)', re.I)
+STANDING_PROBE_DELAYS = (5, 10)
+TRIAL_COLUMNS = (
+    'timestamp', 'host', 'mode', 'dispatch_id', 'repo', 'pr', 'head', 'event',
+    'prs_done', 'reason', 'duration_s', 'headroom_pct',
+)
+
+
+def standing_settings(config):
+    """babysit.standing_verifier merged over its defaults. Disabled unless the config enables it."""
+    cfg = dict(STANDING_DEFAULTS)
+    block = (config.get('babysit') or {}).get('standing_verifier')
+    if isinstance(block, dict):
+        cfg.update({key: block[key] for key in STANDING_DEFAULTS if key in block})
+    for key in ('max_prs', 'wake_timeout_seconds', 'max_context_percent', 'max_turns'):
+        try:
+            cfg[key] = int(cfg[key])
+        except (TypeError, ValueError):
+            cfg[key] = STANDING_DEFAULTS[key]
+    hosts = cfg.get('hosts')
+    cfg['hosts'] = [h for h in hosts if isinstance(h, str) and h] if isinstance(hosts, list) else []
+    cfg['enabled'] = bool(cfg.get('enabled')) and bool(cfg['hosts'])
+    return cfg
+
+
+def trial_log_path():
+    return Path(os.environ.get('STANDING_VERIFIER_TRIAL_LOG') or Path.home() / '.claude' / 'state' / 'verifier-trial.tsv')
+
+
+def trial_event(event, mode, host='', now=None, **fields):
+    """Append one row to the verifier trial log. A log failure never stops a pass."""
+    row = dict.fromkeys(TRIAL_COLUMNS, '')
+    row.update(fields)
+    row.update(
+        timestamp=datetime.datetime.fromtimestamp(now or time.time(), datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        host=host, mode=mode, event=event,
+    )
+    line = '\t'.join(re.sub(r'[\t\r\n]+', ' ', str(row[col])) for col in TRIAL_COLUMNS)
+    path = trial_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fresh = not path.exists() or path.stat().st_size == 0
+        with open(path, 'a') as handle:
+            if fresh:
+                handle.write('\t'.join(TRIAL_COLUMNS) + '\n')
+            handle.write(line + '\n')
+    except OSError:
+        return
+
+
+def read_trial_rows(path=None):
+    path = Path(path) if path else trial_log_path()
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines[1:]:
+        parts = line.split('\t')
+        if len(parts) == len(TRIAL_COLUMNS):
+            rows.append(dict(zip(TRIAL_COLUMNS, parts)))
+    return rows
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def trial_summary(rows):
+    """Text report comparing standing and fresh verifiers from verifier-trial.tsv rows."""
+    def count(mode, event):
+        return sum(1 for r in rows if r['mode'] == mode and r['event'] == event)
+
+    def mean(values):
+        values = [v for v in values if v is not None]
+        return sum(values) / len(values) if values else None
+
+    def fmt(value, suffix=''):
+        return 'n/a' if value is None else '%.1f%s' % (value, suffix)
+
+    def rate(num, den):
+        return 'n/a' if not den else '%.0f%% (%d/%d)' % (100.0 * num / den, num, den)
+
+    out = []
+    for mode in ('standing', 'fresh'):
+        starts, fails = count(mode, 'start'), count(mode, 'start_fail')
+        verdicts = [r for r in rows if r['mode'] == mode and r['event'] == 'verdict']
+        latency = mean([_to_float(r['duration_s']) for r in verdicts])
+        deltas = []
+        seq = [r for r in rows if r['mode'] == mode and _to_float(r['headroom_pct']) is not None]
+        for prev, cur in zip(seq, seq[1:]):
+            if cur['event'] == 'verdict':
+                deltas.append(_to_float(prev['headroom_pct']) - _to_float(cur['headroom_pct']))
+        out.append('%s: starts=%d start_failure_rate=%s verdicts=%d verification_latency_s=%s headroom_delta_per_pr=%s' % (
+            mode, starts, rate(fails, starts + fails), len(verdicts), fmt(latency), fmt(mean(deltas), ' pts')))
+    wakes, fallbacks = count('standing', 'wake'), count('standing', 'wake_fallback')
+    out.append('standing wake_failure_rate=%s' % rate(fallbacks, wakes + fallbacks))
+    done = [_to_float(r['prs_done']) for r in rows if r['mode'] == 'standing' and r['event'] == 'retire']
+    out.append('standing prs_per_dispatch=%s retirements=%d' % (fmt(mean(done)), len(done)))
+    return '\n'.join(out)
+
+
+def _terminal_in(data):
+    if not isinstance(data, dict):
+        return ''
+    term = data.get('terminal')
+    if isinstance(term, dict):
+        term = term.get('handle')
+    if isinstance(term, str) and term.strip():
+        return term.strip()
+    return _terminal_in(data.get('result'))
+
+
+def terminal_from_text(text):
+    raw = text if isinstance(text, str) else ''
+    start = raw.find('{')
+    while start >= 0:
+        try:
+            data, _end = json.JSONDecoder().raw_decode(raw[start:])
+        except json.JSONDecodeError:
+            start = raw.find('{', start + 1)
+            continue
+        found = _terminal_in(data)
+        if found:
+            return found
+        start = raw.find('{', start + 1)
+    return ''
+
+
+class StandingIO:
+    """Terminal reads, sends, stops and sleeps for the standing verifier. Tests replace it."""
+
+    def __init__(self, config):
+        self.config = config
+
+    def _env(self, host):
+        return [] if _is_local_coordinator_host(host, self.config) else ['--environment', host]
+
+    def read(self, terminal, host):
+        """(screen text, lastOutputAt) of a terminal, or ('', None) when it cannot be read."""
+        try:
+            data = rpc('terminal', 'read', '--terminal', terminal, '--screen', *self._env(host))
+        except SEND_ERRORS:
+            return '', None
+        data = data if isinstance(data, dict) else {}
+        term = data.get('terminal') if isinstance(data.get('terminal'), dict) else {}
+        tail = term.get('tail') or data.get('tail') or data.get('text') or ''
+        text = '\n'.join(str(line) for line in tail) if isinstance(tail, list) else str(tail)
+        return text, term.get('lastOutputAt') or data.get('lastOutputAt')
+
+    def send(self, terminal, text, host):
+        try:
+            rpc('terminal', 'send', *self._env(host), '--terminal', terminal, '--text', text, '--enter')
+        except SEND_ERRORS as error:
+            log_send_failed(terminal, error)
+            return False
+        return True
+
+    def stop(self, dispatch_id, host):
+        try:
+            rpc('orchestration', 'worker-stop', '--dispatch', dispatch_id, *self._env(host))
+        except SEND_ERRORS:
+            return
+
+    def sleep(self, seconds):
+        time.sleep(seconds)
+
+
+def standing_low_context(text, cfg):
+    """Reason a standing verifier's screen calls for retirement, else ''."""
+    for match in STANDING_CTX_RE.finditer(text or ''):
+        if int(match.group(1)) >= cfg['max_context_percent']:
+            return 'ctx=%s%%' % match.group(1)
+    if STANDING_STOP_RE.search(text or ''):
+        return 'stopped_banner'
+    for match in STANDING_TURNS_RE.finditer(text or ''):
+        if int(match.group(1) or match.group(2)) >= cfg['max_turns']:
+            return 'turns=%s' % (match.group(1) or match.group(2))
+    return ''
+
+
+def standing_records(state):
+    records = state.get('standing_verifiers')
+    if not isinstance(records, dict):
+        records = {}
+        state['standing_verifiers'] = records
+    return records
+
+
+def _standing_worker(rec, workers):
+    for worker in workers or []:
+        if isinstance(worker, dict) and worker.get('dispatchId') == rec.get('dispatch_id'):
+            return worker
+    return None
+
+
+def _standing_terminal(rec, workers):
+    if rec.get('terminal'):
+        return rec['terminal']
+    worker = _standing_worker(rec, workers)
+    return worker_terminal_handle(worker) if worker else ''
+
+
+def standing_idle(rec, open_prs):
+    """The standing verifier is free: its PR has a Verdict at the assigned head, or is no longer open."""
+    if not rec.get('current_pr'):
+        return True
+    row = open_prs.get((rec.get('repo'), rec.get('current_pr')))
+    if row is None:
+        return True
+    return verdict_posted_for_head(dict(row, headRefOid=rec.get('current_head') or ''))
+
+
+def standing_retire(state, host, rec, reason, io, release_worker, now, log_bits, event='retire'):
+    """Stop and release a standing verifier, clear its record, and log the retirement."""
+    did = rec.get('dispatch_id') or ''
+    if did:
+        io.stop(did, host)
+        release_worker(did, None if rec.get('local') else host)
+    standing_records(state).pop(host, None)
+    trial_event(
+        event, 'standing', host, now, dispatch_id=did, repo=rec.get('repo', ''), prs_done=len(rec.get('prs_assigned') or []),
+        reason=reason, duration_s=int(now - (rec.get('started_at') or now)),
+    )
+    log_bits.append('standing_retire=%s:%s' % (did, reason))
+
+
+def standing_housekeeping(config, state, workers, open_prs, io, release_worker, now, log_bits):
+    """Once per pass: record finished PRs, retire after the last one, and fail a wake that never took."""
+    cfg = standing_settings(config)
+    failed = set()
+    for host, rec in list(standing_records(state).items()):
+        if not isinstance(rec, dict):
+            standing_records(state).pop(host, None)
+            continue
+        worker = _standing_worker(rec, workers)
+        if workers and (worker is None or not worker_row_is_live(worker)):
+            standing_retire(state, host, rec, 'gone', io, release_worker, now, log_bits)
+            continue
+        if not rec.get('current_pr'):
+            continue
+        if standing_idle(rec, open_prs):
+            trial_event(
+                'verdict', 'standing', host, now, dispatch_id=rec.get('dispatch_id', ''), repo=rec.get('repo', ''),
+                pr=rec['current_pr'], head=rec.get('current_head', ''), prs_done=len(rec.get('prs_assigned') or []),
+                duration_s=int(now - (rec.get('assigned_at') or now)), headroom_pct=rec.get('headroom', ''),
+            )
+            rec['current_pr'] = None
+            if len(rec.get('prs_assigned') or []) >= cfg['max_prs']:
+                standing_retire(state, host, rec, 'max_prs', io, release_worker, now, log_bits)
+            continue
+        if rec.get('wake_verified') is False and not rec.get('wake_checked') \
+                and now - (rec.get('assigned_at') or now) >= cfg['wake_timeout_seconds']:
+            rec['wake_checked'] = True
+            text, last = io.read(_standing_terminal(rec, workers), host)
+            if last == rec.get('assigned_last') and not STANDING_BUSY_RE.search(text or ''):
+                failed.add((rec.get('repo'), rec.get('current_pr')))
+                (state.get('babysit') or {}).get(rec.get('repo'), {}).pop(str(rec.get('current_pr')), None)
+                standing_wake_fail(state, host, rec, 'timeout', io, release_worker, now, log_bits)
+            else:
+                rec['wake_verified'] = True
+    return failed
+
+
+def standing_wake_fail(state, host, rec, reason, io, release_worker, now, log_bits):
+    did = rec.get('dispatch_id') or ''
+    pr = rec.get('current_pr') or ''
+    log_bits.append('standing_wake_fail=%s:%s#%s' % (did, rec.get('repo', ''), pr))
+    trial_event(
+        'wake_fallback', 'standing', host, now, dispatch_id=did, repo=rec.get('repo', ''), pr=pr,
+        head=rec.get('current_head', ''), reason=reason,
+    )
+    standing_retire(state, host, rec, 'wake_fail', io, release_worker, now, log_bits, event='retire')
+
+
+def _pick_headroom(picked):
+    selected = (picked or {}).get('selected') if isinstance(picked, dict) else None
+    value = selected.get('headroom') if isinstance(selected, dict) else None
+    return value if isinstance(value, (int, float)) else None
+
+
+def trial_fresh_housekeeping(state, open_prs, now):
+    """Log the Verdict for each fresh one-shot verifier started during the trial, once its PR has one."""
+    bucket = state.get('fresh_verifiers')
+    if not isinstance(bucket, dict):
+        return
+    for did, rec in list(bucket.items()):
+        row = open_prs.get((rec.get('repo'), rec.get('pr')))
+        if row is None or verdict_posted_for_head(dict(row, headRefOid=rec.get('head') or '')):
+            trial_event(
+                'verdict', 'fresh', now=now, dispatch_id=did, repo=rec.get('repo', ''), pr=rec.get('pr', ''),
+                head=rec.get('head', ''), duration_s=int(now - (rec.get('started_at') or now)),
+                headroom_pct='' if rec.get('headroom') is None else rec['headroom'],
+            )
+            bucket.pop(did, None)
+
+
+def standing_prompt(repo, pr_row, builder, root, dispatch_id, final):
+    number, head = pr_row['number'], pr_row.get('headRefOid') or ''
+    who = ('The builder is agent=%s model=%s. Use a different family.' % builder) if builder else 'The builder was not recorded.'
+    verify = 'GitHub Checks are green at head %s. Review the diff and run the live checks the PR names.' % head
+    prior_fail = prior_verdict_fail(pr_row)
+    if prior_fail:
+        verify = 'Re-verify after a fix: check only the prior FAIL items and git diff %s..%s.' % (prior_fail[0], head)
+    elif checks_local_applies(root):
+        verify += ' Run: bash script/checks-local.sh 2>&1 | tail -40.'
+    text = (
+        'Next PR to verify. Refs %s#%s. headRefOid %s. %s First run: git fetch origin pull/%s/head && git checkout --detach %s. '
+        '## Verify: %s Then post the Verdict: script/post-verdict.sh --verifier %s. Stay at this prompt and do not send worker_done.'
+    ) % (repo, number, head, who, number, head, verify, dispatch_id)
+    if final:
+        text += (' This is your last PR: after posting the Verdict run orca worktree set --worktree active '
+                 '--workspace-status completed and send worker_done.')
+    return text
+
+
+def standing_route(
+    config, state, workers, repo, pr_row, builder, tag, open_prs, io, start_worker, release_worker,
+    now, term_times, log_bits, headroom=None,
+):
+    """Send an eligible PR to an idle standing verifier, starting one when none exists.
+
+    Returns 'assigned', 'started', or 'fallback' (the caller starts a fresh one-shot verifier).
+    """
+    cfg = standing_settings(config)
+    if not cfg['enabled']:
+        return 'fallback'
+    number, head = pr_row['number'], pr_row.get('headRefOid') or ''
+    key = '%s#%s@%s' % (repo, number, head)
+    _startup, _run, _from, roots = babysit_settings(config)
+    root = roots.get(repo) or ''
+    records = standing_records(state)
+    for host in cfg['hosts']:
+        rec = records.get(host)
+        if isinstance(rec, dict) and not standing_idle(rec, open_prs):
+            continue
+        if isinstance(rec, dict):
+            terminal = _standing_terminal(rec, workers)
+            text, pre_last = io.read(terminal, host)
+            reason = standing_low_context(text, cfg)
+            if len(rec.get('prs_assigned') or []) >= cfg['max_prs']:
+                reason = reason or 'max_prs'
+            if reason:
+                standing_retire(state, host, rec, 'low_context' if reason != 'max_prs' else reason, io, release_worker, now, log_bits)
+                rec = None
+            else:
+                pre_last = pre_last if pre_last is not None else term_times.get(terminal)
+                final = len(rec.get('prs_assigned') or []) + 1 >= cfg['max_prs']
+                prompt = standing_prompt(repo, pr_row, builder, root, rec['dispatch_id'], final)
+                alive = io.send(terminal, prompt, host) and _standing_wake(io, terminal, host, pre_last)
+                if not alive:
+                    rec.update(current_pr=number, current_head=head)
+                    standing_wake_fail(state, host, rec, 'probe', io, release_worker, now, log_bits)
+                    return 'fallback'
+                rec['prs_assigned'].append(key)
+                _text, last = io.read(terminal, host)
+                rec.update(
+                    current_pr=number, current_head=head, repo=repo, assigned_at=now, wake_verified=True,
+                    assigned_last=last, headroom=headroom if headroom is not None else '',
+                )
+                trial_event('wake', 'standing', host, now, dispatch_id=rec['dispatch_id'], repo=repo, pr=number, head=head,
+                            prs_done=len(rec['prs_assigned']), headroom_pct=headroom if headroom is not None else '')
+                return 'assigned'
+        command = build_babysit_command(config, repo, pr_row, 'verifier', cfg['agent'], cfg['model'], builder, tag, standing_host=host)
+        if command is None:
+            return 'fallback'
+        result = start_worker(command)
+        code, reason = start_result_parts(result)
+        if code != 0:
+            trial_event('start_fail', 'standing', host, now, repo=repo, pr=number, head=head, reason=reason)
+            log_bits.append('standing_start_fail=%s' % number)
+            return 'fallback'
+        did = dispatch_id_from_start(result)
+        records[host] = {
+            'dispatch_id': did, 'terminal': getattr(result, 'terminal', '') or '', 'repo': repo, 'host': host,
+            'local': _is_local_coordinator_host(host, config), 'current_pr': number, 'current_head': head,
+            'prs_assigned': [key], 'started_at': now, 'assigned_at': now, 'wake_verified': True,
+            'headroom': headroom if headroom is not None else '',
+        }
+        trial_event('start', 'standing', host, now, dispatch_id=did, repo=repo, pr=number, head=head,
+                    prs_done=1, headroom_pct=headroom if headroom is not None else '')
+        remember_started_dispatch(state, result, 'verifier')
+        return 'started'
+    return 'fallback'
+
+
+def _standing_wake(io, terminal, host, pre_last):
+    """True when the terminal shows life after a send: output advanced or a busy marker, within 15 seconds."""
+    for delay in STANDING_PROBE_DELAYS:
+        io.sleep(delay)
+        text, last = io.read(terminal, host)
+        if last is not None and last != pre_last:
+            return True
+        if STANDING_BUSY_RE.search(text or ''):
+            return True
+    return False
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
-    closed_fetch=None, runner_fetch=None,
+    closed_fetch=None, runner_fetch=None, standing_io=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -5644,6 +6076,17 @@ def babysit_pass(
                     note_closed(pr_row)
     rows.sort(key=lambda item: (item[0], item[1]))
 
+    standing_cfg = standing_settings(config)
+    if standing_io is None:
+        standing_io = StandingIO(config)
+    open_prs = {(item[2], item[1]): item[3] for item in rows}
+    standing_failed = set()
+    if standing_cfg['enabled'] and not dry_run:
+        standing_failed = standing_housekeeping(config, state, workers, open_prs, standing_io, release_worker, now, log_bits)
+        trial_fresh_housekeeping(state, open_prs, now)
+        if persist_state:
+            persist_state()
+
     for _index, _number, repo, pr_row in rows:
         number = pr_row.get('number')
         head = pr_row.get('headRefOid') or ''
@@ -5732,7 +6175,7 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             log_bits.append('skip_root=%s' % number)
             continue
-        if kind == 'verifier' and live_verifier_for_pr(pr_row, workers):
+        if kind == 'verifier' and live_verifier_for_pr(pr_row, workers, state, repo):
             route = route_rework_head(
                 pr_row, workers, state, repo, now, term_times, release_worker, notify_worker,
             )
@@ -5775,6 +6218,22 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += 1
             continue
+        headroom = _pick_headroom(picked)
+        if kind == 'verifier' and standing_cfg['enabled'] and agent == 'antigravity' \
+                and (repo, number) not in standing_failed:
+            routed = standing_route(
+                config, state, workers, repo, pr_row, builder, tag, open_prs, standing_io, start_worker,
+                release_worker, now, term_times, log_bits, headroom,
+            )
+            if routed in ('assigned', 'started'):
+                babysit_mark(state, repo, number, head, action)
+                started += 1 if routed == 'started' else 0
+                count_started()
+                lines.append(_babysit_line(repo, number, head, action, detail + ' standing=' + routed))
+                log_bits.append('standing_%s=%s' % (routed, number))
+                if persist_state:
+                    persist_state()
+                continue
         command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder, tag)
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
@@ -5795,6 +6254,8 @@ def babysit_pass(
                 continue
             lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
             log_bits.append('start_fail=%s%s' % (number, suffix))
+            if standing_cfg['enabled'] and action == 'verifier':
+                trial_event('start_fail', 'fresh', now=now, repo=repo, pr=number, head=head, reason=reason)
             if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
                 notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, command))
             continue
@@ -5805,6 +6266,13 @@ def babysit_pass(
             if own is not None:
                 own.update(repo=repo, pr=number, head=head)
             _verifier_head_bucket(state, repo)[str(number)] = head
+            if standing_cfg['enabled']:
+                did = dispatch_id_from_start(started_worker)
+                state.setdefault('fresh_verifiers', {})[did or '%s#%s@%s' % (repo, number, head)] = {
+                    'repo': repo, 'pr': number, 'head': head, 'started_at': now, 'headroom': headroom,
+                }
+                trial_event('start', 'fresh', now=now, dispatch_id=did, repo=repo, pr=number, head=head,
+                            headroom_pct='' if headroom is None else headroom)
         started += 1
         count_started()
         lines.append(_babysit_line(repo, number, head, action, detail))
@@ -7035,7 +7503,12 @@ def main():
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
     parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
+    parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
+
+    if args.trial_summary:
+        print(trial_summary(read_trial_rows()))
+        return 0
 
     if args.admit or args.admit_local:
         if args.config is not None:
