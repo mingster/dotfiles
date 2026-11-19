@@ -1128,6 +1128,32 @@ for on_case in local-app-id remote-app-id; do
     || bad "--on with id:$on_case creates the worktree from id:remote-app-id ($(grep 'worktree create' "$tmp/orca-on-$on_case.log"))"
 done
 
+# Brief lint with --on (#1233): lint_dir comes from the local --repo, so checks-local is required only for repos that have it.
+sed 's#Run bash script/checks-local.sh\.#Run npm test.#' "$spec_file" >"$tmp/spec-no-checks.txt"
+mkdir -p "$tmp/lint-nochecks" "$tmp/lint-haschecks/script"
+: >"$tmp/lint-haschecks/script/checks-local.sh"
+for lint_case in nochecks:0 haschecks:1; do
+  lc_name=${lint_case%%:*}
+  lc_want=${lint_case##*:}
+  : >"$tmp/orca-lint-on-$lc_name.log"
+  set +e
+  unset -f python3 2>/dev/null || true
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-lint-on-$lc_name.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$tmp/load-remote-map.sh" \
+    bash --noprofile --norc "$script" --run "run_lint_on_$lc_name" --spec "$tmp/spec-no-checks.txt" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+    --from term_coord --on host-remote --name "n_lint_$lc_name" --repo "id:repo_fx_lint-$lc_name" 2>"$tmp/lint-on-$lc_name.err"
+  lc_ec=$?
+  set -e
+  if [ "$lc_want" = 0 ]; then
+    [ "$lc_ec" = 0 ] && ok || bad "--on remote with a repo lacking checks-local passes lint ($lc_ec) $(cat "$tmp/lint-on-$lc_name.err")"
+  else
+    [ "$lc_ec" -ne 0 ] && grep -q 'checks-local' "$tmp/lint-on-$lc_name.err" && ok \
+      || bad "--on remote with a repo having checks-local still requires it ($lc_ec) $(cat "$tmp/lint-on-$lc_name.err")"
+  fi
+done
+
 # --repo path:<dir> resolves to its Orca repo id before placement, so it places like id:.
 mkdir -p "$tmp/pathapp"
 sed 's/"local-app-id"/"repo_fx_pathapp"/' "$tmp/fleet-placement.json" >"$tmp/fleet-placement-path.json"
