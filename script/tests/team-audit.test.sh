@@ -168,8 +168,8 @@ check "ready issue without a conflicting label passes" 0 'team-audit: clean'
 if [ "$(grep -c '^issue list' "$GH_CALLS")" = 1 ] && ! grep -qv '^issue list' "$GH_CALLS"; then pass=$((pass+1)); echo "ok   labels check makes one gh call and no upstream polling"
 else fail=$((fail+1)); echo "FAIL labels check gh calls"; cat "$GH_CALLS"; fi
 
-setup; withremote; GH_READY='[{"number":6,"labels":[{"name":"ready-for-agent"},{"name":"needs-info"}]}]'; export GH_READY
-check "ready-for-agent with needs-info is a label conflict" 1 '^FINDING labels: acme/project-alpha#6 has ready-for-agent and needs-info$'
+setup; withremote; GH_READY='[{"number":6,"labels":[{"name":"ready-for-agent"},{"name":"blocked"}]}]'; export GH_READY
+check "ready-for-agent with blocked is a label conflict" 1 '^FINDING labels: acme/project-alpha#6 has ready-for-agent and blocked$'
 
 setup; withremote; GH_FAIL=1; export GH_FAIL
 check "gh failure on labels is a warning, not a finding" 0 'WARN labels'

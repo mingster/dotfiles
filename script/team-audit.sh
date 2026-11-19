@@ -19,8 +19,8 @@
 #             exist; every role file `skills:` entry is a skill in dotfiles, the template, the project
 #             or ORCA_SKILLS (Orca bundled, default "orchestration orca-cli")
 #   labels    no open issue of a project (repo read from its origin remote) carries ready-for-agent
-#             together with a CONFLICT_LABELS label (default: blocked needs-info needs-triage
-#             ready-for-human wontfix). One gh issue list per project; a gh or network failure prints
+#             together with a CONFLICT_LABELS label (default: blocked owner deferred tracking
+#             needs-triage needs-elon needs-redesign). One gh issue list per project; a gh or network failure prints
 #             "WARN labels" and is not a finding.
 #   receipt   every non-merge commit touching role files (templates/agent-team/.claude/agents/ in
 #             DOTFILES, .claude/agents/ in each project) carries an "Owner-approved:" trailer (owner
@@ -336,7 +336,7 @@ receipt_check "$DOTFILES" templates/agent-team/.claude/agents
 for proj in "${PROJECTS[@]}"; do [ -d "$proj" ] && receipt_check "$proj" .claude/agents; done
 
 # labels: an open ready-for-agent issue must not also carry a label that says it is not ready.
-CONFLICT_LABELS="${CONFLICT_LABELS:-blocked needs-info needs-triage ready-for-human wontfix}"
+CONFLICT_LABELS="${CONFLICT_LABELS:-blocked owner deferred tracking needs-triage needs-elon needs-redesign}"
 for proj in "${PROJECTS[@]}"; do
   [ -d "$proj" ] || continue
   repo=$(repo_of "$proj"); [ -n "$repo" ] || continue

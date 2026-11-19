@@ -2991,9 +2991,18 @@ def issue_scan_blocked(issue):
     return False
 
 
+ISSUE_HOLD_LABELS = frozenset((
+    'blocked', 'owner', 'deferred', 'tracking', 'needs-triage', 'needs-elon', 'needs-redesign',
+))
+
+
+def _issue_label_names(issue):
+    return {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
+
+
 def issue_scan_eligible(issue):
-    labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
-    if 'ready-for-agent' not in labels:
+    labels = _issue_label_names(issue)
+    if 'ready-for-agent' not in labels or labels & ISSUE_HOLD_LABELS:
         return False
     if issue_scan_blocked(issue):
         return False
@@ -3015,17 +3024,52 @@ def open_pr_for_issue(prs, number):
 
 
 def issue_scan_priority(issue):
-    labels = {entry.get('name') for entry in (issue.get('labels') or []) if isinstance(entry, dict)}
-    if 'P0' in labels:
-        return 0
-    if 'P1' in labels:
-        return 1
+    """P0 to P3 as 0 to 3. No P label ranks as P2."""
+    labels = _issue_label_names(issue)
+    for rank, name in enumerate(('P0', 'P1', 'P2', 'P3')):
+        if name in labels:
+            return rank
     return 2
 
 
+def issue_scan_size(issue):
+    """size:S 0, no size label (M) 1, size:L 2."""
+    labels = _issue_label_names(issue)
+    if 'size:L' in labels:
+        return 2
+    return 0 if 'size:S' in labels else 1
+
+
 def issue_scan_sort_key(issue):
-    created = issue.get('createdAt') or ''
-    return (issue_scan_priority(issue), created)
+    return (issue_scan_priority(issue), issue_scan_size(issue),
+            issue.get('createdAt') or '', int(issue.get('number') or 0))
+
+
+# role label -> (worker title role, usage-gate preset role). No role label means fullstack-dev.
+ISSUE_ROLE_ROUTES = (
+    ('role:pm', 'architect-pm', 'architect-pm'),
+    ('role:qa', 'qa-sdet', 'qa-sdet'),
+    ('role:ops', 'release-manager', 'release-manager'),
+    ('role:secops', 'secops-finops', 'secops-finops'),
+    ('role:growth', 'sales-marketing', 'sales-marketing'),
+    ('role:support', 'support-csm', 'support-csm'),
+)
+
+
+def issue_scan_route(issue):
+    """(title_role, pick_role) for an issue, or None for the default fullstack-dev route."""
+    labels = _issue_label_names(issue)
+    large = 'size:L' in labels
+    for label, title_role, pick in ISSUE_ROLE_ROUTES:
+        if label in labels:
+            if label == 'role:ops' and large:
+                pick = 'architect-pm'
+            return title_role, pick
+    if large:
+        return 'fullstack-dev', 'fullstack-dev-strong'
+    if 'size:S' in labels:
+        return 'fullstack-dev-small', 'fullstack-dev-small'
+    return None
 
 
 def issue_scan_sorted_eligible(issues):
@@ -3558,22 +3602,27 @@ def local_repo_selector(root):
 
 
 def live_start_title(command, workers):
-    """True when a live worker already carries this start's --title (#<issue or PR>|<role>)."""
+    """True when a live worker already carries this start's #<issue or PR>| prefix, whatever its role or suffix."""
     title = command[command.index('--title') + 1] if '--title' in command else ''
-    return bool(title) and any(
-        isinstance(w, dict) and w.get('_task_title') == title and worker_row_is_live(w) for w in workers or []
+    prefix = title.split('|', 1)[0] + '|' if '|' in title else title
+    return bool(prefix) and any(
+        isinstance(w, dict) and str(w.get('_task_title') or '').startswith(prefix) and worker_row_is_live(w)
+        for w in workers or []
     )
 
 
-def build_issue_start_command(config, repo, issue_row, placement=None):
-    """placement is (host, repo_id) to start on a remote host instead of the local checkout."""
+def build_issue_start_command(config, repo, issue_row, placement=None, route=None):
+    """placement is (host, repo_id) to start on a remote host instead of the local checkout.
+
+    route is (title_role, agent, model) from a role or size label; None keeps the scan's builder pick."""
     scan = config['issue_scan']
     root = _issue_scan_repo_root(config, repo)
     if not root:
         return None
     verify = checks_local_verify_text(
         root, 'Run bash script/checks-local.sh and show the Done condition.')
-    role = scan.get('role') or 'builder'
+    role = route[0] if route else scan.get('role') or 'builder'
+    agent, model = (route[1], route[2]) if route else (scan.get('agent') or 'claude', scan.get('model') or '')
     spec_path = _write_issue_scan_spec(_with_preamble(
         'Refs %s#%d\n\n%s\n\n'
         '## Verify\n'
@@ -3588,8 +3637,8 @@ def build_issue_start_command(config, repo, issue_row, placement=None):
         '--run', scan['run'],
         '--spec', spec_path,
         '--title', title,
-        '--agent', scan.get('agent') or 'claude',
-        '--model', scan.get('model') or '',
+        '--agent', agent,
+        '--model', model,
         '--name', 'issue-%d' % issue_row['number'],
         '--repo', local_repo_selector(root),
     ]
@@ -5608,7 +5657,7 @@ def issue_scan_pass(
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
-    babysit_repos=None, repo_id_lookup=None,
+    babysit_repos=None, repo_id_lookup=None, pick_fn=None,
 ):
     """Start at most one eligible ready issue and one rework worker per new failing review head."""
     notices = []
@@ -5931,7 +5980,15 @@ def issue_scan_pass(
                 break
             if not placed:
                 return notices, log_bits
-        command = build_issue_start_command(config, repo, row, placement)
+        route = None
+        labelled = issue_scan_route(row)
+        if labelled:
+            chosen = choose_pick((pick_fn or pick_role)(labelled[1]))
+            if not chosen:
+                log_bits.append('issue_route_blocked=%d:%s' % (row['number'], labelled[1]))
+                continue
+            route = (labelled[0], chosen[0], chosen[1])
+        command = build_issue_start_command(config, repo, row, placement, route)
         if command is None:
             log_bits.append('issue_scan_skip')
             return notices, log_bits
@@ -5978,6 +6035,7 @@ def issue_scan_pass(
         if code == 0:
             remember_started_dispatch(state, started_worker, 'issue')
             started.setdefault(repo, []).append(row['number'])
+            act(['gh', 'issue', 'edit', str(row['number']), '--repo', repo, '--remove-label', 'ready-for-agent'])
             notices.append('issue %s #%d' % (repo, row['number']))
             log_bits.append('issue_start=%d' % row['number'])
             count_started()
@@ -5988,6 +6046,10 @@ def issue_scan_pass(
             park_key = park_id('issue', repo, row['number'], updated)
             if park_failure(state, park_key, reason, config, repo=repo, issue=row['number']):
                 notices.append(park_notice('issue', '%s#%s' % (repo, row['number']), reason, command))
+            act([
+                'gh', 'issue', 'edit', str(row['number']), '--repo', repo,
+                '--add-label', 'needs-triage', '--remove-label', 'ready-for-agent',
+            ])
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))

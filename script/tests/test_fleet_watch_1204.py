@@ -55,8 +55,12 @@ class OwnStarts(unittest.TestCase):
         title = probe[probe.index('--title') + 1]
         self.assertEqual(self.issue_pass('/work/app', [live_worker(title)]), [])
 
-    def test_live_worker_on_the_same_issue_other_role_does_not_block(self):
-        self.assertEqual(len(self.issue_pass('/work/app', [live_worker('#5|qa-sdet')])), 1)
+    def test_live_worker_on_the_same_issue_other_role_blocks_the_start(self):
+        """#1216: the #<n>| prefix decides, whatever the role or suffix."""
+        self.assertEqual(self.issue_pass('/work/app', [live_worker('#5|qa-sdet')]), [])
+
+    def test_live_worker_on_another_issue_does_not_block(self):
+        self.assertEqual(len(self.issue_pass('/work/app', [live_worker('#6|qa-sdet')])), 1)
 
     def test_babysit_and_rework_commands_have_no_from(self):
         config = scan_config('/work/app')
