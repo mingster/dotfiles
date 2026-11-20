@@ -1,1 +1,0 @@
-- worker-startup.sh, ship.sh, head-checks.sh and fleet-watch-loop.sh now fast-forward a clean, behind dotfiles checkout when they start (`script/lib/dotfiles-fresh.sh`, built on session-sync.sh). A dirty, diverged or offline checkout gets one warning line and is left alone. `check-dotfiles-fresh.sh` in checks-local.sh fails when one of them drops the preflight (#1211).

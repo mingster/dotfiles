@@ -1,1 +1,0 @@
-- fleet-watch can run one standing antigravity verifier per configured trial host (`babysit.standing_verifier`, off by default), with a 5 PR and context cap, a wake probe that falls back to a fresh verifier, and a trial log (`fleet-watch.py --trial-summary`).

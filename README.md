@@ -27,11 +27,11 @@ Full role names and boundaries live in [Agent team reference](docs/agents/team-r
 ## How one task runs
 
 1. **Issue.** Someone opens a tracker item with acceptance criteria. Intake roles may grill and slice it until it is ready.
-2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has four parts a person writes: `Refs`, Acceptance, Out of scope and Verify. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start and rejects a brief that lacks any of them, then appends the fixed Finish steps when the brief has no `## Finish`.
+2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has four parts a person writes: `Refs`, Acceptance, Out of scope and Verify. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start and rejects a brief that lacks any of them, then appends the fixed Finish steps when the brief has no `## Finish`. `Refs` may be `Refs #n`, `Closes #n`, `Fixes #n` or `Resolves #n`, and `Verify` must name `script/checks-local.sh` only when the target repo has that script. The worker title must be `#<issue>|<role>`.
 3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks that the host is ready and that the usage quota allows another worker, then starts one worker in a fresh worktree.
 4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
 5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.
-6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` may squash merge. A periodic babysit pass starts a verifier when the Verdict is missing. The existing fix worker and `script/ship.sh` stay in place for a failing head and a head that already passed.
+6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` (the only merge path) may squash merge. After it merges a dotfiles PR it pulls the latest dotfiles to every fleet host. A periodic babysit pass starts a verifier when the Verdict is missing. The existing fix worker and `script/ship.sh` stay in place for a failing head and a head that already passed.
 7. **Cleanup.** `script/wrap-up.sh` removes finished worktrees and merged branches. The issue closes when the PR merges.
 
 Orca orchestration details, gates and failure limits are in [Coordinator operations](docs/agents/coordinator-operations.md) and [Agent team architecture](docs/agents/agent-team-architecture.md).
@@ -54,6 +54,8 @@ sh install.sh
 | `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Refresh links without installing system packages |
 | `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
 | `script/agent-team.sh machine` | Link skills, bins and model routing into `~/.claude`, write rendered copies of roles and `session-start.md`, and merge settings (add `--dry-run` to preview). CLI install is `script/install-agent-clis.sh`, Orca presets are `script/setup-orca.sh` |
+
+On macOS, apps install into `/Applications`. A script finds an app through `script/lib/app-path.sh`, and `script/check-appdir.sh` (run by `script/checks-local.sh`) fails on any mention of the old per category app folder.
 
 Fleet host registration, pull scripts, automations and the readiness checklist are in [Fleet readiness](docs/agents/team-reference.md#fleet-readiness).
 
@@ -91,11 +93,13 @@ See [Agent team setup](docs/agents/team-reference.md#agent-team-setup) for owner
 
 The **fleet** is several computers paired in Orca. One host runs the coordinator agent. Other hosts run builders, reviewers, browser work and heavy checks.
 
-Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database and heavy host runs databases and remote Playwright or `head-checks.sh` jobs only, never interactive workers.
+Placement follows the order and per host limits in [Coordinator operations](docs/agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database host runs the dev database and the `head-checks.sh` steps that need Postgres, never interactive workers or Playwright.
 
 The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** lives in `script/fleet-watch.py` (`COORDINATOR_MAX_LOAD_PER_CORE`). When the coordinator host's load per core or free memory crosses its limit, no new local worker starts there, and the run points to an overflow host with free room. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
 
-`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. Placement is automatic (`script/worker-placement.py` picks the least loaded host). A reason flag (`--force-host chrome-dev|line-desktop|host-file`) sends the start to the host the fleet config maps that reason to. `--on <environment>` remains only as a test or debug override, still gated by the host's load limit and, for the coordinator host, by an allowed `--force-host` reason.
+`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. Placement is automatic (`script/worker-placement.py` ranks hosts by workers per host cap first, then load per core, and picks the coordinator host last). A reason flag (`--force-host chrome-dev|line-desktop|host-file`) sends the start to the host the fleet config maps that reason to. `--on <environment>` remains only as a test or debug override, still gated by the host's load limit and, for the coordinator host, by an allowed `--force-host` reason.
+
+`script/fleet-watch.py` is the 5 minute pass that starts verifiers, fix workers and ready issues, and reruns host fault checks. Start it as a loop from the coordinator terminal with `script/fleet-watch-loop.sh` (see [Fleet watchdog](docs/agents/fleet-watch.md)). Issues are picked by label: [Triage labels](docs/agents/triage-labels.md).
 
 Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
 
@@ -109,7 +113,7 @@ Principles, targets, the full lifecycle diagram, babysit and shipping rules, rol
 
 ### Team files
 
-Canonical team templates live under `templates/agent-team/`. The pstack, cursor-team-kit and The Algorithm trees are vendored whole there (pin and license in `templates/agent-team/docs/agents/pstack-attribution.md`) and never edited by hand. The rule table, with what enforces each rule, is in `templates/agent-team/docs/agents/team.md`. Each project's `docs/agents/` keeps five required files (`issue-tracker.md`, `triage-labels.md`, `domain.md`, `team-facts.md`, `deploy-facts.md`). See [Docs for agent projects](docs/agents/domain.md).
+Canonical team templates live under `templates/agent-team/`. The pstack, cursor-team-kit and The Algorithm trees are vendored whole there (license and pinned commit in `templates/agent-team/docs/agents/pstack-attribution.md`; `script/sync-pstack-template-skills.sh` refreshes them weekly and records the pin in `script/.pstack-template-upstream`) and never edited by hand. The rule table, with what enforces each rule, is in `templates/agent-team/docs/agents/team.md`. Each project's `docs/agents/` keeps five required files (`issue-tracker.md`, `triage-labels.md`, `domain.md`, `team-facts.md`, `deploy-facts.md`). See [Docs for agent projects](docs/agents/domain.md).
 
 ## Tools
 
@@ -140,6 +144,12 @@ All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Cl
 * **Building:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
 * **Research and docs:** `research`, `retro`, `handoff`, `writing-for-agents`.
 * **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca's own skills come from `orca skills install --all`.
+
+## Release notes and changelog
+
+* [RELEASE-NOTES.md](RELEASE-NOTES.md): what changed each week, in plain language.
+* [CHANGELOG.md](CHANGELOG.md): the full technical list.
+* [docs/changelog.md](docs/changelog.md): how `changelog.d/` fragments become `CHANGELOG.md`.
 
 ## Repository layout
 

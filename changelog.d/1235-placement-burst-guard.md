@@ -1,1 +1,0 @@
-The placement burst guard scales each host cap by cores (cores_per_worker, default 2) and skips a host whose free memory (sensor `memfree=` GB, less mem_gb_per_worker, default 4, per recent start) is used up. Host caps are unchanged (#1235).

@@ -1,1 +1,0 @@
-The pre go live waiver (`pre_go_live_host.until` in guard-config.json) now also covers the promote script and the SCHEMA_APPROVED schema check in the guard-bash template. Hand pushes to a production branch, force pushes, deletions, apply scripts and credential writes keep their gates.

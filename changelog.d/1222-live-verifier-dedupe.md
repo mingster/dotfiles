@@ -1,1 +1,0 @@
-- fleet-watch skips a PR whose verifier runs under a detail title or a verify worktree, and worker-startup warns on a duplicate verifier start.
