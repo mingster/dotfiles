@@ -37,6 +37,14 @@ DOTFILES="$DF" bash "$DF/script/agent-team.sh" sync "$PROJ" >"$TMP/out" 2>&1 || 
 
 pin=$(cat "$PROJ/.claude/agent-team-pin" 2>/dev/null)
 [ "$pin" = "$X" ] && ok "sync writes pin = dotfiles HEAD" || bad "sync writes pin = dotfiles HEAD (got '$pin')"
+grep -q 'integer expression' "$TMP/out" && bad "sync runs without a shell error" || ok "sync runs without a shell error"
+
+# A dry-run sync leaves the pin alone.
+printf 'keep\n' >"$PROJ/.claude/agent-team-pin"
+DOTFILES="$DF" bash "$DF/script/agent-team.sh" sync "$PROJ" --dry-run >"$TMP/out" 2>&1
+[ "$(cat "$PROJ/.claude/agent-team-pin")" = keep ] && grep -q "would write .claude/agent-team-pin = $X" "$TMP/out" \
+  && ok "a dry-run sync does not write the pin" || bad "a dry-run sync does not write the pin"
+printf '%s\n' "$X" >"$PROJ/.claude/agent-team-pin"
 
 check() { DOTFILES="$DF" bash "$DF/script/agent-team.sh" check "$@" "$PROJ" >"$TMP/out" 2>&1; }
 

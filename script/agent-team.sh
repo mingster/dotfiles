@@ -2432,7 +2432,7 @@ write_pin() { # <target> <dry>
   if [ -n "$(git -C "$DOTFILES" status --porcelain -- templates script .agents 2>/dev/null)" ]; then
     echo "agent-team: warning: dotfiles has local changes; $PIN_REL names $sha, which does not hold them" >&2
   fi
-  if [ "$1" -eq 1 ]; then
+  if [ "$2" -eq 1 ]; then
     echo "agent-team: [dry-run] would write $PIN_REL = $sha"
     return 0
   fi
