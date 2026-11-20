@@ -1,6 +1,6 @@
 # Orca bots evaluation for the agent team
 
-Status: Proposed (2026-11-20). Author: `architect-pm`. Scope: read only evaluation of the `orca bot` feature against [Agent team architecture](agent-team-architecture.md), [Coordinator operations](coordinator-operations.md), and the shared [team rules](../../templates/agent-team/docs/agents/team.md).
+Status: Decided (2026-11-20): not adopted for now (owner, grill Q1, option B below). Revisit when support mail moves to a Google mailbox or the owner starts using Slack, since both pilots in Question 2 depend on those. Questions 2 to 6 stay open until then. Author: `architect-pm`. Scope: read only evaluation of the `orca bot` feature against [Agent team architecture](agent-team-architecture.md), [Coordinator operations](coordinator-operations.md), and the shared [team rules](../../templates/agent-team/docs/agents/team.md).
 
 ## 1. What Orca bots are
 
@@ -83,7 +83,7 @@ Answer each question with a letter (`A`, `B`, or `C`). They are ordered as a pre
 
 * **A (Recommended):** Adopt Orca bots only at the external communication edge (support email intake via `orca gmail` and owner notifications via `orca slack`), while keeping the coordinator Run, specialist roles, `fleet-watch.py`, `worker-startup.sh`, and `post-verdict.sh` on existing Orca orchestration.
   * *Why A:* It uses Orca bots for the two capabilities our scripts lack (1 minute `gmail.new_email` intake with `orca gmail draft` and a distinct Slack bot app via `orca slack post`) without losing deterministic usage gates, multi host load placement, or cross family PR verification.
-* **B:** Do not adopt Orca bots anywhere; keep all workflows on existing scripts, `fleet-watch.py`, and coordinator terminals.
+* **B (owner decision 2026-11-20):** Do not adopt Orca bots now; keep all workflows on existing scripts, `fleet-watch.py`, and coordinator terminals.
   * *Cost of B:* Support email intake stays tied to the daily 19:00 batch or manual checks instead of 1 minute domain verified Gmail detection, and owner notifications cannot use a native Slack bot channel.
 * **C:** Replace specialist roles (`fullstack-dev`, `qa-sdet`, `release-manager`, `architect-pm`) and `fleet-watch.py` dispatches with standing Orca bots.
   * *Cost of C:* Loses multi provider routing (Cursor `grok-4.7-high` and Antigravity `gemini-4-argon-high`), bypasses `usage-gate.py` and `worker-placement.py`, breaks `github.labeled` self action triggers, and moves role instructions out of git audited `.claude/agents/*.md` files into unreviewed local `~/.orca/bots/<name>` folders.
