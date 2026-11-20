@@ -1,0 +1,1 @@
+- usage-gate: an inactive Claude account whose reading failed is read again after its `retryAtMs`, the good reading is kept as its last good one, and `show` names an account with no reading yet as "not read yet" (#1277).

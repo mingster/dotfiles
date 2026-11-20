@@ -626,7 +626,7 @@ class ClaudeWeekly1275(OrcaAccounts):
         failed = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
         failed["result"]["rateLimits"]["inactiveClaudeAccounts"][0]["rateLimits"] = {}
         self.gate(json.dumps(failed))
-        self.assertEqual(ug.claude_combined(95, 0.0, NOW), {"accounts": 1, "headroom": 35.0, "pace": 35.0})
+        self.assertEqual(ug.claude_combined(95, 0.0, NOW), {"accounts": 1, "headroom": 35.0, "pace": 35.0, "unread": ["bbbbbbbb-2"]})
 
     def test_an_old_last_good_reading_is_dropped(self):
         self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
@@ -642,6 +642,44 @@ class ClaudeWeekly1275(OrcaAccounts):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(ug.main(["show", "--provider", "claude"]), 0)
         self.assertIn("claude combined headroom: 90 points across 2 accounts", out.getvalue())
+
+    def rate_limited(self, retry_at):
+        """A listing whose inactive account failed: status error, no weekly, a retryAtMs."""
+        listing = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        listing["result"]["rateLimits"]["inactiveClaudeAccounts"][0]["rateLimits"] = {
+            "weekly": None, "status": "error",
+            "usageMetadata": {"failureKind": "rate-limited", "retryAtMs": int(retry_at * 1000)}}
+        return json.dumps(listing)
+
+    def count_lists(self, calls):
+        return sum(1 for c in calls if c[1:3] == ["account", "list"])
+
+    def test_a_failed_inactive_account_is_read_again_after_retry_at(self):
+        calls = self.gate(self.rate_limited(NOW - 60))
+        replies = [self.rate_limited(NOW - 60), orca_accounts(60, [("bbbbbbbb-2", 40)])]
+
+        def listing(args, **kwargs):
+            calls.append(args)
+            return mock.Mock(returncode=0, stdout=replies.pop(0))
+        with mock.patch.object(ug.subprocess, "run", listing):
+            combined = ug.claude_combined(95, 0.0, NOW)
+        self.assertEqual((combined["accounts"], combined["headroom"], combined["unread"]), (2, 90.0, []))
+        self.assertEqual(self.count_lists(calls), 2)
+        saved = json.load(open(ug.STATE + "/claude-accounts.last-good.json"))
+        self.assertEqual(saved["bbbbbbbb-2"]["pct"], 40)  # kept as that account's last good reading
+
+    def test_a_failed_inactive_account_is_not_read_again_before_retry_at(self):
+        calls = self.gate(self.rate_limited(NOW + 600))
+        combined = ug.claude_combined(95, 0.0, NOW)
+        self.assertEqual(self.count_lists(calls), 1)
+        self.assertEqual((combined["accounts"], combined["unread"]), (1, ["bbbbbbbb-2"]))
+
+    def test_show_names_an_account_with_no_reading_yet(self):
+        self.gate(self.rate_limited(NOW + 600))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["show", "--provider", "claude"]), 0)
+        self.assertIn("across 1 accounts", out.getvalue())
+        self.assertIn("claude account bbbbbbbb: not read yet", out.getvalue())
 
 
 class Show(unittest.TestCase):
