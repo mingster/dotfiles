@@ -2,6 +2,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
@@ -231,6 +232,24 @@ class BabysitLiveVerifier(unittest.TestCase):
 
     def test_hand_dispatched_verifier_naming_the_pr_in_its_detail_blocks(self):
         starts, lines, _state = self.run_pass([self.live_verifier(title='#1204|qa-sdet|verify PR 7')])
+        self.assertEqual(starts, [])
+        self.assertTrue(any('verifier-live' in line for line in lines), lines)
+
+    def test_bare_verify_title_blocks_a_second_verifier(self):
+        starts, lines, _state = self.run_pass([self.live_verifier(title='#1262|qa-sdet|verify 7')])
+        self.assertEqual(starts, [])
+        self.assertTrue(any('verifier-live' in line for line in lines), lines)
+
+    def test_remote_row_with_launch_record_worktree_blocks(self):
+        remote = {'dispatchId': 'ctx_rem7', 'dispatchStatus': 'dispatched', 'workerState': 'ready',
+                  'terminalState': None, 'resource': None, 'projection': None,
+                  'server': {'environmentId': 'env-1'}}
+        with tempfile.TemporaryDirectory() as state_dir:
+            launches = Path(state_dir) / 'launches'
+            launches.mkdir()
+            (launches / 'ctx_rem7.json').write_text('{"worktree": "/w/dotfiles/verify-7"}')
+            with patch.dict('os.environ', {'WORKER_STARTUP_STATE': state_dir}):
+                starts, lines, _state = self.run_pass([remote])
         self.assertEqual(starts, [])
         self.assertTrue(any('verifier-live' in line for line in lines), lines)
 

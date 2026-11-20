@@ -5,7 +5,7 @@
 # (from FLEET_STAGING_REPOS or fleet-pull.json), fetches origin, and compares origin/main with
 # origin/staging (or configured <component>/staging branches in .claude/hooks/guard-config.json).
 # Only the staging deploy step is skipped when staging equals main; otherwise the wake asks for
-# release-manager staging deploy and the pstack swarm live lanes (production stays gated on owner approval).
+# release-manager staging deploy and the pstack swarm live lanes (production follows go_live_date in the fleet-watch config).
 set -uo pipefail
 
 state_dir="${AGENT_STATE_DIR:-$HOME/agent-state}"
@@ -257,8 +257,24 @@ if [ -n "$from_terminal" ]; then
   run_arg+=("--from" "$from_terminal")
 fi
 
+# go_live_date (YYYY-MM-DD, Asia/Taipei) in the fleet-watch config: before it the regression-passing sha goes to
+# production at once, on or after it production waits for the owner's approval (#1281).
+go_live_date=$(FLEET_WATCH_CONFIG="$fleet_watch_cfg" python3 -c '
+import json, os
+try:
+    print(json.load(open(os.environ["FLEET_WATCH_CONFIG"], encoding="utf-8")).get("go_live_date") or "")
+except Exception:
+    print("")
+' 2>/dev/null || true)
+today=${STAGING_DAILY_TODAY:-$(TZ=Asia/Taipei date +%F)}
+if [ -n "$go_live_date" ] && [[ "$today" < "$go_live_date" ]]; then
+  production_step="Before go live (${go_live_date}): promote the regression-passing sha to production at once."
+else
+  production_step="Production deploy on the owner's approval."
+fi
+
 subject="daily-program-1900: run the standing program"
-body="Daily 19:00 Asia/Taipei: read ${kickoff} and run the standing program. ${staging_step} Production deploy remains gated on owner approval."
+body="Daily 19:00 Asia/Taipei: read ${kickoff} and run the standing program. ${staging_step} ${production_step}"
 
 if ! send_err=$("$orca_cli" orchestration send --to "$to_arg" ${run_arg[@]+"${run_arg[@]}"} --type status --subject "$subject" --body "$body" --json 2>&1 >/dev/null); then
   emit "error: failed to send orchestration wake to $to_arg: $(printf '%s' "$send_err" | head -c 300 | tr '\n' ' ') (${summary})"

@@ -297,4 +297,41 @@ chmod +x "$tmp/load-lowmem.sh"
 small=$(burst_picks "$tmp/load-lowmem.sh" 8 | grep -c '^host-small$' || true)
 [ "$small" -le 1 ] || fail "8 burst picks put $small workers on a host with 5 GB free (budget 4 GB each)"
 
+# 1273: a stub config with no runs reads only the active Run, seats name retained workers, a failed start unrecords.
+mkdir -p "$tmp/home/.config/fleet-watch"
+cp "$tmp/counted.json" "$tmp/home/.config/fleet-watch/config.json"
+printf '{"runs":[{"id":"run_active","terminal":"term_a"}]}\n' >"$tmp/coordinator.json"
+cat >"$tmp/fake-orca-runs.sh" <<'EOS'
+#!/usr/bin/env bash
+case "$*" in
+  *run-list*) printf '%s\n' '{"ok":true,"result":{"runs":[{"id":"run_old"},{"id":"run_active"}]}}' ;;
+  *task-list*) printf '%s\n' '{"ok":true,"result":{"tasks":[]}}' ;;
+  *"worker-list --run run_old"*) printf '{"ok":true,"result":{"workers":%s}}\n' "$(cat "$FAKE_WORKERS")" ;;
+  *"worker-list --run run_active"*) cat "$FAKE_ACTIVE" ;;
+  *) exit 1 ;;
+esac
+EOS
+chmod +x "$tmp/fake-orca-runs.sh"
+workers_for host-primary=2
+printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"d_kept","dispatchStatus":"completed","workerState":"succeeded","terminalState":"retained","projection":{"host":{"id":"host-remote"}},"resource":{"ownershipState":"owned","releaseState":"retained"}}]}}' >"$tmp/active.json"
+py3=$(asdf which python3 2>/dev/null || command -v python3)
+seat_env() {
+  HOME="$tmp/home" FLEET_WATCH_COORDINATOR_CONFIG="$tmp/coordinator.json" WORKER_PLACEMENT_COUNT_WORKERS=1 \
+    ORCA_CLI_COMMAND="$tmp/fake-orca-runs.sh" FAKE_WORKERS="$tmp/workers.json" FAKE_ACTIVE="$tmp/active.json" \
+    WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1273.json" FLEET_LOAD_SCRIPT="$tmp/load-counted.sh" \
+    FLEET_WATCH_CONFIG="$tmp/home/.config/fleet-watch/config.json" "$@"
+}
+out=$(seat_env "$py3" "$py" pick 2>"$tmp/sp.err") || fail "scoped pick failed: $out $(cat "$tmp/sp.err")"
+grep -Fq "host-remote-2" <<<"$out" || fail "scoped pick should still place: $out"
+out=$(seat_env "$py3" "$py" seats 2>"$tmp/seats.err") || fail "seats failed: $(cat "$tmp/seats.err")"
+grep -Fq 'host-primary: 0/2 live=0 retained=0 retained_workers=none' <<<"$out" || fail "seats must count the active Run only: $out"
+grep -Fq 'host-remote: 1/2 live=0 retained=1 retained_workers=d_kept(' <<<"$out" || fail "seats must name the retained worker: $out"
+out=$(seat_env "$py3" "$py" seats --json 2>/dev/null) || fail "seats --json failed"
+[ "$(jq -r '.["host-remote"].retained_workers[0].dispatchId' <<<"$out")" = d_kept ] || fail "seats --json names the retained worker: $out"
+rm -f "$tmp/recent-1273.json"
+seat_env "$py3" "$py" pick --record >/dev/null 2>&1 || fail "recorded pick failed"
+[ "$(jq -r '.starts | length' "$tmp/recent-1273.json")" = 1 ] || fail "pick --record should record a start"
+seat_env "$py3" "$py" unrecord --host "$(jq -r ".starts[0].host" "$tmp/recent-1273.json")"
+[ "$(jq -r '.starts | length' "$tmp/recent-1273.json")" = 0 ] || fail "unrecord should drop the failed start's claim"
+
 echo "worker-placement.test.sh passed"

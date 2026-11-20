@@ -2377,12 +2377,16 @@ def deny_role_files(files, how):
 
 def matches_main(git, rel, rest):
     """True when the staged blob of `rel` equals its blob at MERGE_HEAD (a merge in progress) or origin/main.
+    A file the merge deleted (absent from the index and at MERGE_HEAD) also matches.
     Not for `commit -a`, where the staged copy is not what lands."""
     if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
         return False
     staged = (gate_run([*git, "rev-parse", f":{rel}"], None) or "").strip()
     if not staged:
-        return False
+        merging = gate_run([*git, "rev-parse", "-q", "--verify", "MERGE_HEAD"], None)
+        if merging is None:
+            return False
+        return not (gate_run([*git, "rev-parse", f"MERGE_HEAD:{rel}"], None) or "").strip()
     for ref in ("MERGE_HEAD", "refs/remotes/origin/main"):
         theirs = (gate_run([*git, "rev-parse", f"{ref}:{rel}"], None) or "").strip()
         if theirs and theirs == staged:

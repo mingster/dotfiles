@@ -1,0 +1,1 @@
+- worker-startup: a builder start for another repo is refused while a dotfiles issue is `ready-for-agent` and not started, so the hand dispatch path obeys the dotfiles first start order like fleet-watch's issue scan. `--skip-dotfiles-first REASON` overrides it and logs the reason (#1286).

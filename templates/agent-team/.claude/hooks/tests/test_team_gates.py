@@ -302,6 +302,89 @@ class RoleFileGate(Gate):
         self.write(rel, "v2\n")
         sh(self.repo, "git", "add", "-A")
 
+    def start_merge_from_main(self, rel, main_text, work_text=None):
+        """work branch (adopted project marker + own app change) merging a main that changed `rel`."""
+        self.write(".claude/hooks/guard-config.json", "{}\n")
+        self.write("web/app.ts", "work\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "work")
+        sh(self.repo, "git", "checkout", "-q", "main")
+        self.write(rel, main_text)
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "main sync")
+        sh(self.repo, "git", "checkout", "-q", "work")
+        sh(self.repo, "git", "merge", "-q", "--no-commit", "--no-ff", "main")
+        if work_text is not None:
+            self.write(rel, work_text)
+            sh(self.repo, "git", "add", "-A")
+
+    def test_merge_commit_with_template_file_unchanged_from_main_allowed(self):
+        self.start_merge_from_main(".claude/agents/elon.md", "from main\n")
+        self.assertAllowed('git commit -m "Merge main"', self.repo)
+
+    def test_merge_commit_with_unchanged_docs_template_file_allowed(self):
+        self.start_merge_from_main("docs/agents/team.md", "from main\n")
+        self.assertAllowed('git commit -m "Merge main"', self.repo)
+
+    def test_merge_commit_with_edited_template_file_denied(self):
+        self.start_merge_from_main(".claude/agents/elon.md", "from main\n", work_text="my edit\n")
+        reason = self.bash('git commit -m "Merge main"', self.repo)
+        self.assertIsNotNone(reason)
+        self.assertIn(".claude/agents/elon.md", reason)
+
+    def test_merge_commit_all_with_unstaged_template_edit_denied(self):
+        for flag in ("-am", "--all -m"):
+            with self.subTest(flag=flag):
+                self.setUp()
+                self.start_merge_from_main(".claude/agents/elon.md", "from main\n")
+                self.write(".claude/agents/elon.md", "my edit\n")
+                self.assertDenied(f'git commit {flag} "Merge main"', "template managed", self.repo)
+
+    def start_merge_deleting(self, rel):
+        """main adds then deletes `rel`; the work branch merges the deletion with --no-commit."""
+        self.write(".claude/hooks/guard-config.json", "{}\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "marker")
+        sh(self.repo, "git", "checkout", "-q", "main")
+        self.write(rel, "old\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "add")
+        sh(self.repo, "git", "checkout", "-q", "work")
+        sh(self.repo, "git", "merge", "-q", "--no-edit", "main")
+        sh(self.repo, "git", "checkout", "-q", "main")
+        sh(self.repo, "git", "rm", "-q", rel)
+        sh(self.repo, "git", "commit", "-q", "-m", "main deletes")
+        sh(self.repo, "git", "checkout", "-q", "work")
+        sh(self.repo, "git", "merge", "-q", "--no-commit", "--no-ff", "main")
+
+    def test_merge_commit_bringing_a_main_deletion_of_a_template_file_allowed(self):
+        self.start_merge_deleting("docs/agents/team.md")
+        self.assertAllowed('git commit -m "Merge main"', self.repo)
+
+    def test_merge_commit_that_re_adds_a_deleted_template_file_denied(self):
+        self.start_merge_deleting("docs/agents/team.md")
+        self.write("docs/agents/team.md", "different\n")
+        sh(self.repo, "git", "add", "-A")
+        self.assertDenied('git commit -m "Merge main"', "template managed", self.repo)
+
+    def test_plain_commit_of_template_file_equal_to_origin_main_allowed_else_denied(self):
+        self.write(".claude/hooks/guard-config.json", "{}\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "marker")
+        self.write(".claude/agents/elon.md", "v3\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "tmp")
+        sh(self.repo, "git", "push", "-q", "origin", "HEAD:main")
+        sh(self.repo, "git", "reset", "-q", "--hard", "HEAD~1")
+        sh(self.repo, "git", "fetch", "-q", "origin")
+        self.write(".claude/agents/elon.md", "v3\n")
+        sh(self.repo, "git", "add", "-A")
+        self.assertAllowed('git commit -m "same as main"', self.repo)
+        sh(self.repo, "git", "reset", "-q", "--hard")
+        self.write(".claude/agents/elon.md", "v4\n")
+        sh(self.repo, "git", "add", "-A")
+        self.assertDenied('git commit -m "differs"', "template managed", self.repo)
+
     def test_git_dash_c_checks_the_named_folder(self):
         self.stage(".claude/agents/elon.md")
         self.assertDenied(f'git -C {self.repo} commit -m "x"', "Owner-approved:", self.home)

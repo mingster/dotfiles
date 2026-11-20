@@ -1,6 +1,6 @@
 # Labels
 
-Every label the team uses, in one place. One set of 20 issue labels serves every repo of the team. `script/fleet-watch.py` reads it to pick, order and route work without a coordinator turn. A normal ready issue carries only `ready-for-agent` and `P2`. The script code is the source of truth: when a script and this page disagree, the script wins and this page is the bug.
+Every label the team uses, in one place. One set of 20 issue labels serves every repo of the team. `script/fleet-watch.py` reads it to pick, order and route work without a coordinator turn. A normal ready issue carries only `ready-for-agent` and `P2`, and every open issue carries a state and a P label (Gate at filing). The script code is the source of truth: when a script and this page disagree, the script wins and this page is the bug.
 
 Each table row names the label, what it means, who sets it (a role or a script, with the file), when, and what happens next.
 
@@ -68,9 +68,39 @@ A hold label keeps fleet-watch from starting the issue (`ISSUE_HOLD_LABELS` in `
 | `deferred` | Parked until a later milestone. | architect-pm or the coordinator. | Reviewed when the milestone arrives. |
 | `tracking` | Umbrella issue that tracks child slices. | architect-pm when slicing a spec. | Never dispatched to one builder. The child slices carry the work. |
 
+## Gate at filing
+
+Every open issue carries one state label and one P label from the minute it is filed. `script/issue-label-gate.sh [--apply] [--repo OWNER/REPO]` is the mechanical check (`script/tests/issue-label-gate.test.sh` is its test). The default is a dry run that prints what it would change. It applies these rules:
+
+- No state label (`needs-triage`, `ready-for-agent`, a hold label or `status:進行中`): add `needs-triage`.
+- No `P0` to `P3` label: add `P2`.
+- `status:進行中` beats a leftover `needs-triage` or `ready-for-agent`: both come off.
+- Board status labels follow the state (see Status below).
+
+Who runs it: `script/worker-startup.sh` runs it with `--apply` before every hand dispatch, so a worker start labels any issue filed without labels. The coordinator and architect-pm also run it right after filing an issue (`templates/agent-team/.claude/agents/elon.md`, Musts), and file with `gh issue create --label needs-triage --label P2` so the labels exist at filing. The gate only fills gaps: architect-pm still sets the real priority and moves the issue to `ready-for-agent` at triage. It never starts an issue. The gate reads only open issues of one repo, so run it once per project repo. fleet-watch does not run it yet.
+
+## Status (board view)
+
+Three labels show the state on the board in plain words. They are views of the state above, never routing inputs: fleet-watch ignores them. They sit outside the 20 issue labels.
+
+| Label | Meaning | Set by and when | What happens next |
+| ----- | ------- | --------------- | ----------------- |
+| `status:接下來` | Ready and queued: the next batch to dispatch. | `script/issue-label-gate.sh`: added to a `ready-for-agent` issue with no hold label and not in flight, removed when the issue is no longer ready. | Goes when the worker starts. |
+| `status:進行中` | A worker is building it now. | `script/worker-startup.sh` (`mark_issue_in_flight`): added when a worker start succeeds for the issue, with `needs-triage` and `ready-for-agent` removed. Rework and verify starts leave it alone. | The issue closes with the merged PR. If the worker dies without a PR, the coordinator removes the label and relabels the issue. |
+| `status:等你決定` | Waits on the owner. | `script/issue-label-gate.sh`: added to an issue that carries `owner`, removed when `owner` is gone. | The owner acts and the `owner` label comes off. |
+
 ## Start order
 
-fleet-watch starts eligible issues in this order (`issue_scan_queue_key` in `script/fleet-watch.py`): every dotfiles issue before any other repo's, then priority (`P0` first, no P label counts as `P2`), then size (`size:S`, no size label, `size:L`), then oldest first, then lowest number.
+Every dotfiles issue starts before any other repo's. Two places enforce it:
+
+- fleet-watch orders its issue scan (`issue_scan_queue_key` in `script/fleet-watch.py`): every dotfiles issue before any other repo's, then priority (`P0` first, no P label counts as `P2`), then size (`size:S`, no size label, `size:L`), then oldest first, then lowest number.
+- The coordinator's hand dispatch path enforces it too. `script/worker-startup.sh` (`refuse_before_dotfiles`) refuses a builder start whose brief `Refs` another repo while a dotfiles issue is `ready-for-agent` with no hold label and not in flight. Rework briefs, verify briefs, non-builder roles and a brief with no explicit repo are not refused. A start takes the free seat, so a ready dotfiles issue plus a start request is the whole seat test. `--skip-dotfiles-first REASON` overrides it and logs the reason. A failed `gh` call lets the start go on with a warning. `script/tests/worker-startup.test.sh` covers it.
+
+An unlabeled or `needs-triage` dotfiles issue is not ready, so the gate above is what keeps it from being invisible: it gets labeled at the next start and architect-pm triages it first (`templates/agent-team/.claude/agents/elon.md`, Musts).
+
+## Stale tasks
+
+An Orca task is a view of work, not the work. `worker-release` settles the worker but leaves its task `blocked` or `failed`, so a task whose PR merged long ago still shows as dead work. `script/task-sweep.sh --run RUN_ID [--repo OWNER/REPO] [--apply]` marks such a task `completed` when the `Refs` line of its brief names this repo (or is a bare `#N`, which the dispatch scripts read as the host repo) and that issue or PR is closed. It prints one line per task, and a dry run is the default. A task with no `Refs` line, with another repo's `Refs`, or whose number is not in the repo is left alone. A task that failed on a still open issue stays `failed`. `script/tests/task-sweep.test.sh` is its test. The coordinator runs it with `--apply` at session start and after each merge (`elon.md`, Musts).
 
 ## Labels outside the 20
 
