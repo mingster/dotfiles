@@ -239,6 +239,30 @@ class RoleFileGate(Gate):
                 with mock.patch.dict(os.environ, {"AGENT_TEAM_SYNC": "1"}):
                     self.assertAllowed(f'git commit -m "tweak protected{TRAILER}"', self.repo)
 
+    def merge_main_with_team_md(self):
+        """origin/main gains docs/agents/team.md; work branches off the base, adopts the project, then merges main."""
+        sh(self.repo, "git", "checkout", "-q", "-b", "tmp", "HEAD")
+        self.write("docs/agents/team.md", "main copy\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "main team.md")
+        sh(self.repo, "git", "push", "-q", "origin", "HEAD:main")
+        sh(self.repo, "git", "fetch", "-q", "origin")
+        sh(self.repo, "git", "checkout", "-q", "work")
+        self.write(".claude/settings.json", "{}\n")
+        sh(self.repo, "git", "add", "-A")
+        sh(self.repo, "git", "commit", "-q", "-m", "own work")
+        sh(self.repo, "git", "merge", "-q", "--no-commit", "--no-ff", "origin/main")
+
+    def test_merge_commit_bringing_mains_team_md_allowed(self):
+        self.merge_main_with_team_md()
+        self.assertAllowed('git commit -m "merge main"', self.repo)
+
+    def test_merge_commit_with_edited_team_md_still_denied(self):
+        self.merge_main_with_team_md()
+        self.write("docs/agents/team.md", "my edit\n")
+        sh(self.repo, "git", "add", "-A")
+        self.assertDenied('git commit -m "merge main"', "template managed", self.repo)
+
     def test_commit_with_heredoc_trailer_allowed(self):
         self.write(".claude/model-routing.md", "x\n")
         sh(self.repo, "git", "add", "-A")

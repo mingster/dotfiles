@@ -2375,6 +2375,21 @@ def deny_role_files(files, how):
          "or `dotfiles/templates/agent-team/` instead.")
 
 
+def matches_main(git, rel, rest):
+    """True when the staged blob of `rel` equals its blob at MERGE_HEAD (a merge in progress) or origin/main.
+    Not for `commit -a`, where the staged copy is not what lands."""
+    if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
+        return False
+    staged = (gate_run([*git, "rev-parse", f":{rel}"], None) or "").strip()
+    if not staged:
+        return False
+    for ref in ("MERGE_HEAD", "refs/remotes/origin/main"):
+        theirs = (gate_run([*git, "rev-parse", f"{ref}:{rel}"], None) or "").strip()
+        if theirs and theirs == staged:
+            return True
+    return False
+
+
 def check_role_file_gate(base, args):
     root = find_project_root(GATE_CWD or os.getcwd())
     adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
@@ -2387,9 +2402,11 @@ def check_role_file_gate(base, args):
             if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
                 staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
             if adopted:
-                managed = sorted(f for f in staged if is_template_managed_rel(f))
+                managed = sorted(f for f in staged if is_template_managed_rel(f)
+                                 and not matches_main(git, f, rest))
                 if managed:
                     deny_template_managed(managed[0])
+            staged = {f for f in staged if not (adopted and is_template_managed_rel(f) and matches_main(git, f, rest))}
             files = {f for f in staged if is_protected(f)} | ship_protected(staged)
             if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
                 deny_role_files(files, "This commit")
