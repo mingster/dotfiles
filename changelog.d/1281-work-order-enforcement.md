@@ -1,0 +1,1 @@
+* The work order is enforced by script: fewer than 3 active workers starts triage at once and tells the coordinator, the issue fill stops at 8, an empty day before 19:00 asks for the staging deploy and regression, and the daily wake promotes the passing sha to production before `go_live_date` (#1281).

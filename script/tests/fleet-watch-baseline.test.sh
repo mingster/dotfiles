@@ -84,11 +84,11 @@ class Baseline(unittest.TestCase):
         self.assertFalse(r1['admitted'])
         self.assertEqual(r1['occupied'], 1)
 
-        # Released but not pushed occupies slot
+        # Released frees the slot even when unpushed (#1273)
         w_release_only = [{'dispatchId': 'a1', 'dispatchStatus': 'released', 'projection': {'host': {'id': 'fleet-1'}}, 'pushed': False, 'released': True}]
         r2 = watch.admit('fleet-1', config, w_release_only)
-        self.assertFalse(r2['admitted'])
-        self.assertEqual(r2['occupied'], 1)
+        self.assertTrue(r2['admitted'])
+        self.assertEqual(r2['occupied'], 0)
 
         # Both confirmed frees slot
         w_freed = [{'dispatchId': 'a1', 'dispatchStatus': 'released', 'projection': {'host': {'id': 'fleet-1'}}, 'pushed': True, 'released': True}]

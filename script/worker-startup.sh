@@ -264,6 +264,8 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   local spec_file=$1 repo_sel=${2:-} record=${3:-} json line env_name placed_repo pick_args=() cfg
   WORKER_STARTUP_PLACED_ENV=
   WORKER_STARTUP_PLACED_REPO=
+  WORKER_STARTUP_PLACED_HOST=
+  WORKER_STARTUP_PLACED_CFG=
   cfg=$(resolve_placement_config)
   if [ ! -f "$cfg" ]; then
     echo 'worker-placement: skipped (no fleet config)' >&2
@@ -300,6 +302,10 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   WORKER_STARTUP_PLACED_ENV=$env_name
   placed_repo=$(printf '%s' "$json" | jq -r '.repo // empty')
   WORKER_STARTUP_PLACED_REPO=$placed_repo
+  if [ "$record" = --record ]; then
+    WORKER_STARTUP_PLACED_HOST=$(printf '%s' "$json" | jq -r '.host // empty')
+    WORKER_STARTUP_PLACED_CFG=$cfg
+  fi
 }
 
 # --on skips placement, so judge the named host by the same load rule (worker-placement.py owns it).
@@ -546,23 +552,49 @@ run_captured() { # command... ; print its stdout, return its status. start_out i
 # is started once more in the same worktree before the start counts as failed (#1221).
 STARTUP_EXIT_RE='terminal_exited|agent_not_in_foreground|agent_readiness|dispatch_input'
 
-startup_exit_failure() { # <dispatch id> ; true when the dispatch failed at startup within the readiness wait
-  local d=$1 end out state
+# True when the dispatch failed at startup. Orca reports state=ready from the first second, before agent_readiness and
+# dispatch_input finish, so keep reading worker-show through the readiness wait while the stage is still a startup
+# stage (#1270). A failed state matches the startup errors, or a timeout at a startup stage.
+startup_exit_failure() { # <dispatch id>
+  local d=$1 end out state stage
   end=$((SECONDS + ${WORKER_STARTUP_READINESS_WAIT:-6}))
   while :; do
     out=$("$orca" orchestration worker-show --dispatch "$d" --json 2>/dev/null) || out=
     state=$(jq -r '.result.state // .result.dispatch.state // empty' <<<"$out" 2>/dev/null || true)
+    stage=$(jq -r '(.result.stage // .result.projection.stage // .result.dispatch.stage) | if type == "object" then (.detail // .name // "") else (. // "") end' <<<"$out" 2>/dev/null || true)
     case "$state" in
-      failed|stopped|abandoned|rejected) grep -Eq "$STARTUP_EXIT_RE" <<<"$out"; return ;;
-      running|ready|accepted|succeeded|completed) return 1 ;;
+      failed|stopped|abandoned|rejected)
+        grep -Eq "$STARTUP_EXIT_RE" <<<"$out" && return 0
+        case "$stage" in agent_readiness|dispatch_input) grep -q 'timeout' <<<"$out" && return 0 ;; esac
+        return 1 ;;
+      running|succeeded|completed) return 1 ;;
+      ready|accepted|pending|'')
+        case "$stage" in agent_readiness|dispatch_input|server_record) ;; *) return 1 ;; esac ;;
+      *) return 1 ;;
     esac
     [ "$SECONDS" -lt "$end" ] || return 1
     sleep 1
   done
 }
 
+# The same worker-start command, aimed at the task that already exists: no new task is created (#1270).
+same_task_retry_command() { # <task id> <failed dispatch id> command... ; sets retry_cmd
+  local task_id=$1 failed=$2 skip=0 arg
+  shift 2
+  retry_cmd=()
+  for arg in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$arg" in
+      --spec|--task-title) skip=1 ;;
+      *) retry_cmd+=("$arg") ;;
+    esac
+  done
+  retry_cmd+=(--task "$task_id" --retry-of "$failed")
+}
+
 start_with_startup_retry() { # worker-start wrapper args...; sets start_out like run_captured
-  local ec=0 errf dispatch
+  local ec=0 errf dispatch task_id
+  local -a retry_cmd=()
   errf=$(mktemp)
   run_captured "$@" 2>"$errf" || ec=$?
   cat "$errf" >&2
@@ -572,10 +604,18 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
     run_captured "$@" || ec=$?
   elif [ "$ec" -eq 0 ]; then
     dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+    task_id=$(jq -r '.result.taskId // empty' <<<"$start_out" 2>/dev/null || true)
     if [ -n "$dispatch" ] && startup_exit_failure "$dispatch"; then
       echo "worker-startup: $dispatch failed at startup, retrying once" >&2
       ec=0
-      run_captured "$@" || ec=$?
+      if [ -n "$task_id" ]; then
+        "$orca" orchestration worker-release --dispatch "$dispatch" ${environment:+--environment "$environment"} >/dev/null 2>&1 \
+          || echo "worker-startup: could not release $dispatch before the retry" >&2
+        same_task_retry_command "$task_id" "$dispatch" "$@"
+        run_captured "${retry_cmd[@]}" || ec=$?
+      else
+        run_captured "$@" || ec=$?
+      fi
     fi
   fi
   rm -f "$errf"
@@ -624,6 +664,7 @@ refuse_merged_backlog_line() { # <spec_file> <title>
   local spec_file=$1 title=$2 role kind key repo merged
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
@@ -640,6 +681,7 @@ refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   local spec_file=$1 title=$2 allow=$3 role kind ref repo num prs btype
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
@@ -667,6 +709,7 @@ enforce_builder_provider() { # <title> <agent> <override>
   [ "$agent" != claude ] || return 0
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || die "cannot classify role $role"
   [ "$kind" = builder ] || return 0
   if [ -n "$override" ]; then
@@ -702,6 +745,8 @@ release_ready_label() { # <spec_file> <title>
   local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
+  [ "$role" != qa-sdet ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
   ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
@@ -720,6 +765,7 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   local spec_file=$1 title=$2 skip=$3 role kind btype ref repo dot waiting
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
@@ -749,6 +795,7 @@ mark_issue_in_flight() { # <spec_file> <title>
   local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
   ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
@@ -775,24 +822,26 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
   [ "$role" = qa-sdet ] || [ "$btype" = verify ] || return 0
   [ -n "$run" ] || return 0
   prs=$({
-    printf '%s\n' "${title#*|qa-sdet}" | grep -oiE '(#|\bPRs? #?)[0-9]+' | grep -oE '[0-9]+'
+    printf '%s\n' "${title#*|qa-sdet}" | grep -oE '(^|[^0-9A-Za-z#/.-])#?[0-9]{1,6}($|[^0-9A-Za-z.-])' | grep -oE '[0-9]+'
+    if [[ $title == *"|qa-sdet" ]]; then printf '%s\n' "${title%%|qa-sdet}" | grep -oE '[0-9]+'; fi
     printf '%s\n' "$name" | sed -nE 's/^(verify|vd|v)-?([0-9]+)(-[a-z0-9]+)?$/\2/p'
     grep -oE '(^Refs [A-Za-z0-9_./-]*#|pull/)[0-9]+' "$spec_file" | grep -oE '[0-9]+$'
   } | sort -un) || prs=
   [ -n "$prs" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  workers=$("$orca" orchestration worker-list --run "$run" --include-remote --terminal-state active --json 2>/dev/null) || return 0
+  workers=$("$orca" orchestration worker-list --run "$run" --include-remote --json 2>/dev/null) || return 0
   tasks=$("$orca" orchestration task-list --run "$run" --json 2>/dev/null) || tasks='{}'
   for pr in $prs; do
     printf '%s\n%s\n' "$workers" "$tasks" | jq -rs --arg pr "$pr" '
       (.[0].result.workers // .[0].workers // []) as $w
       | ((.[1].result.tasks // .[1].tasks // []) | map({(.id): .title}) | add // {}) as $t
       | $w[]
-      | select((.liveness // .projection.liveness.verdict // "live") == "live")
-      | select((.terminalState // "active") == "active")
+      | select(((.dispatchStatus // .workerState // .state // "") | ascii_downcase | test("^(completed|succeeded|failed|stopped|cancelled|abandoned|released)$")) | not)
+      | select(((.liveness // .projection.liveness.verdict // "live") | tostring) as $l | ($l | test("^(exited|sleep|settled)$")) | not)
+      | select((.terminalState // "active") | test("^(released|release_unknown)$") | not)
       | {id: .dispatchId, title: ($t[.taskId] // .title // "")}
       | select(.title | test("^(#[0-9]+\\|)?qa-sdet"))
-      | select(.title | test("(#|PRs? #?)" + $pr + "([^0-9]|$)") or test("verify-?" + $pr + "([^0-9]|$)"))
+      | select((.title | sub("^#[0-9]+\\|qa-sdet"; "") | test("(^|[^0-9A-Za-z/.-])(#|PRs? #?)?" + $pr + "([^0-9A-Za-z.-]|$)")) or (.title | test("^#" + $pr + "\\|qa-sdet(\\|[^0-9]*)?$")) or (.title | test("verify-?" + $pr + "([^0-9]|$)")))
       | "worker-startup: warning: live verifier \(.id) (\(.title)) is already running for PR #" + $pr' >&2 2>/dev/null || true
   done
 }
@@ -1061,6 +1110,10 @@ run_mode() {
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
     local ec=$1 rm_args
+    if [ -n "${WORKER_STARTUP_PLACED_HOST:-}" ]; then
+      "$python3" "$here/worker-placement.py" unrecord --host "$WORKER_STARTUP_PLACED_HOST" \
+        ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
+    fi
     if [ "$created_wt" = 1 ]; then
       rm_args=(worktree rm --worktree "path:$wt" --force)
       [ -z "$environment" ] || rm_args+=(--environment "$environment")
@@ -1084,7 +1137,7 @@ run_mode() {
   board_display_name_set "path:$wt" "$title" "$environment"
   start_agent_worker() { # starts the worker for the current agent, model and brief
     if [ -n "$environment" ]; then
-      run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+      start_with_startup_retry bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
     else
       start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \

@@ -64,6 +64,7 @@ def load_config(path: Path) -> dict:
         raise FleetConfigError(f'worker-placement: unreadable fleet config {path} ({exc})') from exc
     if not isinstance(data, dict):
         raise FleetConfigError(f'worker-placement: fleet config must be a JSON object ({path})')
+    data['_config_path'] = str(path)
     return data
 
 
@@ -272,11 +273,13 @@ def live_worker_counts(config: dict, hosts: list[str]) -> dict[str, int] | None:
         return None
     try:
         fw = load_fleet_watch()
+        config, _adopted = fw.resolve_pass_config(dict(config), config.get('_config_path') or '')
         workers = fw.deduplicate_workers(fw.fetch_workers(config))
         env_names = fw._resolve_env_names(workers, config, None)
+        released = fw.persisted_released_ids(os.environ.get('FLEET_WATCH_STATE'))
         counts: dict[str, int] = {}
         for host in hosts:
-            receipt = fw.admit(host, config, workers=workers, env_names=env_names)
+            receipt = fw.admit(host, config, workers=workers, env_names=env_names, released_ids=released)
             counts[host] = int(receipt.get('occupied') or 0)
         return counts
     except Exception as exc:  # inventory is advisory; never block placement on it
@@ -348,6 +351,32 @@ def read_recent(path: Path, window: float, now: float) -> list[dict]:
         if now - at <= window:
             keep.append({'host': row['host'], 'at': at, 'workers': claimed})
     return keep
+
+
+def unrecord_start(config: dict, host: str) -> bool:
+    """Drop the newest recent-start claim for a host, so a start that failed before launching frees its seat (#1273)."""
+    path = recent_file_path(config)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock = open(str(path) + '.lock', 'a', encoding='utf-8')
+    except OSError:
+        return False
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows = read_recent(path, recent_start_seconds(config), time.time())
+        for index in range(len(rows) - 1, -1, -1):
+            if rows[index]['host'] == host:
+                del rows[index]
+                break
+        else:
+            return False
+        tmp = path.with_name(path.name + '.tmp')
+        try:
+            tmp.write_text(json.dumps({'starts': rows}), encoding='utf-8')
+            os.replace(tmp, path)
+        except OSError:
+            return False
+    return True
 
 
 def recent_claims(rows: list[dict]) -> dict[str, int]:
@@ -567,6 +596,27 @@ def cmd_pick(args: argparse.Namespace) -> int:
     return 0 if result.get('ok') else 1
 
 
+def cmd_unrecord(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(config_path(args.config))
+    except FleetConfigError:
+        return 0
+    unrecord_start(cfg, args.host)
+    return 0
+
+
+def cmd_seats(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(config_path(args.config))
+    except FleetConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    fw = load_fleet_watch()
+    report = fw.fleet_seat_report(cfg, cfg.get('_config_path'), os.environ.get('FLEET_WATCH_STATE'))
+    print(json.dumps(report, indent=2) if args.json else fw.format_seat_report(report))
+    return 0
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     try:
         cfg = load_config(config_path(args.config))
@@ -622,6 +672,14 @@ def main() -> int:
     pick.add_argument('--json', action='store_true', help='Emit JSON instead of one line')
     pick.add_argument('--record', action='store_true', help='Remember this start so the next pick counts it')
     pick.set_defaults(func=cmd_pick)
+    unrecord = sub.add_parser('unrecord', help='Forget the newest recorded start on a host (a start that failed early)')
+    unrecord.add_argument('--host', required=True)
+    unrecord.add_argument('--config', default=None)
+    unrecord.set_defaults(func=cmd_unrecord)
+    seats = sub.add_parser('seats', help='Live and retained seats per host, naming each retained worker')
+    seats.add_argument('--config', default=None)
+    seats.add_argument('--json', action='store_true')
+    seats.set_defaults(func=cmd_seats)
     check = sub.add_parser('check-host', help='Judge a host chosen with --on against its load limit')
     check.add_argument('--host', required=True)
     check.add_argument('--spec', default=None)

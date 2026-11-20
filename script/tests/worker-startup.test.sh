@@ -1545,7 +1545,7 @@ PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-sonnet-5-5-m
 grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
-grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "a non-builder start should also drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
+grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && bad "a qa-sdet start must keep ready-for-agent on the issue (#1271)" || ok
 
 # A handoff line has no --from: the coordinator's own handle is the sender (#1192).
 : >"$tmp/orca-route.log"
@@ -1691,7 +1691,14 @@ case "$*" in
     printf '{"ok":true,"result":{"dispatchId":"ctx_r%s","taskId":"task_r","runId":"run_r","state":"ready","terminal":"term_r"}}\n' "$n"
     ;;
   *"orchestration worker-show"*)
-    if [ "$RETRY_MODE" = vanish_first ] && [[ "$*" == *ctx_r1* ]]; then
+    if [ "$RETRY_MODE" = ready_then_vanish ] && [[ "$*" == *ctx_r1* ]]; then
+      c=$(grep -c 'orchestration worker-show' "$RETRY_LOG")
+      if [ "$c" -lt 2 ]; then
+        echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"ready","stage":"agent_readiness"}}'
+      else
+        echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"failed","stage":"agent_readiness","lastError":"timeout"}}'
+      fi
+    elif [ "$RETRY_MODE" = vanish_first ] && [[ "$*" == *ctx_r1* ]]; then
       echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"failed","stage":{"detail":"agent_readiness"},"lastError":"terminal_exited"}}'
     elif [ "$RETRY_MODE" = other_failure ]; then
       echo '{"ok":true,"result":{"dispatchId":"ctx_r1","state":"failed","lastError":"budget exhausted"}}'
@@ -1699,6 +1706,7 @@ case "$*" in
       echo '{"ok":true,"result":{"state":"ready","liveness":"live","terminal":"term_r"}}'
     fi
     ;;
+  *"orchestration worker-release"*) echo '{"ok":true,"result":{}}' ;;
   *"terminal read"*) echo '{"ok":true,"result":{"terminal":{"tail":[]}}}' ;;
   *) printf 'unexpected orca: %s\n' "$*" >&2; exit 99 ;;
 esac
@@ -1721,12 +1729,57 @@ retry_run() { # <mode>
 }
 retry_run vanish_first
 [ "$retry_ec" = 0 ] && [ "$retry_starts" = 2 ] && ok || bad "dispatch that failed at startup is started once more (ec=$retry_ec starts=$retry_starts) $(cat "$tmp/retry.err")"
+grep -q 'orchestration worker-release --dispatch ctx_r1' "$tmp/orca-retry.log" && ok || bad "failed startup dispatch is released before the retry"
+grep 'orchestration worker-start' "$tmp/orca-retry.log" | sed -n 2p | grep -q -- '--task task_r --retry-of ctx_r1' && ok || bad "startup retry reuses the task (--task task_r --retry-of ctx_r1)"
+grep 'orchestration worker-start' "$tmp/orca-retry.log" | sed -n 2p | grep -q -- '--task-title' && bad "startup retry must not create a second task" || ok
+retry_run ready_then_vanish
+[ "$retry_ec" = 0 ] && [ "$retry_starts" = 2 ] && ok || bad "ready then agent_readiness timeout is retried once (ec=$retry_ec starts=$retry_starts) $(cat "$tmp/retry.err")"
 retry_run exit_first
 [ "$retry_ec" = 0 ] && [ "$retry_starts" = 2 ] && ok || bad "worker-start exiting with terminal_exited is retried once (ec=$retry_ec starts=$retry_starts)"
 retry_run healthy
 [ "$retry_ec" = 0 ] && [ "$retry_starts" = 1 ] && ok || bad "healthy start is not retried (ec=$retry_ec starts=$retry_starts)"
 retry_run other_failure
 [ "$retry_starts" = 1 ] && ok || bad "failure that is not a startup exit is not retried (starts=$retry_starts)"
+
+# 1270: a remote start that reports ready and then fails at startup is released and retried once on the same task.
+cat >"$tmp/orca-remote-retry" <<EOS
+#!/usr/bin/env bash
+case " \$* " in
+  *" orchestration worker-start "*)
+    printf '%s\n' "\$(printf '%s ' "\$@" | tr '\n' ' ')" >>"$tmp/remote-retry.log"
+    n=\$(grep -c . "$tmp/remote-retry.log")
+    printf '{"ok":true,"result":{"dispatchId":"ctx_rr%s","taskId":"task_rr","state":"ready","terminal":"term_rr"}}\n' "\$n"
+    ;;
+  *" orchestration worker-show "*)
+    if [[ "\$*" == *ctx_rr1* ]]; then
+      echo '{"ok":true,"result":{"state":"failed","stage":"agent_readiness","lastError":"agent_not_in_foreground"}}'
+    else
+      echo '{"ok":true,"result":{"state":"running","terminal":"term_rr"}}'
+    fi
+    ;;
+  *" orchestration worker-release "*)
+    printf '%s\n' "\$*" >>"$tmp/remote-release.log"
+    echo '{"ok":true,"result":{}}'
+    ;;
+  *) exec "$orca_remote_stub" "\$@" ;;
+esac
+EOS
+chmod +x "$tmp/orca-remote-retry"
+: >"$tmp/remote-retry.log"; : >"$tmp/remote-release.log"
+set +e
+unset -f python3 2>/dev/null || true
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-remote-retry" ORCA_STUB_LOG="$tmp/orca-rem-retry.log" WORKER_STARTUP_READINESS_WAIT=2 \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_rem_retry --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --on rem-env --name n_rem --repo "path:$rem_app" >"$tmp/rem-retry.out" 2>"$tmp/rem-retry.err"
+ec_rem_retry=$?
+set -e
+[ "$ec_rem_retry" = 0 ] && ok || bad "remote startup retry exits 0 ($ec_rem_retry) $(cat "$tmp/rem-retry.err")"
+[ "$(grep -c . "$tmp/remote-retry.log")" = 2 ] && ok || bad "remote startup failure starts twice ($(cat "$tmp/remote-retry.log"))"
+grep -q -- '--dispatch ctx_rr1 --environment rem-env' "$tmp/remote-release.log" && ok || bad "failed remote dispatch is released on its environment ($(cat "$tmp/remote-release.log"))"
+sed -n 2p "$tmp/remote-retry.log" | grep -q -- '--task task_rr --retry-of ctx_rr1' && ok || bad "remote retry reuses the task ($(sed -n 2p "$tmp/remote-retry.log"))"
+sed -n 2p "$tmp/remote-retry.log" | grep -q -- '--task-title' && bad "remote retry must not create a second task" || ok
 
 # 1019: --on this host starts locally. --on another host still passes --environment.
 cat >"$bin/hostname" <<'EOS'
@@ -1879,10 +1932,11 @@ cat >"$orca_live_stub" <<EOS
 #!/usr/bin/env bash
 case " \$* " in
   *" orchestration worker-list "*)
-    echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"}]}}'
+    printf '%s\\n' "\$*" >>"$tmp/live-list.log"
+    echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_rem1","taskId":"task_r1","dispatchStatus":"dispatched","workerState":"ready","terminalState":null},{"dispatchId":"ctx_done1","taskId":"task_d1","dispatchStatus":"completed","workerState":"succeeded","terminalState":null}]}}'
     exit 0 ;;
   *" orchestration task-list "*)
-    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"}]}}'
+    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"},{"id":"task_r1","title":"#1262|qa-sdet|verify 1263"},{"id":"task_d1","title":"#1300|qa-sdet|verify 1301"}]}}'
     exit 0 ;;
 esac
 exec "$orca_stub" "\$@"
@@ -1910,6 +1964,27 @@ live_verifier_run "#9|qa-sdet|standing" --name verify-78
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a verifier for another PR must not warn ($(cat "$tmp/live.err"))" || ok
 live_verifier_run "#79|fullstack-dev" --name verify-77
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a builder start must not warn" || ok
+
+# 1271: a remote live verifier (terminalState null) titled with a bare "verify <pr>" warns, a finished one does not.
+: >"$tmp/live-list.log"
+live_verifier_run "#1262|qa-sdet|verify 1263" --name verify-1263
+grep -Fq 'worker-startup: warning: live verifier ctx_rem1 (#1262|qa-sdet|verify 1263) is already running for PR #1263' "$tmp/live.err" && ok || bad "remote live verifier with a bare verify title should warn ($(cat "$tmp/live.err"))"
+grep -- '--run' "$tmp/live-list.log" | grep -q -- '--terminal-state'  && bad "warn_live_verifier must not filter by --terminal-state" || ok
+live_verifier_run "#1300|qa-sdet|verify 1301" --name verify-1301
+grep -q 'ctx_done1' "$tmp/live.err" && bad "a completed verifier must not warn" || ok
+live_verifier_run "#1263|qa-sdet"
+grep -Fq 'ctx_rem1' "$tmp/live.err" && ok || bad "a verifier titled by its PR number only should warn ($(cat "$tmp/live.err"))"
+
+# 1271: a verifier start never removes ready-for-agent from the issue it refs.
+cat >"$bin/gh" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$tmp/gh.log"
+EOS
+chmod +x "$bin/gh"
+: >"$tmp/gh.log"
+live_verifier_run "#9|qa-sdet|verify PR 77" --name verify-77
+grep -q 'issue edit' "$tmp/gh.log" && bad "qa-sdet start must not edit issue labels ($(cat "$tmp/gh.log"))" || ok
+rm -f "$bin/gh"
 
 # Hand dispatch obeys the start order: a builder for another repo is refused while a ready dotfiles issue waits (#1286).
 run_path="$ghbin:$run_path_saved"

@@ -1,0 +1,1 @@
+* The standing verifier trial now arms from `~/.config/fleet-watch/config.json` (`hosts: ["auto"]` picks the first remote code host), and a remote standing verifier keeps its terminal handle, so PRs 2 to 5 wake it instead of falling back to a fresh worker (#1272).

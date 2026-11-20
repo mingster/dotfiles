@@ -132,6 +132,22 @@ check 'wake message instructs coordinator to dispatch release-manager' grep -q '
 check 'wake message instructs coordinator to run swarm with the staging overlay' grep -q 'playbooks/swarm.md' "$ORCA_LOG"
 check 'wake message states production deploy remains gated on owner approval' grep -qi 'production.*owner' "$ORCA_LOG"
 
+# go_live_date (#1281): before it production is promoted at once, on or after it production waits for the owner.
+gl_cfg="$tmp/config/fleet-watch-golive.json"
+sed 's|"runs": \[|"go_live_date": "2026-12-01", "runs": [|' "$FLEET_WATCH_CONFIG" >"$gl_cfg"
+for gl_today in 2026-11-21 2026-12-01 2026-12-02; do
+  : >"$ORCA_LOG"
+  FLEET_WATCH_CONFIG="$gl_cfg" STAGING_DAILY_TODAY="$gl_today" FLEET_STAGING_REPOS="$repo_a" \
+    STAGING_DAILY_LOG="$tmp/gl-$gl_today.log" bash "$script" >/dev/null 2>&1 || true
+  if [ "$gl_today" = 2026-11-21 ]; then
+    check 'before go live the wake says to promote the passing sha at once' grep -q 'promote the regression-passing sha to production at once' "$ORCA_LOG"
+    check 'before go live the wake does not wait for the owner' bash -c '! grep -qi "owner" "$1"' _ "$ORCA_LOG"
+  else
+    check "on or after go live ($gl_today) production waits for the owner's approval" grep -q "Production deploy on the owner's approval" "$ORCA_LOG"
+    check "on or after go live ($gl_today) the wake does not promote at once" bash -c '! grep -q "at once" "$1"' _ "$ORCA_LOG"
+  fi
+done
+
 # --- 3. Per-component <component>/staging branches in .claude/hooks/guard-config.json & fleet-pull.json ---
 repo_b_bare="$tmp/repo-b.git"
 repo_b="$tmp/repo-b"
