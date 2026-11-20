@@ -10,9 +10,12 @@ bad() { echo "FAIL $1: $2"; fail=$((fail + 1)); }
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
-# gh issue view <n> -R <repo> --json body,comments
+# gh issue view <n> -R <repo> --json body,comments. Issues 90 to 99 without a fixture are "could not resolve".
+echo "$3" >>"$FIX/asked"
 f="$FIX/$3.json"
-[ -f "$f" ] && cat "$f" || { echo "not found" >&2; exit 1; }
+[ -f "$f" ] && cat "$f" && exit 0
+case "$3" in 9[0-9]) echo "GraphQL: Could not resolve to an issue or pull request with the number of $3." >&2 ;; *) echo "connection reset" >&2 ;; esac
+exit 1
 STUB
 chmod +x "$tmp/bin/gh"
 export FIX="$tmp" PATH="$tmp/bin:$PATH"
@@ -31,12 +34,29 @@ echo '{"body":"","comments":[{"body":"Owner decision: skip it."}]}' >"$tmp/4.jso
 run o/r 3
 [ "$rc" -eq 0 ] && grep -q '^#4: Owner decision: skip it' <<<"$so" && ok "decision on a linked issue counts" || bad linked "rc=$rc so=$so"
 
-run o/r 99
-[ "$rc" -eq 2 ] && grep -q 'cannot read #99' <<<"$se" && ok "gh failure exits 2, not 1" || bad ghfail "rc=$rc se=$se"
+run o/r 199
+[ "$rc" -eq 2 ] && grep -q 'cannot read #199' <<<"$se" && ok "gh failure exits 2, not 1" || bad ghfail "rc=$rc se=$se"
 
-echo '{"body":"Blocked by #98.","comments":[]}' >"$tmp/5.json"
+echo '{"body":"Blocked by #198.","comments":[]}' >"$tmp/5.json"
 run o/r 5
-[ "$rc" -eq 2 ] && grep -q 'cannot read #98' <<<"$se" && ok "failing linked issue read exits 2, not 1" || bad linkedfail "rc=$rc se=$se"
+[ "$rc" -eq 2 ] && grep -q 'cannot read #198' <<<"$se" && ok "failing linked issue read exits 2, not 1" || bad linkedfail "rc=$rc se=$se"
+
+echo '{"body":"See #98.","comments":[{"body":"Owner decision: own wins."}]}' >"$tmp/6.json"
+run o/r 6
+[ "$rc" -eq 0 ] && grep -q '^#6: Owner decision: own wins' <<<"$so" && ok "dead ref does not drop the own decision" || bad deadown "rc=$rc so=$so se=$se"
+
+echo '{"body":"See #97 and #4.","comments":[]}' >"$tmp/7.json"
+run o/r 7
+[ "$rc" -eq 0 ] && grep -q '^#4: Owner decision: skip it' <<<"$so" && ok "dead ref first does not hide a later linked decision" || bad deadfirst "rc=$rc so=$so se=$se"
+
+echo '{"body":"See #198.","comments":[]}' >"$tmp/8.json"
+run o/r 8
+[ "$rc" -eq 2 ] && ok "non resolve linked failure with no decision exits 2" || bad transient "rc=$rc"
+
+echo '{"body":"Cross repo other/repo#98 and url x/y#97.","comments":[]}' >"$tmp/9.json"
+: >"$tmp/asked"
+run o/r 9
+[ "$rc" -eq 1 ] && ! grep -qE '^9[78]$' "$tmp/asked" && ok "owner/repo#N is not read as a local issue" || bad crossrepo "rc=$rc asked=$(tr '\n' ' ' <"$tmp/asked")"
 
 run o/r
 [ "$rc" -eq 2 ] && ok "missing argument exits 2" || bad usage "rc=$rc"
