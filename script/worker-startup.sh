@@ -981,14 +981,23 @@ run_mode() {
     [ -z "$wt" ] || created_wt=1
   fi
   remote_git_only() { # <remote worktree path>: fetch and fast-forward there, no install
-    local term_json term_handle wait_json
+    # The terminal is an interactive shell that never exits, and a remote `terminal wait --for exit` reports
+    # exitCode 0 whatever the command did (host_status_unavailable). So the command prints its own result line
+    # and this reads the terminal until that line shows up.
+    local term_json term_handle read_json rc="" tries=0
     term_json=$("$orca" terminal create --environment "$environment" --worktree "path:$1" --json \
-      --command "cd $(printf '%q' "$1") && bash \"\$HOME/dotfiles/script/worktree-setup.sh\" --git-only") || return 1
+      --command "cd $(printf '%q' "$1") && bash \"\$HOME/dotfiles/script/worktree-setup.sh\" --git-only; echo GIT_ONLY_RC=\$?") || return 1
     term_handle=$(printf '%s' "$term_json" | jq -r '.result.terminal.handle // empty')
     [ -n "$term_handle" ] || return 1
-    wait_json=$("$orca" terminal wait --environment "$environment" --terminal "$term_handle" --for exit --timeout-ms 120000 --json) || return 1
+    while [ "$tries" -lt "${WORKER_STARTUP_GIT_ONLY_TRIES:-60}" ]; do
+      read_json=$("$orca" terminal read --environment "$environment" --terminal "$term_handle" --json 2>/dev/null) || read_json=""
+      rc=$(printf '%s' "$read_json" | jq -r '[.result.terminal.tail[]? | capture("^GIT_ONLY_RC=(?<rc>[0-9]+)$").rc] | first // empty' 2>/dev/null)
+      [ -z "$rc" ] || break
+      tries=$((tries + 1))
+      sleep 2
+    done
     "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
-    printf '%s' "$wait_json" | jq -e '.result.wait | .satisfied == true and .status == "exited" and .exitCode == 0' >/dev/null
+    [ "$rc" = 0 ]
   }
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
