@@ -1,5 +1,10 @@
 {
   "runs": [],
+  "go_live_date": "2099-01-01",
+  "work_order": {
+    "min_active": 3,
+    "target_workers": 8
+  },
   "host_caps": {
     "primary-code-host": 4,
     "overflow-host-a": 4,

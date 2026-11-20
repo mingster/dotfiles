@@ -3985,13 +3985,56 @@ def build_triage_command(config, repo, agent, model):
     return [part for part in command if part]
 
 
+def work_order_settings(config):
+    """(min_active, target_workers) from the work_order block, or None when it is not configured (#1281)."""
+    block = config.get('work_order') if isinstance(config, dict) else None
+    if not isinstance(block, dict):
+        return None
+    out = []
+    for key, default in (('min_active', 3), ('target_workers', 8)):
+        try:
+            out.append(int(block.get(key, default)))
+        except (TypeError, ValueError):
+            out.append(default)
+    return tuple(out)
+
+
+def active_worker_count(workers):
+    return sum(1 for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w))
+
+
+def _is_building(worker):
+    title = str(worker.get('_task_title') or worker.get('title') or '')
+    return worker_row_is_live(worker) and not _worker_titled_verifier(worker) and 'triage' not in title
+
+
+def work_order_no_work_notice(config, state, now, workers, ready_count):
+    """One line a day, before 19:00 Asia/Taipei, when nothing is building and no ready issue is left (#1281)."""
+    if work_order_settings(config) is None or ready_count:
+        return None
+    if any(isinstance(w, dict) and _is_building(w) for w in workers or []):
+        return None
+    local = datetime.datetime.fromtimestamp(now, datetime.timezone(datetime.timedelta(hours=8)))
+    day = local.strftime('%Y-%m-%d')
+    if local.hour >= 19 or state.get('work_order_no_work_day') == day:
+        return None
+    state['work_order_no_work_day'] = day
+    return 'work order: no work left, start the staging deploy and regression now'
+
+
 def issue_scan_try_triage(
     config, state, now, repos, host, admission, extra_starts, workers,
-    start_worker, list_backlog=None, pick_fn=None, persist_state=None,
+    start_worker, list_backlog=None, pick_fn=None, persist_state=None, notices=None,
 ):
-    """Idle seats and no ready issue: start one architect-pm triage worker per repo, at most once per interval."""
+    """Idle seats and no ready issue: start one architect-pm triage worker per repo, at most once per interval.
+
+    With work_order.min_active set and fewer workers active than that, the interval is skipped and the
+    coordinator gets one status line (#1281)."""
     log_bits = []
     scan = config.get('issue_scan') or {}
+    order = work_order_settings(config)
+    active = active_worker_count(workers)
+    urgent = order is not None and active < order[0]
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     last_starts = state.setdefault('issue_scan_triage_at', {})
     used = 0
@@ -4003,7 +4046,7 @@ def issue_scan_try_triage(
             recent = now - float(last_starts.get(repo)) < interval
         except (TypeError, ValueError):
             recent = False
-        if recent:
+        if recent and not urgent:
             log_bits.append('triage_skip_recent')
             continue
         backlog = (list_backlog or fetch_triage_backlog)(repo)
@@ -4029,6 +4072,8 @@ def issue_scan_try_triage(
             last_starts[repo] = now
             used += 1
             log_bits.append('triage_start=%d' % backlog)
+            if urgent and notices is not None:
+                notices.append('work order: %d active, grill backlog' % active)
             count_started()
         else:
             log_bits.append('triage_fail')
@@ -6882,9 +6927,12 @@ def issue_scan_pass(
     if not candidates:
         triage_bits, triage_used = ([], 0) if list_failed else issue_scan_try_triage(
             config, state, now, repos, host, admission, extra_starts, workers,
-            start_worker, list_backlog, pick_fn, persist_state,
+            start_worker, list_backlog, pick_fn, persist_state, notices,
         )
         log_bits.extend(triage_bits)
+        no_work = None if list_failed else work_order_no_work_notice(config, state, now, workers, ready_queue_count)
+        if no_work:
+            notices.append(no_work)
         extra_starts += triage_used
         queue_count = None if list_failed else ready_queue_count
         sweep_bits = issue_scan_try_backlog_sweep(
@@ -6905,8 +6953,12 @@ def issue_scan_pass(
     # The workers inventory is a snapshot from before this pass, so count this pass's starts per host.
     pass_starts = {}
     attempts = 0
+    order = work_order_settings(config)
     for repo, row in candidates:
         placement = None
+        if order is not None and active_worker_count(workers) + extra_starts >= order[1]:
+            log_bits.append('work_order_target=%d' % order[1])
+            break
         if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
             count_refused('host_cap')
             break
