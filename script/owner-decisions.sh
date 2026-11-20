@@ -18,7 +18,8 @@ out=$(decisions "$issue" "$json")
 [ -z "$out" ] || { echo "$out"; found=1; }
 for n in $(jq -r '.body // ""' <<<"$json" | grep -oE '#[0-9]+' | tr -d '#' | sort -un || true); do
   [ "$n" = "$issue" ] && continue
-  out=$(decisions "$n" "$(fetch "$n")")
+  linked_json=$(fetch "$n")
+  out=$(decisions "$n" "$linked_json")
   [ -z "$out" ] || { echo "$out"; found=1; }
 done
 exit $((1 - found))

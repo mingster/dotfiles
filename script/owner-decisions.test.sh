@@ -34,6 +34,10 @@ run o/r 3
 run o/r 99
 [ "$rc" -eq 2 ] && grep -q 'cannot read #99' <<<"$se" && ok "gh failure exits 2, not 1" || bad ghfail "rc=$rc se=$se"
 
+echo '{"body":"Blocked by #98.","comments":[]}' >"$tmp/5.json"
+run o/r 5
+[ "$rc" -eq 2 ] && grep -q 'cannot read #98' <<<"$se" && ok "failing linked issue read exits 2, not 1" || bad linkedfail "rc=$rc se=$se"
+
 run o/r
 [ "$rc" -eq 2 ] && ok "missing argument exits 2" || bad usage "rc=$rc"
 run o/r abc
