@@ -61,5 +61,6 @@ if hooks_changed ${changed[@]+"${changed[@]}"}; then
   bash script/check-guard-false-positives.sh
 fi
 bash script/check-dotfiles-fresh.sh
+bash script/check-appdir.sh
 bash script/shellcheck-dotfiles.sh
 skipped_note

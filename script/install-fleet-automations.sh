@@ -12,6 +12,8 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/automation-path.sh
 . "$here/lib/automation-path.sh"
+# shellcheck source=lib/app-path.sh
+. "$here/lib/app-path.sh"
 
 orca_cli=${ORCA_CLI_COMMAND:-orca}
 dry=0
@@ -60,7 +62,7 @@ if [ ! -f "$DOTFILES_DIR/script/fleet-watch.py" ]; then
   echo "install-fleet-automations: missing $DOTFILES_DIR/script/fleet-watch.py" >&2
   exit 1
 fi
-orca_app_bin=${FLEET_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}
+orca_app_bin=${FLEET_ORCA_APP_BIN:-$(app_path Orca.app)/Contents/Resources/bin}
 resolve_orca_cli() {
   if [ -n "${ORCA_CLI_COMMAND:-}" ]; then
     command -v "$ORCA_CLI_COMMAND" >/dev/null 2>&1 || return 1

@@ -8,9 +8,11 @@
 export PATH="${FLEET_TOOLCHAIN_PATH:-$HOME/.local/bin:$HOME/.bun/bin:${ASDF_DATA_DIR:-$HOME/.asdf}/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH}"
 # Version managers read .tool-versions from the cwd; a checkout pinning a version this host lacks would break the shim
 cd "$HOME" 2>/dev/null || true
+# The sender prepends app-path.sh when it ships this file to a host; run in place it sits beside this file.
+command -v app_path >/dev/null 2>&1 || . "$(dirname "$0")/app-path.sh"
 stale="$HOME/.orca/cli/bin"
 orca_bin=""
-list="${FLEET_ORCA_APP_BIN:-${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}}:$PATH:$HOME/.local/bin"
+list="${FLEET_ORCA_APP_BIN:-${WRAP_UP_ORCA_APP_BIN:-$(app_path Orca.app)/Contents/Resources/bin}}:$PATH:$HOME/.local/bin"
 old_ifs=$IFS
 IFS=:
 for dir in $list; do

@@ -3,9 +3,9 @@
 #no longer needed in high sierra
 #sudo chown -R $(whoami):admin /usr/local
 
-for orca_app in /Applications/_dev/Orca.app /Applications/Orca.app; do
-  [ -d "$orca_app" ] && break
-done
+# shellcheck source=../../script/lib/app-path.sh disable=SC1091
+. "$HOME/dotfiles/script/lib/app-path.sh"
+orca_app=$(app_path Orca.app)
 orca_ver() { defaults read "$orca_app/Contents/Info" CFBundleShortVersionString 2>/dev/null; }
 orca_before=$(orca_ver)
 
@@ -13,13 +13,13 @@ brew update
 brew upgrade --greedy
 #brew upgrade --cask --greedy
 
-# A cask whose app sits in another folder than brew recorded (HOMEBREW_CASK_OPTS
-# moves new installs to /Applications/_dev) fails to upgrade with "App source is
+# A cask whose app sits in another folder than brew recorded (an old HOMEBREW_CASK_OPTS
+# appdir, or an app moved by hand) fails to upgrade with "App source is
 # not there". Reinstall each one over the app where it really is.
 for cask in $(brew outdated --cask --greedy --quiet); do
   app=$(brew info --cask --json=v2 "$cask" | jq -r '[.casks[0].artifacts[] | select(.app) | .app[0] | strings][0] // empty')
   [ -n "$app" ] || continue
-  for dir in /Applications /Applications/_dev /Applications/Utilities; do
+  for dir in $APP_DIRS /Applications/Utilities; do
     if [ -d "$dir/$app" ]; then
       brew install --cask --force --appdir="$dir" "$cask"
       break

@@ -45,10 +45,10 @@ check "dry-run lists brew tmux" "grep -q 'brew install tmux' <<< \"\$dry_out\""
 check "dry-run lists brew asdf" "grep -q 'brew install asdf' <<< \"\$dry_out\""
 
 # Casks
-check "dry-run lists stablyai/orca/orca" "grep -q 'brew install --cask --appdir=/Applications/_dev stablyai/orca/orca' <<< \"\$dry_out\""
-check "dry-run lists cursor" "grep -q 'brew install --cask --appdir=/Applications/_dev cursor' <<< \"\$dry_out\""
-check "dry-run lists antigravity" "grep -q 'brew install --cask --appdir=/Applications/_dev antigravity' <<< \"\$dry_out\""
-check "dry-run lists antigravity-ide" "grep -q 'brew install --cask --appdir=/Applications/_dev antigravity-ide' <<< \"\$dry_out\""
+check "dry-run lists stablyai/orca/orca" "grep -q 'brew install --cask stablyai/orca/orca' <<< \"\$dry_out\""
+check "dry-run lists cursor" "grep -q 'brew install --cask cursor' <<< \"\$dry_out\""
+check "dry-run lists antigravity" "grep -q 'brew install --cask antigravity' <<< \"\$dry_out\""
+check "dry-run lists antigravity-ide" "grep -q 'brew install --cask antigravity-ide' <<< \"\$dry_out\""
 check "dry-run lists google-chrome@dev" "grep -q 'brew install --cask google-chrome@dev' <<< \"\$dry_out\""
 
 # Excluded non-agent personal applications

@@ -7,7 +7,7 @@ DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 # Install the Cursor app (package manager varies by OS)
 case "${OSTYPE:-}" in
   darwin*)
-    brew list --cask cursor >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" cursor
+    brew list --cask cursor >/dev/null 2>&1 || brew install --cask cursor
     ;;
   linux*)
     command -v cursor >/dev/null 2>&1 || curl https://cursor.com/install -fsS | bash

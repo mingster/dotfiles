@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Verify agent startup instruction links installed from dotfiles.
 set -euo pipefail
+# shellcheck source=lib/app-path.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/app-path.sh"
 
 # Return 0 when setup-antigravity.sh would skip (no Antigravity on this host).
 antigravity_should_skip() {
   case "${OSTYPE:-}" in
     darwin*)
-      if [ ! -d "/Applications/Antigravity IDE.app" ] \
-          && [ ! -d "/Applications/_dev/Antigravity IDE.app" ] \
+      if [ ! -d "$(app_path "Antigravity IDE.app")" ] \
           && [ ! -d "$HOME/Applications/Antigravity IDE.app" ] \
           && ! command -v agy >/dev/null 2>&1; then
         return 0

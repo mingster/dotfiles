@@ -20,8 +20,8 @@ java --version
 
 # IDE installs (platform-specific)
 if command -v brew >/dev/null 2>&1; then
-  brew list --cask android-studio  >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" android-studio
-  brew list --cask intellij-idea-ce >/dev/null 2>&1 || brew install --cask --appdir="/Applications/_dev" intellij-idea-ce
+  brew list --cask android-studio  >/dev/null 2>&1 || brew install --cask android-studio
+  brew list --cask intellij-idea-ce >/dev/null 2>&1 || brew install --cask intellij-idea-ce
 elif command -v yay >/dev/null 2>&1; then
   yay -S --noconfirm --needed android-studio intellij-idea-community-edition
 fi

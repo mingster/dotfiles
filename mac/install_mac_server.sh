@@ -186,10 +186,9 @@ if [ "$skip_casks" -eq 0 ]; then
   )
   for cask in "${dev_casks[@]}"; do
     if [ "$dry" -eq 1 ]; then
-      echo "would run: brew install --cask --appdir=/Applications/_dev $cask (if missing)"
+      echo "would run: brew install --cask $cask (if missing)"
     else
-      mkdir -p /Applications/_dev
-      brew list --cask "$cask" >/dev/null 2>&1 || run brew install --cask --appdir="/Applications/_dev" "$cask"
+      brew list --cask "$cask" >/dev/null 2>&1 || run brew install --cask "$cask"
     fi
   done
 

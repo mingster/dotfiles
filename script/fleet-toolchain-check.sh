@@ -115,7 +115,7 @@ latest_python3() {
   norm_ver "$(read_pin python)"
 }
 
-probe_shell() { cat "$here/lib/toolchain-probe.sh"; }
+probe_shell() { cat "$here/lib/app-path.sh" "$here/lib/toolchain-probe.sh"; }
 
 probe_dir=$(mktemp -d)
 trap 'rm -rf "$probe_dir"' EXIT
@@ -353,7 +353,8 @@ elif command -v cursor-agent >/dev/null 2>&1; then
   try "cursor-agent update" env AGENT_CLI_CREDENTIAL_STORE=file cursor-agent update
 fi
 command -v agy >/dev/null 2>&1 && try "agy update" "$dot/bin/agy" update
-orca_app="\${FLEET_ORCA_APP:-/Applications/_dev/Orca.app}"
+$(cat "$here/lib/app-path.sh")
+orca_app="\${FLEET_ORCA_APP:-\$(app_path Orca.app)}"
 orca_mac() { # <version>: replace Orca.app from the release zip, putting the old one back on failure, and reopen it
   case "\$(uname -m)" in arm64) asset="Orca-\$1-arm64-mac.zip" ;; *) asset="Orca-\$1-mac.zip" ;; esac
   [ -d "\$orca_app" ] || { echo "no \$orca_app"; return 1; }
