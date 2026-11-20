@@ -964,9 +964,9 @@ run_mode() {
     create_args=(--name "$name" --repo "$repo_selector")
     [ -z "$base" ] || create_args+=(--base-branch "$base")
     # `Setup: none` briefs never run bun/node: skip the install hook, keep the fresh-main fast-forward.
-    # A remote host has no exec path here, so it keeps --setup run.
+    # A remote host has no exec path here, so the local git-only step below is skipped for it.
     setup_mode=run
-    if [ -z "$environment" ] && grep -q '^Setup: none' "$spec"; then setup_mode=skip; fi
+    if grep -q '^Setup: none' "$spec"; then setup_mode=skip; fi
     create_args+=(--setup "$setup_mode" --json)
     [ -z "$environment" ] || create_args+=(--environment "$environment")
     result=$("$orca" worktree create "${create_args[@]}") || {
@@ -991,7 +991,7 @@ run_mode() {
     exit "$ec"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
-  if [ "${setup_mode:-}" = skip ]; then
+  if [ "${setup_mode:-}" = skip ] && [ -z "$environment" ]; then
     (cd "$wt" && bash "$here/worktree-setup.sh" --git-only) || { echo "worker-startup: git-only setup failed in $wt" >&2; start_failed 1; }
   fi
 
