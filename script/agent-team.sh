@@ -5,7 +5,7 @@
 #   ~/dotfiles/script/agent-team.sh machine [--dry-run]
 #   ~/dotfiles/script/agent-team.sh project [<dir>] [--project-name <name>] [--dry-run] [--labels]
 #   ~/dotfiles/script/agent-team.sh sync    [<dir>] [--project-name <name>] [--dry-run] [--labels]
-#   ~/dotfiles/script/agent-team.sh check   [<dir> ...]
+#   ~/dotfiles/script/agent-team.sh check   [--pinned] [<dir> ...]
 #   ~/dotfiles/script/agent-team.sh all     [<dir>] [--project-name <name>] [--dry-run] [--labels]
 set -euo pipefail
 
@@ -394,6 +394,7 @@ check_safe_paths() {
     .claude/settings.json
     .claude/settings.project.json
     .claude/model-routing.md
+    .claude/agent-team-pin
     .orca
     .orca/presets.project.json
     .cursor
@@ -2411,10 +2412,68 @@ cmd_project() {
   project_name=$(detect_project_name "$target" "$name")
 
   run_project_engine project "$target" "$project_name" "$dry"
+  write_pin "$target" "$dry"
 
   if [ "$labels" -eq 1 ]; then
     create_github_labels "$target" "$dry"
   fi
+}
+
+# The dotfiles commit a sync rendered from (#1247). check --pinned checks the project against the
+# template at this commit, so a later template merge does not turn open project PRs red.
+PIN_REL=.claude/agent-team-pin
+
+write_pin() { # <target> <dry>
+  local sha
+  # A dotfiles tree outside git (an archive copy) has no commit to pin; check then falls back to the plain check.
+  sha=$(git -C "$DOTFILES" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null) || return 0
+  if [ -n "$(git -C "$DOTFILES" status --porcelain -- templates script .agents 2>/dev/null)" ]; then
+    echo "agent-team: warning: dotfiles has local changes; $PIN_REL names $sha, which does not hold them" >&2
+  fi
+  if [ "$2" -eq 1 ]; then
+    echo "agent-team: [dry-run] would write $PIN_REL = $sha"
+    return 0
+  fi
+  printf '%s\n' "$sha" >"$1/$PIN_REL"
+}
+
+# check_pinned <target>: run the check of the dotfiles copy at the target's pin, project rules only.
+# No pin file: the check of this copy (projects that have not synced since pins began).
+check_pinned() {
+  local target pin tmp rc=0
+  target=$(validate_target_dir "$1") || return
+  if [ ! -f "$target/$PIN_REL" ]; then
+    check_project "$target"
+    return
+  fi
+  pin=$(head -n 1 "$target/$PIN_REL" | tr -d '\r')
+  if ! [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || ! git -C "$DOTFILES" cat-file -e "$pin^{commit}" 2>/dev/null \
+    || ! { git -C "$DOTFILES" merge-base --is-ancestor "$pin" HEAD 2>/dev/null \
+      || git -C "$DOTFILES" merge-base --is-ancestor "$pin" refs/remotes/origin/main 2>/dev/null; }; then
+    echo "DRIFT $target: $PIN_REL names ${pin:-nothing}, which is not in the dotfiles history at $DOTFILES; re-sync" >&2
+    return 1
+  fi
+  tmp=$(mktemp -d)
+  if ! git -C "$DOTFILES" archive "$pin" script templates .agents | tar -x -C "$tmp"; then
+    rm -rf "$tmp"
+    echo "agent-team: cannot extract dotfiles at $pin" >&2
+    return 2
+  fi
+  DOTFILES="$tmp" bash "$tmp/script/agent-team.sh" check --project-only "$target" || rc=$?
+  rm -rf "$tmp"
+  return "$rc"
+}
+
+check_project() { # <target>
+  local target project_name status=0
+  target=$(validate_target_dir "$1") || return
+  check_safe_paths "$target" || return
+  project_name=$(detect_project_name "$target" "")
+  run_project_engine check "$target" "$project_name" 0 || status=1
+  if [ -d "$target/.agents/skills" ] || [ -d "$target/.claude/skills" ] || [ -d "$target/.cursor/skills" ]; then
+    bash "$DOTFILES/script/check-skill-collisions.sh" "$target" || status=1
+  fi
+  return "$status"
 }
 
 # A machine link into a linked git worktree makes branch code live for every session (#761).
@@ -2459,10 +2518,13 @@ check_machine_copies() {
 }
 
 cmd_check() {
-  local targets=()
+  local targets=() pinned=0 project_only=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --check) shift ;;
+      --pinned) pinned=1; shift ;;
+      # Host checks (machine links and copies) belong to this host, not to the project under check.
+      --project-only) project_only=1; shift ;;
       -h|--help) usage 0 ;;
       -*) die "unknown check option: $1" 2 ;;
       *) targets+=("$1"); shift ;;
@@ -2471,22 +2533,20 @@ cmd_check() {
   [ "${#targets[@]}" -gt 0 ] || targets=(".")
   require_templates
 
-  local status=0 raw target project_name
+  local status=0 raw rc
   for raw in "${targets[@]}"; do
-    target=$(validate_target_dir "$raw") || { status=$?; continue; }
-    check_safe_paths "$target" || { status=$?; continue; }
-    project_name=$(detect_project_name "$target" "")
-    if ! run_project_engine check "$target" "$project_name" 0; then
-      status=1
+    rc=0
+    if [ "$pinned" -eq 1 ]; then
+      check_pinned "$raw" || rc=$?
+    else
+      check_project "$raw" || rc=$?
     fi
-    if [ -d "$target/.agents/skills" ] || [ -d "$target/.claude/skills" ] || [ -d "$target/.cursor/skills" ]; then
-      if ! bash "$DOTFILES/script/check-skill-collisions.sh" "$target"; then
-        status=1
-      fi
-    fi
+    [ "$rc" -le "$status" ] || status=$rc
   done
-  check_machine_links || status=1
-  check_machine_copies || status=1
+  if [ "$project_only" -eq 0 ]; then
+    check_machine_links || status=$(( status > 1 ? status : 1 ))
+    check_machine_copies || status=$(( status > 1 ? status : 1 ))
+  fi
   return "$status"
 }
 

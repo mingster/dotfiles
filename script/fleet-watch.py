@@ -1980,6 +1980,67 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
     return notices
 
 
+TEMPLATE_SYNC_STATE_DEFAULT = os.path.expanduser('~/.claude/state/template-sync.json')
+TEMPLATE_PIN_LAG = 24 * 3600
+TEMPLATE_PATHS = ('templates/agent-team', 'script/agent-team.sh')
+
+
+def _git_out(cwd, *args):
+    try:
+        out = subprocess.run(['git', '-C', str(cwd)] + list(args), capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (getattr(out, 'stdout', None) or '').strip() if getattr(out, 'returncode', 1) == 0 else None
+
+
+def template_pin_notices(config, state, now, dotfiles=None, sync_state=None, origin_of=None):
+    """Report a project whose .claude/agent-team-pin lags a dotfiles template change by more than 24 h, and a
+    pin bump PR template-sync-pr.sh left red or failed (#1247). Each one is reported once per template commit.
+
+    The pin is read from each repo_roots checkout's origin/main; a project without a pin is not on the pinned
+    template yet and is skipped. The last template change is the newest dotfiles origin/main commit that touched
+    templates/agent-team or script/agent-team.sh.
+    """
+    dotfiles = dotfiles or os.environ.get('DOTFILES') or str(Path(__file__).resolve().parent.parent)
+    origin_of = origin_of or github_repo_from_origin
+    seen = state.setdefault('template_pin', {})
+    notices = []
+    last = _git_out(dotfiles, 'log', '-1', '--format=%H %ct', 'origin/main', '--', *TEMPLATE_PATHS)
+    # Without a readable dotfiles history, keep the lag keys so a later pass does not report them again.
+    keep = {} if last else {k: v for k, v in seen.items() if k.startswith('lag ')}
+    if last:
+        change, when = last.split()
+        if now - int(when) > TEMPLATE_PIN_LAG:
+            for path in iter_repo_root_paths(config.get('repo_roots')):
+                pin = _git_out(path, 'show', 'origin/main:.claude/agent-team-pin')
+                if not pin:
+                    continue
+                pin = pin.splitlines()[0].strip()
+                if _git_out(dotfiles, 'merge-base', '--is-ancestor', change, pin) is not None:
+                    continue
+                repo = origin_of(path) or path
+                key = 'lag %s %s' % (repo, change)
+                keep[key] = seen.get(key, now)
+                if key not in seen:
+                    notices.append('%s: .claude/agent-team-pin %s lags the dotfiles template change %s by more than 24 h; '
+                                   'run script/template-sync-pr.sh or land its bump PR' % (repo, pin[:12], change[:12]))
+    try:
+        synced = json.loads(Path(sync_state or os.environ.get('TEMPLATE_SYNC_STATE') or TEMPLATE_SYNC_STATE_DEFAULT).read_text())
+    except (OSError, ValueError):
+        synced = {}
+    for repo, entry in sorted(synced.items()) if isinstance(synced, dict) else []:
+        if not isinstance(entry, dict) or entry.get('state') not in ('red', 'failed'):
+            continue
+        key = '%s %s %s' % (entry['state'], repo, entry.get('sha'))
+        keep[key] = seen.get(key, now)
+        if key not in seen:
+            pr = ' PR #%s' % entry['pr'] if entry.get('pr') else ''
+            notices.append('%s: template bump%s for dotfiles %s is %s; fix it, then rerun script/template-sync-pr.sh' % (
+                repo, pr, str(entry.get('sha'))[:12], entry['state']))
+    state['template_pin'] = keep
+    return notices
+
+
 CHANGELOG_FRAGMENT_WARN = 50
 
 
@@ -7784,6 +7845,7 @@ def main():
     notices += heavy_extra + wrap_extra
     notices += stale_board_notices(config, state, now)
     notices += fleet_pull_after_ship_notices(config, state, now)
+    notices += template_pin_notices(config, state, now)
     notices += changelog_fragment_notices(config, state)
     notices += stale_worktree_notices(config)
 
