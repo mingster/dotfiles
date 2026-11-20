@@ -98,6 +98,39 @@ class ReconcileRemoteCompletions(unittest.TestCase):
         fw.reconcile_remote_completions({}, {}, [remote_row('ctx_n')], [], boom)
 
 
+class DeferredPrRelease(unittest.TestCase):
+    """A settled PR worker whose checks are pending on pass 1 is still released once they turn green."""
+
+    def test_pending_then_green_releases_on_pass_two(self):
+        config, state, released = {'repo': 'o/r'}, {}, []
+        rejected = {'id': 'm1', 'type': 'worker_done',
+                    'payload': {'dispatchId': 'ctx_d',
+                                '_orcaLifecycleRejection': {'code': 'unknown_dispatch'}}}
+        checks = {'green': False}
+
+        def pr_of(_repo, _number):
+            return {'statusCheckRollup': [{'conclusion': 'SUCCESS' if checks['green'] else None,
+                                           'status': 'COMPLETED' if checks['green'] else 'IN_PROGRESS'}]}
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'), \
+                patch.object(fw, 'pr_checks_all_success', side_effect=lambda row: checks['green']):
+            for green in (False, True):
+                checks['green'] = green
+                messages = [dict(rejected)]
+                workers = [remote_row('ctx_d', pr=7)]
+                fw.reconcile_remote_completions(config, state, workers, messages, Recorder())
+                fw.release_green_successes(messages, workers, config, state, released.append, pr_of)
+                if not green:
+                    self.assertEqual(released, [])
+        self.assertEqual(released, ['ctx_d'])
+        self.assertIn('ctx_d', state['auto_released'])
+
+    def test_not_resynthesized_after_release(self):
+        state = {'remote_reconciled': ['ctx_d'], 'auto_released': ['ctx_d']}
+        messages = []
+        fw.reconcile_remote_completions({}, state, [remote_row('ctx_d', pr=7)], messages, Recorder())
+        self.assertEqual(messages, [])
+
+
 class ReleaseWorkerEnvironment(unittest.TestCase):
     def test_default_release_passes_environment_for_remote(self):
         with patch.object(fw, 'rpc') as rpc:

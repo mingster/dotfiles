@@ -1,0 +1,1 @@
+* A remote worker whose `worker_done` the coordinator rejects as `unknown_task`, or whose rejected dispatch is missing from `worker-list`, is now settled and released by `fleet-watch`, and a PR worker with pending checks is released once they turn green (#1269).

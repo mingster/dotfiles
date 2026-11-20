@@ -7469,11 +7469,15 @@ def worker_is_settled_remote(worker):
                 and w.get('pushed') is not False)
 
 
-_UNKNOWN_DISPATCH_BODY = 'Orca rejected this worker_done: worker_done references unknown dispatch'
+_REJECTED_DONE_BODIES = (
+    'Orca rejected this worker_done: worker_done references unknown dispatch',
+    'Orca rejected this worker_done: worker_done references unknown task',
+)
+_REJECTED_DONE_CODES = ('unknown_dispatch', 'unknown_task')
 
 
 def worker_done_rejected(message):
-    """True for the copy of a relayed worker_done that the coordinator's Orca rejected as unknown_dispatch (#1228).
+    """True for the copy of a relayed worker_done that the coordinator's Orca rejected as unknown_dispatch or unknown_task (#1228, #1269).
 
     The full inbox view carries _orcaLifecycleRejection in the payload; the concise view keeps only ids,
     so the rejection shows only in the body Orca writes.
@@ -7482,8 +7486,27 @@ def worker_done_rejected(message):
         return False
     rejection = _message_payload(message).get('_orcaLifecycleRejection')
     if isinstance(rejection, dict):
-        return rejection.get('code') == 'unknown_dispatch'
-    return str(message.get('body') or '').startswith(_UNKNOWN_DISPATCH_BODY)
+        return rejection.get('code') in _REJECTED_DONE_CODES
+    return str(message.get('body') or '').startswith(_REJECTED_DONE_BODIES)
+
+
+def _shown_remote_worker(dispatch, rpc_call):
+    """Row for a dispatch missing from worker-list, read from worker-show. None when it cannot be read."""
+    try:
+        shown = rpc_call('orchestration', 'worker-show', '--dispatch', dispatch)
+    except SEND_ERRORS:
+        return None
+    if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+        shown = shown['worker']
+    if not isinstance(shown, dict) or not shown:
+        return None
+    row = dict(shown)
+    row['dispatchId'] = dispatch
+    if 'workerState' not in row and row.get('state'):
+        row['workerState'] = row['state']
+    if 'dispatchStatus' not in row and row.get('status'):
+        row['dispatchStatus'] = row['status']
+    return row
 
 
 def reconcile_remote_completions(config, state, workers, messages, rpc_call):
@@ -7508,25 +7531,44 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
             if isinstance(dispatch, str):
                 (rejected if worker_done_rejected(message) else arrived).add(dispatch)
     notices = []
-    for worker in workers or []:
+    candidates = list(workers or [])
+    listed = {w.get('dispatchId') for w in candidates if isinstance(w, dict)}
+    for dispatch in sorted(rejected - listed - seen):
+        shown = _shown_remote_worker(dispatch, rpc_call)
+        if shown is not None:
+            candidates.append(shown)
+            if isinstance(workers, list):
+                workers.append(shown)
+    auto_released = set(state.get('auto_released') or ())
+    present = {m.get('id') for m in messages or [] if isinstance(m, dict)}
+    for worker in candidates:
         if not isinstance(worker, dict) or not worker_is_remote(worker, config):
             continue
         settled = worker_settled_kind(worker)
         if settled is None and worker_inventory_status(worker) != 'completed':
             continue
         dispatch = worker.get('dispatchId')
-        if not isinstance(dispatch, str) or not dispatch or dispatch in seen:
+        if not isinstance(dispatch, str) or not dispatch:
+            continue
+        outcome = 'succeeded' if settled in (None, 'succeeded') else 'failed'
+        synthesized = {
+            'id': 'remote-reconciled:' + dispatch,
+            'type': 'worker_done',
+            'payload': {'dispatchId': dispatch, 'outcome': outcome, 'synthesized': True},
+        }
+        if dispatch in seen:
+            if (dispatch not in arrived and outcome == 'succeeded' and worker_pr_number(worker)
+                    and dispatch not in auto_released and not worker_terminal_released(worker)
+                    and synthesized['id'] not in present):
+                messages.append(synthesized)
+                present.add(synthesized['id'])
             continue
         seen.add(dispatch)
         done.append(dispatch)
         if dispatch in arrived:
             continue
-        outcome = 'succeeded' if settled in (None, 'succeeded') else 'failed'
-        messages.append({
-            'id': 'remote-reconciled:' + dispatch,
-            'type': 'worker_done',
-            'payload': {'dispatchId': dispatch, 'outcome': outcome, 'synthesized': True},
-        })
+        messages.append(synthesized)
+        present.add(synthesized['id'])
         if outcome == 'succeeded' and worker_pr_number(worker):
             continue
         environment = remote_environment(worker)
@@ -7540,7 +7582,7 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
             pass
         _mark_worker_released(worker)
         if dispatch in rejected:
-            notices.append('remote worker %s finished %s; its rejected worker_done (unknown_dispatch) is settled '
+            notices.append('remote worker %s finished %s; its rejected worker_done is settled '
                            'and released, no hand release needed' % (dispatch, outcome))
         else:
             notices.append('remote worker %s finished %s' % (dispatch, outcome))
@@ -7566,7 +7608,7 @@ def release_green_successes(messages, workers, config, state, release, pr_of):
             by_dispatch[dispatch] = worker
     done = []
     for message in messages or []:
-        if not isinstance(message, dict) or message.get('type') != 'worker_done':
+        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
             continue
         payload = _message_payload(message)
         if _message_outcome(message, payload) != 'succeeded':
@@ -7676,7 +7718,7 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
             by_dispatch[dispatch] = worker
     gate = _sibling('pr_body_gate', 'pr-body-gate.py')
     for message in messages or []:
-        if not isinstance(message, dict) or message.get('type') != 'worker_done':
+        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
             continue
         message_id = message.get('id')
         if not isinstance(message_id, str) or not message_id or message_id in seen:
