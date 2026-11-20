@@ -608,6 +608,7 @@ set -e
 grep -q -- "--task-title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "worker-start should carry the task title"
 grep -q -- "terminal rename --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "terminal should be renamed to the title ($(cat "$tmp/orca-title.log"))"
 grep -q -- "terminal set-pane-title --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "pane title should be set"
+grep -E "terminal (rename|set-pane-title)" "$tmp/orca-title.log" | grep -q -- '--environment' && bad "a local worker title must not pass --environment" || ok
 # Optional suffix: "#<issue>|<role>|free text" starts, and the role is read from the second field.
 : >"$tmp/orca-title.log"
 set +e
@@ -925,7 +926,11 @@ case " \$* " in
     exit 0
     ;;
   *" orchestration worker-start "*)
-    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_rem","state":"ready"}}'
+    printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_rem","state":"ready","terminal":"term_rem_worker"}}'
+    exit 0
+    ;;
+  *" terminal rename "*|*" terminal set-pane-title "*)
+    printf '%s\n' '{"ok":true,"result":{}}'
     exit 0
     ;;
 esac
@@ -1127,6 +1132,12 @@ for on_case in local-app-id remote-app-id; do
   [ "$ec_on" = 0 ] && ok || bad "--on host-remote --repo id:$on_case exits 0 ($ec_on) $(cat "$tmp/on-$on_case.err")"
   grep 'worktree create' "$tmp/orca-on-$on_case.log" | grep -q -- '--repo id:remote-app-id' && ok \
     || bad "--on with id:$on_case creates the worktree from id:remote-app-id ($(grep 'worktree create' "$tmp/orca-on-$on_case.log"))"
+done
+
+# Remote worker titles: terminal rename and set-pane-title must carry --environment <host> (the local orca cannot see a remote handle).
+for t in rename set-pane-title; do
+  grep "terminal $t" "$tmp/orca-on-remote-app-id.log" | grep -q -- '--environment host-remote' && ok \
+    || bad "remote worker: terminal $t must pass --environment host-remote ($(grep "terminal $t" "$tmp/orca-on-remote-app-id.log"))"
 done
 
 # Brief lint with --on (#1233): lint_dir comes from the local --repo, so checks-local is required only for repos that have it.

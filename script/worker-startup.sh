@@ -457,13 +457,13 @@ require_title_form() { # <title>
 }
 
 # Set the worker terminal and pane title (best effort; the task title is already set).
-apply_terminal_title() { # <title> <worker-start json>
-  local title=$1 start_json=$2 handle
+apply_terminal_title() { # <title> <worker-start json> [environment]
+  local title=$1 start_json=$2 env=${3:-} handle
   handle=$(jq -r '.result.terminal | if type == "object" then .handle else . end // empty' <<<"$start_json" 2>/dev/null || true)
   [ -n "$handle" ] || return 0
-  "$orca" terminal rename --terminal "$handle" --title "$title" >/dev/null 2>&1 \
+  "$orca" terminal rename --terminal "$handle" --title "$title" ${env:+--environment "$env"} >/dev/null 2>&1 \
     || echo "worker-startup: could not rename terminal $handle" >&2
-  "$orca" terminal set-pane-title --terminal "$handle" --title "$title" >/dev/null 2>&1 \
+  "$orca" terminal set-pane-title --terminal "$handle" --title "$title" ${env:+--environment "$env"} >/dev/null 2>&1 \
     || echo "worker-startup: could not set pane title on $handle" >&2
 }
 
@@ -942,7 +942,7 @@ run_mode() {
     run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
-    apply_terminal_title "$title" "$start_out"
+    apply_terminal_title "$title" "$start_out" "$environment"
     release_ready_label "$spec" "$title"
     return 0
   fi
@@ -1024,7 +1024,7 @@ run_mode() {
   elif [ "$agy_ec" -ne 0 ]; then
     exit "$agy_ec"
   fi
-  apply_terminal_title "$title" "$start_out"
+  apply_terminal_title "$title" "$start_out" "$environment"
   release_ready_label "$spec" "$title"
   return 0
 }
