@@ -1,0 +1,11 @@
+
+  Antigravity CLI v1.4.2
+  /Users/worker/orca/workspaces/app/issue-12
+
+  You are currently not signed in. Select login method
+
+  > 1. Sign in with Google
+    2. Use an API key
+    3. Quit
+
+  Authentication is required to continue.
