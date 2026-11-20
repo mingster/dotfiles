@@ -585,6 +585,23 @@ def spawn(slots, processes, argv, **kwargs):
     return proc
 
 
+def wait_child(proc, timeout, parent):
+    """proc.wait that also stops when the opted in parent has exited (orphaned to another pid)."""
+    if parent is None:
+        return proc.wait(timeout=timeout)
+    end = None if timeout is None else time.monotonic() + timeout
+    while True:
+        step = 1.0 if end is None else min(1.0, max(end - time.monotonic(), 0))
+        try:
+            return proc.wait(timeout=step)
+        except subprocess.TimeoutExpired:
+            if os.getppid() != parent:
+                print('heavy-gate: parent exited; stopping the command', file=sys.stderr, flush=True)
+                raise Interrupted(signal.SIGHUP)
+            if end is not None and time.monotonic() >= end:
+                raise
+
+
 def poll_interval():
     value = float(os.environ.get('HEAVY_GATE_POLL_SECONDS', '1'))
     if not math.isfinite(value) or value <= 0:
@@ -808,11 +825,12 @@ def measure_gate(args):
     timeout = command_timeout()
     load, free = sample()
     begin = time.monotonic()
+    parent = os.getppid() if getattr(args, 'exit_with_parent', False) else None
     try:
         with children() as processes:
             proc = spawn(None, processes, args.command[1:])
             try:
-                status = proc.wait(timeout=timeout)
+                status = wait_child(proc, timeout, parent)
             except subprocess.TimeoutExpired:
                 command = shlex.join(args.command[1:]).replace('\n', r'\n').replace('\r', r'\r')
                 print(f'heavy-gate: timed out after {timeout:g}s: {command}',
@@ -842,6 +860,7 @@ def gate(args):
         raise ValueError('usage: heavy-gate.sh [--weight N] -- <cmd...>')
     long_job = job_class() == 'long' and count > 1
     weight = min(args.weight, count - 1) if long_job else args.weight
+    parent = os.getppid() if getattr(args, 'exit_with_parent', False) else None
     slots = Slots(count)
     last_notice = -math.inf
     nested = holds_slot()
@@ -874,6 +893,9 @@ def gate(args):
             if wait_begin is None:
                 wait_begin = now
             time.sleep(poll_interval())
+            if parent is not None and os.getppid() != parent:
+                print('heavy-gate: parent exited; leaving the queue', file=sys.stderr, flush=True)
+                raise Interrupted(signal.SIGHUP)
         if wait_begin is not None:
             log_heavy_gate_wait(time.monotonic() - wait_begin)
         with children(slots, nested=nested) as processes:
@@ -886,7 +908,7 @@ def gate(args):
             else:
                 proc = spawn(slots, processes, args.command[1:], env=env)
             try:
-                status = proc.wait(timeout=timeout)
+                status = wait_child(proc, timeout, parent)
             except subprocess.TimeoutExpired:
                 command = shlex.join(args.command[1:]).replace('\n', r'\n').replace('\r', r'\r')
                 print(f'heavy-gate: timed out after {timeout:g}s: {command}',
@@ -996,6 +1018,8 @@ def main():
         '3-second grace), releases slots, and exits 124.'))
     run.add_argument('--weight', type=int, default=1)
     run.add_argument('--memory-mb', metavar='MIB', help='memory the job expects to use, counted while it runs')
+    run.add_argument('--exit-with-parent', action='store_true',
+                     help='stop the command and leave the queue when the parent process exits')
     run.add_argument('--measure', action='store_true',
                      help='run without a slot; log duration, load and free memory')
     run.add_argument('command', nargs=argparse.REMAINDER)

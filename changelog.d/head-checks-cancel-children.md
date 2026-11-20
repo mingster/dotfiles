@@ -1,0 +1,1 @@
+head-checks: cancelling a run (TERM, INT, or the runner killing it) now stops the running step and everything it started, so no child is left running to starve the next job. The heavy gate gains `--exit-with-parent`, which head-checks passes so a gated command stops when head-checks is killed outright.

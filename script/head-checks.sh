@@ -18,11 +18,11 @@ head_checks_gate_wrap() {
   [ "$name" = dotfiles ] && return 0
   case "$command" in
     *playwright*|*'next build'*|*'run build'*|*test:regression*)
-      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 2 --
+      printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --exit-with-parent --weight 2 --
       ;;
     *)
       if is_tsc_step "$command"; then
-        printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --weight 1 --
+        printf '%s\n' python3 "$script_dir/heavy-gate.py" gate --exit-with-parent --weight 1 --
       fi
       ;;
   esac
@@ -86,7 +86,7 @@ log=$(mktemp); receipt=$(mktemp)
 # Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
 finish() {
-  local status=$? result=${check_result:-FAIL}
+  local status=${1:-$?} result=${check_result:-FAIL}
   trap - EXIT
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
@@ -179,7 +179,33 @@ sys.stdout.write(text)
   [ -z "$changed" ] || rm -f "$changed" "$changed.unchecked"
   [ "$status" -eq 0 ] || exit 1
 }
-trap finish EXIT
+# A cancelled run must not leave its step running: the next job would start beside it.
+step_pid=""
+step_descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do printf '%s\n' "$child"; step_descendants "$child"; done
+}
+reap_step() {
+  local pids pid tries=0 alive
+  [ -n "$step_pid" ] || return 0
+  # shellcheck disable=SC2046
+  pids="$step_pid $(step_descendants "$step_pid")"
+  # shellcheck disable=SC2086
+  kill -TERM $pids 2>/dev/null
+  # The gate stops its own process group (TERM, 3 seconds, KILL); give it time.
+  while [ "$tries" -lt 100 ]; do
+    alive=0
+    for pid in $pids; do ! kill -0 "$pid" 2>/dev/null || alive=1; done
+    [ "$alive" -eq 1 ] || break
+    tries=$((tries + 1)); sleep 0.1
+  done
+  # shellcheck disable=SC2086
+  kill -KILL $pids 2>/dev/null
+  step_pid=""
+  return 0
+}
+finish_reaping() { local status=$?; reap_step; finish "$status"; }
+trap finish_reaping EXIT
 # A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
 trap 'exit 143' TERM; trap 'exit 130' INT
 if [ -n "$pr" ]; then
@@ -507,7 +533,13 @@ while IFS= read -r command || [ -n "$command" ]; do
   tsc_attempt=0
   while :; do
     tsc_attempt=$((tsc_attempt + 1))
-    if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
+    # In the background so a TERM or INT trap runs at once (bash defers a trap until a foreground command ends).
+    (cd "$worktree" && "${runner[@]}") > "$output" 2>&1 &
+    step_pid=$!
+    step_status=0
+    wait "$step_pid" 2>/dev/null || step_status=$?
+    step_pid=""
+    if [ "$step_status" -eq 0 ]; then
       sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
@@ -518,7 +550,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       [ -z "$db_lock" ] || { rm -rf "$db_lock"; db_lock=""; }
       break
     else
-      status=$?
+      status=$step_status
       sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
