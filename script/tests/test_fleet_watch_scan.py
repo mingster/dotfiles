@@ -561,7 +561,7 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(starts, [])
         self.assertIn('issue_scan_load', log)
 
-    def test_priority_order_picks_first_eligible_only(self):
+    def test_priority_order_starts_best_first(self):
         state = {}
         issues = {
             REPO: [
@@ -570,8 +570,9 @@ class IssueScanPass(unittest.TestCase):
             ],
         }
         _, _, starts, _ = self.run_pass(state, issues)
-        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(starts), 2)
         self.assertIn('#1', ' '.join(starts[0]))
+        self.assertIn('#2', ' '.join(starts[1]))
 
     def test_failed_inventory_refuses_start(self):
         state = {}

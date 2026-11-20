@@ -6306,7 +6306,7 @@ def issue_scan_pass(
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
     babysit_repos=None, repo_id_lookup=None, pick_fn=None,
 ):
-    """Start at most one eligible ready issue and one rework worker per new failing review head."""
+    """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
     log_bits = []
     babysit_owned = set(babysit_repos or ())
@@ -6603,8 +6603,14 @@ def issue_scan_pass(
 
     candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
     lookup = repo_id_lookup or default_repo_id_lookup
+    # The workers inventory is a snapshot from before this pass, so count this pass's starts per host.
+    pass_starts = {}
+    attempts = 0
     for repo, row in candidates:
         placement = None
+        if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
+            count_refused('host_cap')
+            break
         if remote_hosts:
             placed = False
             for candidate in remote_hosts:
@@ -6613,6 +6619,13 @@ def issue_scan_pass(
                     why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
                     log_bits.append('issue_scan_refused_%s=%s' % (candidate, why))
                     count_refused(refusal_token(why))
+                    continue
+                host_cap = receipt.get('cap')
+                if host_cap is None:
+                    host_cap = config.get('host_caps', {}).get(candidate, 4)
+                if (receipt.get('occupied') or 0) + pass_starts.get(candidate, 0) >= host_cap:
+                    log_bits.append('issue_scan_full_%s' % candidate)
+                    count_refused('host_cap')
                     continue
                 if not _host_maps_repo(config, candidate, repo):
                     log_bits.append('issue_scan_no_repo_%s' % candidate)
@@ -6638,10 +6651,10 @@ def issue_scan_pass(
         command = build_issue_start_command(config, repo, row, placement, route)
         if command is None:
             log_bits.append('issue_scan_skip')
-            return notices, log_bits
+            continue
         if live_start_title(command, workers):
             log_bits.append('issue_live=%d' % row['number'])
-            return notices, log_bits
+            continue
         spec_path = command[command.index('--spec') + 1]
         missing = brief_lint_missing(spec_path)
         if missing:
@@ -6665,6 +6678,15 @@ def issue_scan_pass(
                     persist_state()
             log_bits.append('issue_needs_triage=%d' % row['number'])
             continue
+        if attempts:
+            seen_gate = len(USAGE_GATE_REFUSALS)
+            if not gate_check(config):
+                fresh = USAGE_GATE_REFUSALS[seen_gate:]
+                gate_reason = one_line_reason(fresh[-1].get('reason') if fresh else 'unknown')
+                count_refused('usage_gate')
+                log_bits.append('issue_scan_gate=%s' % gate_reason)
+                break
+        attempts += 1
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
             persist_state()
@@ -6678,9 +6700,13 @@ def issue_scan_pass(
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
-            return notices, log_bits
+            continue
         if code == 0:
             remember_started_dispatch(state, started_worker, 'issue')
+            if placement:
+                pass_starts[placement[0]] = pass_starts.get(placement[0], 0) + 1
+            else:
+                extra_starts += 1
             started.setdefault(repo, []).append(row['number'])
             act(['gh', 'issue', 'edit', str(row['number']), '--repo', repo, '--remove-label', 'ready-for-agent'])
             notices.append('issue %s #%d' % (repo, row['number']))
@@ -6700,7 +6726,6 @@ def issue_scan_pass(
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_fail=%d%s' % (row['number'], suffix))
-        return notices, log_bits
     return notices, log_bits
 
 

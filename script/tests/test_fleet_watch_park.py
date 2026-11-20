@@ -267,16 +267,14 @@ class ScanPark(unittest.TestCase):
                 start_worker=start_worker,
             )
             notices, _log = fw.issue_scan_pass(scan_config(root), state, 1, [], **common)
-            self.assertEqual(len(starts), 1)
+            self.assertEqual(len(starts), 2)
             self.assertIn('issue-5', starts[0])
+            self.assertIn('issue-6', starts[1])
             self.assertTrue(any(message in str(notice) for notice in notices), notices)
             fw.issue_scan_pass(scan_config(root), state, 2, [], **common)
             self.assertEqual(len(starts), 2)
-            self.assertIn('issue-6', starts[1])
 
             rows[0] = issue_row(5, '2026-01-03T00:00:00Z')
-            # 6 is started, so 5 is the only remaining candidate once its edit changes the key.
-            state['issue_scan_started'] = {REPO: [6]}
             fw.issue_scan_pass(scan_config(root), state, 3, [], **common)
             self.assertEqual(len(starts), 3)
             self.assertIn('issue-5', starts[2])
