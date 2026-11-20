@@ -544,23 +544,49 @@ run_captured() { # command... ; print its stdout, return its status. start_out i
 # is started once more in the same worktree before the start counts as failed (#1221).
 STARTUP_EXIT_RE='terminal_exited|agent_not_in_foreground|agent_readiness|dispatch_input'
 
-startup_exit_failure() { # <dispatch id> ; true when the dispatch failed at startup within the readiness wait
-  local d=$1 end out state
+# True when the dispatch failed at startup. Orca reports state=ready from the first second, before agent_readiness and
+# dispatch_input finish, so keep reading worker-show through the readiness wait while the stage is still a startup
+# stage (#1270). A failed state matches the startup errors, or a timeout at a startup stage.
+startup_exit_failure() { # <dispatch id>
+  local d=$1 end out state stage
   end=$((SECONDS + ${WORKER_STARTUP_READINESS_WAIT:-6}))
   while :; do
     out=$("$orca" orchestration worker-show --dispatch "$d" --json 2>/dev/null) || out=
     state=$(jq -r '.result.state // .result.dispatch.state // empty' <<<"$out" 2>/dev/null || true)
+    stage=$(jq -r '(.result.stage // .result.projection.stage // .result.dispatch.stage) | if type == "object" then (.detail // .name // "") else (. // "") end' <<<"$out" 2>/dev/null || true)
     case "$state" in
-      failed|stopped|abandoned|rejected) grep -Eq "$STARTUP_EXIT_RE" <<<"$out"; return ;;
-      running|ready|accepted|succeeded|completed) return 1 ;;
+      failed|stopped|abandoned|rejected)
+        grep -Eq "$STARTUP_EXIT_RE" <<<"$out" && return 0
+        case "$stage" in agent_readiness|dispatch_input) grep -q 'timeout' <<<"$out" && return 0 ;; esac
+        return 1 ;;
+      running|succeeded|completed) return 1 ;;
+      ready|accepted|pending|'')
+        case "$stage" in agent_readiness|dispatch_input|server_record) ;; *) return 1 ;; esac ;;
+      *) return 1 ;;
     esac
     [ "$SECONDS" -lt "$end" ] || return 1
     sleep 1
   done
 }
 
+# The same worker-start command, aimed at the task that already exists: no new task is created (#1270).
+same_task_retry_command() { # <task id> <failed dispatch id> command... ; sets retry_cmd
+  local task_id=$1 failed=$2 skip=0 arg
+  shift 2
+  retry_cmd=()
+  for arg in "$@"; do
+    if [ "$skip" = 1 ]; then skip=0; continue; fi
+    case "$arg" in
+      --spec|--task-title) skip=1 ;;
+      *) retry_cmd+=("$arg") ;;
+    esac
+  done
+  retry_cmd+=(--task "$task_id" --retry-of "$failed")
+}
+
 start_with_startup_retry() { # worker-start wrapper args...; sets start_out like run_captured
-  local ec=0 errf dispatch
+  local ec=0 errf dispatch task_id
+  local -a retry_cmd=()
   errf=$(mktemp)
   run_captured "$@" 2>"$errf" || ec=$?
   cat "$errf" >&2
@@ -570,10 +596,18 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
     run_captured "$@" || ec=$?
   elif [ "$ec" -eq 0 ]; then
     dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+    task_id=$(jq -r '.result.taskId // empty' <<<"$start_out" 2>/dev/null || true)
     if [ -n "$dispatch" ] && startup_exit_failure "$dispatch"; then
       echo "worker-startup: $dispatch failed at startup, retrying once" >&2
       ec=0
-      run_captured "$@" || ec=$?
+      if [ -n "$task_id" ]; then
+        "$orca" orchestration worker-release --dispatch "$dispatch" ${environment:+--environment "$environment"} >/dev/null 2>&1 \
+          || echo "worker-startup: could not release $dispatch before the retry" >&2
+        same_task_retry_command "$task_id" "$dispatch" "$@"
+        run_captured "${retry_cmd[@]}" || ec=$?
+      else
+        run_captured "$@" || ec=$?
+      fi
     fi
   fi
   rm -f "$errf"
@@ -1025,7 +1059,7 @@ run_mode() {
   board_display_name_set "path:$wt" "$title" "$environment"
   start_agent_worker() { # starts the worker for the current agent, model and brief
     if [ -n "$environment" ]; then
-      run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+      start_with_startup_retry bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
     else
       start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \

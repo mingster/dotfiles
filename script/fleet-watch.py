@@ -3020,7 +3020,9 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                             repo=repo, pr=pr_num)
             return
         try:
-            rpc_call('orchestration', 'worker-release', '--dispatch', did)
+            environment = remote_environment(w) if worker_is_remote(w, config) else ''
+            rpc_call('orchestration', 'worker-release', '--dispatch', did,
+                     *(('--environment', environment) if environment else ()))
         except SEND_ERRORS:
             pass
         try:
@@ -4824,9 +4826,51 @@ def worker_startup_failed(worker):
     proj = w.get('projection') or {}
     stage = proj.get('stage')
     detail = stage.get('detail') if isinstance(stage, dict) else ''
+    if not detail and isinstance(w.get('stage'), str):
+        detail = w['stage']
     evidence = proj.get('evidence') if isinstance(proj.get('evidence'), dict) else {}
     err = ' '.join(str(v) for v in (w.get('lastError'), proj.get('lastError'), evidence.get('lastError')) if v)
     return detail in STARTUP_FAIL_DETAILS or startup_failure_text(err)
+
+
+def enrich_failed_worker_show(worker, state, rpc_call):
+    """Copy stage and lastError from worker-show onto a failed own or follow-up row that carries neither (#1270).
+
+    Remote and concise worker-list rows hold only the failed status. The one worker-show answer is cached
+    in state so later passes reapply it without another call. Rows that are not ours are left alone."""
+    w = worker or {}
+    did = w.get('dispatchId')
+    if not isinstance(did, str) or not did or worker_inventory_status(w) != 'failed':
+        return
+    proj = w.get('projection') if isinstance(w.get('projection'), dict) else {}
+    stage = proj.get('stage')
+    if w.get('lastError') or proj.get('lastError') or (isinstance(stage, dict) and stage.get('detail')):
+        return
+    if did not in (state.get('own_dispatches') or {}) and not _followup_parent(w):
+        return
+    checked = state.setdefault('show_checked', {})
+    if not isinstance(checked, dict):
+        checked = {}
+        state['show_checked'] = checked
+    found = checked.get(did)
+    if not isinstance(found, dict):
+        try:
+            shown = rpc_call('orchestration', 'worker-show', '--dispatch', did)
+        except SEND_ERRORS:
+            return
+        if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+            shown = shown['worker']
+        if not isinstance(shown, dict):
+            shown = {}
+        shown_stage = shown.get('stage')
+        if isinstance(shown_stage, dict):
+            shown_stage = shown_stage.get('detail')
+        found = {'stage': str(shown_stage or ''), 'lastError': str(shown.get('lastError') or '')}
+        checked[did] = found
+    if found.get('lastError'):
+        w['lastError'] = found['lastError']
+    if found.get('stage'):
+        w['stage'] = found['stage']
 
 
 def startup_retry_taken(state, key):
@@ -6267,7 +6311,12 @@ def babysit_pass(
                 # The verifier vanished at startup: release it, then start one fresh verifier. A second
                 # startup failure parks the PR (#1221).
                 _own_row(state, failed_did)['startup_handled'] = True
-                release_worker(failed_did)
+                failed_row = next((w for w in workers or [] if w.get('dispatchId') == failed_did), {})
+                failed_env = remote_environment(failed_row) if worker_is_remote(failed_row, config) else ''
+                if failed_env:
+                    release_worker(failed_did, failed_env)
+                else:
+                    release_worker(failed_did)
                 park_key = park_id('verifier', repo, number, head)
                 if startup_retry_taken(state, park_key):
                     state['babysit'][repo].pop(str(number), None)
@@ -7905,6 +7954,8 @@ def main():
         state.pop('orca_inventory_skip_latched', None)
         try:
             notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
+            for failed in workers:
+                enrich_failed_worker_show(failed, state, rpc)
         except Exception as error:
             print('fleet-watch: remote reconcile skipped: %s' % (repr(error),), file=sys.stderr)
     except Exception as error:

@@ -1,0 +1,1 @@
+* A worker that fails seconds after start (remote or local) is released and retried once on the same task instead of creating a duplicate, and `fleet-watch` now reads `worker-show` to spot startup failures that `worker-list` hides (#1270).

@@ -128,5 +128,87 @@ class DeadFollowup(unittest.TestCase):
         self.assertEqual(fw.release_dead_followups([parent, child], {}, lambda _d: None), [])
 
 
+def bare_failed_row(did, **extra):
+    """worker-list --include-remote row for a failed dispatch: no stage, no lastError."""
+    row = {'dispatchId': did, 'dispatchStatus': 'failed', 'workerState': 'failed',
+           'server': {'environmentId': 'env-1', 'name': 'remote-host'}}
+    row.update(extra)
+    return row
+
+
+class ShowRpc:
+    def __init__(self, shown):
+        self.shown, self.calls = shown, []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.shown
+
+
+class WorkerShowEnrichment(unittest.TestCase):
+    def own(self, did):
+        return {'own_dispatches': {did: {'kind': 'verifier', 'repo': REPO, 'pr': 7, 'head': HEAD}}}
+
+    def test_failed_row_without_stage_is_enriched_from_worker_show(self):
+        for stage, err in (('agent_readiness', 'agent_not_in_foreground'), ('dispatch_input', 'terminal_exited'),
+                           ('agent_readiness', 'timeout')):
+            row, state = bare_failed_row('ctx_v1'), self.own('ctx_v1')
+            self.assertFalse(fw.worker_startup_failed(row))
+            rpc = ShowRpc({'worker': {'stage': stage, 'lastError': err}})
+            fw.enrich_failed_worker_show(row, state, rpc)
+            self.assertEqual(rpc.calls, [('orchestration', 'worker-show', '--dispatch', 'ctx_v1')])
+            self.assertTrue(fw.worker_startup_failed(row), (stage, err))
+
+    def test_enrichment_is_checked_once_and_reapplied_from_state(self):
+        state, rpc = self.own('ctx_v1'), ShowRpc({'stage': 'agent_readiness', 'lastError': 'terminal_exited'})
+        fw.enrich_failed_worker_show(bare_failed_row('ctx_v1'), state, rpc)
+        again = bare_failed_row('ctx_v1')
+        fw.enrich_failed_worker_show(again, state, rpc)
+        self.assertEqual(len(rpc.calls), 1)
+        self.assertTrue(fw.worker_startup_failed(again))
+
+    def test_non_startup_failure_is_cached_and_not_retried(self):
+        for shown in ({'stage': 'server_record', 'lastError': 'worker_report failed'},
+                      {'stage': 'settled', 'lastError': None}):
+            row, state = bare_failed_row('ctx_v1'), self.own('ctx_v1')
+            rpc = ShowRpc(shown)
+            fw.enrich_failed_worker_show(row, state, rpc)
+            fw.enrich_failed_worker_show(bare_failed_row('ctx_v1'), state, rpc)
+            self.assertEqual(len(rpc.calls), 1)
+            self.assertFalse(fw.worker_startup_failed(row))
+            self.assertIn('ctx_v1', state['show_checked'])
+
+    def test_unrelated_failed_row_is_not_queried(self):
+        rpc = ShowRpc({'stage': 'agent_readiness'})
+        fw.enrich_failed_worker_show(bare_failed_row('ctx_other'), {}, rpc)
+        self.assertEqual(rpc.calls, [])
+
+    def test_remote_verifier_release_passes_environment_and_retries(self):
+        starts, releases = [], []
+
+        def start(command):
+            starts.append(command)
+            result = fw.BabysitStartResult(0, '')
+            result.dispatch_id = 'ctx_v%d' % len(starts)
+            return result
+
+        def release(did, environment=None):
+            releases.append((did, environment))
+        with tempfile.TemporaryDirectory() as root:
+            state = {}
+            config = {
+                'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
+                'babysit': {'repos': [REPO], 'startup': '/bin/true'},
+            }
+            kwargs = dict(pr_fetch=lambda _repo: [verifier_pr()], start_worker=start, pick=PICK,
+                          owner_check=lambda _pr: None, release_worker=release)
+            fw.babysit_pass(config, state, [], **kwargs)
+            failed = bare_failed_row('ctx_v1')
+            fw.enrich_failed_worker_show(failed, state, ShowRpc({'stage': 'agent_readiness', 'lastError': 'terminal_exited'}))
+            fw.babysit_pass(config, state, [failed], **kwargs)
+        self.assertEqual(len(starts), 2)
+        self.assertEqual(releases, [('ctx_v1', 'env-1')])
+
+
 if __name__ == '__main__':
     unittest.main()
