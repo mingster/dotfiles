@@ -1,0 +1,1 @@
+- `script/task-sweep.sh` marks `completed` the Orca tasks of a repo whose issue or PR is closed, so tasks left `blocked` or `failed` by `worker-release` stop showing as dead work (#1287).

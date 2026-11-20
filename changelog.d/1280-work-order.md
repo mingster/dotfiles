@@ -1,0 +1,1 @@
+- elon: new Work order section (grill the backlog under 3 active workers, keep at least 8 busy, staging plus full regression daily at 19:00, production per go-live state). The 8-worker goal replaces the ten-worker goal in the dispatch, orchestrate and team docs (#1280).
