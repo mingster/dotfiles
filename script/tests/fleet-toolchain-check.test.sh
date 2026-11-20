@@ -249,7 +249,7 @@ fake_dotfiles="$tmp/fake-dotfiles"
 mkdir -p "$fake_dotfiles/script"
 cp "$here/fleet-toolchain-check.sh" "$fake_dotfiles/script/"
 mkdir -p "$fake_dotfiles/script/lib"
-cp "$here/lib/find-orca-dir.sh" "$fake_dotfiles/script/lib/"
+cp "$here/lib/find-orca-dir.sh" "$here/lib/app-path.sh" "$fake_dotfiles/script/lib/"
 mkdir -p "$fake_dotfiles/bin"
 cp "$here/../bin/agy" "$fake_dotfiles/bin/agy"
 cat > "$fake_dotfiles/script/bootstrap-asdf-tools.sh" <<EOS
@@ -371,7 +371,7 @@ check "842 a dead ssh during apply is printed" \
 home_a="$tmp/home-a"; home_b="$tmp/home-b"
 mkdir -p "$home_a/dotfiles/script/lib" "$home_b/dotfiles/script"
 cp "$fake_dotfiles/script/fleet-toolchain-check.sh" "$home_a/dotfiles/script/"
-cp "$fake_dotfiles/script/lib/find-orca-dir.sh" "$home_a/dotfiles/script/lib/"
+cp "$fake_dotfiles/script/lib/find-orca-dir.sh" "$fake_dotfiles/script/lib/app-path.sh" "$home_a/dotfiles/script/lib/"
 printf '#!/usr/bin/env bash\necho peer-bootstrap >> %q\n' "$peer_log" > "$home_b/dotfiles/script/bootstrap-asdf-tools.sh"
 sed "s|/bin/bash -c|HOME=$home_b /bin/bash -c|" "$tmp/peer-ssh" > "$tmp/peer-ssh-home"; chmod +x "$tmp/peer-ssh-home"
 : > "$peer_log"
@@ -468,7 +468,7 @@ check "codex alone does not skip the Orca upgrade" \
 check "codex alone still upgrades Orca" \
   "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgraded to 1.4.253'; echo $?)"
 : > "$orca_log"
-orca_out=$(FAKE_COMM=/Applications/_dev/Orca.app/Contents/MacOS/Orca orca_apply 1.4.251)
+orca_out=$(FAKE_COMM=/Applications/Orca.app/Contents/MacOS/Orca orca_apply 1.4.251)
 check "842 a run inside Orca never kills its own Orca" \
   "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, running inside Orca'; echo $?)"
 check "842 a run inside Orca downloads nothing" "$(grep -qE '^worker-a (curl|pkill)' "$orca_log" && echo 1 || echo 0)"

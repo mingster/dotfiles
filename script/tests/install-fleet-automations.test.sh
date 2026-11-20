@@ -456,6 +456,7 @@ fake_wt="$tmp/fake-worktree/script"
 mkdir -p "$fake_wt/lib" "$HOME/dotfiles/script"
 cp "$script" "$fake_wt/install-fleet-automations.sh"
 cp "$root/script/lib/automation-path.sh" "$fake_wt/lib/automation-path.sh"
+cp "$root/script/lib/app-path.sh" "$fake_wt/lib/app-path.sh"
 touch "$HOME/dotfiles/script/fleet-watch.py"
 canonical_home_dotfiles=$(cd "$HOME/dotfiles" && pwd -P)
 unset DOTFILES_DIR

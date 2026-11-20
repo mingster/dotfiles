@@ -45,7 +45,8 @@ export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/bin2:$PATH"
 export PATH="$HOME/bin:$PATH"
 export PATH="$HOME/dotfiles/bin:$PATH"
-export PATH="/Applications/_dev/Visual Studio Code.app/Contents/Resources/app/bin:$PATH"
+[ -f "$HOME/dotfiles/script/lib/app-path.sh" ] && . "$HOME/dotfiles/script/lib/app-path.sh" \
+  && export PATH="$(app_path "Visual Studio Code.app")/Contents/Resources/app/bin:$PATH"
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
 export PATH="$HOME/.antigravity/antigravity/bin:$PATH"
 

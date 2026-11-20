@@ -4,6 +4,8 @@
 # --branch (after a merge), --finish-worker (a settled worker).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=lib/app-path.sh disable=SC1091
+. "$here/lib/app-path.sh"
 # Runs a command for at most $1 seconds in its own process group, stdin closed; exit 124 on timeout. Stock macOS has no
 # timeout command. Perl needs no version manager, and killing the group means a hung child cannot hold a pipe open.
 # TERM goes first and is passed down, so a nested call stops its own group; KILL follows after 3 seconds.
@@ -99,7 +101,7 @@ release_round_lock() { if [ "$(cat "$lock" 2>/dev/null)" = "$$" ]; then guarded_
 # The directory of the orca to use. On one host ~/.orca/cli/bin holds a stale remote CLI that cannot reach the app, so it comes last.
 find_orca_dir() {
   local stale="$HOME/.orca/cli/bin" dir list
-  list="${WRAP_UP_ORCA_APP_BIN:-/Applications/_dev/Orca.app/Contents/Resources/bin}:$PATH:$HOME/.local/bin:${extra_bin:-}"
+  list="${WRAP_UP_ORCA_APP_BIN:-$(app_path Orca.app)/Contents/Resources/bin}:$PATH:$HOME/.local/bin:${extra_bin:-}"
   local IFS=:
   for dir in $list; do
     if [ "$dir" != "$stale" ] && [ -x "$dir/orca" ]; then printf '%s\n' "$dir"; return 0; fi

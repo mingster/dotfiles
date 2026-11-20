@@ -85,4 +85,4 @@ psql -U postgres -l
 #
 # gui tool
 #
-#brew install --cask --appdir="/Applications/_dev" pgadmin4
+#brew install --cask pgadmin4

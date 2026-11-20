@@ -1,1 +1,2 @@
-export FLAGS_GETOPT_CMD=/Applications/_dev/Sourcetree.app/Contents/Resources/bin/getopt
+. "$HOME/dotfiles/script/lib/app-path.sh" 2>/dev/null
+export FLAGS_GETOPT_CMD="$(app_path Sourcetree.app)/Contents/Resources/bin/getopt"
