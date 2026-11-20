@@ -1,0 +1,1 @@
+elon: the role file gains a MUST rule for each repeated coordinator failure (idle seats, answered owner questions, host work, waived approvals, labels, dotfiles first, rules kept only in memory) and a "Before you message the owner" checklist (#1294).
