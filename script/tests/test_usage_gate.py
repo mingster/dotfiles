@@ -2322,11 +2322,11 @@ class GrokGate(unittest.TestCase):
             ug.main(["pick", "--role", "fullstack-dev", "--avoid-provider", "grok"])
         self.assertEqual(pick.call_args.args[5], "grok")
 
-    def test_routing_doc_says_grok_replaces_cursor(self):
+    def test_routing_doc_names_grok_lane(self):
         path = os.path.join(os.path.dirname(__file__), "..", "..", "templates", "agent-team", ".claude", "model-routing.md")
         with open(path) as handle:
             text = handle.read()
-        self.assertIn("grok replaces cursor", text)
+        self.assertNotIn("grok replaces cursor", text)
         self.assertIn("`--agent grok --model grok-4.7`", text)
         self.assertIn("grok_hosts", text)
 
