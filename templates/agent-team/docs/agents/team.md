@@ -8,7 +8,7 @@ This file holds only facts and the rule table. GitHub issues and PRs are the sta
 | --- | --- | --- |
 | The coordinator (CEO) | `elon.md` | Priorities, user contact, dispatch |
 | architect-pm | `architect-pm.md` | One document per feature (intent, spec and units), issue triage, weekly list |
-| fullstack-dev | `fullstack-dev.md` | Isolated branch with its own tests. Claude, then Antigravity, Grok and Cursor `grok-4.7-high` in that order |
+| fullstack-dev | `fullstack-dev.md` | Isolated branch with its own tests. Claude, then Antigravity, then Grok `grok-4.7`, in that order |
 | qa-sdet | `qa-sdet.md` | Verifier Verdict (`script/post-verdict.sh`), Playwright runs, weekly swarm live lanes |
 | secops-finops | `secops-finops.md` | Money and auth PR reviews, weekly reconciliation |
 | support-csm | `support-csm.md` | Ticket triage, reply drafts and recurring pain points |
