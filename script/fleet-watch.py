@@ -3945,6 +3945,99 @@ def issue_scan_try_backlog_sweep(
     return log_bits
 
 
+_TRIAGE_INTERVAL_HOURS = 2
+_TRIAGE_LABELS = ('needs-triage', 'ready-for-human')
+_TRIAGE_BRIEF = Path(__file__).resolve().parent.parent / 'templates/agent-team/docs/agents/triage-worker-brief.md'
+
+
+def fetch_triage_backlog(repo, run=subprocess.run):
+    """Count of open needs-triage and ready-for-human issues, or None when gh fails."""
+    seen = set()
+    for label in _TRIAGE_LABELS:
+        command = [
+            'gh', 'issue', 'list', '--repo', repo, '--label', label, '--state', 'open',
+            '--limit', '100', '--json', 'number',
+        ]
+        try:
+            output = run(command, capture_output=True, text=True, timeout=30, check=True)
+            seen.update(row['number'] for row in json.loads(output.stdout))
+        except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError):
+            return None
+    return len(seen)
+
+
+def build_triage_command(config, repo, agent, model):
+    scan = config['issue_scan']
+    root = _issue_scan_repo_root(config, repo)
+    if not root:
+        return None
+    spec_path = _write_issue_scan_spec(_with_preamble(_TRIAGE_BRIEF.read_text(encoding='utf-8'), 'architect-pm'))
+    command = [
+        'bash', _issue_scan_startup_script(config),
+        '--run', scan['run'],
+        '--spec', spec_path,
+        '--title', '#0|architect-pm',
+        '--agent', agent,
+        '--model', model,
+        '--name', 'triage-architect-pm',
+        '--repo', local_repo_selector(root),
+    ]
+    return [part for part in command if part]
+
+
+def issue_scan_try_triage(
+    config, state, now, repos, host, admission, extra_starts, workers,
+    start_worker, list_backlog=None, pick_fn=None, persist_state=None,
+):
+    """Idle seats and no ready issue: start one architect-pm triage worker per repo, at most once per interval."""
+    log_bits = []
+    scan = config.get('issue_scan') or {}
+    interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
+    last_starts = state.setdefault('issue_scan_triage_at', {})
+    used = 0
+    for repo in repos:
+        if not _issue_scan_has_slot(host, config, admission, extra_starts + used):
+            log_bits.append('triage_skip_no_seat')
+            break
+        try:
+            recent = now - float(last_starts.get(repo)) < interval
+        except (TypeError, ValueError):
+            recent = False
+        if recent:
+            log_bits.append('triage_skip_recent')
+            continue
+        backlog = (list_backlog or fetch_triage_backlog)(repo)
+        if backlog is None:
+            log_bits.append('triage_list_failed')
+            continue
+        if not backlog:
+            log_bits.append('triage_skip_no_backlog')
+            continue
+        builder = (scan.get('agent') or 'claude', scan.get('model') or '')
+        chosen = choose_pick((pick_fn or pick_role)('architect-pm', avoid_family=_avoid_family(builder)), builder)
+        if not chosen:
+            log_bits.append('triage_pick_blocked')
+            continue
+        command = build_triage_command(config, repo, chosen[0], chosen[1])
+        if command is None:
+            log_bits.append('triage_skip_root')
+            continue
+        if live_start_title(command, workers):
+            log_bits.append('triage_skip_live')
+            continue
+        if start_worker(command) == 0:
+            last_starts[repo] = now
+            used += 1
+            log_bits.append('triage_start=%d' % backlog)
+            count_started()
+        else:
+            log_bits.append('triage_fail')
+            count_failed()
+        if persist_state:
+            persist_state()
+    return log_bits, used
+
+
 USAGE_GATE_REFUSALS = []  # refusals seen this pass, drained by usage_gate_notices
 USAGE_GATE_CALLS = [0]  # gate calls this pass
 
@@ -6373,7 +6466,7 @@ def issue_scan_pass(
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
-    babysit_repos=None, repo_id_lookup=None, pick_fn=None,
+    babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
@@ -6656,6 +6749,12 @@ def issue_scan_pass(
         log_bits.append('issue_scan_none')
         return notices, log_bits
     if not candidates:
+        triage_bits, triage_used = ([], 0) if list_failed else issue_scan_try_triage(
+            config, state, now, repos, host, admission, extra_starts, workers,
+            start_worker, list_backlog, pick_fn, persist_state,
+        )
+        log_bits.extend(triage_bits)
+        extra_starts += triage_used
         queue_count = None if list_failed else ready_queue_count
         sweep_bits = issue_scan_try_backlog_sweep(
             config, state, now, repos, queue_count, host, admission, extra_starts,
