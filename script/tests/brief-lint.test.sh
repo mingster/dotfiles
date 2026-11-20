@@ -634,5 +634,13 @@ sed '/^## Out of scope/,/^$/d' "$tmp/no-refs.md" >"$tmp/no-refs-no-scope.md"
 out=$(bash "$lint" --issue-body "$tmp/no-refs-no-scope.md" 2>&1); ec=$?
 if [ "$ec" -eq 1 ] && [ "$out" = "brief-lint: missing Out of scope" ]; then ok; else bad "--issue-body still checks the other parts (ec=$ec, out=$out)"; fi
 
+# 1242. A numbered Acceptance list counts like - items.
+sed 's|^- \[ \] New script|1. New script|' "$tmp/refs-base.md" >"$tmp/numbered.md"
+out=$(bash "$lint" "$tmp/numbered.md" 2>&1); ec=$?
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "numbered Acceptance should pass (ec=$ec, out=$out)"; fi
+sed 's|^- \[ \] New script|1) New script|' "$tmp/refs-base.md" >"$tmp/numbered2.md"
+out=$(bash "$lint" "$tmp/numbered2.md" 2>&1); ec=$?
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "1) Acceptance should pass (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

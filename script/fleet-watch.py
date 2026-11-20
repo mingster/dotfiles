@@ -6654,16 +6654,16 @@ def issue_scan_pass(
                 (c.get('body') or '').splitlines()[:1] == [comment_head]
                 for c in (row.get('comments') or []) if isinstance(c, dict)
             )
+            act([
+                'gh', 'issue', 'edit', issue_key, '--repo', repo,
+                '--add-label', 'needs-triage', '--remove-label', 'ready-for-agent',
+            ])
             if not already:
-                act([
-                    'gh', 'issue', 'edit', issue_key, '--repo', repo,
-                    '--add-label', 'needs-triage', '--remove-label', 'ready-for-agent',
-                ])
                 act(['gh', 'issue', 'comment', issue_key, '--repo', repo, '--body', comment_body])
                 lint_state[issue_key] = body_head
                 if persist_state:
                     persist_state()
-            log_bits.append('issue_needs_triage=%d' % row['number'])
+            log_bits.append(('issue_lint_stuck=%d' if already else 'issue_needs_triage=%d') % row['number'])
             continue
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:

@@ -105,9 +105,9 @@ function harvest_searches(line,    rest, chunk, bare) {
   else sec = ""
   next
 }
-sec == "Acceptance" && /^[[:space:]]*- / {
+sec == "Acceptance" && /^[[:space:]]*(- |[0-9]+[.)] )/ {
   line = $0
-  sub(/^[[:space:]]*- (\[\][[:space:]]*|\[[[:space:]]\][[:space:]]*)?/, "", line)
+  sub(/^[[:space:]]*([0-9]+[.)] |- )(\[\][[:space:]]*|\[[[:space:]]\][[:space:]]*)?/, "", line)
   if (line ~ /[^[:space:]]/) has_acceptance = 1
   if (index($0, "Self-check") > 0) has_self_check = 1
 }
