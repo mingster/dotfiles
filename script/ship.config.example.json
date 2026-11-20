@@ -1,5 +1,6 @@
 {
   "verdict_from_repos": [],
+  "go_live_date": "2026-11-30",
   "coordinator_ids": [],
   "coordinator_host": "",
   "head_checks_remote": {},

@@ -3,14 +3,77 @@
 # Expects caller to provide: $files (JSON array of filenames), $diff (PR diff text), $info (PR JSON with .comments, .baseRefOid),
 # $head (40-hex SHA), field(), refuse(), die(), and verdict_carry().
 
+owner_only_path() { # <path>
+  case "$1" in
+    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|templates/agent-team/.claude/hooks/*|templates/agent-team/.claude/settings.json) return 0 ;;
+  esac
+  return 1
+}
+
+# Pre go-live waiver date: config key go_live_date (ship.config.example.json merged with ship.local.json),
+# else $SHIP_GO_LIVE_DATE, else 2026-11-30. Today is read in Asia/Taipei; $SHIP_TODAY overrides it for tests.
+go_live_date() {
+  local dir=${ship_dir:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)} d=""
+  if [ -f "$dir/ship.config.example.json" ]; then
+    d=$(python3 "$dir/apply-local-overlay.py" "$dir/ship.config.example.json" "$dir/ship.local.json" 2>/dev/null \
+      | jq -r '.go_live_date // empty' 2>/dev/null) || d=""
+  fi
+  printf '%s\n' "${d:-${SHIP_GO_LIVE_DATE:-2026-11-30}}"
+}
+
+# The newest unedited Verdict PASS with a recorded agent and model must come from another model family than the Builder line.
+# The same-family-different-model tag does not count here.
+waiver_families_differ() {
+  local dir=${ship_dir:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)} line v_agent v_model b_agent b_model vf bf
+  line=$(jq -r '[.comments[]? | select((.includesCreatedEdit // false | not) and (.isMinimized // false | not)) | (.body // "" | split("\n")[0])
+      | select(test("^Verdict: (PASS\\+NOTES|PASS) head=[0-9a-f]{40} verifier=[a-zA-Z0-9_-]+ author=[a-zA-Z0-9_-]+ agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+$"))] | last // empty' <<<"$info")
+  [[ "$line" =~ agent=([A-Za-z0-9._-]+)\ model=([A-Za-z0-9._:-]+)$ ]] || return 1
+  v_agent=${BASH_REMATCH[1]} v_model=${BASH_REMATCH[2]}
+  line=$(grep -E '^Builder: agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+[[:space:]]*$' <<<"$(jq -r '.body // ""' <<<"$info")" | tail -n 1) || true
+  [[ "$line" =~ ^Builder:\ agent=([A-Za-z0-9._-]+)\ model=([A-Za-z0-9._:-]+) ]] || return 1
+  b_agent=${BASH_REMATCH[1]} b_model=${BASH_REMATCH[2]}
+  vf=$(python3 "$dir/usage-gate.py" family --agent "$v_agent" --model "$v_model" 2>/dev/null) || return 1
+  bf=$(python3 "$dir/usage-gate.py" family --agent "$b_agent" --model "$b_model" 2>/dev/null) || return 1
+  [ -n "$vf" ] && [ "$vf" != unknown ] && [ -n "$bf" ] && [ "$vf" != "$bf" ]
+}
+
+# A cold Review: PASS (newest Review at the head) and a Verdict PASS both name the head.
+waiver_review_and_verdict() {
+  jq -e --arg h "$head" '
+    [.comments[]? | select((.includesCreatedEdit // false | not) and (.isMinimized // false | not)) | (.body // "" | split("\n")[0])] as $l
+    | ($l | map(select(test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )")) | capture("^Review: (?<r>PASS|FAIL)").r) | last) == "PASS"
+      and ($l | any(.[]; test("^Verdict: (PASS|PASS\\+NOTES) head=" + $h + " ")))' <<<"$info" >/dev/null
+}
+
+# Before go_live_date an owner-only path passes when Review PASS and Verdict PASS cover the head, the verifier is
+# another model family, and every commit touching these paths has a non-empty Owner-approved value.
+owner_waiver_applies() { # <path>...
+  local date today base_sha ancestor
+  date=$(go_live_date)
+  today=${SHIP_TODAY:-$(TZ=Asia/Taipei date +%F)}
+  [[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+  [[ "$today" < "$date" ]] || return 1
+  waiver_review_and_verdict || return 1
+  waiver_families_differ || return 1
+  base_sha=$(field .baseRefOid)
+  ensure_commit_in_store "$head" && ensure_commit_in_store "$base_sha" || return 1
+  ancestor=$(git merge-base "$base_sha" "$head" 2>/dev/null) || return 1
+  load_owner_receipts "$ancestor..$head" "$@" || return 1
+  { [ "$owner_receipt_count" -gt 0 ] && [ -z "$owner_receipt_missing" ]; } || return 1
+  echo "ship: owner-only path waived until $date (pre go-live rule)" >&2
+}
+
 check_owner_only_paths() {
-  local f
+  local f owner_paths=()
   while IFS= read -r f; do
-    case "$f" in
-      .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|templates/agent-team/.claude/hooks/*|templates/agent-team/.claude/settings.json)
-        refuse "PR touches $f, which waits for the owner through Elon" ;;
-    esac
+    if owner_only_path "$f"; then
+      [ "$f" != bin/owner-approve.sh ] || refuse "PR touches $f, which waits for the owner through Elon"
+      owner_paths+=("$f")
+    fi
   done < <(jq -r '.[]' <<<"$files")
+  if [ "${#owner_paths[@]}" -gt 0 ] && ! owner_waiver_applies "${owner_paths[@]}"; then
+    refuse "PR touches ${owner_paths[0]}, which waits for the owner through Elon"
+  fi
   intent_acceptance_receipt
 }
 
