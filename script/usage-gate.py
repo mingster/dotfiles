@@ -13,9 +13,10 @@ automatic start is blocked by the daily cap; manual and coordinator starts never
 get the note "pacing: prefer a lighter model".
 show [--json] includes the exact source and reading age; pick --role ROLE retains
 its existing flags. every role takes the first allowed entry of the provider priority
-(owner 2026-11-16): Claude, then Antigravity, then Grok grok-4.7, then Cursor
-grok-4.7-high. A Claude-built PR gets an Antigravity verifier first. Strong roles
-other than qa-sdet never select Grok or Cursor.
+(owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
+(Cursor is no longer a provider). When all three are blocked, pick reports queue.
+A Claude-built PR gets an Antigravity verifier first. Strong roles other than
+qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
 A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
@@ -56,7 +57,7 @@ CURSOR_BUILD_MODEL = "grok-4.7-high"
 CURSOR_URGENT_MODEL = "grok-4.7-high-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
-STRONG_NO_CURSOR = ("elon", "architect-pm", "secops-finops")  # these roles never take Cursor or Grok
+STRONG_NO_GROK = ("elon", "architect-pm", "secops-finops")  # these roles never take Cursor or Grok
 GROK_MODEL = "grok-4.7"
 GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
 
@@ -1153,19 +1154,15 @@ def grok_entry(chain):
 
 
 def order_builder_chain(chain):
-    """Claude, then Antigravity, then Grok grok-4.7, then Cursor grok-4.7-high, whatever the preset text says."""
-    cursor = [entry for entry in chain
-              if entry.get("provider") == "cursor" and entry.get("model") == CURSOR_BUILD_MODEL]
-    if not cursor:
-        cursor = [{"provider": "cursor", "model": CURSOR_BUILD_MODEL}]
+    """Claude, then Antigravity, then Grok grok-4.7, nothing after (owner 2026-11-20: Grok replaced Cursor)."""
     claude = [entry for entry in chain if entry.get("provider") == "claude"]
     antigravity = [entry for entry in chain if entry.get("provider") == "antigravity"]
-    return [*claude, *antigravity, grok_entry(chain), *cursor[:1]]
+    return [*claude, *antigravity, grok_entry(chain)]
 
 
 def order_reviewer_chain(chain):
-    """Claude, Antigravity, Grok grok-4.7, then Cursor for a reviewer; other providers keep their place after Claude."""
-    rank = {"claude": 0, "antigravity": 1, "grok": 2, "cursor": 3}
+    """Claude, Antigravity, Grok grok-4.7 for a reviewer; other providers keep their place after Claude."""
+    rank = {"claude": 0, "antigravity": 1, "grok": 2}
     rest = [entry for entry in chain if entry.get("provider") != "grok"]
     return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 1))
 
@@ -1248,8 +1245,8 @@ def _mark_claude_fallback(candidates, chain, rows):
 
 
 def _gated_model(entry):
-    """Antigravity and Cursor readings are per model; other providers share one pool."""
-    if entry["provider"] in ("antigravity", "cursor"):
+    """Antigravity readings are per model; other providers share one pool."""
+    if entry["provider"] == "antigravity":
         return entry["model"]
     return None
 
@@ -1263,7 +1260,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
     elif reviewer:
         chain = order_reviewer_chain(chain)
     chain = [entry for entry in chain
-             if not (entry["provider"] == "grok" and role in STRONG_NO_CURSOR)]
+             if entry["provider"] != "cursor"
+             and not (entry["provider"] == "grok" and role in STRONG_NO_GROK)]
     rows = {}
     for entry in chain:
         key = (entry["provider"], _gated_model(entry))
@@ -1283,10 +1281,6 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
         if avoid == "grok" and family(entry) != "claude":
             excluded = True  # Claude always reviews Grok authored work (owner 2026-11-09)
         excluded_provider = entry["provider"] == avoid_provider
-        if entry["provider"] == "cursor" and entry["model"] not in CURSOR_MODELS:
-            eligible, row = False, {**row, "verdict": "cursor runs only grok-4.7-high and grok-4.7-high-fast"}
-        if role in STRONG_NO_CURSOR and entry["provider"] == "cursor":
-            eligible, row = False, {**row, "verdict": "strong roles never run on Cursor"}
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
         candidate = {**entry, "verdict": row["verdict"], "headroom": room,
@@ -1308,7 +1302,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
             chosen = fallback
     resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
     until = min(resets) if resets else None
-    return {"role": role, "selected": chosen, "candidates": candidates,
+    return {"role": role, "selected": chosen, "queue": chosen is None, "candidates": candidates,
             "blocked_until": until, "blocked_until_local": local(until)}
 
 
@@ -1375,7 +1369,8 @@ def main(argv=None):
                     flags += f" --effort {chosen['effort']}"
                 print(flags)
             else:
-                print(f"nothing allowed; earliest reset: {result['blocked_until_local']}", file=sys.stderr)
+                print(f"queue: Claude, Antigravity and Grok are all unavailable; earliest reset: "
+                      f"{result['blocked_until_local']}", file=sys.stderr)
         return 0 if result["selected"] else (3 if all(c["verdict"] == "blocked" for c in result["candidates"]) else 4)
     names = [a.provider] if a.provider else list(READERS)
     if a.cmd == "show" and not a.provider:
