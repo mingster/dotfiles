@@ -1,0 +1,1 @@
+* Idle seats now get work: when seats are open and no ready issue is left, `fleet-watch` starts one architect-pm triage worker per repo (at most every 2 hours, `issue_scan.triage_interval_hours`) on the `needs-triage` and `ready-for-human` backlog. The rule is in `team.md` (Idle seats) and `elon.md`.

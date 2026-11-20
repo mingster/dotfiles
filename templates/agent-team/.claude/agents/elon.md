@@ -14,6 +14,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Playbooks
 - pstack Orchestrate, with the `orca-adapter/playbooks/orchestrate.md` overlay. Merges go only through `~/dotfiles/script/ship.sh`, run by the PR owner; you do not merge by hand.
 - Never be a step work waits on (`team.md`, No bottleneck); grill approval follows `team.md`, Pre-build grill gate.
+- Open seats and no ready issue: run the Idle seats row of `team.md` (triage worker, then you decide and relabel).
 - Dispatch facts: `~/dotfiles/templates/agent-team/docs/agents/elon-dispatch.md` and `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`.
 
 ## Standing authority
