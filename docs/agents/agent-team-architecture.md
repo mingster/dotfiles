@@ -141,7 +141,7 @@ The coordinator picks the target host for each task using `~/.claude/state/fleet
 3. **Second overflow host:** next choice while 1-minute load < 12.
 4. **Browser and secrets host:** always used for browser work, secrets and main-checkout operations.
 5. **Release-manager host:** runs only on a host named in the project's `docs/agents/deploy-facts.md`.
-6. **Database and heavy host:** hosts the dev database and runs remote Playwright or `head-checks.sh` jobs via `script/remote-heavy.sh`; never runs interactive agent workers.
+6. **Database and heavy host:** hosts the dev database and runs the `head-checks.sh` steps that need Postgres, via `script/remote-heavy.sh`; never runs interactive agent workers or Playwright.
 
 ### Worker admission and load balancing
 

@@ -1,1 +1,0 @@
-head-checks now locks the remote database-step checkout so two runs never share it. The second run waits, then reports host busy (INFRA, not FAIL). A database step that executed 0 tests reports a host fault (INFRA), so no rework starts.

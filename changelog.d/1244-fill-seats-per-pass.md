@@ -1,1 +1,0 @@
-fleet-watch: one issue_scan pass now starts every eligible issue the host caps and the usage gate allow, instead of one per pass. It counts this pass's starts per host, re-checks the usage gate before each later start, and moves on to the next candidate after a failed, deferred, live or skipped one. Refs #1244.

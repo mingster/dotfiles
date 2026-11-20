@@ -9,8 +9,11 @@ owner trial. It never waits for a slot; it logs wall time, 1 minute load and
 free memory percent per run to `~/.orca/logs/heavy-gate-measure.log`.
 
 Unit tests, lint and review scripts are not heavy and do not use the gate.
-`head-checks.sh` wraps only Playwright and build checklist steps; the type
-check step uses measure mode.
+`head-checks.sh` wraps Playwright, build and `test:regression` steps at weight 2
+and type check steps at weight 1 (other repos only; the dotfiles repo's own
+checks wrap nothing). A type check killed with exit 137 is retried once, then
+reported as INFRA, so no rework starts. Type checks that an agent runs by hand
+still use measure mode.
 
 Slot waits still log `stamp host=H wait_s=S` lines to
 `~/.orca/logs/heavy-gate-wait.log` for `fleet-watch.py` and team audit metrics.

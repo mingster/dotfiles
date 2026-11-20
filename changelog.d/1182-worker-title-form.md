@@ -1,1 +1,0 @@
-`worker-startup.sh` refuses any `--title` that is not `#<issue>|<role>` (for example `#123|qa-sdet`; a verifier uses its PR number) and sets the title on the worker terminal and pane. `fleet-watch` emits that form for builder, rework, fix, verifier and sweep starts and still reads the old `<role> - <job>` titles of workers already running (#1182).

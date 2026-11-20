@@ -1,1 +1,0 @@
-* `fleet-watch` no longer counts the coordinator's rejected copy of a remote `worker_done` (`unknown_dispatch`) as an accepted one. It synthesizes the completion, releases the dispatch on the remote host and the coordinator, and sends one plain status line saying no hand release is needed (#1228).
