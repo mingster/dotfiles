@@ -4671,6 +4671,22 @@ def _host_caps_present(config):
     return isinstance(caps, dict) and bool(caps)
 
 
+def _keep_standing_verifier(dest, source):
+    """Carry babysit.standing_verifier (or a top-level standing_verifier) from the stub into the pass config (#1272)."""
+    if not isinstance(dest, dict) or not isinstance(source, dict):
+        return
+    block = (source.get('babysit') or {}).get('standing_verifier') if isinstance(source.get('babysit'), dict) else None
+    if not isinstance(block, dict):
+        block = source.get('standing_verifier')
+    if not isinstance(block, dict):
+        return
+    babysit = dest.get('babysit')
+    if not isinstance(babysit, dict):
+        babysit = {}
+        dest['babysit'] = babysit
+    babysit.setdefault('standing_verifier', block)
+
+
 def resolve_pass_config(config, config_path):
     """Use the coordinator file when the scheduled stub has no runs.
 
@@ -4691,6 +4707,7 @@ def resolve_pass_config(config, config_path):
             adopted = coordinator_config_path()
     source = config if given_is_stub and isinstance(config, dict) else _read_json_object(stub_path)
     _fill_missing_stub_keys(pass_config, source)
+    _keep_standing_verifier(pass_config, source)
     if isinstance(pass_config, dict) and not _host_caps_present(pass_config):
         log_fleet_watch('pass_config_no_host_caps')
     return pass_config, adopted
@@ -5711,6 +5728,7 @@ def default_babysit_start(command, run=subprocess.run):
         done.returncode,
         _start_reason(done.stderr, getattr(done, 'stdout', '') or ''),
         dispatch_id_from_text(getattr(done, 'stdout', None) or ''),
+        terminal_from_text(getattr(done, 'stdout', None) or ''),
     )
 
 
@@ -5789,6 +5807,17 @@ TRIAL_COLUMNS = (
 )
 
 
+def _first_remote_code_host(config):
+    """The first host in worker_placement.order, else host_caps, that is not the coordinator's own host (#1272)."""
+    placement = config.get('worker_placement') if isinstance(config.get('worker_placement'), dict) else {}
+    order = placement.get('order') if isinstance(placement.get('order'), list) else []
+    caps = config.get('host_caps') if isinstance(config.get('host_caps'), dict) else {}
+    for host in list(order) + list(caps):
+        if isinstance(host, str) and host and not _is_local_coordinator_host(host, config):
+            return [host]
+    return []
+
+
 def standing_settings(config):
     """babysit.standing_verifier merged over its defaults. Disabled unless the config enables it."""
     cfg = dict(STANDING_DEFAULTS)
@@ -5802,6 +5831,8 @@ def standing_settings(config):
             cfg[key] = STANDING_DEFAULTS[key]
     hosts = cfg.get('hosts')
     cfg['hosts'] = [h for h in hosts if isinstance(h, str) and h] if isinstance(hosts, list) else []
+    if cfg.get('enabled') and cfg['hosts'] in ([], ['auto']):
+        cfg['hosts'] = _first_remote_code_host(config)
     cfg['enabled'] = bool(cfg.get('enabled')) and bool(cfg['hosts'])
     return cfg
 
@@ -5942,6 +5973,29 @@ class StandingIO:
             return False
         return True
 
+    def resolve_terminal(self, dispatch_id, worktree_name, host):
+        """Terminal handle of a remote standing verifier, whose worker-list row carries none (#1272), else ''."""
+        try:
+            shown = rpc('orchestration', 'worker-show', '--dispatch', dispatch_id, *self._env(host))
+        except SEND_ERRORS:
+            shown = None
+        if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+            shown = shown['worker']
+        found = worker_terminal_handle(shown) if isinstance(shown, dict) else ''
+        if found:
+            return found
+        try:
+            listed = rpc('terminal', 'list', *self._env(host))
+        except SEND_ERRORS:
+            return ''
+        rows = listed.get('terminals') if isinstance(listed, dict) else None
+        for row in rows if isinstance(rows, list) else []:
+            if isinstance(row, dict) and worktree_name and worktree_name in json.dumps(row):
+                handle = row.get('handle')
+                if isinstance(handle, str) and handle:
+                    return handle
+        return ''
+
     def stop(self, dispatch_id, host):
         try:
             rpc('orchestration', 'worker-stop', '--dispatch', dispatch_id, *self._env(host))
@@ -5980,11 +6034,17 @@ def _standing_worker(rec, workers):
     return None
 
 
-def _standing_terminal(rec, workers):
+def _standing_terminal(rec, workers, io=None):
     if rec.get('terminal'):
         return rec['terminal']
     worker = _standing_worker(rec, workers)
-    return worker_terminal_handle(worker) if worker else ''
+    found = worker_terminal_handle(worker) if worker else ''
+    if not found and io is not None and hasattr(io, 'resolve_terminal') and rec.get('dispatch_id'):
+        slug = re.sub(r'[^a-z0-9]+', '-', str(rec.get('repo') or '').lower()).strip('-')
+        found = io.resolve_terminal(rec['dispatch_id'], 'verify-standing-%s' % slug, rec.get('host') or '') or ''
+        if found:
+            rec['terminal'] = found
+    return found
 
 
 def standing_idle(rec, open_prs):
@@ -6038,7 +6098,7 @@ def standing_housekeeping(config, state, workers, open_prs, io, release_worker, 
         if rec.get('wake_verified') is False and not rec.get('wake_checked') \
                 and now - (rec.get('assigned_at') or now) >= cfg['wake_timeout_seconds']:
             rec['wake_checked'] = True
-            text, last = io.read(_standing_terminal(rec, workers), host)
+            text, last = io.read(_standing_terminal(rec, workers, io), host)
             if last == rec.get('assigned_last') and not STANDING_BUSY_RE.search(text or ''):
                 failed.add((rec.get('repo'), rec.get('current_pr')))
                 (state.get('babysit') or {}).get(rec.get('repo'), {}).pop(str(rec.get('current_pr')), None)
@@ -6123,7 +6183,7 @@ def standing_route(
         if isinstance(rec, dict) and not standing_idle(rec, open_prs):
             continue
         if isinstance(rec, dict):
-            terminal = _standing_terminal(rec, workers)
+            terminal = _standing_terminal(rec, workers, io)
             text, pre_last = io.read(terminal, host)
             reason = standing_low_context(text, cfg)
             if len(rec.get('prs_assigned') or []) >= cfg['max_prs']:

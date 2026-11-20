@@ -49,6 +49,11 @@ class FakeIO:
         self.wakes = True
         self.tick = 100
 
+    resolved = ''
+
+    def resolve_terminal(self, dispatch, name, host):
+        return self.resolved
+
     def read(self, terminal, host):
         return self.screens.get(terminal, ('', None))
 
@@ -314,6 +319,19 @@ class StandingVerifier(unittest.TestCase):
         cfg = fw.standing_settings({'babysit': {'standing_verifier': {'enabled': True, 'hosts': ['h'], 'max_prs': '3'}}})
         self.assertEqual((cfg['enabled'], cfg['max_prs'], cfg['model']), (True, 3, 'gemini-4-argon-high'))
 
+    def test_remote_wake_that_never_happens_releases_on_the_environment_and_falls_back(self):
+        state = {}
+        remote_row = dict(standing_row(), terminal=None, agentTerminalHandle=None)
+        self.run_pass([pr(7)], state)
+        state['standing_verifiers'][HOST]['terminal'] = ''
+        self.workers = [remote_row]
+        self.io.resolved = 'term_s1'
+        self.io.wakes = False
+        self.run_pass([pr(7, verdict=True), pr(8)], state)
+        self.assertEqual(self.released, [('ctx_s1', HOST)])
+        self.assertEqual(len(self.starts), 2)
+        self.assertNotIn('--on', self.starts[1])
+
     def test_the_example_config_documents_the_block_disabled(self):
         import json
         example = json.loads((Path(__file__).parent.parent / 'fleet-watch.config.example.json').read_text())
@@ -321,6 +339,83 @@ class StandingVerifier(unittest.TestCase):
         self.assertIs(block['enabled'], False)
         self.assertEqual((block['agent'], block['max_prs'], block['wake_timeout_seconds'], block['max_context_percent']),
                          ('antigravity', 5, 90, 70))
+
+
+class StandingTrialActivation(unittest.TestCase):
+    def test_resolve_pass_config_keeps_standing_verifier_from_the_stub(self):
+        import json
+        with tempfile.TemporaryDirectory() as home:
+            stub = Path(home) / '.config' / 'fleet-watch' / 'config.json'
+            stub.parent.mkdir(parents=True)
+            block = {'enabled': True, 'hosts': ['auto']}
+            stub.write_text(json.dumps({'babysit': {'standing_verifier': block}, 'host_caps': {'local': 2}}))
+            coordinator = Path(home) / 'elon.json'
+            coordinator.write_text(json.dumps({'runs': [{'id': 'run_x', 'terminal': 'term_x'}]}))
+            with patch.object(Path, 'home', return_value=Path(home)), \
+                    patch.dict(os.environ, {'FLEET_WATCH_COORDINATOR_CONFIG': str(coordinator)}):
+                config = json.loads(stub.read_text())
+                resolved, adopted = fw.resolve_pass_config(config, str(stub))
+        self.assertEqual(adopted, coordinator)
+        self.assertEqual(resolved['babysit']['standing_verifier'], block)
+        self.assertTrue(resolved['runs'])
+
+    def test_auto_host_picks_the_first_non_local_code_host(self):
+        base = {'local_host': 'me', 'worker_placement': {'order': ['me', 'far-a', 'far-b']},
+                'host_caps': {'me': 5, 'far-a': 5}}
+        for hosts in (['auto'], []):
+            config = dict(base, babysit={'standing_verifier': {'enabled': True, 'hosts': hosts}})
+            cfg = fw.standing_settings(config)
+            self.assertEqual((cfg['enabled'], cfg['hosts']), (True, ['far-a']), hosts)
+        caps_only = {'local_host': 'me', 'host_caps': {'me': 5, 'far-b': 5},
+                     'babysit': {'standing_verifier': {'enabled': True, 'hosts': ['auto']}}}
+        self.assertEqual(fw.standing_settings(caps_only)['hosts'], ['far-b'])
+        only_local = {'local_host': 'me', 'host_caps': {'me': 5},
+                      'babysit': {'standing_verifier': {'enabled': True, 'hosts': ['auto']}}}
+        self.assertFalse(fw.standing_settings(only_local)['enabled'])
+
+
+class RemoteStandingTerminal(unittest.TestCase):
+    def test_default_babysit_start_carries_the_terminal_from_stdout(self):
+        done = type('Done', (), {'returncode': 0, 'stderr': '', 'stdout': (
+            '{"ok":true,"result":{"dispatchId":"ctx_s9","terminal":{"handle":"term_s9"}}}')})()
+        result = fw.default_babysit_start(['x'], run=lambda *_a, **_k: done)
+        self.assertEqual((result.dispatch_id, result.terminal), ('ctx_s9', 'term_s9'))
+
+    def test_resolve_terminal_reads_worker_show_then_terminal_list_and_caches(self):
+        calls = []
+
+        def fake_rpc(*args):
+            calls.append(args)
+            if args[:2] == ('orchestration', 'worker-show'):
+                return {'worker': {'dispatchId': 'ctx_s1', 'agentTerminalHandle': None}}
+            if args[:2] == ('terminal', 'list'):
+                return {'terminals': [{'handle': 'term_other', 'title': 'x'},
+                                      {'handle': 'term_found', 'title': 'verify-standing-o-r'}]}
+            return {}
+        io = fw.StandingIO({'local_host': 'me'})
+        with patch.object(fw, 'rpc', fake_rpc):
+            self.assertEqual(io.resolve_terminal('ctx_s1', 'verify-standing-o-r', 'far-a'), 'term_found')
+        self.assertIn(('orchestration', 'worker-show', '--dispatch', 'ctx_s1', '--environment', 'far-a'), calls)
+        self.assertIn(('terminal', 'list', '--environment', 'far-a'), calls)
+
+    def test_resolve_terminal_prefers_the_worker_show_handle(self):
+        def fake_rpc(*args):
+            return {'worker': {'terminal': 'term_shown'}}
+        with patch.object(fw, 'rpc', fake_rpc):
+            self.assertEqual(fw.StandingIO({}).resolve_terminal('ctx_s1', 'verify-standing-o-r', 'far-a'), 'term_shown')
+
+    def test_standing_terminal_resolves_once_and_caches_on_the_record(self):
+        class Io:
+            calls = 0
+
+            def resolve_terminal(self, dispatch, name, host):
+                self.calls += 1
+                return 'term_r'
+        rec, io = {'dispatch_id': 'ctx_s1', 'repo': 'o/r', 'host': 'far-a', 'terminal': ''}, Io()
+        remote_row = {'dispatchId': 'ctx_s1', 'agentTerminalHandle': None}
+        self.assertEqual(fw._standing_terminal(rec, [remote_row], io), 'term_r')
+        self.assertEqual(fw._standing_terminal(rec, [remote_row], io), 'term_r')
+        self.assertEqual((io.calls, rec['terminal']), (1, 'term_r'))
 
 
 if __name__ == '__main__':
