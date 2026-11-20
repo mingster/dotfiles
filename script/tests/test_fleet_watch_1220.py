@@ -131,6 +131,69 @@ class DeferredPrRelease(unittest.TestCase):
         self.assertEqual(messages, [])
 
 
+def local_row(dispatch, **extra):
+    row = {'dispatchId': dispatch, 'dispatchStatus': 'completed', 'workerState': 'succeeded',
+           'terminalState': 'retained', 'projection': {'host': {'id': 'host-a'}, 'resource': {'state': 'absent'}},
+           '_task_title': '#1|fullstack-dev'}
+    row.update(extra)
+    return row
+
+
+SEAT_CONFIG = {'local_host': 'host-a', 'host_caps': {'host-a': 3, 'host-b': 2}}
+
+
+class ReleasedWorkersFreeSeats(unittest.TestCase):
+    def occupies(self, row, **kw):
+        return fw.classify_worker(row, None, kw.get('config') or SEAT_CONFIG, {})[0]
+
+    def test_released_unpushed_row_holds_no_seat(self):
+        row = local_row('d1', dispatchStatus='released', pushed=False, terminalState='released')
+        self.assertFalse(self.occupies(row))
+
+    def test_completed_retained_row_with_an_absent_resource_holds_no_seat(self):
+        self.assertFalse(self.occupies(local_row('d2')))
+
+    def test_persisted_released_ids_free_the_seat_on_admit(self):
+        row = {'dispatchId': 'd3', 'dispatchStatus': 'completed', 'workerState': 'succeeded',
+               'terminalState': 'retained', 'projection': {'host': {'id': 'host-b'}},
+               'resource': {'ownershipState': 'owned', 'releaseState': 'retained'}}
+        with patch.object(fw, 'coordinator_load_per_core', return_value=0.1):
+            held = fw.admit('host-b', SEAT_CONFIG, workers=[dict(row)])
+            freed = fw.admit('host-b', SEAT_CONFIG, workers=[dict(row)], released_ids={'d3'})
+        self.assertEqual((held['occupied'], freed['occupied']), (1, 0))
+
+    def test_persisted_released_ids_come_from_the_state_file(self):
+        import json
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as handle:
+            json.dump({'auto_released': ['a'], 'remote_reconciled': ['b'], 'followup_released': ['c'], 'other': ['z']}, handle)
+        self.assertEqual(fw.persisted_released_ids(handle.name), {'a', 'b', 'c'})
+        self.assertEqual(fw.persisted_released_ids(None), set())
+
+
+class SeatReport(unittest.TestCase):
+    def workers(self):
+        live = {'dispatchId': 'd_live', 'dispatchStatus': 'running', 'terminalState': 'active',
+                'projection': {'host': {'id': 'host-a'}, 'liveness': {'verdict': 'live'}, 'outcome': 'in_progress'},
+                '_task_title': '#5|fullstack-dev'}
+        held = {'dispatchId': 'd_held', 'dispatchStatus': 'completed', 'workerState': 'succeeded',
+                'terminalState': 'retained', 'projection': {'host': {'id': 'host-b'}},
+                'resource': {'ownershipState': 'owned', 'releaseState': 'retained'}, '_task_title': '#6|qa-sdet'}
+        return [live, held, local_row('d_freed')]
+
+    def test_report_counts_live_and_names_retained_workers_per_host(self):
+        with patch.object(fw, 'coordinator_load_per_core', return_value=0.1), \
+                patch.object(fw, 'coordinator_free_gb', return_value=64.0):
+            report = fw.fleet_seat_report(dict(SEAT_CONFIG), None, None, workers=self.workers())
+        self.assertEqual((report['host-a']['occupied'], report['host-a']['live_count'], report['host-a']['retained_count']), (1, 1, 0))
+        self.assertEqual((report['host-b']['occupied'], report['host-b']['retained_count']), (1, 1))
+        held = report['host-b']['retained_workers'][0]
+        self.assertEqual((held['dispatchId'], held['title']), ('d_held', '#6|qa-sdet'))
+        text = fw.format_seat_report(report)
+        self.assertIn('host-a: 1/3 live=1 retained=0 retained_workers=none', text)
+        self.assertIn('host-b: 1/2 live=0 retained=1 retained_workers=d_held(#6|qa-sdet,', text)
+
+
 class ReleaseWorkerEnvironment(unittest.TestCase):
     def test_default_release_passes_environment_for_remote(self):
         with patch.object(fw, 'rpc') as rpc:

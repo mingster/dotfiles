@@ -262,6 +262,8 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   local spec_file=$1 repo_sel=${2:-} record=${3:-} json line env_name placed_repo pick_args=() cfg
   WORKER_STARTUP_PLACED_ENV=
   WORKER_STARTUP_PLACED_REPO=
+  WORKER_STARTUP_PLACED_HOST=
+  WORKER_STARTUP_PLACED_CFG=
   cfg=$(resolve_placement_config)
   if [ ! -f "$cfg" ]; then
     echo 'worker-placement: skipped (no fleet config)' >&2
@@ -298,6 +300,10 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   WORKER_STARTUP_PLACED_ENV=$env_name
   placed_repo=$(printf '%s' "$json" | jq -r '.repo // empty')
   WORKER_STARTUP_PLACED_REPO=$placed_repo
+  if [ "$record" = --record ]; then
+    WORKER_STARTUP_PLACED_HOST=$(printf '%s' "$json" | jq -r '.host // empty')
+    WORKER_STARTUP_PLACED_CFG=$cfg
+  fi
 }
 
 # --on skips placement, so judge the named host by the same load rule (worker-placement.py owns it).
@@ -1039,6 +1045,10 @@ run_mode() {
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
     local ec=$1 rm_args
+    if [ -n "${WORKER_STARTUP_PLACED_HOST:-}" ]; then
+      "$python3" "$here/worker-placement.py" unrecord --host "$WORKER_STARTUP_PLACED_HOST" \
+        ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
+    fi
     if [ "$created_wt" = 1 ]; then
       rm_args=(worktree rm --worktree "path:$wt" --force)
       [ -z "$environment" ] || rm_args+=(--environment "$environment")

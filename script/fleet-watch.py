@@ -317,6 +317,10 @@ def worker_terminal_released(worker):
     resource = w.get('resource') or {}
     if 'released' in (resource.get('releaseState'), resource.get('ownershipState')):
         return True
+    # A finished dispatch whose resource Orca no longer has holds no terminal, even when it reports "retained" (#1273).
+    if (status == 'completed' or worker_settled_kind(w) is not None) \
+            and (projection.get('resource') or {}).get('state') == 'absent':
+        return True
     # Orca drops the resource and terminal of a dispatch it already released (worker-release says already_released).
     if (status == 'completed' and 'resource' in w and not resource
             and not w.get('agentTerminalHandle') and not w.get('terminalState')):
@@ -824,24 +828,14 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
             return True, info, False
 
     if status == 'released':
-        if worker.get('pushed') is False or evidence_dict.get('pushed') is False:
-            info = {
-                'dispatchId': dispatch_id,
-                'host': host,
-                'category': 'retained',
-                'role': role or 'author',
-                'evidence': {'status': status, 'pushed': False, 'released': True}
-            }
-            return True, info, False
-        else:
-            info = {
-                'dispatchId': dispatch_id,
-                'host': host,
-                'category': 'freed',
-                'role': role,
-                'evidence': {'status': status, 'pushed': pushed, 'released': True}
-            }
-            return False, info, False
+        info = {
+            'dispatchId': dispatch_id,
+            'host': host,
+            'category': 'freed',
+            'role': role,
+            'evidence': {'status': status, 'pushed': pushed, 'released': True}
+        }
+        return False, info, False
 
     info = {
         'dispatchId': dispatch_id,
@@ -1235,7 +1229,7 @@ def _first_admitted_overflow_host(host, config, workers, env_names=None, repo=No
     return None
 
 
-def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=None):
+def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=None, released_ids=None):
     """Evaluate host admission under its configured cap.
     Returns an admission receipt dict. Missing/failed remote inventory and release_unknown never authorize a start.
     """
@@ -1291,6 +1285,9 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
                     }
 
     deduped = deduplicate_workers(workers)
+    for w in deduped:
+        if released_ids and isinstance(w, dict) and w.get('dispatchId') in released_ids:
+            _mark_worker_released(w)
     env_names = _resolve_env_names(deduped, config, env_names)
     proof = build_gone_proof(deduped, config, env_names)
     host_resources = []
@@ -7931,12 +7928,65 @@ def agy_signin_notices(config, workers, read=None, now=None):
     return notices
 
 
+def persisted_released_ids(state_path):
+    """Dispatch ids that earlier passes released (auto_released, remote_reconciled, followup_released) (#1273)."""
+    state = _read_json_object(state_path) if state_path else None
+    ids = set()
+    for key in ('auto_released', 'remote_reconciled', 'followup_released'):
+        rows = (state or {}).get(key)
+        if isinstance(rows, list):
+            ids.update(r for r in rows if isinstance(r, str))
+    return ids
+
+
+def _seat_worker(info, titles):
+    evidence = info.get('evidence') if isinstance(info.get('evidence'), dict) else {}
+    reason = 'release_unknown' if evidence.get('release_unknown') else str(evidence.get('status') or info.get('category') or '')
+    return {'dispatchId': info.get('dispatchId'), 'title': titles.get(info.get('dispatchId'), ''),
+            'role': info.get('role'), 'evidence': evidence, 'reason': reason}
+
+
+def fleet_seat_report(config, config_path=None, state_path=None, workers=None):
+    """Live and retained seats per host, with each retained worker named (#1273)."""
+    config, _adopted = resolve_pass_config(config or {}, config_path or '')
+    if workers is None:
+        workers = fetch_workers(config)
+    workers = deduplicate_workers(workers)
+    titles = {w.get('dispatchId'): w.get('_task_title') or '' for w in workers if isinstance(w, dict)}
+    released = persisted_released_ids(state_path)
+    env_names = _resolve_env_names(workers, config, None)
+    report = {}
+    for host, cap in (config.get('host_caps') or {}).items():
+        receipt = admit(host, config, workers=workers, env_names=env_names, released_ids=released)
+        resources = receipt.get('resources') or []
+        report[host] = {
+            'cap': receipt.get('cap', cap),
+            'occupied': receipt.get('occupied'),
+            'live_count': receipt.get('live_count', 0),
+            'retained_count': receipt.get('retained_count', 0),
+            'live_workers': [_seat_worker(r, titles) for r in resources if r.get('category') == 'live'],
+            'retained_workers': [_seat_worker(r, titles) for r in resources if r.get('category') != 'live'],
+        }
+    return report
+
+
+def format_seat_report(report):
+    lines = []
+    for host, row in report.items():
+        retained = ','.join('%s(%s,%s)' % (w['dispatchId'], w['title'] or w['role'], w['reason'])
+                            for w in row['retained_workers']) or 'none'
+        lines.append('%s: %s/%s live=%s retained=%s retained_workers=%s' % (
+            host, row['occupied'], row['cap'], row['live_count'], row['retained_count'], retained))
+    return '\n'.join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
     parser.add_argument('--state', type=Path, required=False)
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     parser.add_argument('--admit-local', action='store_true', help='Check coordinator load, memory, and cap admission')
+    parser.add_argument('--seats', action='store_true', help='Print live and retained seats per host and exit')
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
@@ -7948,15 +7998,21 @@ def main():
         print(trial_summary(read_trial_rows()))
         return 0
 
-    if args.admit or args.admit_local:
+    if args.admit or args.admit_local or args.seats:
         if args.config is not None:
+            cfg_path = args.config
             config = json.loads(args.config.read_text()) if args.config.exists() else {}
         else:
             cfg_env = os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json')
             cfg_path = Path(cfg_env)
             config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        if args.seats:
+            report = fleet_seat_report(config, cfg_path, args.state)
+            print(json.dumps(report, indent=2) if args.json else format_seat_report(report))
+            return 0
+        config, _adopted = resolve_pass_config(config, cfg_path)
         target = args.admit if args.admit else (config.get('local_host') or 'local')
-        receipt = admit(target, config)
+        receipt = admit(target, config, released_ids=persisted_released_ids(args.state))
         print(json.dumps(receipt, indent=2))
         return 0 if receipt.get('admitted') else 1
 

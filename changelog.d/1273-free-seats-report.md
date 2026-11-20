@@ -1,0 +1,1 @@
+* Seats: placement and admission read only the active Run, released and finished workers free their seat, a failed start no longer holds one for 5 minutes, and `fleet-watch.py --seats` (or `worker-placement.py seats`) lists live and retained seats per host and names each retained worker (#1273).
