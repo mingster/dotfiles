@@ -417,5 +417,16 @@ case18_first_tests_start_first() {
   ok "case18 SELECT_SCRIPT_TESTS_FIRST starts its tests first"
 }
 
+case22_model_routing_runs_usage_gate() {
+  local out t
+  out=$(bash "$root/script/select-changed-script-tests.sh" --list-only templates/agent-team/.claude/model-routing.md 2>&1) \
+    || fail "case22 run failed: $out"
+  for t in script/tests/test_usage_gate.py script/agent-team.test.sh script/tests/release-guard-rules.test.sh script/tests/role-word-budget.test.sh; do
+    grep -Fq "$t" <<<"$out" || fail "case22 missing $t: $out"
+  done
+  ok "case22 model-routing.md selects test_usage_gate.py and the template tests"
+}
+
 case18_first_tests_start_first
-echo 'PASS: 21 acceptance cases'
+case22_model_routing_runs_usage_gate
+echo 'PASS: 22 acceptance cases'

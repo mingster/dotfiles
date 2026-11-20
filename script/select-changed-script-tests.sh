@@ -198,6 +198,12 @@ map_file() {
     .agents/skills/orca-team/*)
       add_if_exists ".agents/skills/orca-team/worker-state.test.sh"
       ;;
+    templates/agent-team/.claude/model-routing.md)
+      add_if_exists "script/tests/test_usage_gate.py"
+      add_if_exists "script/agent-team.test.sh"
+      add_if_exists "script/tests/release-guard-rules.test.sh"
+      add_if_exists "script/tests/role-word-budget.test.sh"
+      ;;
     templates/agent-team/*)
       add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
