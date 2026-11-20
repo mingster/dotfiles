@@ -2425,10 +2425,8 @@ PIN_REL=.claude/agent-team-pin
 
 write_pin() { # <target> <dry>
   local sha
-  sha=$(git -C "$DOTFILES" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null) || {
-    echo "agent-team: $DOTFILES is not a git checkout; $PIN_REL not written" >&2
-    return 0
-  }
+  # A dotfiles tree outside git (an archive copy) has no commit to pin; check then falls back to the plain check.
+  sha=$(git -C "$DOTFILES" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null) || return 0
   if [ -n "$(git -C "$DOTFILES" status --porcelain -- templates script .agents 2>/dev/null)" ]; then
     echo "agent-team: warning: dotfiles has local changes; $PIN_REL names $sha, which does not hold them" >&2
   fi

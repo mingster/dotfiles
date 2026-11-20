@@ -1990,7 +1990,7 @@ def _git_out(cwd, *args):
         out = subprocess.run(['git', '-C', str(cwd)] + list(args), capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
         return None
-    return out.stdout.strip() if out.returncode == 0 else None
+    return (getattr(out, 'stdout', None) or '').strip() if getattr(out, 'returncode', 1) == 0 else None
 
 
 def template_pin_notices(config, state, now, dotfiles=None, sync_state=None, origin_of=None):
