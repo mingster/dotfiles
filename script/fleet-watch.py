@@ -3098,6 +3098,12 @@ def issue_scan_sort_key(issue):
             issue.get('createdAt') or '', int(issue.get('number') or 0))
 
 
+def issue_scan_queue_key(repo, issue):
+    """Owner rule 2026-11-20: every dotfiles issue goes before any other repo's, then the sort key."""
+    dotfiles_first = 0 if str(repo).rsplit('/', 1)[-1] == 'dotfiles' else 1
+    return (dotfiles_first,) + issue_scan_sort_key(issue)
+
+
 # role label -> (worker title role, usage-gate preset role). No role label means fullstack-dev.
 ISSUE_ROLE_ROUTES = (
     ('role:pm', 'architect-pm', 'architect-pm'),
@@ -6601,7 +6607,7 @@ def issue_scan_pass(
         count_refused('host_cap')
         return notices, log_bits
 
-    candidates.sort(key=lambda pair: issue_scan_sort_key(pair[1]))
+    candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
     lookup = repo_id_lookup or default_repo_id_lookup
     for repo, row in candidates:
         placement = None
