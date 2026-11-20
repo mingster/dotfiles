@@ -3,7 +3,7 @@
 
 Ceilings, reserve weights and the missing reading rule live in usage-gate.config.json
 (USAGE_GATE_CONFIG overrides the path); check, pick and fleet-watch all read that one file.
-check --provider NAME exits 0 allowed, 3 ceiling reached (or daily cap, automatic starts only),
+check --provider NAME exits 0 allowed, 3 ceiling reached (or daily cap, automatic starts only, never Claude),
 4 unknown. A missing reading falls back to the last good one when it is under 2 hours old and at
 least 10 points under the ceiling (allowed with a note); otherwise it is unknown and blocks.
 Antigravity with no reading is allowed in check and pick alike (owner 2026-11-12, 2026-11-13);
@@ -24,6 +24,10 @@ treat that provider as blocked until the date; "grok" also covers Cursor grok mo
 family --agent A --model M prints the model family from the one map ship.sh and
 fleet-watch share. When qa-sdet is asked to avoid a family and every other family
 is out of quota, pick returns a different Claude model with same_family_fallback.
+Claude has no daily cap (owner 2026-11-21): its headroom is the weekly percent left against the
+time to the weekly reset, summed over every managed Orca account (show prints the combined figure).
+The active account switches to a free one before a start is blocked, and an account whose reading
+fails keeps its last good reading (under last_good_max_age_min old).
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads included usage from GetCurrentPeriodUsage, which names
 every model that percent covers, and falls back to the usage-summary meter only
@@ -94,6 +98,39 @@ def _orca_weekly(limits, observed):
             "observed_at": observed}
 
 
+def carry_account_readings(readings):
+    """readings: {account id: reading or None}. Save each good one. A failed one (for example the usage
+    endpoint is rate limited) takes its saved reading while that is under last_good_max_age_min old and
+    its week has not reset; with nothing usable saved the account is left out, never counted as zero."""
+    path = STATE + "/claude-accounts.last-good.json"
+    try:
+        with open(path) as f:
+            saved = json.load(f)
+    except (OSError, ValueError):
+        saved = {}
+    now, limit = time.time(), load_config()["last_good_max_age_min"] * 60
+    kept, out = {}, {}
+    for key, reading in readings.items():
+        old = saved.get(key) if isinstance(saved, dict) else None
+        if reading:
+            out[key] = kept[key] = reading
+            continue
+        try:
+            t, resets = epoch(old["observed_at"]), old.get("resets_at")
+            if t is not None and 0 <= now - t < limit and (resets is None or resets > now):
+                out[key] = kept[key] = old
+        except (TypeError, KeyError, AttributeError):
+            pass
+    if kept != saved:
+        try:
+            os.makedirs(STATE, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(kept, f)
+        except OSError:
+            pass
+    return out
+
+
 def orca_claude_accounts():
     """Managed Claude accounts from Orca: {"active": reading, "active_id", "others": [{"id", **reading}]}.
 
@@ -107,26 +144,29 @@ def orca_claude_accounts():
         limits = result["rateLimits"]["claude"]
         observed = limits.get("updatedAt")
         observed = observed / 1000 if isinstance(observed, (int, float)) else None
-        active = _orca_weekly(limits, observed)
-        if active is None:
-            return None
-        others = []
+        active_id = result["claude"].get("activeAccountId")
+        key = active_id or "system"
+        readings = {key: _orca_weekly(limits, observed)}
         for other in result["rateLimits"].get("inactiveClaudeAccounts") or []:
-            reading = _orca_weekly(other.get("rateLimits"), observed)
-            if reading and other.get("accountId"):
-                others.append({"id": other["accountId"], **reading})
-        return {"active": active, "active_id": result["claude"].get("activeAccountId"), "others": others}
+            if other.get("accountId"):
+                readings[other["accountId"]] = _orca_weekly(other.get("rateLimits"), observed)
+        good = carry_account_readings(readings)
+        if key not in good:
+            return None
+        others = [{"id": k, **v} for k, v in good.items() if k != key]
+        return {"active": good[key], "active_id": active_id, "others": others}
     except Exception:
         return None
 
 
-def claude_switch(ceiling):
-    """Select a managed Claude account under the ceiling when the active one is at or over it.
+def claude_switch(ceiling, reserve=0.0):
+    """Select a managed Claude account under the ceiling when the active one, with the reserve for
+    running workers, reaches it. This runs before any block.
 
     Returns the new account's reading, or None when nothing changed. Running workers keep their account.
     """
     accounts = orca_claude_accounts()
-    if not accounts or accounts["active"]["pct"] < ceiling:
+    if not accounts or accounts["active"]["pct"] + reserve < ceiling:
         return None
     free = [o for o in accounts["others"] if o["pct"] < ceiling]
     if not free:
@@ -143,6 +183,20 @@ def claude_switch(ceiling):
           f"{accounts['active']['pct']:g}% (ceiling {ceiling:g}%), switched to {best['id'][:8]} at {best['pct']:g}%",
           file=sys.stderr)
     return {k: v for k, v in best.items() if k != "id"}
+
+
+def claude_combined(ceiling, reserve, now):
+    """Headroom summed over every managed Claude account: weekly percent left (to the ceiling, less the
+    reserve), and points per day left until each account's weekly reset. None without Orca accounts."""
+    accounts = orca_claude_accounts()
+    if not accounts:
+        return None
+    readings = [accounts["active"], *accounts["others"]]
+    rooms = [max(ceiling - r["pct"], 0.0) for r in readings]
+    per_day = sum(room / (max((float(r["resets_at"]) - now) / 86400, MIN_DAYS) if r.get("resets_at") else 7.0)
+                  for room, r in zip(rooms, readings))
+    return {"accounts": len(readings), "headroom": round(max(sum(rooms) - reserve, 0.0), 1),
+            "pace": round(per_day, 1)}
 
 
 def claude_reading(path=None):
@@ -620,11 +674,12 @@ def auto_cap(baseline, resets, now, ceiling):
     return round(max(ceiling - baseline, 0.0) / max(days, 1.0), 1)
 
 
-def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None, auto=False):
+def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None, auto=False, daily_cap=True):
     """Return (verdict, detail, new_state). verdict: allowed|blocked|unknown.
     reserve is weekly percent held back for workers already running.
     cap is the daily pacing line; None derives it from the day baseline and weekly reset.
-    Past the cap an automatic start (auto) is blocked until midnight; any other start gets a note."""
+    Past the cap an automatic start (auto) is blocked until midnight; any other start gets a note.
+    daily_cap=False (Claude, issue 1275) has no daily cap: only the weekly ceiling blocks."""
     if reading is None:
         return "unknown", {"reason": "no reading"}, state
     pct, resets = reading["pct"], reading.get("resets_at")
@@ -648,10 +703,12 @@ def decide(reading, state, today, now, cap, ceiling, reserve=0.0, day_start=None
         cap = auto_cap(st["baseline"], resets, now, ceiling)
     detail = {"weekly_used": pct, "today_used": spent, "cap": cap, "ceiling": ceiling,
               "reserve": reserve, "resets_at": resets}
+    if not daily_cap:
+        del detail["cap"]
     if pct + reserve >= ceiling:
         detail["reason"] = "weekly ceiling"
         return "blocked", detail, st
-    if spent + reserve >= cap:
+    if daily_cap and spent + reserve >= cap:
         if auto:
             detail["reason"] = "daily cap"
             return "blocked", detail, st
@@ -891,7 +948,7 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
     except (OSError, ValueError):
         state = None
     reader = READERS.get(provider)
-    switched = claude_switch(ceiling) if provider == "claude" else None
+    switched = claude_switch(ceiling, round(running_reserve(provider, per_worker)[1], 1)) if provider == "claude" else None
     try:
         raw = switched or (reader() if reader else None)
     except Exception:
@@ -932,7 +989,8 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
                 cap = float(o["cap"])
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    verdict, detail, new = decide(basis, state, today, now, cap, ceiling, reserve, day_start, auto)
+    verdict, detail, new = decide(basis, state, today, now, cap, ceiling, reserve, day_start, auto,
+                                  daily_cap=provider != "claude")
     if new is not state and new:
         os.makedirs(STATE, exist_ok=True)
         json.dump(new, open(path, "w"))
@@ -958,6 +1016,9 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
         detail["reading_age_min"] = (round((now - t) / 60, 1) if carried_ok else round((now - t) / 60)) if t is not None else None
         detail["running"] = running
         detail["headroom"] = round(max(ceiling - basis["pct"] - reserve, 0.0), 1)
+        combined = claude_combined(ceiling, reserve, now) if provider == "claude" else None
+        if combined:
+            detail.update(combined)
         detail["resets_local"] = local(detail.get("resets_at"))
         if verdict == "blocked":
             until = blocked_until(detail, now)
@@ -1004,8 +1065,12 @@ def table(rows):
                     f"{r.get('blocked_until_local', 'when a worker ends')} ({r['reason']})" if r["verdict"] == "blocked" else r.get("note", "now")))
     widths = [max(len(str(x[i])) for x in [head] + out) for i in range(len(head))]
     lines = ["  ".join(str(c).ljust(w) for c, w in zip(row, widths)).rstrip() for row in [head] + out]
-    lines.append("cap% blocks automatic starts only (fleet-watch); other starts get a pacing note. "
+    lines.append("cap% blocks automatic starts only (fleet-watch), never claude; other starts get a pacing note. "
                  "The ceiling plus reserve% blocks every start.")
+    for r in rows:
+        if "accounts" in r:
+            lines.append(f"claude combined headroom: {r['headroom']:g} points across {r['accounts']} accounts, "
+                         f"{r['pace']:g} pts/day to the weekly resets")
     now = time.time()
     ordered = sorted(rows, key=lambda r: pace(r, now) if pace(r, now) is not None else -float("inf"),
                      reverse=True)
@@ -1025,6 +1090,8 @@ def headroom(row):
     """Remaining real weekly/cycle headroom; daily pacing never ranks out a provider."""
     if row.get("verdict") == "unknown" or "weekly_used" not in row:
         return None, None
+    if "accounts" in row:
+        return row["headroom"], row["headroom"] / (row["ceiling"] * row["accounts"]) if row["ceiling"] > 0 else 0.0
     room = max(row["ceiling"] - row["weekly_used"] - row.get("reserve", 0), 0.0)
     return room, room / row["ceiling"] if row["ceiling"] > 0 else 0.0
 
@@ -1034,6 +1101,8 @@ def pace(row, now):
     room = headroom(row)[0]
     if room is None:
         return None
+    if "accounts" in row:
+        return row["pace"]
     resets = row.get("resets_at")
     days = max((float(resets) - now) / 86400, MIN_DAYS) if resets else 7.0
     return room / days

@@ -1,0 +1,1 @@
+- usage-gate: Claude headroom is the weekly percent left over the time to the weekly reset, summed over every managed Claude account. No fixed daily cap for Claude, the active account switches before a start is blocked, and an account whose reading fails keeps its last good one (#1275).
