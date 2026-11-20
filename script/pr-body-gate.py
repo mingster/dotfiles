@@ -21,6 +21,8 @@ _ACCEPT_ISSUE = re.compile(
     re.I | re.M,
 )
 _BUILDER_LINE = re.compile(r'^Builder: agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+)\s*$')
+# template-sync-pr.sh opens bump PRs as a script, not a model. Only this exact pair is allowed (#1291).
+_SCRIPT_BUILDER = ('script', 'template-sync-pr.sh')
 _PROVIDERS = ('claude', 'antigravity', 'agy', 'grok', 'cursor', 'codex')
 # Model prefixes of the families in usage-gate.py family(). A role name or a host fails here.
 _MODEL_PREFIXES = ('claude-', 'sonnet', 'opus', 'haiku', 'gpt-', 'composer', 'grok', 'gemini-')
@@ -80,6 +82,8 @@ def has_valid_builder_line(body):
             found = match.groups()
     if not found:
         return False
+    if found == _SCRIPT_BUILDER:
+        return True
     return found[0].lower() in _PROVIDERS and found[1].lower().startswith(_MODEL_PREFIXES)
 
 
