@@ -551,6 +551,99 @@ class DayStartReading(unittest.TestCase):
             self.assertIsNone(ug.claude_day_start(NOW + 100, p))
 
 
+class ClaudeWeekly1275(OrcaAccounts):
+    """Issue 1275: Claude headroom is percent left of the weekly limit over the time to the reset,
+    summed over every managed account, with no fixed daily cap."""
+    ST = {"v": ug.STATE_VERSION, "date": "d1", "baseline": 40, "resets_at": FUT}
+
+    def test_no_daily_cap_blocks_or_nags_claude(self):
+        verdict, detail, _ = ug.decide(D(52), self.ST, "d1", NOW, 12, 95, auto=True, daily_cap=False)
+        self.assertEqual(verdict, "allowed")
+        self.assertNotIn("cap", detail)
+        self.assertNotIn("note", detail)
+
+    def test_the_daily_cap_still_applies_to_other_providers(self):
+        self.assertEqual(ug.decide(D(52), self.ST, "d1", NOW, 12, 95, auto=True)[0], "blocked")
+
+    def test_automatic_claude_start_past_the_old_cap_is_allowed_while_weekly_room_remains(self):
+        self.gate(orca_accounts(60))
+        with open(ug.STATE + "/claude.json", "w") as f:
+            json.dump({**self.ST, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d")}, f)
+        result = ug.run("claude", 5, 95, now=NOW, auto=True)
+        self.assertEqual(result["verdict"], "allowed")
+        self.assertNotEqual(result.get("reason"), "daily cap")
+
+    def test_combined_headroom_sums_every_account(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40), ("cccccccc-3", 95)]))
+        result = ug.run("claude", None, 95, now=NOW)
+        self.assertEqual((result["accounts"], result["headroom"]), (3, 90.0))  # 35 + 55 + 0
+        self.assertEqual(result["pace"], 90.0)  # a day to the reset
+
+    def test_combined_headroom_holds_back_the_reserve(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        ug.live_workers = mock.Mock(return_value=rows(2))
+        self.addCleanup(setattr, ug, "live_workers", lambda provider: [])
+        result = ug.run("claude", None, 95, now=NOW)
+        self.assertEqual(result["headroom"], 88.0)  # 90 minus two workers at 1 point
+
+    def test_active_account_near_the_ceiling_switches_before_blocking(self):
+        calls = self.gate(orca_accounts(94, [("bbbbbbbb-2", 10)]))
+        with mock.patch.object(ug, "live_workers", return_value=rows(2)), contextlib.redirect_stderr(io.StringIO()):
+            result = ug.run("claude", None, 95, now=NOW)
+        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "bbbbbbbb-2"], calls)
+        self.assertEqual(result["verdict"], "allowed")
+
+    def test_every_account_full_blocks_with_no_headroom(self):
+        self.gate(orca_accounts(96, [("bbbbbbbb-2", 97)]))
+        result = ug.run("claude", None, 95, now=NOW)
+        self.assertEqual((result["verdict"], result["headroom"]), ("blocked", 0.0))
+
+    def regate(self, listing):
+        """A later call with a new listing but the same state directory."""
+        state = ug.STATE
+        self.gate(listing)
+        keep = mock.patch.object(ug, "STATE", state)
+        keep.start()
+        self.addCleanup(keep.stop)
+
+    def test_a_failed_account_reading_keeps_its_last_good_one(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        self.assertEqual(ug.claude_combined(95, 0.0, NOW)["headroom"], 90.0)
+        failed = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        failed["result"]["rateLimits"]["inactiveClaudeAccounts"][0]["rateLimits"] = {}
+        self.regate(json.dumps(failed))
+        self.assertEqual(ug.claude_combined(95, 0.0, NOW)["headroom"], 90.0)  # not 35, not blocked
+
+    def test_a_failed_active_reading_keeps_its_last_good_one(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        ug.claude_combined(95, 0.0, NOW)
+        failed = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        failed["result"]["rateLimits"]["claude"] = {"updatedAt": int(NOW * 1000)}
+        self.regate(json.dumps(failed))
+        self.assertEqual(ug.claude_reading()["pct"], 60)
+
+    def test_a_failed_reading_with_nothing_saved_is_not_counted_as_zero(self):
+        failed = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        failed["result"]["rateLimits"]["inactiveClaudeAccounts"][0]["rateLimits"] = {}
+        self.gate(json.dumps(failed))
+        self.assertEqual(ug.claude_combined(95, 0.0, NOW), {"accounts": 1, "headroom": 35.0, "pace": 35.0})
+
+    def test_an_old_last_good_reading_is_dropped(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        ug.claude_combined(95, 0.0, NOW)
+        failed = json.loads(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        failed["result"]["rateLimits"]["inactiveClaudeAccounts"][0]["rateLimits"] = {}
+        self.regate(json.dumps(failed))
+        with mock.patch.object(ug.time, "time", return_value=NOW + 3 * 3600):
+            self.assertEqual(ug.claude_combined(95, 0.0, NOW)["accounts"], 1)
+
+    def test_show_prints_the_combined_claude_headroom(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 40)]))
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ug.main(["show", "--provider", "claude"]), 0)
+        self.assertIn("claude combined headroom: 90 points across 2 accounts", out.getvalue())
+
+
 class Show(unittest.TestCase):
     def test_show_lists_every_provider_in_one_table(self):
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
@@ -904,13 +997,13 @@ class AutoCap(unittest.TestCase):
         resets = self.mid() + 4 * 86400
         reading = {"pct": 45.0, "resets_at": resets, "observed_at": NOW}
         with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
-                mock.patch.dict(ug.READERS, {"claude": lambda: reading}), \
+                mock.patch.dict(ug.READERS, {"cursor": lambda: reading}), \
                 mock.patch.object(ug, "live_workers", lambda p: []), \
                 mock.patch.object(ug, "start_of_day", lambda r, p, m: {"pct": 35.0, "resets_at": resets}), \
                 mock.patch.object(ug.time, "time", lambda: NOW):
-            self.assertEqual(ug.run("claude", None, 95)["cap"], 15.0)
-            os.remove(t + "/claude.json")
-            self.assertEqual(ug.run("claude", 12, 95)["cap"], 12)
+            self.assertEqual(ug.run("cursor", None, 95)["cap"], 15.0)
+            os.remove(t + "/cursor.json")
+            self.assertEqual(ug.run("cursor", 12, 95)["cap"], 12)
 
 
 class IdleReading(unittest.TestCase):
@@ -1635,13 +1728,13 @@ class DailyCap987(unittest.TestCase):
         def go(*argv):
             with tempfile.TemporaryDirectory() as t, mock.patch.object(ug, "STATE", t), \
                     mock.patch.object(ug.time, "time", return_value=NOW), \
-                    mock.patch.dict(ug.READERS, {"claude": lambda: {"pct": 52, "resets_at": FUT, "observed_at": NOW}}), \
+                    mock.patch.dict(ug.READERS, {"cursor": lambda: {"pct": 52, "resets_at": FUT, "observed_at": NOW}}), \
                     contextlib.redirect_stdout(io.StringIO()) as out:
-                with open(t + "/claude.json", "w") as f:
+                with open(t + "/cursor.json", "w") as f:
                     json.dump({**self.ST, "date": ug.datetime.fromtimestamp(NOW).strftime("%Y-%m-%d")}, f)
                 return ug.main(list(argv)), out.getvalue()
-        self.assertEqual(go("check", "--provider", "claude", "--cap", "12")[0], 0)
-        status, out = go("check", "--provider", "claude", "--cap", "12", "--auto")
+        self.assertEqual(go("check", "--provider", "cursor", "--cap", "12")[0], 0)
+        status, out = go("check", "--provider", "cursor", "--cap", "12", "--auto")
         self.assertEqual((status, json.loads(out)["reason"]), (3, "daily cap"))
 
     def test_pick_marks_an_automatic_start(self):
