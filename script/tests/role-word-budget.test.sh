@@ -15,7 +15,6 @@ done
 
 # Moved detail must still be reachable: role file names the doc, the doc holds the detail.
 has() { grep -qF -- "$2" "$1" && ok "$3" || bad "$3"; }
-has "$T/docs/agents/coordinator-operations.md" 'workspace-trusted' "cursor trust marker lives in coordinator-operations"
 has "$T/docs/agents/deploy-facts.md" 'Host preflight' "host preflight lives in deploy-facts"
 has "$T/docs/agents/release-manager-work.md" 'Production job order' "release-manager-work holds the production job order pointer"
 has "$T/docs/agents/coordinator-operations.md" 'Small task method' "small task method lives in coordinator-operations"

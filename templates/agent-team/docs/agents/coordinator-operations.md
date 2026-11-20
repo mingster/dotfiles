@@ -19,7 +19,6 @@ Read before your first dispatch. Worker accounting follows pstack Orchestrate, S
 
 - At start and each wake, settle every unreleased dispatch from `orca orchestration worker-list --run <your run> --json`; a stopped or failed one follows the lifecycle transition in the Orca orchestration guide, preserving unmerged work. A new coordinator session adopts every live worker before new work.
 - Answer a worker only with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`; a bare `orca orchestration reply` does not wake an idle worker.
-- **Cursor worker trust marker:** start Cursor workers with `~/dotfiles/script/start-cursor-worker.sh` (`.claude/model-routing.md`, Cursor start rule); it creates the worktree and writes `.workspace-trusted` first.
 - **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Cursor `grok-4.7-high` worker, merge on checks.
 
 ## Independent inbox watchdog

@@ -3,8 +3,7 @@
   "default_chain": [
     "claude",
     "antigravity",
-    "grok",
-    "cursor"
+    "grok"
   ],
   "roles": {
     "elon": {
@@ -68,10 +67,6 @@
         {
           "provider": "grok",
           "model": "grok-4.7"
-        },
-        {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
         }
       ],
       "pin": true
@@ -107,10 +102,6 @@
         {
           "provider": "grok",
           "model": "grok-4.7"
-        },
-        {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
         }
       ]
     },
@@ -175,10 +166,6 @@
         {
           "provider": "grok",
           "model": "grok-4.7"
-        },
-        {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
         }
       ]
     },
@@ -197,10 +184,6 @@
         {
           "provider": "grok",
           "model": "grok-4.7"
-        },
-        {
-          "provider": "cursor",
-          "model": "grok-4.7-high"
         }
       ]
     },
@@ -240,9 +223,6 @@
     "light": {
       "claude": {
         "model": "haiku"
-      },
-      "cursor": {
-        "model": "grok-4.7-high"
       },
       "antigravity": {
         "model": "gemini-3.8-flash"
