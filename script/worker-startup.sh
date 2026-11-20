@@ -5,7 +5,7 @@
 #   worker-startup.sh --host-check
 #   worker-startup.sh --pick-host-only --spec FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
-#         [--route-override REASON] [--allow-delivered REASON]
+#         [--route-override REASON] [--allow-delivered REASON] [--skip-dotfiles-first REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 # --title must be "#<issue>|<role>" (for example "#123|qa-sdet"; a verifier uses its PR number), else exit 2.
 # After start the title is also set on the worker terminal and pane.
@@ -15,6 +15,8 @@
 # is given (the coordinator host accepts only chrome-dev, line-desktop or host-file).
 # A fullstack-dev brief whose Refs issue a merged PR already closed (Closes, Fixes, Resolves, Delivers) is refused
 # unless --allow-delivered REASON is given (#1158).
+# A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label) waits, unless
+# --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 set -euo pipefail
@@ -442,7 +444,7 @@ with_refs_line() { # <spec_file> <title>
 }
 
 usage_run() {
-  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON]" >&2
+  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON] [--skip-dotfiles-first REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
   echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
@@ -711,6 +713,59 @@ release_ready_label() { # <spec_file> <title>
     || echo "worker-startup: could not remove ready-for-agent from $ref" >&2
 }
 
+# Owner rule 2026-11-20: every dotfiles issue starts before any other repo's. The hand dispatch path obeys it too.
+# A builder brief that Refs another repo is refused while a ready dotfiles issue waits. Rework and verify briefs, a brief
+# with no explicit repo, and a failed gh call go on. A start takes the free seat, so a ready issue plus a start request is the seat test.
+refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
+  local spec_file=$1 title=$2 skip=$3 role kind btype ref repo dot waiting
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || return 0
+  [ "$kind" = builder ] || return 0
+  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
+  case "$btype" in rework|verify) return 0 ;; esac
+  ref=$(grep -m1 -oE '^Refs [A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  [ -n "$ref" ] || return 0
+  repo=${ref%%#*}
+  dot=${DOTFILES_REPO:-}
+  if [ -z "$dot" ]; then
+    dot=$(git -C "$here/.." remote get-url origin 2>/dev/null | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##' || true)
+  fi
+  [ -n "$dot" ] && [ "$dot" != off ] || return 0
+  [ "$repo" != "$dot" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  waiting=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels 2>/dev/null \
+    | jq -r '[.[] | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | "#\(.number)"] | join(", ")' 2>/dev/null) || waiting=
+  [ -n "$waiting" ] || return 0
+  if [ -n "$skip" ]; then
+    echo "worker-startup: --skip-dotfiles-first: $ref starts while dotfiles $waiting wait ($skip)" >&2
+    return 0
+  fi
+  die "refused: dotfiles issue $waiting is ready and not started; start it first, or pass --skip-dotfiles-first REASON"
+}
+
+# The hand dispatch path knows an issue is in flight, so it sets the board label (docs/agents/labels.md, Status).
+mark_issue_in_flight() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role btype ref repo num
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
+  case "$btype" in rework|verify) return 0 ;; esac
+  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  [ -n "$ref" ] || return 0
+  num=${ref##*#}
+  repo=${ref%%#*}
+  command -v gh >/dev/null 2>&1 || return 0
+  gh issue edit "$num" ${repo:+-R "$repo"} --add-label "status:進行中" --remove-label needs-triage >/dev/null 2>&1 \
+    || echo "worker-startup: could not set status:進行中 on $ref" >&2
+}
+
+# Keep every open issue of the host repo carrying a state and a P label. Best effort.
+run_label_gate() {
+  [ -z "${WORKER_STARTUP_NO_LABEL_GATE:-}" ] && [ "${DOTFILES_REPO:-}" != off ] || return 0
+  bash "$here/issue-label-gate.sh" --apply >/dev/null 2>&1 || true
+}
+
 # A qa-sdet start for a PR that already has a live verifier dispatch warns on stderr and goes on (#1222).
 # Best effort: a failed orca call or a missing jq never blocks a start.
 warn_live_verifier() { # <spec_file> <title> <name> <run>
@@ -745,10 +800,10 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
-  local explicit_on=0 force_host='' on_raw='' allow_delivered=''
+  local explicit_on=0 force_host='' on_raw='' allow_delivered='' skip_dotfiles=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered|--skip-dotfiles-first)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -768,6 +823,7 @@ run_mode() {
           --route-override) route_override=$2; [ -n "$route_override" ] || die "route override needs a reason" ;;
           --force-host) force_host=$2; [ -n "$force_host" ] || die "force-host needs a reason" ;;
           --allow-delivered) allow_delivered=$2; [ -n "$allow_delivered" ] || die "allow-delivered needs a reason" ;;
+          --skip-dotfiles-first) skip_dotfiles=$2; [ -n "$skip_dotfiles" ] || die "skip-dotfiles-first needs a reason" ;;
         esac
         shift 2 ;;
       *) usage_run ;;
@@ -823,6 +879,8 @@ run_mode() {
   local lint_out lint_dir dispatch_log orig_spec=$spec
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
+  run_label_gate
+  refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"
   warn_live_verifier "$spec" "$title" "$name" "$run"
   spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   lint_dir=${wt:-}
@@ -944,6 +1002,7 @@ run_mode() {
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
     apply_terminal_title "$title" "$start_out" "$environment"
     release_ready_label "$spec" "$title"
+    mark_issue_in_flight "$spec" "$title"
     return 0
   fi
 
@@ -1049,6 +1108,7 @@ run_mode() {
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
   release_ready_label "$spec" "$title"
+  mark_issue_in_flight "$spec" "$title"
   return 0
 }
 

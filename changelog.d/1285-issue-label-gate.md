@@ -1,0 +1,1 @@
+- labels: `script/issue-label-gate.sh` gives every open issue a state label (`needs-triage` by default) and a P label (`P2` by default) and keeps `status:接下來` and `status:等你決定` in step. `worker-startup.sh` runs it before each start and sets `status:進行中` on the started issue. Rules in `docs/agents/labels.md` (#1285).
