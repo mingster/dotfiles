@@ -27,8 +27,13 @@ case "$*" in
   "orchestration worker-list"*) printf '{"result":{"workers":[]}}'; exit 0 ;;
   "worktree create"*) printf '{"result":{"worktree":{"path":"%s"}}}' "$WT_PATH"; exit 0 ;;
   "worktree list"*) printf '{"result":{"worktrees":[{"path":"%s","isMainWorktree":true}]}}' "$WT_PATH"; exit 0 ;;
+  "terminal create"*--git-only*) printf '{"result":{"terminal":{"handle":"term_git"}}}'; exit 0 ;;
   "terminal create"*) printf '{"result":{"terminal":{"handle":"term_stub"}}}'; exit 0 ;;
+  # Real shapes from a paired remote host (#1262): the terminal is an interactive shell that never exits, so
+  # `wait --for exit` times out, and the command's own result line shows in the read tail.
+  "terminal wait"*term_git*) printf '{"id":"x","ok":false,"error":{"code":"timeout","message":"timeout"}}'; exit 1 ;;
   "terminal wait"*) printf '{"result":{"wait":{"satisfied":true,"status":"exited","exitCode":0}}}'; exit 0 ;;
+  "terminal read"*) printf '{"ok":true,"result":{"terminal":{"handle":"term_git","status":"running","tail":["","❯  cd /p && bash worktree-setup.sh --git-only; echo GIT_ONLY_RC=$?","GIT_ONLY_RC=%s","","❯ "]}}}' "${GIT_ONLY_RC:-0}"; exit 0 ;;
   "terminal close"*) printf '{"result":{}}'; exit 0 ;;
   "orchestration worker-start"*) printf '{"result":{"terminal":{"handle":"term_w"}}}'; exit 0 ;;
 esac
@@ -71,6 +76,10 @@ run_start 'Setup: none' --on remote-host
 check "remote Setup: none skips" "$(setup_flag)" skip
 check "remote Setup: none runs git-only once" "$(git_only_calls)" 1
 check "remote git-only runs between create and worker-start" "$(order_ok)" yes
+
+GIT_ONLY_RC=1 run_start 'Setup: none' --on remote-host && failed=started || failed=failed
+check "remote git-only failure fails the start" "$failed" failed
+check "remote git-only failure says so" "$(grep -c 'git-only setup failed' "$tmp/out.log")" 1
 
 run_start 'Refs #1' --on remote-host
 check "remote plain brief runs setup" "$(setup_flag)" run
