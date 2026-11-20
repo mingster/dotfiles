@@ -1543,7 +1543,7 @@ PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-sonnet-5-5-m
 grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
-grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "a non-builder start should also drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
+grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && bad "a qa-sdet start must keep ready-for-agent on the issue (#1271)" || ok
 
 # A handoff line has no --from: the coordinator's own handle is the sender (#1192).
 : >"$tmp/orca-route.log"
@@ -1930,10 +1930,11 @@ cat >"$orca_live_stub" <<EOS
 #!/usr/bin/env bash
 case " \$* " in
   *" orchestration worker-list "*)
-    echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"}]}}'
+    printf '%s\\n' "\$*" >>"$tmp/live-list.log"
+    echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_rem1","taskId":"task_r1","dispatchStatus":"dispatched","workerState":"ready","terminalState":null},{"dispatchId":"ctx_done1","taskId":"task_d1","dispatchStatus":"completed","workerState":"succeeded","terminalState":null}]}}'
     exit 0 ;;
   *" orchestration task-list "*)
-    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"}]}}'
+    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"},{"id":"task_r1","title":"#1262|qa-sdet|verify 1263"},{"id":"task_d1","title":"#1300|qa-sdet|verify 1301"}]}}'
     exit 0 ;;
 esac
 exec "$orca_stub" "\$@"
@@ -1961,6 +1962,27 @@ live_verifier_run "#9|qa-sdet|standing" --name verify-78
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a verifier for another PR must not warn ($(cat "$tmp/live.err"))" || ok
 live_verifier_run "#79|fullstack-dev" --name verify-77
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a builder start must not warn" || ok
+
+# 1271: a remote live verifier (terminalState null) titled with a bare "verify <pr>" warns, a finished one does not.
+: >"$tmp/live-list.log"
+live_verifier_run "#1262|qa-sdet|verify 1263" --name verify-1263
+grep -Fq 'worker-startup: warning: live verifier ctx_rem1 (#1262|qa-sdet|verify 1263) is already running for PR #1263' "$tmp/live.err" && ok || bad "remote live verifier with a bare verify title should warn ($(cat "$tmp/live.err"))"
+grep -- '--run' "$tmp/live-list.log" | grep -q -- '--terminal-state'  && bad "warn_live_verifier must not filter by --terminal-state" || ok
+live_verifier_run "#1300|qa-sdet|verify 1301" --name verify-1301
+grep -q 'ctx_done1' "$tmp/live.err" && bad "a completed verifier must not warn" || ok
+live_verifier_run "#1263|qa-sdet"
+grep -Fq 'ctx_rem1' "$tmp/live.err" && ok || bad "a verifier titled by its PR number only should warn ($(cat "$tmp/live.err"))"
+
+# 1271: a verifier start never removes ready-for-agent from the issue it refs.
+cat >"$bin/gh" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$tmp/gh.log"
+EOS
+chmod +x "$bin/gh"
+: >"$tmp/gh.log"
+live_verifier_run "#9|qa-sdet|verify PR 77" --name verify-77
+grep -q 'issue edit' "$tmp/gh.log" && bad "qa-sdet start must not edit issue labels ($(cat "$tmp/gh.log"))" || ok
+rm -f "$bin/gh"
 
 rm -f "$bin/hostname"
 

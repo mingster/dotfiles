@@ -1,0 +1,1 @@
+* A verifier started with a bare `verify <pr>` title, or running on a remote host, is now seen as live, so no duplicate verifier is dispatched for the same PR, and a verifier start no longer removes `ready-for-agent` from its issue (#1271).

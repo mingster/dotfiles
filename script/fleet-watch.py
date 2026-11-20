@@ -4951,24 +4951,48 @@ _VERIFY_WORKTREE_RE = re.compile(r'^(?:verify|vd|v)-?(\d+)(?:-[a-z0-9]+)?$')
 _VERIFIER_TITLE_KEYS = ('_task_title', 'title', 'name')
 
 
+_BARE_NUMBER_RE = re.compile(r'(?<![\w/#.-])(\d{1,6})(?![\w.-])')
+
+
+def _title_prs(text):
+    """PR numbers in a title segment: "#7", "PR 7", and bare numbers such as "verify 1263" (#1271)."""
+    prs = [int(a or b) for a, b in _TITLE_PR_RE.findall(text)]
+    prs += [int(n) for n in _BARE_NUMBER_RE.findall(text)]
+    return list(dict.fromkeys(prs))
+
+
 def _verifier_text_prs(text):
     new_form = _NEW_VERIFY_TITLE_RE.match(text)
     if new_form:
         if (new_form.group(2) or '').strip() == 'standing':
             return []
-        prs = [int(new_form.group(1))]
-        prs += [int(a or b) for a, b in _TITLE_PR_RE.findall(new_form.group(2) or '')]
-        return prs
+        return list(dict.fromkeys([int(new_form.group(1))] + _title_prs(new_form.group(2) or '')))
     match = _VERIFY_TITLE_RE.match(text)
     if not match:
         return []
-    return [int(a or b) for a, b in _TITLE_PR_RE.findall(match.group(1))]
+    return _title_prs(match.group(1))
+
+
+def _launch_record_worktree(dispatch_id):
+    """Worktree path that worker-startup.sh recorded for a dispatch, else ''."""
+    if not isinstance(dispatch_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', dispatch_id):
+        return ''
+    state_dir = os.environ.get('WORKER_STARTUP_STATE') or os.path.expanduser(
+        os.path.join('~', '.local', 'state', 'worker-startup')
+    )
+    try:
+        data = json.loads((Path(state_dir) / 'launches' / ('%s.json' % dispatch_id)).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return ''
+    value = data.get('worktree') if isinstance(data, dict) else ''
+    return value if isinstance(value, str) else ''
 
 
 def _verifier_worktree_pr(worker):
     """PR number from a verifier worktree basename (verify-7, v7, verify-7-b), else None."""
     selector = worker_worktree_selector(worker)
-    for raw in (worker_checkout_path(worker), selector.split('::', 1)[-1] if isinstance(selector, str) else ''):
+    for raw in (worker_checkout_path(worker), selector.split('::', 1)[-1] if isinstance(selector, str) else '',
+                _launch_record_worktree(worker.get('dispatchId'))):
         base = os.path.basename(str(raw or '').rstrip('/'))
         found = _VERIFY_WORKTREE_RE.match(base)
         if found:

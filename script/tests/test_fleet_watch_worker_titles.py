@@ -4,6 +4,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
@@ -65,6 +66,25 @@ class ParsedTitles(unittest.TestCase):
         for path, prs in (('/w/dotfiles/verify-7', [7]), ('/w/dotfiles/v7', [7]), ('/w/dotfiles/verify-7-b', [7]),
                           ('/w/dotfiles/vd-7', [7]), ('/w/dotfiles/d1222', []), ('/w/dotfiles/verify-standing-x', [])):
             self.assertEqual(fw.verifier_title_prs({'workspace': 'wt::' + path}), prs, path)
+
+    def test_bare_verify_numbers_are_pr_numbers(self):
+        for title, prs in (('#1262|qa-sdet|verify 1263', [1262, 1263]), ('#8955|qa-sdet|verify 8962', [8955, 8962]),
+                           ('#1253|qa-sdet|verify 1253 1254', [1253, 1254]), ('qa-sdet - verify 1263', [1263]),
+                           ('#1262|qa-sdet|standing', [])):
+            self.assertEqual(fw.verifier_title_prs({'_task_title': title}), prs, title)
+
+    def test_remote_row_reads_the_launch_record_worktree(self):
+        with tempfile.TemporaryDirectory() as state_dir:
+            launches = Path(state_dir) / 'launches'
+            launches.mkdir()
+            (launches / 'ctx_rem.json').write_text('{"worktree": "/w/dotfiles/verify-1263"}')
+            row = {'dispatchId': 'ctx_rem', 'dispatchStatus': 'dispatched', 'workerState': 'ready',
+                   'terminalState': None, 'resource': None, 'projection': None,
+                   'server': {'environmentId': 'env-1'}}
+            with patch.dict('os.environ', {'WORKER_STARTUP_STATE': state_dir}):
+                self.assertEqual(fw.verifier_title_prs(row), [1263])
+                self.assertTrue(fw.live_verifier_for_pr({'number': 1263}, [row]))
+                self.assertFalse(fw.live_verifier_for_pr({'number': 1264}, [row]))
 
     def test_builder_role_reads_both_forms(self):
         self.assertEqual(fw._builder_role({'_task_title': '#42|fullstack-dev'}), 'fullstack-dev')

@@ -734,6 +734,7 @@ release_ready_label() { # <spec_file> <title>
   local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" != qa-sdet ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
   ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
@@ -754,24 +755,26 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
   [ "$role" = qa-sdet ] || [ "$btype" = verify ] || return 0
   [ -n "$run" ] || return 0
   prs=$({
-    printf '%s\n' "${title#*|qa-sdet}" | grep -oiE '(#|\bPRs? #?)[0-9]+' | grep -oE '[0-9]+'
+    printf '%s\n' "${title#*|qa-sdet}" | grep -oE '(^|[^0-9A-Za-z#/.-])#?[0-9]{1,6}($|[^0-9A-Za-z.-])' | grep -oE '[0-9]+'
+    if [[ $title == *"|qa-sdet" ]]; then printf '%s\n' "${title%%|qa-sdet}" | grep -oE '[0-9]+'; fi
     printf '%s\n' "$name" | sed -nE 's/^(verify|vd|v)-?([0-9]+)(-[a-z0-9]+)?$/\2/p'
     grep -oE '(^Refs [A-Za-z0-9_./-]*#|pull/)[0-9]+' "$spec_file" | grep -oE '[0-9]+$'
   } | sort -un) || prs=
   [ -n "$prs" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  workers=$("$orca" orchestration worker-list --run "$run" --include-remote --terminal-state active --json 2>/dev/null) || return 0
+  workers=$("$orca" orchestration worker-list --run "$run" --include-remote --json 2>/dev/null) || return 0
   tasks=$("$orca" orchestration task-list --run "$run" --json 2>/dev/null) || tasks='{}'
   for pr in $prs; do
     printf '%s\n%s\n' "$workers" "$tasks" | jq -rs --arg pr "$pr" '
       (.[0].result.workers // .[0].workers // []) as $w
       | ((.[1].result.tasks // .[1].tasks // []) | map({(.id): .title}) | add // {}) as $t
       | $w[]
-      | select((.liveness // .projection.liveness.verdict // "live") == "live")
-      | select((.terminalState // "active") == "active")
+      | select(((.dispatchStatus // .workerState // .state // "") | ascii_downcase | test("^(completed|succeeded|failed|stopped|cancelled|abandoned|released)$")) | not)
+      | select(((.liveness // .projection.liveness.verdict // "live") | tostring) as $l | ($l | test("^(exited|sleep|settled)$")) | not)
+      | select((.terminalState // "active") | test("^(released|release_unknown)$") | not)
       | {id: .dispatchId, title: ($t[.taskId] // .title // "")}
       | select(.title | test("^(#[0-9]+\\|)?qa-sdet"))
-      | select(.title | test("(#|PRs? #?)" + $pr + "([^0-9]|$)") or test("verify-?" + $pr + "([^0-9]|$)"))
+      | select((.title | sub("^#[0-9]+\\|qa-sdet"; "") | test("(^|[^0-9A-Za-z/.-])(#|PRs? #?)?" + $pr + "([^0-9A-Za-z.-]|$)")) or (.title | test("^#" + $pr + "\\|qa-sdet(\\|[^0-9]*)?$")) or (.title | test("verify-?" + $pr + "([^0-9]|$)")))
       | "worker-startup: warning: live verifier \(.id) (\(.title)) is already running for PR #" + $pr' >&2 2>/dev/null || true
   done
 }
