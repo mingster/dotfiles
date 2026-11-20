@@ -664,6 +664,7 @@ refuse_merged_backlog_line() { # <spec_file> <title>
   local spec_file=$1 title=$2 role kind key repo merged
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
@@ -680,6 +681,7 @@ refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   local spec_file=$1 title=$2 allow=$3 role kind ref repo num prs btype
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
@@ -707,6 +709,7 @@ enforce_builder_provider() { # <title> <agent> <override>
   [ "$agent" != claude ] || return 0
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || die "cannot classify role $role"
   [ "$kind" = builder ] || return 0
   if [ -n "$override" ]; then
@@ -742,6 +745,7 @@ release_ready_label() { # <spec_file> <title>
   local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   [ "$role" != qa-sdet ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
@@ -761,6 +765,7 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   local spec_file=$1 title=$2 skip=$3 role kind btype ref repo dot waiting
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || return 0
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
@@ -790,6 +795,7 @@ mark_issue_in_flight() { # <spec_file> <title>
   local spec_file=$1 title=$2 role btype ref repo num
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
+  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
   ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
