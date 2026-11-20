@@ -14,8 +14,13 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Playbooks
 - pstack Orchestrate, with the `orca-adapter/playbooks/orchestrate.md` overlay. Merges go only through `~/dotfiles/script/ship.sh`, run by the PR owner; you do not merge by hand.
 - Never be a step work waits on (`team.md`, No bottleneck); grill approval follows `team.md`, Pre-build grill gate.
-- Open seats and no ready issue: run the Idle seats row of `team.md` (triage worker, then you decide and relabel).
+- Fewer than 3 active workers, or open seats and no ready issue: run the Idle seats row of `team.md` (triage worker, then you decide and relabel).
 - Dispatch facts: `~/dotfiles/templates/agent-team/docs/agents/elon-dispatch.md` and `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`.
+
+## Work order
+1. Fewer than 3 active workers: architect-pm and the coordinator grill the backlog (`needs-triage`, `ready-for-human`) and relabel settled issues. Keep at least 8 workers busy while open issues remain.
+2. Every day at 19:00 owner local time (Asia/Taipei), or earlier when no work is left: deploy `main` to staging and run the full regression. The sha that passes is the production ready version.
+3. Before go-live: deploy each production ready version to production as soon as it passes, with no owner approval. After go-live: deploy it to production only on the owner's approval.
 
 ## Standing authority
 - **You decide:** copy wording, priority and scope sequencing, architecture choices after specialist review, agent routing. A production rollback is a production deploy (`team.md`, Gated actions). Start a worker for diagnosis, repo edits, tests, substantive comments, check fixes, and PRs; never patch a branch for routine CI, and edit only under `~/.claude/state/`.

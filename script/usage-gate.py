@@ -131,30 +131,49 @@ def carry_account_readings(readings):
     return out
 
 
-def orca_claude_accounts():
-    """Managed Claude accounts from Orca: {"active": reading, "active_id", "others": [{"id", **reading}]}.
+def _orca_list():
+    response = subprocess.run([ORCA, "account", "list", "--json"], capture_output=True, text=True, timeout=5)
+    return json.loads(response.stdout)["result"]
 
+
+def _account_readings(result):
+    """({account id: reading or None}, {account id: retryAtMs in seconds}, active key, active id)."""
+    limits = result["rateLimits"]["claude"]
+    observed = limits.get("updatedAt")
+    observed = observed / 1000 if isinstance(observed, (int, float)) else None
+    active_id = result["claude"].get("activeAccountId")
+    key = active_id or "system"
+    readings, retry = {key: _orca_weekly(limits, observed)}, {}
+    for other in result["rateLimits"].get("inactiveClaudeAccounts") or []:
+        if other.get("accountId"):
+            readings[other["accountId"]] = _orca_weekly(other.get("rateLimits"), observed)
+            at = ((other.get("rateLimits") or {}).get("usageMetadata") or {}).get("retryAtMs")
+            if isinstance(at, (int, float)):
+                retry[other["accountId"]] = at / 1000
+    return readings, retry, key, active_id
+
+
+def orca_claude_accounts():
+    """Managed Claude accounts from Orca: {"active": reading, "active_id", "others": [{"id", **reading}],
+    "unread": [ids with no reading yet]}.
+
+    An inactive account whose reading failed with a retryAtMs is listed again once that time has passed.
     None when Orca lists no managed Claude accounts or the call fails, so callers keep the old reading.
     """
     try:
-        response = subprocess.run([ORCA, "account", "list", "--json"], capture_output=True, text=True, timeout=5)
-        result = json.loads(response.stdout)["result"]
+        result = _orca_list()
         if not result["claude"]["accounts"]:
             return None
-        limits = result["rateLimits"]["claude"]
-        observed = limits.get("updatedAt")
-        observed = observed / 1000 if isinstance(observed, (int, float)) else None
-        active_id = result["claude"].get("activeAccountId")
-        key = active_id or "system"
-        readings = {key: _orca_weekly(limits, observed)}
-        for other in result["rateLimits"].get("inactiveClaudeAccounts") or []:
-            if other.get("accountId"):
-                readings[other["accountId"]] = _orca_weekly(other.get("rateLimits"), observed)
+        readings, retry, key, active_id = _account_readings(result)
+        if any(readings[k] is None and at <= time.time() for k, at in retry.items()):
+            again = _account_readings(_orca_list())[0]
+            readings.update({k: v for k, v in again.items() if readings.get(k) is None and v})
         good = carry_account_readings(readings)
         if key not in good:
             return None
         others = [{"id": k, **v} for k, v in good.items() if k != key]
-        return {"active": good[key], "active_id": active_id, "others": others}
+        return {"active": good[key], "active_id": active_id, "others": others,
+                "unread": [k for k in readings if k not in good]}
     except Exception:
         return None
 
@@ -196,7 +215,7 @@ def claude_combined(ceiling, reserve, now):
     per_day = sum(room / (max((float(r["resets_at"]) - now) / 86400, MIN_DAYS) if r.get("resets_at") else 7.0)
                   for room, r in zip(rooms, readings))
     return {"accounts": len(readings), "headroom": round(max(sum(rooms) - reserve, 0.0), 1),
-            "pace": round(per_day, 1)}
+            "pace": round(per_day, 1), "unread": accounts["unread"]}
 
 
 def claude_reading(path=None):
@@ -1071,6 +1090,8 @@ def table(rows):
         if "accounts" in r:
             lines.append(f"claude combined headroom: {r['headroom']:g} points across {r['accounts']} accounts, "
                          f"{r['pace']:g} pts/day to the weekly resets")
+            for account in r.get("unread") or []:
+                lines.append(f"claude account {str(account)[:8]}: not read yet")
     now = time.time()
     ordered = sorted(rows, key=lambda r: pace(r, now) if pace(r, now) is not None else -float("inf"),
                      reverse=True)
