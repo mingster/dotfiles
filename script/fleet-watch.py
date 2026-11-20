@@ -319,7 +319,8 @@ def worker_terminal_released(worker):
         return True
     # A finished dispatch whose resource Orca no longer has holds no terminal, even when it reports "retained" (#1273).
     if (status == 'completed' or worker_settled_kind(w) is not None) \
-            and (projection.get('resource') or {}).get('state') == 'absent':
+            and (projection.get('resource') or {}).get('state') == 'absent' \
+            and resource.get('retainedReason') != 'unpushed':
         return True
     # Orca drops the resource and terminal of a dispatch it already released (worker-release says already_released).
     if (status == 'completed' and 'resource' in w and not resource
