@@ -964,7 +964,7 @@ run_mode() {
     create_args=(--name "$name" --repo "$repo_selector")
     [ -z "$base" ] || create_args+=(--base-branch "$base")
     # `Setup: none` briefs never run bun/node: skip the install hook, keep the fresh-main fast-forward.
-    # A remote host has no exec path here, so the local git-only step below is skipped for it.
+    # On a remote host the same git-only step runs there in a terminal, before the worker starts.
     setup_mode=run
     if grep -q '^Setup: none' "$spec"; then setup_mode=skip; fi
     create_args+=(--setup "$setup_mode" --json)
@@ -980,6 +980,16 @@ run_mode() {
     wt="${wt%"${wt##*[![:space:]]}"}"
     [ -z "$wt" ] || created_wt=1
   fi
+  remote_git_only() { # <remote worktree path>: fetch and fast-forward there, no install
+    local term_json term_handle wait_json
+    term_json=$("$orca" terminal create --environment "$environment" --worktree "path:$1" --json \
+      --command "cd $(printf '%q' "$1") && bash \"\$HOME/dotfiles/script/worktree-setup.sh\" --git-only") || return 1
+    term_handle=$(printf '%s' "$term_json" | jq -r '.result.terminal.handle // empty')
+    [ -n "$term_handle" ] || return 1
+    wait_json=$("$orca" terminal wait --environment "$environment" --terminal "$term_handle" --for exit --timeout-ms 120000 --json) || return 1
+    "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
+    printf '%s' "$wait_json" | jq -e '.result.wait | .satisfied == true and .status == "exited" and .exitCode == 0' >/dev/null
+  }
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
     local ec=$1 rm_args
@@ -991,8 +1001,12 @@ run_mode() {
     exit "$ec"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
-  if [ "${setup_mode:-}" = skip ] && [ -z "$environment" ]; then
-    (cd "$wt" && bash "$here/worktree-setup.sh" --git-only) || { echo "worker-startup: git-only setup failed in $wt" >&2; start_failed 1; }
+  if [ "${setup_mode:-}" = skip ]; then
+    if [ -z "$environment" ]; then
+      (cd "$wt" && bash "$here/worktree-setup.sh" --git-only) || { echo "worker-startup: git-only setup failed in $wt" >&2; start_failed 1; }
+    else
+      remote_git_only "$wt" || { echo "worker-startup: git-only setup failed in $wt on $environment" >&2; start_failed 1; }
+    fi
   fi
 
   local brief

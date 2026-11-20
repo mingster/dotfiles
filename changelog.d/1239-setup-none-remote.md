@@ -1,1 +1,1 @@
-worker-startup: a `Setup: none` brief started with `--on <host>` now skips the install hook on the remote worktree (#1239).
+worker-startup: a `Setup: none` brief started with `--on <host>` skips the install hook on the remote worktree and still fetches and fast-forwards it to `origin/main` before the worker starts (#1239).
