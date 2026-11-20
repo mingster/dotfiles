@@ -1,0 +1,1 @@
+The coordinator waits at most 2 hours by default on a step that needs the owner's own hands (a merge, an approval, a sign in), then takes the recommended path that does not need the owner and records it. Owner-reserved items still wait.
