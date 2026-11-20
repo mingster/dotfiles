@@ -36,7 +36,7 @@ cat >"$TMP/bin/gh" <<EOF
 echo "\$*" >>"$GH_LOG"
 case "\$1 \$2" in
   "pr list") [ -f "$TMP/open-pr" ] && cat "$TMP/open-pr"; exit 0 ;;
-  "pr create") echo 42 >"$TMP/open-pr"; echo https://github.com/example-org/proj/pull/42 ;;
+  "pr create") for a in "\$@"; do [ "\$p" = --body ] && printf '%s\n' "\$a" >"$TMP/pr-body"; p=\$a; done; echo 42 >"$TMP/open-pr"; echo https://github.com/example-org/proj/pull/42 ;;
   "pr checks") cat "$TMP/checks" ;;
 esac
 EOF
@@ -78,6 +78,13 @@ if [ "$RC" -eq 0 ] && grep -qx 'example-org/proj open 42' <<<"$OUT" && [ "$(grep
 else bad "a template change opens one bump PR" "rc=$RC out=$OUT gh=$(cat "$GH_LOG")"; fi
 pushed_pin=$(git -C "$TMP/proj.git" show "team-sync/$Y:.claude/agent-team-pin" 2>/dev/null)
 [ "$pushed_pin" = "$Y" ] && ok "the bump branch is team-sync/<sha> and pins that sha" || bad "the bump branch is team-sync/<sha> and pins that sha" "pin=$pushed_pin"
+
+# The bump PR body passes the PR body gate ship.sh applies, and the script builder is not the verifier's family (#1291).
+if grep -qx 'Builder: agent=script model=template-sync-pr.sh' "$TMP/pr-body" && grep -qx '## Self-check' "$TMP/pr-body" \
+  && python3 "$ROOT/script/pr-body-gate.py" <"$TMP/pr-body" \
+  && [ "$(python3 "$ROOT/script/usage-gate.py" family --agent script --model template-sync-pr.sh)" != claude ]; then
+  ok "the bump PR body passes the Builder and Self-check checks"
+else bad "the bump PR body passes the Builder and Self-check checks" "$(cat "$TMP/pr-body" 2>/dev/null)"; fi
 
 run --no-ship
 if [ "$RC" -eq 0 ] && grep -qx 'example-org/proj open 42' <<<"$OUT" && [ "$(grep -c 'pr create' "$GH_LOG")" = 1 ]; then

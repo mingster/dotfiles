@@ -32,6 +32,13 @@ class BuilderGateTests(unittest.TestCase):
                      'Builder: agent=cursor model=composer-2'):
             self.assertIsNone(gate.finish_block_reason(body(line)), line)
 
+    def test_template_sync_script_builder_passes(self):
+        self.assertIsNone(gate.finish_block_reason(body('Builder: agent=script model=template-sync-pr.sh')))
+
+    def test_other_script_builders_block(self):
+        for line in ('Builder: agent=script model=other.sh', 'Builder: agent=script model=sonnet'):
+            self.assertIn('Builder:', gate.finish_block_reason(body(line)) or '', line)
+
     def test_missing_line_blocks(self):
         reason = gate.finish_block_reason(body(''))
         self.assertIn('Builder: agent=<provider> model=<model>', reason)
