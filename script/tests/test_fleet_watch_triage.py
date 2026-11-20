@@ -1,5 +1,6 @@
 """Idle seats with no ready issue start one triage worker per repo, at most once per interval."""
 import importlib.util
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -67,6 +68,15 @@ class TriageWorker(unittest.TestCase):
         state['issue_scan_triage_at'] = {k: NOW - 7300 for k in state['issue_scan_triage_at']}
         triage, _bits, _state = run([], backlog=3, state=state)
         self.assertEqual(len(triage), 1)
+
+    def test_generated_spec_passes_brief_lint(self):
+        triage, _bits, _state = run([], backlog=3)
+        spec = Path(triage[0][triage[0].index('--spec') + 1])
+        repo = Path(__file__).resolve().parents[2]
+        result = subprocess.run(['bash', str(repo / 'script/brief-lint.sh'), str(spec), str(repo)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('Setup: none', spec.read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':
