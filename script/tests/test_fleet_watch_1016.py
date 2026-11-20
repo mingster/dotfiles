@@ -393,3 +393,31 @@ class QuietFailedDigest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LintStuckIssue(unittest.TestCase):
+    def test_second_lint_failure_relabels_to_needs_triage(self):
+        state = {'issue_scan_backlog_sweep_at': NOW}
+        bad = issue(1, ['ready-for-agent'], '## Acceptance criteria\n- prove it')
+        bad['comments'] = [{'body': 'brief-lint: Out of scope'}]
+        gh_calls = []
+
+        def act(command):
+            gh_calls.append(command)
+            return 0
+
+        _notices, log = fw.issue_scan_pass(
+            scan_config({'local': 4}), state, NOW, [],
+            list_issues=lambda _repo: [bad],
+            pr_fetch=lambda _repo: [],
+            gate_check=lambda _c: True,
+            admit_fn=lambda _h, _c, _w: {'admitted': True, 'occupied': 0},
+            start_worker=lambda cmd: 0,
+            act=act,
+        )
+        edits = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'edit']]
+        self.assertEqual(len(edits), 1, gh_calls)
+        self.assertIn('needs-triage', edits[0])
+        self.assertIn('ready-for-agent', edits[0])
+        self.assertFalse([c for c in gh_calls if c[:3] == ['gh', 'issue', 'comment']], gh_calls)
+        self.assertIn('issue_lint_stuck=1', log)

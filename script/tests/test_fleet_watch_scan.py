@@ -466,7 +466,7 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(starts2, [])
         self.assertIn('issue_scan_none', log2)
 
-    def test_incomplete_issue_brief_adds_needs_triage_and_comments_once(self):
+    def test_incomplete_issue_brief_comments_once_and_relabels_each_pass(self):
         state = {'issue_scan_backlog_sweep_at': NOW}
         bad_issue = issue(19, ['ready-for-agent'], '## Acceptance criteria\n- prove it')
         issues = {REPO: [bad_issue]}
@@ -490,8 +490,9 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(starts, [])
         edits = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'edit']]
         comments = [c for c in gh_calls if c[:3] == ['gh', 'issue', 'comment']]
-        self.assertEqual(len(edits), 1, gh_calls)
+        self.assertEqual(len(edits), 2, gh_calls)
         self.assertIn('needs-triage', edits[0])
+        self.assertIn('needs-triage', edits[1])
         self.assertEqual(len(comments), 1, gh_calls)
         body = comments[0][comments[0].index('--body') + 1]
         self.assertTrue(body.splitlines()[0].startswith('brief-lint: '), body)
