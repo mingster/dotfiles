@@ -1600,6 +1600,9 @@ case "$*" in
   *"orchestration worker-show"*)
     printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_agy","state":"ready","liveness":"live","terminal":"term_agy"}}'
     ;;
+  *"orchestration worker-stop"*)
+    printf '%s\n' '{"ok":true,"result":{"stopped":true}}'
+    ;;
   *"terminal read"*)
     python3 -c '
 import json, os
@@ -1624,20 +1627,37 @@ agy_run() { # <screen file> <stderr>
     PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-agy" ORCA_STUB_LOG="$tmp/orca-agy.log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" \
     PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-    AGY_WT="$wt_proof" AGY_SCREEN="$1" \
+    AGY_WT="$wt_proof" AGY_SCREEN="$1" WORKER_STARTUP_AGY_WAIT=0 AGY_UNAVAILABLE_STATE="$tmp/agy-unavailable.json" \
     bash --noprofile --norc "$script" --run run_agy --spec "$spec_file" --title "#1|fullstack-dev" \
     --agent antigravity --model gemini-4-argon-medium \
     --from term_coord --name nagy --repo "path:$clean" >"$tmp/agy.out" 2>"$2"
   agy_ec=$?
   set -e
 }
+# 1240: the sign-in screen stops the dispatch and restarts the same brief on claude; a working screen starts once.
 agy_run "$tmp/agy-login.txt" "$tmp/agy-login.err"
-[ "$agy_ec" -ne 0 ] && ok || bad "antigravity sign-in screen should exit non-zero ($agy_ec)"
-grep -q 'sign-in step' "$tmp/agy-login.err" && ok || bad "antigravity sign-in stderr should name the sign-in step ($(cat "$tmp/agy-login.err"))"
-grep -q 'orchestration worker-start' "$tmp/orca-agy.log" && ok || bad "sign-in failure is reported after the worker starts"
+[ "$agy_ec" = 0 ] && ok || bad "antigravity sign-in screen falls back and exits 0 ($agy_ec) $(cat "$tmp/agy-login.err")"
+grep -q '^agy-signin: host=.* fell back to claude$' "$tmp/agy.out" && ok || bad "fallback line missing ($(cat "$tmp/agy.out"))"
+grep -q 'orchestration worker-stop --dispatch ctx_agy' "$tmp/orca-agy.log" && ok || bad "sign-in worker is stopped ($(cat "$tmp/orca-agy.log"))"
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 2 ] && ok || bad "sign-in start is repeated once ($(cat "$tmp/orca-agy.log"))"
+grep -q -- '--agent antigravity --model' "$tmp/orca-agy.log" && grep -q -- '--agent claude --model sonnet' "$tmp/orca-agy.log" && ok || bad "restart is on claude sonnet after an antigravity start"
 agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 [ "$agy_ec" = 0 ] && ok || bad "normal antigravity screen should exit 0 ($agy_ec) $(cat "$tmp/agy-ok.err")"
-grep -q 'sign-in step' "$tmp/agy-ok.err" && bad "normal antigravity screen must not report sign-in" || ok
+grep -q 'agy-signin' "$tmp/agy.out" && bad "normal antigravity screen must not fall back" || ok
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "normal antigravity screen starts once"
+grep -q 'worker-stop' "$tmp/orca-agy.log" && bad "normal antigravity screen must not stop the worker" || ok
+# A host already marked agy-unavailable starts on claude without the first antigravity start.
+agy_unavailable_run() {
+  : >"$tmp/orca-agy.log"
+  host_label=$(hostname -s | tr '[:upper:]' '[:lower:]')
+  AGY_UNAVAILABLE_STATE="$tmp/agy-unavailable.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
+  agy_run "$tmp/agy-ok.txt" "$tmp/agy-unavailable.err"
+}
+agy_unavailable_run
+[ "$agy_ec" = 0 ] && ok || bad "unavailable host start exits 0 ($agy_ec) $(cat "$tmp/agy-unavailable.err")"
+grep -q 'is agy-unavailable, using claude' "$tmp/agy.out" && ok || bad "unavailable host line missing ($(cat "$tmp/agy.out"))"
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "unavailable host starts once"
+grep -q -- '--agent claude --model sonnet' "$tmp/orca-agy.log" && ! grep -q -- '--agent antigravity' "$tmp/orca-agy.log" && ok || bad "unavailable host starts on claude only"
 
 # 1221: a worker that vanishes at startup is started once more; a healthy or non-startup failure is not retried.
 cat >"$tmp/orca-retry" <<'EOS'

@@ -580,21 +580,40 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
   return "$ec"
 }
 
-surface_antigravity_screen() { # <agent> <worker-start json>
-  local agent=$1 start_json=$2 dispatch msg ec check
+# About a minute after an antigravity start, read the worker screen. The sign-in screen stops the dispatch and
+# returns 10 so the caller restarts the same brief on claude (#1240). Fleet watch marks the host and tells the owner.
+AGY_SIGNIN_EXIT=10
+surface_antigravity_screen() { # <agent> <worker-start json> [environment]
+  local agent=$1 start_json=$2 env=${3:-} dispatch handle shown screen
   [ "$agent" = antigravity ] || return 0
   dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_json" 2>/dev/null || true)
   [ -n "$dispatch" ] || die "antigravity start returned no dispatch"
-  check=$here/../.agents/skills/orca-team/worker-start-check.sh
-  [ -f "$check" ] || die "missing worker-start-check.sh"
-  set +e
-  msg=$(bash "$check" --screen-only "$dispatch" 15 2>&1)
-  ec=$?
-  set -e
-  if [ "$ec" -ne 0 ]; then
-    printf '%s\n' "$msg" >&2
-    exit "$ec"
+  sleep "${WORKER_STARTUP_AGY_WAIT:-60}"
+  handle=$(jq -r '.result.terminal | if type == "object" then (.handle // .id // empty) else (. // empty) end' <<<"$start_json" 2>/dev/null || true)
+  if [ -z "$handle" ]; then
+    shown=$("$orca" orchestration worker-show --dispatch "$dispatch" --json ${env:+--environment "$env"} 2>/dev/null) || shown=
+    handle=$(jq -r '.result.terminal | if type == "object" then (.handle // .id // empty) else (. // empty) end' <<<"$shown" 2>/dev/null || true)
   fi
+  [ -n "$handle" ] || return 0
+  screen=$("$orca" terminal read --terminal "$handle" --screen --json ${env:+--environment "$env"} 2>/dev/null) || return 0
+  "$python3" "$here/agy-signin.py" match <<<"$screen" || return 0
+  "$orca" orchestration worker-stop --dispatch "$dispatch" ${env:+--environment "$env"} >/dev/null 2>&1 \
+    || echo "worker-startup: could not stop $dispatch after the agy sign-in screen" >&2
+  return "$AGY_SIGNIN_EXIT"
+}
+
+agy_host_label() { # <environment> -> the host the worker runs on
+  local h=${1:-}
+  [ -n "$h" ] || h=$(this_host_name)
+  printf '%s\n' "${h:-local}"
+}
+
+# The brief copy a worker gets: finish block and Builder line for this agent and model, refs line, role preamble.
+build_brief_spec() { # <orig_spec> <run> <title> <agent> <model>
+  local s
+  s=$(with_finish_block "$1" "$2" "$4" "$5")
+  s=$(with_refs_line "$s" "$3")
+  prepend_role_preamble "$s" "$3"
 }
 
 # A builder brief for a backlog line ("#<issue> L<n>" in the title or the brief's first heading) is refused
@@ -784,20 +803,28 @@ run_mode() {
     run_captured pr_review_gates_orchestration_worker_start "$agent" "${model:-}" "$wt_retry" -- \
       --run "$run" --task "$task" --retry-of "$retry_of" \
       --worktree "$worktree_sel" --agent "$agent" --from "$from" ${model:+--model "$model"} || exit $?
-    surface_antigravity_screen "$agent" "$start_out"
+    local agy_ec=0
+    surface_antigravity_screen "$agent" "$start_out" || agy_ec=$?
+    [ "$agy_ec" -ne 0 ] || return 0
+    [ "$agy_ec" -eq "$AGY_SIGNIN_EXIT" ] || exit "$agy_ec"
+    echo "agy-signin: host=$(agy_host_label '') fell back to claude"
+    agent=claude model=sonnet
+    "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" --model "$model" >&2 \
+      || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
+    run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt_retry" -- \
+      --run "$run" --task "$task" --retry-of "$retry_of" \
+      --worktree "$worktree_sel" --agent "$agent" --from "$from" --model "$model" || exit $?
     return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
   require_title_form "$title"
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
-  local lint_out lint_dir dispatch_log
+  local lint_out lint_dir dispatch_log orig_spec=$spec
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
   warn_live_verifier "$spec" "$title" "$name" "$run"
-  spec=$(with_finish_block "$spec" "$run" "$agent" "$model")
-  spec=$(with_refs_line "$spec" "$title")
-  spec=$(prepend_role_preamble "$spec" "$title")
+  spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   lint_dir=${wt:-}
   if [ -z "$lint_dir" ] && [ "$agent" != cursor ]; then
     case "$repo" in
@@ -858,6 +885,13 @@ run_mode() {
   if [ "$explicit_on" != 1 ] && [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
     apply_worker_placement "$spec" "$repo" --record
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
+  fi
+
+  # A host marked agy-unavailable (signed out) gets claude instead of antigravity (#1240).
+  if [ "$agent" = antigravity ] && "$python3" "$here/agy-signin.py" unavailable "$(agy_host_label "$environment")"; then
+    echo "agy-signin: host=$(agy_host_label "$environment") is agy-unavailable, using claude"
+    agent=claude model=sonnet
+    spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   fi
 
   if [ -n "$repo" ]; then
@@ -966,18 +1000,30 @@ run_mode() {
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   board_status_set "path:$wt" in-progress "$environment"
   board_display_name_set "path:$wt" "$title" "$environment"
-  if [ -n "$environment" ]; then
-    run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-      --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
-    surface_antigravity_screen "$agent" "$start_out"
-    apply_terminal_title "$title" "$start_out"
-    release_ready_label "$spec" "$title"
-    return 0
+  start_agent_worker() { # starts the worker for the current agent, model and brief
+    if [ -n "$environment" ]; then
+      run_captured bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+        --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
+    else
+      start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
+        --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
+        --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
+    fi
+  }
+  start_agent_worker
+  local agy_ec=0
+  surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?
+  if [ "$agy_ec" -eq "$AGY_SIGNIN_EXIT" ]; then
+    echo "agy-signin: host=$(agy_host_label "$environment") fell back to claude"
+    agent=claude model=sonnet
+    "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" --model "$model" >&2 \
+      || { echo "worker-startup: refused by the usage gate" >&2; start_failed 3; }
+    brief=$(cat "$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")")
+    pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
+    start_agent_worker
+  elif [ "$agy_ec" -ne 0 ]; then
+    exit "$agy_ec"
   fi
-  start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
-    --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-    --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
-  surface_antigravity_screen "$agent" "$start_out"
   apply_terminal_title "$title" "$start_out"
   release_ready_label "$spec" "$title"
   return 0

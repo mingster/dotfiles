@@ -5889,6 +5889,8 @@ def standing_route(
     root = roots.get(repo) or ''
     records = standing_records(state)
     for host in cfg['hosts']:
+        if _agy_signin().is_unavailable(host):
+            continue
         rec = records.get(host)
         if isinstance(rec, dict) and not standing_idle(rec, open_prs):
             continue
@@ -7515,6 +7517,54 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
     return lines
 
 
+def _agy_signin():
+    return _sibling('agy_signin', 'agy-signin.py')
+
+
+def agy_signin_notices(config, workers, read=None, now=None):
+    """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
+
+    One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
+    A plain `agy -p` probe over ssh cannot tell, so the worker screen is the check.
+    """
+    agy = _agy_signin()
+    notices = []
+    seen = set()
+    for w in workers or []:
+        if not isinstance(w, dict) or worker_agent_id(w) not in ('antigravity', 'agy'):
+            continue
+        if worker_settled_kind(w) is not None or worker_terminal_released(w):
+            continue
+        terminal = worker_terminal_handle(w)
+        if not terminal:
+            continue
+        remote = worker_is_remote(w, config)
+        host = remote_environment(w) if remote else (config.get('local_host') or 'local')
+        if not host or host in seen:
+            continue
+        try:
+            if read is not None:
+                screen = read(terminal, host if remote else '')
+            else:
+                screen = json.dumps(rpc('terminal', 'read', '--terminal', terminal, '--screen',
+                                        *(['--environment', host] if remote else [])))
+        except SEND_ERRORS:
+            continue
+        if not agy.is_sign_in_screen(screen):
+            continue
+        seen.add(host)
+        try:
+            due = agy.mark(host, now=now)
+        except OSError as error:
+            print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
+            continue
+        if due:
+            notices.append(Urgent(
+                'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
+                'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host)))
+    return notices
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
@@ -7726,6 +7776,11 @@ def main():
     )
     notices += scan_extra
     notices += usage_gate_notices(state, now)
+    if inventory_ok:
+        try:
+            notices += agy_signin_notices(config, workers, now=now)
+        except Exception as error:
+            print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
