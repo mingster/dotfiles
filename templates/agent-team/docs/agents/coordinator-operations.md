@@ -4,7 +4,7 @@ Read before reporting status or reviewing process performance.
 
 ## Status evidence
 
-- Provider quota comes from the readings (`python3 ~/dotfiles/script/usage-gate.py show`), never the gate verdict alone; the daily cap paces, it does not block (`.claude/model-routing.md`, Starting a worker). Non engineering worker state comes from its screen or `worker-list`. Say "not checked" for anything you did not check.
+- Provider quota comes from the readings (`python3 ~/dotfiles/script/usage-gate.py show`), never the gate verdict alone; headroom is the weekly percent left summed over every Claude account against the time to the weekly reset; there is no daily cap (ADR 0001, amended 2026-11-21) (`.claude/model-routing.md`, Starting a worker). Non engineering worker state comes from its screen or `worker-list`. Say "not checked" for anything you did not check.
 - Each wake, drain every pending delivery. Ack and drop heartbeat deliveries (`--type heartbeat`, empty body); never treat one as a report or relay it. When `orca orchestration check --run <run>` returns `consumer_fenced`, run `orca orchestration run-use --id <run>` first, then wait with `check --run <run> --wait` and `--ack` each batch. Never scrape the shared `orca orchestration inbox`.
 
 ## Process improvement
