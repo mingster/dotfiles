@@ -820,6 +820,39 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   vf "verdict-from refuses an untracked file under templates/agent-team" 1 "not at origin/main"
   rm -f "$fx/templates/agent-team/untracked-template.md"
 
+  # Pinned bump PRs (#1247): the copies are checked against the template at the head's .claude/agent-team-pin.
+  fxg() { "$MF_REAL_GIT" -C "$fx" -c user.name=t -c user.email=t@example.invalid "$@"; }
+  fx_tpl="$fx/templates/agent-team/docs/agents/team.md"
+  pin_p=$(fxg rev-parse HEAD)
+  pin_branch() { # <dotfiles dir to sync from> -> sets pin_head, pin_files
+    g checkout -q -B feat-gen "$base_sha"
+    DOTFILES="$1" bash "$1/script/agent-team.sh" sync "$MF_REPO" --project-name acme >/dev/null 2>&1
+  }
+  pin_commit() {
+    g add -A && g commit -qm bump && g push -q -f origin feat-gen
+    pin_head=$(g rev-parse HEAD)
+    pin_files=$(g diff --name-only "$base_sha" "$pin_head" | jq -Rsc 'split("\n")[:-1]')
+    mkpr 200 "$pin_head" "$pin_files" "Body"; set_checks 200 "$green_checks"
+  }
+  pin_branch "$fx"; pin_commit
+  if [ "$(g show "$pin_head:.claude/agent-team-pin")" = "$pin_p" ]; then
+    vf "verdict-from: a bump PR with pin = origin/main passes" 0 "generated team copies"
+  else
+    bad "verdict-from: a bump PR with pin = origin/main passes" "pin not written: $(g show "$pin_head:.claude/agent-team-pin" 2>&1)"
+  fi
+  # A template change lands on dotfiles main: the bump PR pinned at the older commit still passes.
+  printf '\nA later template change.\n' >> "$fx_tpl"
+  fxg commit -qam 'template change'; fxg update-ref refs/remotes/origin/main HEAD
+  vf "verdict-from: a bump PR pinned before a later template change still passes" 0 "generated team copies"
+  # A pin that is not an ancestor of dotfiles origin/main.
+  pin_branch "$fx"; printf '%s\n' 0123456789abcdef0123456789abcdef01234567 > "$MF_REPO/.claude/agent-team-pin"; pin_commit
+  vf "verdict-from: a non-ancestor pin is refused" 1 "not an ancestor of dotfiles origin/main"
+  # Copies rendered from the newer template but pinned at the older commit do not match the render at the pin.
+  pin_branch "$fx"; printf '%s\n' "$pin_p" > "$MF_REPO/.claude/agent-team-pin"; pin_commit
+  vf "verdict-from: a copy that does not match the render at the pin is refused" 1 "agent-team.sh check fails"
+  fxg checkout -q "$pin_p" -- templates; fxg commit -qam "restore template"; fxg update-ref refs/remotes/origin/main HEAD
+  g checkout -q -B feat-gen "$base_sha"
+
   # A generated-copy PR may also delete the paths check flags: a canonical role file, or a shared
   # hook nothing kept loads. An add, an edit, a kept hook, or an unrelated deletion still refuses.
   src MERGED "$(one "$GOOD")"
@@ -1223,7 +1256,35 @@ fp_start=$SECONDS
 fleet_case 1404 mingster/dotfiles called hang
 if [ "$SHIP_RC" -eq 0 ] && [ $((SECONDS - fp_start)) -lt 20 ] && grep -q 'pr=1404 .*exit=124' <<<"$FP_LOG"; then ok "a hanging fleet-pull is cut off by the timeout"
 else bad "a hanging fleet-pull is cut off by the timeout" "rc=$SHIP_RC log=$FP_LOG"; fi
-unset SHIP_FLEET_PULL SHIP_FLEET_PULL_LOG
+# A dotfiles merge that touched the team template also starts template-sync-pr.sh in the background (#1247).
+cat > "$fp_dir/fake-template-sync" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$fp_dir/sync-calls"
+echo "example/repo open 7"
+EOF
+export SHIP_TEMPLATE_SYNC="$fp_dir/fake-template-sync" SHIP_TEMPLATE_SYNC_LOG="$fp_dir/sync-log"
+sync_case() { # <pr> <path> <expect called|silent>
+  local n=$1 h i
+  rm -f "$fp_dir/sync-calls" "$fp_dir/sync-log"
+  mf_pr_add "$n" "feat-sync-$n" "Body" "$2"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"; set_checks "$n" "$green_checks"; post_verdict "$n" PASS "$h"
+  SHIP_FLEET_PULL_TIMEOUT=2 run_ship --repo mingster/dotfiles --pr "$n"
+  for i in $(seq 1 100); do
+    grep -q '^template-sync ' "$fp_dir/sync-log" 2>/dev/null && break
+    [ "$3" = silent ] && [ "$i" -ge 10 ] && break
+    sleep 0.1
+  done
+  SYNC_LOG=$(cat "$fp_dir/sync-log" 2>/dev/null || true)
+}
+sync_case 1405 templates/agent-team/docs/agents/x.md called
+if [ "$SHIP_RC" -eq 0 ] && grep -q -- '--verdict-from mingster/dotfiles#1405' "$fp_dir/sync-calls" 2>/dev/null && grep -q 'pr=1405 .*exit=0' <<<"$SYNC_LOG"; then
+  ok "a template merge starts template-sync-pr.sh and logs it"
+else bad "a template merge starts template-sync-pr.sh and logs it" "rc=$SHIP_RC log=$SYNC_LOG out=$SHIP_OUT"; fi
+sync_case 1406 docs/notes-1406.md silent
+if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$fp_dir/sync-calls" ] && [ -z "$SYNC_LOG" ]; then ok "a dotfiles merge without template changes does not start template sync"
+else bad "a dotfiles merge without template changes does not start template sync" "rc=$SHIP_RC log=$SYNC_LOG"; fi
+unset SHIP_FLEET_PULL SHIP_FLEET_PULL_LOG SHIP_TEMPLATE_SYNC SHIP_TEMPLATE_SYNC_LOG
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

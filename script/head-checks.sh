@@ -359,9 +359,10 @@ for team_file in .claude/settings.project.json .claude/hooks/guard-config.json; 
 done
 if [ "$team_files" -eq 1 ]; then
   export DOTFILES="${DOTFILES_DIR:-${DOTFILES:-$(cd "$script_dir/.." && pwd)}}"
-  printf '\nCommand: bash "%s/script/agent-team.sh" check "%s"\n' "$DOTFILES" "$worktree" >> "$log"
+  # --pinned: check against the template the project last synced, not the moving dotfiles main (#1247).
+  printf '\nCommand: bash "%s/script/agent-team.sh" check --pinned "%s"\n' "$DOTFILES" "$worktree" >> "$log"
   started=$SECONDS
-  if bash "$DOTFILES/script/agent-team.sh" check "$worktree" >> "$log" 2>&1; then
+  if bash "$DOTFILES/script/agent-team.sh" check --pinned "$worktree" >> "$log" 2>&1; then
     printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
   else
     status=$?

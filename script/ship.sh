@@ -11,9 +11,11 @@
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
 # agent-team.sh check flags as a canonical role file or an unkept shared hook copy. The verdict lane accepts
-# a generated copy whose blob at the PR head equals the template render at dotfiles origin/main (the same
-# {{PROJECT_NAME}} substitution agent-team.sh uses), and a deletion of a generated copy that check demands.
-# Any other generated copy still needs --verdict-from.
+# a generated copy whose blob at the PR head equals the template render at the head's .claude/agent-team-pin
+# (dotfiles origin/main when the head has no pin; the same {{PROJECT_NAME}} substitution agent-team.sh uses),
+# and a deletion of a generated copy that check demands. Any other generated copy still needs --verdict-from.
+# A pin must be an ancestor of dotfiles origin/main and must not move behind the base's pin.
+# After a dotfiles merge that touched the team template, template-sync-pr.sh opens the pin bump PRs (#1247).
 set -euo pipefail
 
 ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -103,6 +105,22 @@ fleet_pull_after_merge() { # <pr> <merge sha>
     [ "$rc" -lt 128 ] || rc=124
     { printf 'fleet-pull %s pr=%s sha=%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pr_n" "$sha" "$rc"; cat "$tmp"; } >>"$log" 2>/dev/null || true
     rm -f "$tmp"
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+# After a dotfiles merge that touched the team template, open one pin bump PR per project (#1247). Detached like
+# fleet-pull: a failure never reaches ship's exit code; fleet-watch reports a pin that lags or a red bump PR.
+template_sync_after_merge() { # <pr> <merge sha>
+  local pr_n=$1 sha=$2
+  local log=${SHIP_TEMPLATE_SYNC_LOG:-$HOME/.claude/state/template-sync-after-ship.log}
+  local cmd=${SHIP_TEMPLATE_SYNC:-$ship_dir/template-sync-pr.sh}
+  mkdir -p "$(dirname "$log")" 2>/dev/null || return 0
+  (
+    trap - EXIT
+    rc=0
+    out=$(bash "$cmd" --verdict-from "$repo#$pr_n" 2>&1) || rc=$?
+    { printf 'template-sync %s pr=%s sha=%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pr_n" "$sha" "$rc"; printf '%s\n' "$out"; } >>"$log" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
 }
@@ -454,7 +472,33 @@ detect_copy_project_name() { # <sha>
   fi
   basename "$PWD"
 }
-# Blob at head equals the origin/main template after {{PROJECT_NAME}} substitution.
+# The dotfiles commit generated copies at the PR head render from: the head's .claude/agent-team-pin, else
+# origin/main. A pin outside origin/main, or behind the base's pin, is refused (#1247).
+PIN_REL=.claude/agent-team-pin
+render_ref=""
+resolve_render_ref() {
+  [ -z "$render_ref" ] || return 0
+  local pin base_pin base
+  git -C "$dotfiles_root" rev-parse --verify -q origin/main >/dev/null || refuse "cannot resolve origin/main in the dotfiles tree"
+  if ! git cat-file -e "$head:$PIN_REL" 2>/dev/null; then
+    render_ref=origin/main
+    return 0
+  fi
+  pin=$(git cat-file blob "$head:$PIN_REL" | sed -n '1p' | tr -d '\r')
+  [[ "$pin" =~ ^[0-9a-f]{40}$ ]] || refuse "$PIN_REL at head is not a commit sha"
+  git -C "$dotfiles_root" merge-base --is-ancestor "$pin" origin/main 2>/dev/null \
+    || refuse "$PIN_REL names ${pin:0:12}, which is not an ancestor of dotfiles origin/main"
+  base=$(field .baseRefOid)
+  git cat-file -e "$base^{commit}" 2>/dev/null || git fetch origin "$base" >&2 || true
+  if git cat-file -e "$base:$PIN_REL" 2>/dev/null; then
+    base_pin=$(git cat-file blob "$base:$PIN_REL" | sed -n '1p' | tr -d '\r')
+    if [[ "$base_pin" =~ ^[0-9a-f]{40}$ ]] && ! git -C "$dotfiles_root" merge-base --is-ancestor "$base_pin" "$pin" 2>/dev/null; then
+      refuse "$PIN_REL moves from ${base_pin:0:12} to ${pin:0:12}, which is not newer"
+    fi
+  fi
+  render_ref=$pin
+}
+# Blob at head equals the template at the head's pin after {{PROJECT_NAME}} substitution.
 # agent-team.sh project sync does that with str.replace, not the user-level "this project" render.
 render_matches_head() { # <path>
   local rel name tmp rc=0
@@ -464,11 +508,12 @@ render_matches_head() { # <path>
     copy_project_name_ready=true
   fi
   name=$copy_project_name
-  if ! git -C "$dotfiles_root" cat-file -e "origin/main:templates/agent-team/${rel}" 2>/dev/null; then
+  resolve_render_ref
+  if ! git -C "$dotfiles_root" cat-file -e "$render_ref:templates/agent-team/${rel}" 2>/dev/null; then
     return 1
   fi
   tmp=$(mktemp -d)
-  git -C "$dotfiles_root" cat-file blob "origin/main:templates/agent-team/${rel}" >"$tmp/raw" || { rm -rf "$tmp"; return 1; }
+  git -C "$dotfiles_root" cat-file blob "$render_ref:templates/agent-team/${rel}" >"$tmp/raw" || { rm -rf "$tmp"; return 1; }
   python3 - "$name" "$tmp/raw" "$tmp/rendered" <<'PY' || { rm -rf "$tmp"; return 1; }
 import sys
 name, src, dst = sys.argv[1:]
@@ -556,7 +601,7 @@ path_removal_demanded() { # <path>; 0 demanded, 1 not, 2 check could not run
   done <<<"$removal_paths"
   return 1
 }
-# 0 when this generated copy is the origin/main render, or a deletion check demands.
+# 0 when this generated copy is the render at the head's pin, or a deletion check demands.
 allow_generated_copy() { # <path>
   local f=$1 rc=0
   if [ "$pr_head_ready" = false ]; then
@@ -577,6 +622,11 @@ allow_generated_copy() { # <path>
 }
 dotfiles_root=$(cd "$ship_dir/.." && pwd)
 skill_names=$(cd "$dotfiles_root/templates/agent-team/.agents/skills" 2>/dev/null && for d in */; do [ -f "$d/SKILL.md" ] && echo "${d%/}"; done; true)
+if jq -e --arg p "$PIN_REL" 'index($p) != null' <<<"$files" >/dev/null; then
+  git cat-file -e "$head^{commit}" 2>/dev/null || git fetch origin "$head" >&2 || refuse "cannot read head $head"
+  pr_head_ready=true
+  resolve_render_ref
+fi
 if [ -z "$verdict_from" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
@@ -628,8 +678,11 @@ generated)
   deleted_paths=$(git diff --diff-filter=D --name-only "$base_oid" "$head")
   demanded="" demanded_ready=false lane_deletions=""
   while IFS= read -r f; do
-    # Generated copies, or a pure deletion of a path check flags on the base. check below byte-verifies the head.
-    if is_generated_copy "$f" "$skill_names"; then
+    # Generated copies, the pin, or a pure deletion of a path check flags on the base. check --pinned below
+    # byte-verifies the head against the template at its pin.
+    if [ "$f" = "$PIN_REL" ]; then
+      :
+    elif is_generated_copy "$f" "$skill_names"; then
       mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
       [ "$mode" != 120000 ] || refuse "--verdict-from refuses symlink $f"
     elif grep -Fxq -- "$f" <<<"$deleted_paths"; then
@@ -649,7 +702,7 @@ generated)
   sync_dir=$(mktemp -d)
   git archive "$head" 2>/dev/null | tar -x -C "$sync_dir" 2>/dev/null || true
   git -C "$sync_dir" init -q 2>/dev/null || true
-  (export DOTFILES="$dotfiles_root"; bash "$dotfiles_root/script/agent-team.sh" check "$sync_dir" >&2) \
+  (export DOTFILES="$dotfiles_root"; bash "$dotfiles_root/script/agent-team.sh" check --pinned "$sync_dir" >&2) \
     || refuse "agent-team.sh check fails at head $head"
   src=$(gh pr view "$src_pr" --repo "$src_repo" --json state,headRefOid,body,comments) || refuse "cannot read $verdict_from"
   [ "$(jq -r .state <<<"$src")" = MERGED ] || refuse "$verdict_from is not MERGED"
@@ -769,7 +822,12 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit) || refuse "can
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || refuse "MERGED read-back for PR $pr has no merge commit"
 echo "shipped PR $pr as $merge_sha"
-[ "$repo" != "${SHIP_FLEET_PULL_REPO:-mingster/dotfiles}" ] || fleet_pull_after_merge "$pr" "$merge_sha"
+if [ "$repo" = "${SHIP_FLEET_PULL_REPO:-mingster/dotfiles}" ]; then
+  fleet_pull_after_merge "$pr" "$merge_sha"
+  if jq -e 'any(.[]; startswith("templates/agent-team/") or . == "script/agent-team.sh")' <<<"$files" >/dev/null; then
+    template_sync_after_merge "$pr" "$merge_sha"
+  fi
+fi
 # The merge is done; a board failure only warns. A failed merge refused above and never reaches this line.
 # The card lives on the host that holds the worktree. --environment wins; otherwise the dispatch record's host does.
 board_env=$ship_environment
