@@ -6765,7 +6765,7 @@ def issue_scan_pass(
         if row['number'] in pending_list:
             pending_list.remove(row['number'])
         suffix = ':%s' % reason if reason else ''
-        if code in BABYSIT_DEFERRED_EXITS:
+        if code in BABYSIT_DEFERRED_EXITS or (code != 0 and refusal_token(reason) == 'usage_gate'):
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
