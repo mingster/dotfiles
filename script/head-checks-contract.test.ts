@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
@@ -107,7 +108,7 @@ else:
 		repo,
 		binpath,
 		base,
-		buildInfo: join(home, "orca/workspaces/fixture/tsc-_checks.tsbuildinfo"),
+		cacheDir: join(home, "orca/workspaces/fixture/tsc-cache"),
 		worktree: join(home, "orca/workspaces/fixture/_checks"),
 	};
 }
@@ -158,17 +159,17 @@ test(
 		git(fix.repo, "commit", "-qm", "add ts");
 		const head = git(fix.repo, "rev-parse", "HEAD");
 
-		rmSync(fix.buildInfo, { force: true });
+		rmSync(fix.cacheDir, { recursive: true, force: true });
 		const cold = runHeadChecks(fix, head, comments);
 		expect(cold.code).toBe(0);
-		expect(existsSync(fix.buildInfo)).toBe(true);
+		expect(readdirSync(fix.cacheDir)).toHaveLength(1);
 		expect(existsSync(join(fix.worktree, "tsc.tsbuildinfo"))).toBe(false);
 		coldDuration = parseTscDuration(cold.receipt);
 		expect(coldDuration).not.toBeNull();
 
 		const warm = runHeadChecks(fix, head, comments);
 		expect(warm.code).toBe(0);
-		expect(existsSync(fix.buildInfo)).toBe(true);
+		expect(readdirSync(fix.cacheDir)).toHaveLength(1);
 		warmDuration = parseTscDuration(warm.receipt);
 		expect(warmDuration).not.toBeNull();
 
@@ -181,7 +182,7 @@ test(
 		const badHead = git(fix.repo, "rev-parse", "HEAD");
 		const bad = runHeadChecks(fix, badHead, comments);
 		expect(bad.code).not.toBe(0);
-		expect(existsSync(fix.buildInfo)).toBe(true);
+		expect(readdirSync(fix.cacheDir)).toHaveLength(1);
 
 		console.log(
 			`tsc durations cold=${coldDuration}s warm=${warmDuration}s planted-error-exit=${bad.code}`,

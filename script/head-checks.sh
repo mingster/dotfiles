@@ -342,9 +342,8 @@ done
 [ -n "$worktree" ] || usage "every check worktree is in use by pid$busy"
 refused=""
 printf '%s\n' "$$" > "$lock/pid"
-# Incremental tsc cache lives beside the check worktree, never inside the checkout.
-tsc_build_info="$HOME/orca/workspaces/$name/tsc-${worktree##*/}.tsbuildinfo"
-mkdir -p "$(dirname "$tsc_build_info")"
+# Incremental tsc cache is shared by every check worktree of this repo on this host (see head-checks-tsc.sh).
+tsc_cache_dir="$HOME/orca/workspaces/$name/tsc-cache"
 common=$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir)
 if [ -e "$worktree" ] && [ "$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "$common" ] \
     && [ -z "$(git -C "$worktree" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
@@ -534,7 +533,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
-  step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
+  step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_CACHE_DIR="$tsc_cache_dir")
   run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" "$bash_bin" -euo pipefail -c "$expanded")
   gate_prefix=()
   while IFS= read -r token || [ -n "${token:-}" ]; do
