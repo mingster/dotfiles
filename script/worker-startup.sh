@@ -1133,6 +1133,26 @@ run_mode() {
     "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
     [ "$rc" = 0 ]
   }
+  grok_trust_worktree() { # <worktree path>: Grok blocks on its folder-trust question in a new worktree (#1312)
+    local term_json term_handle read_json rc="" tries=0
+    if [ -z "$environment" ]; then
+      bash "$here/grok-trust.sh" "$1" >&2
+      return
+    fi
+    term_json=$("$orca" terminal create --environment "$environment" --worktree "path:$1" --json \
+      --command "bash \"\$HOME/dotfiles/script/grok-trust.sh\" $(printf '%q' "$1"); echo GROK_TRUST_RC=\$?") || return 1
+    term_handle=$(printf '%s' "$term_json" | jq -r '.result.terminal.handle // empty')
+    [ -n "$term_handle" ] || return 1
+    while [ "$tries" -lt "${WORKER_STARTUP_GIT_ONLY_TRIES:-60}" ]; do
+      read_json=$("$orca" terminal read --environment "$environment" --terminal "$term_handle" --json 2>/dev/null) || read_json=""
+      rc=$(printf '%s' "$read_json" | jq -r '[.result.terminal.tail[]? | capture("^GROK_TRUST_RC=(?<rc>[0-9]+)$").rc] | first // empty' 2>/dev/null)
+      [ -z "$rc" ] || break
+      tries=$((tries + 1))
+      sleep 2
+    done
+    "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
+    [ "$rc" = 0 ]
+  }
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
     local ec=$1 rm_args
@@ -1162,6 +1182,9 @@ run_mode() {
   board_status_set "path:$wt" in-progress "$environment"
   board_display_name_set "path:$wt" "$title" "$environment"
   start_agent_worker() { # starts the worker for the current agent, model and brief
+    if [ "$agent" = grok ]; then
+      grok_trust_worktree "$wt" || { echo "worker-startup: could not pre-trust $wt for grok (#1312)" >&2; start_failed 1; }
+    fi
     if [ -n "$environment" ]; then
       start_with_startup_retry bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?

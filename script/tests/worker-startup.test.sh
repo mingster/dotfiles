@@ -415,6 +415,18 @@ case " \$* " in
   *" worktree set "*)
     exit 0
     ;;
+  *" terminal create "*)
+    printf '%s\n' '{"ok":true,"result":{"terminal":{"handle":"term_stub"}}}'
+    exit 0
+    ;;
+  *" terminal read "*)
+    printf '%s\n' '{"ok":true,"result":{"terminal":{"tail":["GROK_TRUST_RC=0"]}}}'
+    exit 0
+    ;;
+  *" terminal close "*)
+    printf '%s\n' '{"ok":true,"result":{}}'
+    exit 0
+    ;;
 esac
 exit 99
 EOS
