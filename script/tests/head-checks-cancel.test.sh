@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as temp:
     case('plain step dies on KILL of head-checks', plain, [(0, signal.SIGKILL)], kill=True)
 
     case('INT then TERM still cleans up', '(trap "" TERM; exec sleep 300) & echo $! > PIDFILE; wait',
-         [(0, signal.SIGINT), (1, signal.SIGTERM)], max_exit=8)
+         [(0, signal.SIGINT), (1, signal.SIGTERM)], max_exit=6.5)
 
     def hold_every_slot():
         holder = subprocess.Popen(['python3', gate, 'gate', '--weight', '2', '--', 'sleep', '60'], env=env,

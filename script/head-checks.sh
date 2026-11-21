@@ -216,14 +216,15 @@ stop_watcher() {
   watcher_pid=""
 }
 reap_step() {
-  local tries=0
+  local deadline=$((SECONDS + 5))
   [ -n "$step_pid" ] || return 0
   stop_watcher
   kill -TERM -- -"$step_pid" 2>/dev/null || true
   # A 5 second grace: the gate's own cleanup (TERM, 3 seconds, KILL) fits inside it, and it ends
   # before the runner follows its INT with TERM (7.5 seconds later) and KILL (2.5 more).
-  while [ "$tries" -lt 50 ] && group_live "$step_pid"; do
-    tries=$((tries + 1)); sleep 0.1
+  # A clock deadline, not a try count: each ps call adds time under load.
+  while [ "$SECONDS" -lt "$deadline" ] && group_live "$step_pid"; do
+    sleep 0.1
   done
   kill -KILL -- -"$step_pid" 2>/dev/null || true
   step_pid=""
