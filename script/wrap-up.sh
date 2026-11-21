@@ -167,7 +167,7 @@ scheduled_round() {
   rotate_log "$log_file"; rotate_log "$detail_file"
   take_round_lock || exit 0
   trap release_round_lock EXIT
-  rm -f "$round_state/wrap-up-scheduled.terminals"
+  guarded_round_rm f "$round_state/wrap-up-scheduled.terminals"
 
   orca_dir=$(find_orca_dir)
   export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin:/usr/sbin:/sbin"
