@@ -10,9 +10,13 @@
 # Verify must name script/checks-local.sh unless a target repo dir is given that has no such script (#1195).
 # Refs is "Refs #<n>", "Refs: #<n>", "Closes #<n>", "Fixes #<n>" or "Resolves #<n>", each with an optional owner/repo before the #.
 # --issue-body lints a draft issue body: the issue has no number yet, so Refs is not required (#1201).
+# A builder brief (any Type but verify) whose "Allowed files" names an owner gated path (script/lib/protected-paths.sh) gets a
+# "brief-lint: warning:" line. The exit code does not change (#1328).
 # Usage: brief-lint.sh [--issue-body] <file> [<target-repo-dir>]
 set -euo pipefail
 
+lint_rc=0
+lint_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 need_refs=1
 if [ "${1:-}" = --issue-body ]; then
   need_refs=0
@@ -145,4 +149,40 @@ END {
   }
   exit rc
 }
-' "$file"
+' "$file" || lint_rc=$?
+
+# Warn when a builder brief lets the worker edit an owner gated path. Tokens split without globbing, \r stripped.
+warn_owner_paths() {
+  [ -r "$file" ] && [ -r "$lint_here/lib/protected-paths.sh" ] || return 0
+  # shellcheck source=lib/protected-paths.sh
+  . "$lint_here/lib/protected-paths.sh"
+  local line sec="" body tok seen=" " btype="" warns=""
+  set -f
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    case "$line" in Type:*) btype=${line#Type:}; btype=${btype//[[:space:]]/} ;; esac
+    body=""
+    case "$line" in
+      "## Allowed files"*) sec=heading; continue ;;
+      "## "*) sec="" ;;
+      "**Allowed files:**"*) sec=inline; body=${line#"**Allowed files:**"} ;;
+      "Allowed files:"*) sec=inline; body=${line#"Allowed files:"} ;;
+      *) if [ -z "${line//[[:space:]]/}" ]; then [ "$sec" = heading ] || sec=""; elif [ -n "$sec" ]; then body=$line; fi ;;
+    esac
+    [ -n "$body" ] || continue
+    body=${body//,/ }; body=${body//\`/ }; body=${body//\"/ }; body=${body//\'/ }
+    for tok in $body; do
+      tok=${tok#./}; tok=${tok%%[.;:)]}
+      [ -n "$tok" ] || continue
+      case "$seen" in *" $tok "*) continue ;; esac
+      seen="$seen$tok "
+      if owner_only_path "$tok" || protected_path "$tok"; then
+        warns="${warns}brief-lint: warning: Allowed files names owner gated path $tok; the PR waits for the owner"$'\n'
+      fi
+    done
+  done <"$file"
+  set +f
+  [ "$btype" = verify ] || printf '%s' "$warns"
+}
+warn_owner_paths
+exit "$lint_rc"

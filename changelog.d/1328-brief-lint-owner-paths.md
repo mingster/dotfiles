@@ -1,0 +1,1 @@
+* `brief-lint.sh` now warns when a builder brief's `Allowed files` names an owner gated path (hooks, settings, rules, role files, templates copies), and `worker-startup.sh` prints that warning to stderr when lint passes. The exit code is unchanged (#1328).
