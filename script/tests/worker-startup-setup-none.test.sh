@@ -3,6 +3,8 @@
 # A plain brief keeps --setup run with no extra git-only step. Home and state files stay under $tmp.
 set -uo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail=0
