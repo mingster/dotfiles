@@ -3193,20 +3193,21 @@ SHELL_WORD = re.compile(r"[A-Za-z0-9_./-]+")
 
 class ShellLines:
     """Shell syntax state across the shell lines of a command (never heredoc bodies): the open quote, the
-    `$(` / `(` / backtick stack, `case` nesting, a `\\` continuation, pending heredocs, and `unsure`."""
+    `$(` / `(` / backtick stack, pending heredocs, and `unsure`. A construct it cannot track (`case`, a `\\`
+    line continuation, `#` after `)`, `\\` in a quoted heredoc delimiter) sets `unsure`."""
 
     def __init__(self):
-        self.quote, self.stack, self.case_stack, self.continued, self.pending, self.unsure = "", [], [], False, [], False
+        self.quote, self.stack, self.pending, self.unsure = "", [], [], False
 
     def at_top_level(self):
-        return not (self.unsure or self.quote or self.stack or self.case_stack or self.continued or self.pending)
+        return not (self.unsure or self.quote or self.stack or self.pending)
 
     def _push(self, kind):
-        self.stack.append((kind, self.quote, self.case_stack))
-        self.quote, self.case_stack = "", []
+        self.stack.append((kind, self.quote))
+        self.quote = ""
 
     def _pop(self):
-        _, self.quote, self.case_stack = self.stack.pop()
+        _, self.quote = self.stack.pop()
 
     def _delimiter(self, text, j):
         """(closing_delimiter_or_None, next_index) for a heredoc operator whose word starts at `text[j]`."""
@@ -3216,6 +3217,8 @@ class ShellLines:
             if q:
                 if c == q:
                     q = ""
+                elif c == "\\" and q == '"':
+                    return None, j
                 else:
                     delim += c
             elif c in "'\"":
@@ -3232,13 +3235,13 @@ class ShellLines:
 
     def scan(self, line):
         text = line.rstrip("\r\n")
-        self.continued = False
         i, n = 0, len(text)
         while i < n:
             c = text[i]
             if c == "\\" and self.quote != "'":
                 if i + 1 >= n:
-                    self.continued = True
+                    self.unsure = True
+                    return
                 i += 2
                 continue
             if self.quote == "'":
@@ -3265,20 +3268,18 @@ class ShellLines:
                     self.quote = ""
             elif c in "'\"":
                 self.quote = c
-            elif c == "#" and (i == 0 or text[i - 1] in " \t;&|()<>"):
+            elif c == "#" and i > 0 and text[i - 1] == ")":
+                self.unsure = True
+                return
+            elif c == "#" and (i == 0 or text[i - 1] in " \t;&|(<>"):
                 break
             elif c in "<>" and text[i + 1:i + 2] == "(":
                 self.unsure = True
                 return
             elif c == "(":
-                if self.case_stack and len(self.stack) <= self.case_stack[-1]:
-                    self.unsure = True
-                    return
                 self._push("(")
             elif c == ")":
-                if self.case_stack and len(self.stack) <= self.case_stack[-1]:
-                    pass
-                elif self.stack:
+                if self.stack:
                     self._pop()
                 else:
                     self.unsure = True
@@ -3297,13 +3298,9 @@ class ShellLines:
                 continue
             elif c.isascii() and (c.isalnum() or c in "_./-"):
                 word = SHELL_WORD.match(text, i)
-                if word[0] == "case":
-                    self.case_stack.append(len(self.stack))
-                elif word[0] == "esac":
-                    if not self.case_stack:
-                        self.unsure = True
-                        return
-                    self.case_stack.pop()
+                if word[0] in ("case", "esac"):
+                    self.unsure = True
+                    return
                 i = word.end()
                 continue
             i += 1
@@ -3335,7 +3332,7 @@ def _strip_report_heredocs(command):
         if shell.unsure:
             return command
         out.append(line)
-        if shell.pending and not shell.quote and not shell.continued:
+        if shell.pending and not shell.quote:
             for dash, delim in shell.pending:
                 while i < len(lines):
                     body = lines[i]
@@ -3346,7 +3343,7 @@ def _strip_report_heredocs(command):
                 else:
                     return command
             shell.pending = []
-    return "".join(out)
+    return "".join(out) if shell.at_top_level() else command
 
 
 def report_command_text(command):
@@ -3390,7 +3387,7 @@ def _interpreter_stdin_body(command, base):
         if not match and mention.search(bare):
             return command
         shell.scan(line)
-        if shell.unsure or shell.quote or shell.continued:
+        if shell.unsure or shell.quote:
             return command
         if not shell.pending:
             continue
@@ -3428,7 +3425,7 @@ def _shell_parse_unsure(command):
         i += 1
         if shell.unsure:
             return True
-        if shell.pending and not shell.quote and not shell.continued:
+        if shell.pending and not shell.quote:
             for dash, delim in shell.pending:
                 while i < len(lines):
                     body = lines[i]

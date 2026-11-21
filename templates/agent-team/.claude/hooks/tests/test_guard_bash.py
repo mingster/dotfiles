@@ -373,6 +373,26 @@ class ShellScriptBoundary(GuardTest):
                     mod.main()
             self.assertEqual(json.loads(buf.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
 
+    def test_untrackable_shell_syntax_returns_the_unstripped_command(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_unsure", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        brief = "cat > /tmp/x <<'EOF'\n$(bash bin/deploy-raw.sh)\nEOF\n"
+        commands = {
+            "backslash split $'": "echo \"$(echo $\\\n'\\')\" #')'\n" + brief + "\"",
+            "backslash split $(": "echo \"$\\\n(echo \"a\n" + brief + "\")\"",
+            "backslash split $((": "echo $\\\n(( 1 << 2 ))\necho \"\n2\n" + brief + "\" #\"",
+            "backslash split <<": "cat > out/brief.md <\\\n<OUTER\n" + brief + "OUTER",
+            "hash after )": "echo $(echo 1)#\"\n" + brief + "\"",
+            "case word": "echo \"$(echo case)\" <<OUTER; echo \"esac )\"\n" + brief + "OUTER",
+            "escaped quote in delimiter": "cat <<\"\\\"\"; echo \"\"x\"\n\\; echo x\n" + brief + "\"\n\"",
+            "pending heredoc at EOF": brief + "cat <<OUTER; echo \"\nunclosed",
+            "open quote at EOF": brief + "echo \"unclosed",
+        }
+        for name, command in commands.items():
+            with self.subTest(name):
+                self.assertEqual(mod.report_command_text(command), command)
+
     def test_exception_in_the_interpreter_stdin_helper_scans_the_whole_command(self):
         spec = importlib.util.spec_from_file_location("guard_bash_stdin_inject", HOOK)
         mod = importlib.util.module_from_spec(spec)
