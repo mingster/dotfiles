@@ -597,6 +597,17 @@ for bad_title in myjob "qa-sdet - verify #5" "#12" "#12|QA" "12|qa-sdet" "#12|qa
   grep -q "#<issue>|<role>" "$tmp/title.err" && ok || bad "title '$bad_title' refusal should show the expected form ($(cat "$tmp/title.err"))"
   [ ! -s "$tmp/orca-title.log" ] && ok || bad "title '$bad_title' must not reach orca"
 done
+# 1324: a refused title prints the corrected one when the brief heading names the issue.
+hint_spec="$tmp/hint-spec.md"
+printf '# Build #1324: worker-startup refusals\nRole: fullstack-dev\n' >"$hint_spec"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-title.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_title --spec "$hint_spec" --title "myjob" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_title --repo "path:$clean" 2>"$tmp/title.err"
+set -e
+grep -q "did you mean '#1324|fullstack-dev'?" "$tmp/title.err" && ok || bad "refused title should print the corrected title ($(cat "$tmp/title.err"))"
 : >"$tmp/orca-title.log"
 set +e
 env -u BASH_ENV \

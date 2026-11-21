@@ -62,8 +62,23 @@ check_link() { # <label> <home-path> <expected-target>
   fi
 }
 
+# Warn (never fail) when the fleet config lists remote hosts but no grok_hosts: every grok --on start is refused (#1324).
+warn_empty_grok_hosts() {
+  local state cfg
+  state=${AGENT_STATE_DIR:-$HOME/agent-state}
+  for cfg in "${FLEET_PULL_CONFIG:-}" "$state/fleet-pull.json" "$state/fleet-config.json"; do
+    [ -n "$cfg" ] && [ -f "$cfg" ] || continue
+    command -v jq >/dev/null 2>&1 || return 0
+    if jq -e '((.hosts // []) | length > 0) and ((.grok_hosts // []) | length == 0)' "$cfg" >/dev/null 2>&1; then
+      echo "check-agent-startup: WARN grok_hosts is empty in $cfg; every grok start with --on is refused (list the hosts that have the grok CLI)" >&2
+    fi
+    return 0
+  done
+}
+
 run_check_agent_startup() {
   local dotfiles_root
+  warn_empty_grok_hosts
   if antigravity_should_skip; then
     echo 'check-agent-startup: Antigravity IDE not installed; skipping agy links.'
     return 0

@@ -457,9 +457,17 @@ usage_run() {
 }
 
 # Owner rule 2026-11-18: every worker title is "#<issue>|<role>".
-require_title_form() { # <title>
+require_title_form() { # <title> [<spec_file>]
   if ! [[ $1 =~ ^#[0-9]+\|[a-z][a-z-]*(\|.+)?$ ]]; then
-    echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)" >&2
+    local issue='' role='' hint=''
+    if [ -n "${2:-}" ] && [ -f "$2" ]; then
+      issue=$(grep -m1 -oE '^#+[[:space:]].*#[0-9]+|^(Refs|Closes|Fixes|Resolves):?[[:space:]]+[A-Za-z0-9_./-]*#[0-9]+' "$2" | grep -oE '#[0-9]+$' | head -n 1 | tr -d '#' || true)
+      role=$(sed -n 's/^Role:[[:space:]]*\([a-z][a-z-]*\).*/\1/p' "$2" | head -n 1)
+    fi
+    [ -n "$role" ] || role=$(grep -oE '[a-z]+(-[a-z]+)+' <<<"$1" | head -n 1 || true)
+    [ -n "$role" ] || role=fullstack-dev
+    [ -z "$issue" ] || hint="; did you mean '#$issue|$role'?"
+    echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)$hint" >&2
     exit 2
   fi
 }
@@ -922,7 +930,7 @@ run_mode() {
     return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
-  require_title_form "$title"
+  require_title_form "$title" "$spec"
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out lint_dir dispatch_log orig_spec=$spec
