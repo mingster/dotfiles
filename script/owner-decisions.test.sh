@@ -18,7 +18,7 @@ case "$3" in 9[0-9]) echo "GraphQL: Could not resolve to an issue or pull reques
 exit 1
 STUB
 chmod +x "$tmp/bin/gh"
-export FIX="$tmp" PATH="$tmp/bin:$PATH"
+export FIX="$tmp" PATH="$tmp/bin:$PATH" OWNER_ASKS_LOG="$tmp/asks.md"
 run() { bash "$here/owner-decisions.sh" "$@" >"$tmp/so" 2>"$tmp/se"; rc=$?; so=$(cat "$tmp/so"); se=$(cat "$tmp/se"); }
 
 echo '{"body":"Question.","comments":[{"body":"Owner decision: use A."}]}' >"$tmp/1.json"
@@ -57,6 +57,15 @@ echo '{"body":"Cross repo other/repo#98 and url x/y#97.","comments":[]}' >"$tmp/
 : >"$tmp/asked"
 run o/r 9
 [ "$rc" -eq 1 ] && ! grep -qE '^9[78]$' "$tmp/asked" && ok "owner/repo#N is not read as a local issue" || bad crossrepo "rc=$rc asked=$(tr '\n' ' ' <"$tmp/asked")"
+
+printf 'asked #12 about X, owner said use B\nasked #123 other\n' >"$tmp/asks.md"
+echo '{"body":"Question.","comments":[]}' >"$tmp/12.json"
+run o/r 12
+[ "$rc" -eq 0 ] && grep -q '^asks log: asked #12 ' <<<"$so" && ! grep -q '#123' <<<"$so" && ok "owner asks log line for the issue counts" || bad askslog "rc=$rc so=$so"
+echo '{"body":"Question.","comments":[]}' >"$tmp/13.json"
+run o/r 13
+[ "$rc" -eq 1 ] && ok "asks log without the issue number exits 1" || bad askslognone "rc=$rc so=$so"
+rm -f "$tmp/asks.md"
 
 run o/r
 [ "$rc" -eq 2 ] && ok "missing argument exits 2" || bad usage "rc=$rc"
