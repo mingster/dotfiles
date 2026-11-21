@@ -1,0 +1,1 @@
+Grok config: `script/setup-grok.sh` merges `ide/grok/config.defaults.toml` into `~/.grok/config.toml` (never overwrites user keys), and `.zshenv` exports `COLORTERM=truecolor` for kitty and other truecolor terminals (#1302).

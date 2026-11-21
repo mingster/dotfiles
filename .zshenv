@@ -8,4 +8,11 @@ for d in "$HOME/.node_modules/bin" "$HOME/.yarn/bin" "$HOME/.grok/bin" "$HOME/.a
 done
 export PATH
 
+# Tell tools the terminal does 24 bit color. Kitty and its peers reach us over ssh with TERM set but no COLORTERM.
+if [ -z "${COLORTERM:-}" ]; then
+  case "${TERM:-}:${TERM_PROGRAM:-}" in
+    *kitty*|*ghostty*|*[Ww]ez[Tt]erm*|*iTerm*|*alacritty*|*Alacritty*) export COLORTERM=truecolor ;;
+  esac
+fi
+
 [ -f "$HOME/.zshenv.local" ] && . "$HOME/.zshenv.local"
