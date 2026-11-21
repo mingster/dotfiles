@@ -2862,6 +2862,7 @@ def check_team_gates(base, args):
 
 INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
+GLUED_CODE_FLAG = re.compile(r"^-[ceE](?=.)")  # `perl -esystem...`: the code follows the flag in one word
 STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
                             r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
@@ -2908,8 +2909,11 @@ def check_indirection(base, args):
     elif INTERPRETERS.match(base):
         idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
+        glued = next((i for i, a in enumerate(args) if GLUED_CODE_FLAG.match(a)), None)
         if idx is not None:
             code = " ".join(args[idx + 1:])
+        elif glued is not None:
+            code = " ".join([args[glued][2:], *args[glued + 1:]])
         elif operand is None or "-" in args:
             code = interpreter_stdin_body(CODE_COMMAND, base)
         else:
@@ -3212,6 +3216,8 @@ class ShellLines:
     def _delimiter(self, text, j):
         """(closing_delimiter_or_None, next_index) for a heredoc operator whose word starts at `text[j]`."""
         delim, q = "", ""
+        if text[j:j + 2] in ("$'", '$"'):
+            return None, j
         while j < len(text):
             c = text[j]
             if q:
@@ -3223,7 +3229,9 @@ class ShellLines:
                     delim += c
             elif c in "'\"":
                 q = c
-            elif c == "\\" and j + 1 < len(text):
+            elif c == "\\":
+                if j + 1 >= len(text):
+                    return None, j
                 j += 1
                 delim += text[j]
             elif c in " \t;&|<>()":
@@ -3364,30 +3372,40 @@ def _stdin_heredoc_line(line, base):
     ops = list(QUOTED_HEREDOC.finditer(line))
     if len(ops) != 1 or line.count("<<") != 1 or line[ops[0].end():].strip():
         return None
-    rest = _STDIN_PREFIX.fullmatch(line[:ops[0].start()])
+    head = line[:ops[0].start()]
+    if head and head[-1] not in " \t":
+        return None
+    rest = _STDIN_PREFIX.fullmatch(head)
     if not rest or os.path.basename(rest[1].split()[0]) != base:
         return None
+    for arg in rest[1].split()[1:]:
+        if arg.startswith("-") and arg not in ("-", "--") and not (re.fullmatch(r"-[A-Za-z]+", arg) and not set(arg) & set("ceEpr")):
+            return None
     return ops[0]
 
 
 def _interpreter_stdin_body(command, base):
     """The quoted heredoc body fed to the one interpreter line `base`, or `command` when unsure."""
     mention = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])")
+    quote_marks = re.compile(r"[\\'\"]")
     lines = command.splitlines(keepends=True)
     shell, i, body, found = ShellLines(), 0, [], False
     while i < len(lines):
         line = lines[i]
         i += 1
         bare = line.rstrip("\r\n")
+        if bare.count("<<") != len(QUOTED_HEREDOC.findall(bare)):
+            return command
         match = _stdin_heredoc_line(bare, base) if shell.at_top_level() else None
-        if match and len(mention.findall(bare)) != 1:
+        loose = quote_marks.sub("", bare)
+        if match and (len(mention.findall(bare)) != 1 or len(mention.findall(loose)) != 1):
             return command
         if match and found:
             return command
-        if not match and mention.search(bare):
+        if not match and (mention.search(bare) or mention.search(loose)):
             return command
         shell.scan(line)
-        if shell.unsure or shell.quote:
+        if shell.unsure or shell.quote or (shell.pending and shell.stack):
             return command
         if not shell.pending:
             continue
