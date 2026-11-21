@@ -3,6 +3,8 @@
 # be reported as a missing load sample.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
 # Placement tests use fake hosts; only the worker count tests below read an orca fake.
 export WORKER_PLACEMENT_COUNT_WORKERS=0
 py=$here/../worker-placement.py
