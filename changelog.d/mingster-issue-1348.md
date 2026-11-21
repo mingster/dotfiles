@@ -1,0 +1,1 @@
+* wrap-up remembers a never settled dispatch that Orca cannot show (`dispatch_not_found`) in `wrap-up-gone-dispatches` and stops asking about it. Only `--apply` records it, a dry run never writes the file. `docs/agents/orca-automations.md` explains why Orca lists every precheck run as `skipped_precheck` (#1348).

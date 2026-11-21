@@ -6,6 +6,14 @@ Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fl
 
 Orca's own listings are slow under load (terminals and worktrees can take minutes), so a scheduled wrap-up round lists terminals once. The first repo's child reuses the listing its terminal close step already made for the worktree check and the idle worktree sweep, and saves it (without the terminals it closed) as `wrap-up-scheduled.terminals` in the state directory; later repos read that file. The first repo reads the whole worktree list once and reuses it in the sweep (it lists again only when the run removed worktrees in between). Each later repo asks only for its own worktrees (`orca worktree list --repo path:<repo>`), falls back to the whole list when that fails, and does not fall back when it timed out. Refs #1314.
 
+## Why Orca shows every run as an error
+
+Orca has no script only automation. An automation is an agent prompt, and its precheck is the only place to run a shell command without an agent. Orca (1.4.x) starts the agent only on precheck exit 0, and records any other exit as `skipped_precheck` with the error text `Precheck exited with code N.` There is no exit code Orca treats as a normal skip. So an ok round and a failed round both look like errors in the run history, and a change to the exit codes cannot fix that.
+
+What to read instead: the precheck stdout on the run record starts with `ok <name>` (wrapper exit 1) or `FAILED <name>` (wrapper exit 2), and the log named on that line has the round. A real failure is exit 2. Exit 1 only means the job ran fine.
+
+A scheduled wrap-up round asks Orca once about a never settled dispatch that Orca cannot show (`dispatch_not_found`). The first `--apply` logs the warning and records the id in `wrap-up-gone-dispatches` in the state directory, and later runs skip it. A dry run reads that file but never creates or changes it.
+
 ## Commands
 
 ```bash
