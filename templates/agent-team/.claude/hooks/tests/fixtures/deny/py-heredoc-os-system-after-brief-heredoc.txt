@@ -1,0 +1,7 @@
+cat > brief.md <<'EOF'
+note
+EOF
+python3 - <<'PY'
+import os
+os.system("bash bin/deploy-raw.sh")
+PY
