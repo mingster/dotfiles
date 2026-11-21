@@ -1,0 +1,6 @@
+cat <<'EOF-1'
+"
+EOF-1
+bash \
+-c "bash bin/deploy-raw.sh"
+# "

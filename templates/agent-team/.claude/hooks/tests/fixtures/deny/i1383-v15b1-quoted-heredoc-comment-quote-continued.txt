@@ -1,0 +1,4 @@
+echo "<<EOF" # "
+bash \
+-c "bash bin/deploy-raw.sh"
+EOF

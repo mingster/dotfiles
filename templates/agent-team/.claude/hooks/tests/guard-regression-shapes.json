@@ -686,5 +686,29 @@
  {
   "name": "probe-path-python3",
   "command": "find . -exec stat {} + > s.txt\n./python3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "i1383-process-substitution-runs-script",
+  "command": "cat <(bash bin/deploy-raw.sh)"
+ },
+ {
+  "name": "i1383-ansi-c-quote-single-line",
+  "command": "echo $'\\''; bash bin/deploy-raw.sh; echo $'\\''"
+ },
+ {
+  "name": "i1383-spliced-name-in-substitution",
+  "command": "echo \"$(echo \")\"; bash bin/deploy-ra\"w\".sh)\""
+ },
+ {
+  "name": "i1383-py-heredoc-body-comment-quote-then-script",
+  "command": "python3 - <<'PY'\n# it's\nPY\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "i1383-perl-stdin-heredoc-concat-system",
+  "command": "perl <<'PL'\n\"sys\".\"tem('bash bin/deploy-raw.sh')\"\nPL"
+ },
+ {
+  "name": "i1383-perl-glued-e-flag-split-name",
+  "command": "perl -esystem+q:ba:.q:sh:,q:bin/deploy:.q:-raw.sh:"
  }
 ]

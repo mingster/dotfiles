@@ -1,0 +1,1 @@
+echo "$(echo ")"; bash bin/deploy-ra"w".sh)"

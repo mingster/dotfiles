@@ -2862,6 +2862,7 @@ def check_team_gates(base, args):
 
 INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
+GLUED_PERL_CODE = re.compile(r"^-[A-Za-z]*?[eE](.+)$", re.S)  # `perl -esystem...`, `-lesystem`, `-neeval` (#1383)
 STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
                             r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
@@ -2930,6 +2931,11 @@ def check_indirection(base, args):
                     INDIRECT.append(f"`{base} -c` running the output of a command substitution hides the command "
                                     "from the guard. Run the inner command directly.")
     elif INTERPRETERS.match(base):
+        if base.startswith("perl"):
+            glued = [" ".join([m[1], *args[i + 1:]]) for i, a in enumerate(args) if (m := GLUED_PERL_CODE.match(a))]
+            if any(STARTS_PROCESS.search(code) or "`" in code for code in glued):
+                INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process "
+                                "...) hides the command from the guard. Run the command directly.")
         idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
         if idx is not None:
@@ -3935,6 +3941,82 @@ def check_hidden_script_paths(command, cwd):
              "so the command is denied.")
 
 
+# A blocked script name in a command the parsers above can misread (#1383): an allowlist, not a parser.
+# Each shell line must be plain: quotes open and close on the line, no backslash, `$`, backtick or process
+# substitution, and at most one closing `<<'TAG'` heredoc with a plain tag. Anything else denies.
+PLAIN_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*")
+
+
+def _plain_shell_line(line):
+    """(text before any comment, heredoc match or None) for a plain shell line, else None."""
+    quote, heredoc = "", None
+    for i, c in enumerate(line):
+        if c in "\\$`\r":
+            return None
+        if quote:
+            quote = "" if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|()<>"):
+            line = line[:i]
+            break
+        elif c in "<>" and line[i + 1:i + 2] == "(":
+            return None
+        elif c == "<" and line[i + 1:i + 2] == "<" and heredoc is None:
+            heredoc = i
+        elif c == "<" and heredoc is not None and i > heredoc + 1:
+            return None
+    if quote:
+        return None
+    if heredoc is None:
+        return line, None
+    match = PLAIN_HEREDOC.fullmatch(line, heredoc)
+    return (line, match) if match else None
+
+
+def _blocked_mention(text):
+    flat = re.sub(r"[\"'\\]", "", text).lower()
+    return any(name.lower() in flat for name in BLOCKED_SCRIPTS)
+
+
+def _deny_unplain_mention():
+    deny("This command names a blocked script in a shape the guard cannot read with certainty (a quote across "
+         "lines, a backslash, `$`, a backtick, a process substitution, or an unusual heredoc). Put each command on "
+         "its own plain line, or write prose about the script into a file with `cat > file <<'EOF'`.")
+
+
+def check_blocked_script_mentions(command):
+    """Deny a blocked script name outside the plain line grammar; check each plain line on its own."""
+    try:
+        if not BLOCKED_SCRIPTS or not _blocked_mention(command):
+            return
+        lines, i, cur_cwd = command.split("\n"), 0, GATE_CWD
+        while i < len(lines):
+            plain = _plain_shell_line(lines[i])
+            if plain is None:
+                _deny_unplain_mention()
+            text, heredoc = plain
+            i += 1
+            for seg in segments(text[:heredoc.start()] if heredoc else text):
+                check_segment(seg, cwd=cur_cwd)
+                prog, args = program_and_args(words(seg))
+                if prog in ("cd", "pushd") and args:
+                    dest = next((a for a in args if not a.startswith("-")), None)
+                    if dest:
+                        cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+            if heredoc:
+                dash, tag = heredoc[1], heredoc[3]
+                end = next((j for j in range(i, len(lines))
+                            if (lines[j].lstrip("\t") if dash else lines[j]) == tag), None)
+                if end is None or (_blocked_mention("\n".join(lines[i:end])) and not text_sink_heredoc(text.rstrip())):
+                    _deny_unplain_mention()
+                i = end + 1
+    except SystemExit:
+        raise
+    except Exception:
+        _deny_unplain_mention()
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -3953,6 +4035,7 @@ def check_command(command):
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
+    check_blocked_script_mentions(RAW_COMMAND)
     if INDIRECT:
         deny(INDIRECT[0])
 

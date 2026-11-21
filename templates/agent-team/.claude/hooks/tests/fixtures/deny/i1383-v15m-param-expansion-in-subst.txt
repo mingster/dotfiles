@@ -1,0 +1,3 @@
+echo "$(echo "${x:-")"}";
+bash bin/deploy-raw.sh
+)"
