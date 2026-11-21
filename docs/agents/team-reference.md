@@ -374,7 +374,11 @@ Existing differing configuration files are moved to `<file>.bak.<date>` before
 replacement. `setup-orca.sh` links `~/.orca/presets.json` to `~/dotfiles/.orca/presets.json`
 after backing up any differing file. Usage gate (`usage-gate-hook.py`) and worker budget
 (`worker-budget.py`) hooks are composed into Claude Code, Cursor and Antigravity hook
-files via `setup-agent-hooks.sh`. Logins and credentials are never migrated or inspected.
+files via `setup-agent-hooks.sh`, which keeps one usage gate entry (it skips a copy `agent-team.sh machine`
+already wrote and removes an older absolute path duplicate). The usage gate hook caches an allowed
+reading per provider for 30 seconds; a block is never cached. The same script carries `skillOverrides`
+from `.agents/claude/settings.json` (skills the guide never names, set to `off`, one entry each) into
+a kept `~/.claude/settings.json`; delete an entry to turn a skill back on. Logins and credentials are never migrated or inspected.
 Orca installation and sign in remain user steps when its CLI is missing.
 
 `project` adopts a project: it installs the team files, generated team skills and tracker seeds, and

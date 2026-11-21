@@ -635,6 +635,25 @@ def max_wait():
     return value
 
 
+WAIT_CAP_STATUS = 75  # EX_TEMPFAIL: never admitted, the command did not run
+
+
+def max_admission_wait(args):
+    """Seconds a job may wait for admission before giving up; None means no cap."""
+    raw = getattr(args, 'max_wait', None)
+    if raw is None:
+        raw = (os.environ.get('HEAVY_GATE_WAIT_CAP_SECONDS') or '').strip() or None
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1.0
+    if not math.isfinite(value) or value < 0:
+        raise ValueError('wait cap must be a nonnegative number of seconds')
+    return value
+
+
 def heavy_gate_wait_log_path():
     override = (os.environ.get('HEAVY_GATE_WAIT_LOG') or '').strip()
     if override:
@@ -829,6 +848,7 @@ def gate(args):
     if getattr(args, 'measure', False):
         return measure_gate(args)
     timeout = command_timeout()
+    wait_cap = max_admission_wait(args)
     memory = declared_memory(args)
     host_memory = hardware()[2] // (1024 * 1024) if memory else 0
     if memory > host_memory > 0:
@@ -873,9 +893,16 @@ def gate(args):
                 last_notice = now
             if wait_begin is None:
                 wait_begin = now
+            if wait_cap is not None and now - wait_begin >= wait_cap:
+                log_heavy_gate_wait(now - wait_begin)
+                print(f'heavy-gate: wait cap of {wait_cap:g}s reached, not admitted: {reason}',
+                      file=sys.stderr, flush=True)
+                return WAIT_CAP_STATUS
             time.sleep(poll_interval())
         if wait_begin is not None:
-            log_heavy_gate_wait(time.monotonic() - wait_begin)
+            waited = time.monotonic() - wait_begin
+            log_heavy_gate_wait(waited)
+            print(f'heavy-gate: waited {waited:.0f}s for admission', file=sys.stderr, flush=True)
         with children(slots, nested=nested) as processes:
             env = dict(os.environ)
             if not nested:
@@ -996,6 +1023,9 @@ def main():
         '3-second grace), releases slots, and exits 124.'))
     run.add_argument('--weight', type=int, default=1)
     run.add_argument('--memory-mb', metavar='MIB', help='memory the job expects to use, counted while it runs')
+    run.add_argument('--max-wait', metavar='SECONDS',
+                     help='give up after this many seconds without admission and exit 75 '
+                          '(HEAVY_GATE_WAIT_CAP_SECONDS is the default; the command never ran)')
     run.add_argument('--measure', action='store_true',
                      help='run without a slot; log duration, load and free memory')
     run.add_argument('command', nargs=argparse.REMAINDER)

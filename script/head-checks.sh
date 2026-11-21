@@ -477,7 +477,13 @@ db_step_runner() {
   if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
     return 1
   fi
-  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --
+  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --max-wait "${HEAD_CHECKS_DB_GATE_WAIT_SECONDS:-600}" --
+}
+# db_wait_receipt <step output>: the remote heavy-gate's wait for admission, so the audit can split wait from run time.
+db_wait_receipt() {
+  local waited
+  waited=$(sed -n 's/^heavy-gate: waited \([0-9]*\)s for admission$/\1/p; s/^heavy-gate: wait cap of \([0-9.]*\)s reached.*/\1/p' "$1" | tail -1)
+  [ -z "$waited" ] || printf 'Remote wait: %ss\n' "$waited"
 }
 # db_lock_acquire: one run at a time may use the remote database-step checkout, like the local _checks lock.
 # Waits up to HEAD_CHECKS_DB_WAIT_SECONDS (default HEAD_CHECKS_WAIT_SECONDS); returns 1 when it stays busy.
@@ -576,6 +582,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
+      [ ${#db_prefix[@]} -eq 0 ] || db_wait_receipt "$output" >> "$log"
       printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
       [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
       rm -f "$output"
@@ -587,6 +594,17 @@ while IFS= read -r command || [ -n "$command" ]; do
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
+      if [ ${#db_prefix[@]} -gt 0 ]; then
+        db_wait_receipt "$output" >> "$log"
+        # Exit 75 is the remote heavy-gate giving up on admission: the step never ran.
+        if [ "$status" -eq 75 ] && grep -q '^heavy-gate: wait cap' "$output"; then
+          gate_reason=$(sed -n 's/^heavy-gate: wait cap of [0-9.]*s reached, not admitted: //p' "$output" | tail -1)
+          check_result=INFRA
+          printf 'Result: host busy; the database host heavy-gate did not admit the step within its wait cap (%s), so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: %ss\n' "${gate_reason:-no reason reported}" "$((SECONDS - started))" >> "$log"
+          rm -f "$output"
+          exit 1
+        fi
+      fi
       if [ "$status" -eq 137 ] && is_tsc_step "$expanded"; then
         if [ "$tsc_attempt" -eq 1 ]; then
           printf 'Result: exit 137; retryable infra failure (tsc killed by OS, the code was not judged); retrying once when load drops\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"

@@ -25,6 +25,17 @@ It also covers a KILL of head-checks that lands during that 5 second grace.
 A step process that starts its own session or process group (the gate's
 command does) is stopped by its own parent, not by head-checks.
 
+**Wait cap.** `heavy-gate.sh --max-wait SECONDS` (or `HEAVY_GATE_WAIT_CAP_SECONDS`)
+gives up on admission after that many seconds, for any reason (load, memory or
+slots), prints `heavy-gate: wait cap of Ns reached, not admitted: <reason>` and
+exits 75. The command never ran. An admitted job prints
+`heavy-gate: waited Ns for admission` first. `remote-heavy.sh --max-wait`
+passes the cap to the remote gate. `head-checks.sh` gives a database step
+(`# db`) 600 seconds (`HEAD_CHECKS_DB_GATE_WAIT_SECONDS`); past that it posts
+`Checks: INFRA` with `Result: host busy` and the gate reason, so rerun Checks.
+The receipt shows `Remote wait: Ns` for each database step, so the audit can
+separate wait time from run time.
+
 Slot waits still log `stamp host=H wait_s=S` lines to
 `~/.orca/logs/heavy-gate-wait.log` for `fleet-watch.py` and team audit metrics.
 

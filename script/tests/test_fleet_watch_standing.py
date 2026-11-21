@@ -25,7 +25,7 @@ def pr(number, verdict=False, **extra):
         'number': number, 'state': 'OPEN', 'isDraft': False, 'headRefOid': head, 'headRefName': 'b%s' % number,
         'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
         'comments': comments, 'labels': [], 'mergeable': 'MERGEABLE',
-        'body': 'Builder: agent=claude model=sonnet',
+        'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
     }
     row.update(extra)
     return row

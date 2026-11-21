@@ -113,7 +113,7 @@ class OwnDispatchRecord(unittest.TestCase):
                 'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS', 'isRequired': True,
             }],
             'comments': [{'body': 'Verdict: PASS head=%s verifier=ctx_v author=ctx_a' % head}],
-            'labels': [], 'body': 'Builder: agent=claude model=sonnet',
+            'labels': [], 'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
         }
         fix = {
             'number': 9, 'state': 'OPEN', 'isDraft': False, 'headRefOid': '1' * 40,
@@ -194,7 +194,7 @@ class OwnDispatchRecord(unittest.TestCase):
             'statusCheckRollup': [{
                 'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS', 'isRequired': True,
             }],
-            'comments': [{'body': 'Review: PASS head=%s' % head}], 'labels': [], 'body': 'Builder: agent=claude model=sonnet',
+            'comments': [{'body': 'Review: PASS head=%s' % head}], 'labels': [], 'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
         }
         babysit_state = {}
         _b_notices, b_lines, _b_log = fw.babysit_pass(

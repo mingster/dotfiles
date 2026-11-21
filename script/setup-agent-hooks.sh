@@ -7,6 +7,7 @@ import copy
 import datetime
 import json
 import pathlib
+import re
 import shlex
 import sys
 
@@ -47,12 +48,41 @@ for event, groups in template['hooks'].items():
                 path = root / 'templates/agent-team/.claude/hooks/worker-budget.py'
             else:
                 continue
+            # agent-team.sh machine writes the same hook as $HOME/dotfiles/...; one entry only (#1313).
+            if path.name == 'usage-gate-hook.py' and any(
+                    path.name in h.get('command', '') for g in hooks.get(event, []) for h in g.get('hooks', [])
+                    if g.get('matcher') == group['matcher']):
+                continue
             selected.append({'type': 'command', 'command': 'python3 ' + shlex.quote(str(path))})
         if selected:
             entry = {'matcher': group['matcher'], 'hooks': selected}
             entries = hooks.setdefault(event, [])
             if entry not in entries:
                 entries.append(entry)
+# An older run left an absolute path copy beside the $HOME/dotfiles one; keep a single usage gate hook (#1313).
+gate = [h.get('command', '') for g in hooks.get('PreToolUse', []) if g.get('matcher') == 'Bash'
+        for h in g.get('hooks', []) if 'usage-gate-hook.py' in h.get('command', '')]
+if len(gate) > 1:
+    keep = next((c for c in gate if c.startswith('f="$HOME/')), gate[0])
+    for g in hooks['PreToolUse']:
+        if g.get('matcher') == 'Bash':
+            g['hooks'] = [h for h in g.get('hooks', [])
+                          if 'usage-gate-hook.py' not in h.get('command', '') or h.get('command') == keep]
+    hooks['PreToolUse'] = [g for g in hooks['PreToolUse'] if g.get('hooks')]
+# A managed hook whose absolute script path is gone (a removed worktree) only adds an error per call.
+for event in hooks:
+    for g in hooks[event]:
+        g['hooks'] = [h for h in g.get('hooks', [])
+                      if not (re.fullmatch(r'python3 (/\S+/(usage-gate-hook|worker-budget)\.py)', h.get('command', ''))
+                              and not pathlib.Path(h['command'][8:]).exists())]
+    hooks[event] = [g for g in hooks[event] if g.get('hooks')]
+# Skills the guide never names are turned off in the tracked Claude settings; carry them to a kept
+# settings.json too. A key already set on this machine wins (#1313).
+tracked = root / '.agents/claude/settings.json'
+if tracked.is_file():
+    overrides = json.loads(tracked.read_text()).get('skillOverrides', {})
+    if overrides:
+        data['skillOverrides'] = {**overrides, **data.get('skillOverrides', {})}
 if render:
     print(json.dumps(data, indent=2))
     sys.exit(0)

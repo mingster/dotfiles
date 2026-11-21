@@ -65,7 +65,7 @@ def verifier_pr(head=HEAD):
         'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': head, 'headRefName': 'b',
         'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
         'comments': [{'body': 'Review: PASS head=%s' % head}], 'labels': [], 'mergeable': 'MERGEABLE',
-        'body': 'Builder: agent=claude model=sonnet',
+        'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
     }
 
 

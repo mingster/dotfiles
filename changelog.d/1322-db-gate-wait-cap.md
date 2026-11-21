@@ -1,0 +1,1 @@
+The database step in head-checks now stops waiting on the remote heavy-gate after 10 minutes and posts `Checks: INFRA` with the gate reason, and the receipt logs the remote wait seconds (`Remote wait: Ns`). Recalibrating the DB host is separate host work (#1322).

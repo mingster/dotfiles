@@ -450,6 +450,8 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
                 file=sys.stderr,
             )
             continue
+        if caps.get(host, 0) <= 0:
+            continue
         sample = loads.get(host)
         if sample is None:
             continue
@@ -458,9 +460,9 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
         if ceiling is None:
             continue
         considered[host] = load
-        cap = scaled_cap(caps.get(host, 0), cores, cores_per_worker)
+        cap = scaled_cap(caps[host], cores, cores_per_worker)
         workers = max(0 if live is None else live.get(host, 0), claims.get(host, 0))
-        if cap > 0 and workers >= cap:
+        if workers >= cap:
             full[host] = '%d/%d' % (workers, cap)
             continue
         if memory_full(mem_free, sum(1 for row in recent if row['host'] == host), mem_per_worker):
@@ -468,7 +470,7 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
             continue
         if host_over_load(host, load, cores, ceiling, local_host):
             continue
-        share = workers / cap if cap > 0 else 0.0
+        share = workers / cap
         candidates.append((False, share, load5 / cores if cores > 0 else 0.0, index, host, load, ceiling, workers, cap))
     if candidates:
         has_remote = any(c[4] != local_host for c in candidates)
@@ -511,6 +513,8 @@ def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: s
     """Judge a host the caller already chose (--on). Same load rule as pick_host."""
     known = {h.lower(): h for h in (config.get('host_caps') or {})}
     name = known.get(host.lower())
+    if name is not None and host_caps_of(config).get(name, 0) <= 0:
+        return {'ok': False, 'host': name, 'reason': 'host_caps is 0, the host takes no workers'}
     ceiling = ceiling_for(name, config) if name else None
     if name is None or ceiling is None:
         return {'ok': True, 'host': host, 'reason': 'no load limit configured for this host'}
@@ -547,6 +551,8 @@ def reason_host(config: dict, reason: str) -> str | None:
 def format_check_line(result: dict) -> str:
     if result.get('ok'):
         return 'worker-placement: forced host=%s within limit' % result['host']
+    if 'load_1m' not in result:
+        return 'worker-placement: refused forced host=%s (%s)' % (result['host'], result['reason'])
     line = 'worker-placement: refused forced host=%s load_1m=%s limit=%s' % (
         result['host'], result['load_1m'], result['ceiling'])
     alt = result.get('alternative')

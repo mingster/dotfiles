@@ -299,7 +299,7 @@ class Sticky(unittest.TestCase):
             'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': head, 'headRefName': 'b',
             'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
             'comments': comments, 'labels': [], 'mergeable': mergeable,
-            'body': 'Builder: agent=claude model=opus',
+            'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=opus',
         }
 
     def worker(self):
@@ -417,7 +417,8 @@ class Sticky(unittest.TestCase):
 
     def test_unknown_builder_family_stops_without_dispatching_verifier(self):
         now = 1_700_000_000
-        for body in ('Builder: agent=fullstack-dev model=mystery-1', 'Why\n\nNo builder line here.\n'):
+        sc = '## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+        for body in (sc + 'Builder: agent=fullstack-dev model=mystery-1', 'Why\n\n' + sc + 'No builder line here.\n'):
             with self.subTest(body=body), tempfile.TemporaryDirectory() as root:
                 pr = self.pr()
                 pr['body'] = body

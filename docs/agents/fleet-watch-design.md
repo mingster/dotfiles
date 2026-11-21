@@ -41,6 +41,8 @@ The monitor keeps today's alerts (failed dispatch, host cap, lead pane gone, wai
 
 The dispatcher keeps babysit, issue scan, rework and the head checks runs. Its order inside one run is babysit, then rework, then new issues, so the target path runs first and is never starved by slower steps.
 
+Babysit starts no verifier for a PR whose body fails `pr-body-gate.py`. The builder gets one rework note per reason (#1323). `pr-review.sh` runs one `fleet-watch.py --babysit-only` pass right after it posts `Review: PASS` when `FLEET_WATCH_CONFIG` and `FLEET_WATCH_STATE` are set, so the verifier starts without waiting for the next scan, and the start line carries `review_to_verifier_s` (#1321).
+
 **The outbox.** The dispatcher appends one JSON line per notice to `dispatcher.outbox.jsonl`. The monitor claims the file at the start of its pass (rename, then read), merges the lines into its queue, and deletes the claimed file once sent. Nothing else writes it. A crashed monitor leaves the claimed file, and the next pass reads it again. Duplicate text is merged, as today.
 
 **Why split.** A third of today's passes run past a minute. Six were killed at 280 s, and a killed pass sends nothing, because notices go out last. With the split, a broken dispatcher cannot silence the monitor, and a slow monitor cannot delay a verifier.
