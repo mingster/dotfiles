@@ -1,0 +1,4 @@
+python3 -Es - <<'PY'
+import subprocess
+subprocess.run(["bash", "bin/deploy-raw.sh"])
+PY
