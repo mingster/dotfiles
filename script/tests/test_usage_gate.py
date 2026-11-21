@@ -2213,6 +2213,8 @@ class BuilderCursorRoute(unittest.TestCase):
         status, out = self.flags("qa-sdet", roles, {"claude": 40, "antigravity": 5})
         self.assertEqual((status, out), (0, "--agent claude --model opus --effort medium"))
         status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 5})
+        self.assertEqual((status, out), (0, self.GROK))
+        status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 5, "grok:verdict": "blocked"})
         self.assertEqual((status, out), (0, "--agent antigravity --model gemini-4-argon-high"))
         status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 96})
         self.assertEqual((status, out), (0, self.GROK))
@@ -2228,7 +2230,7 @@ class BuilderCursorRoute(unittest.TestCase):
                     "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
-        self.assertEqual((picked["provider"], picked["model"]), ("antigravity", "gemini-4-argon-high"))
+        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))
 
     def test_a_cursor_entry_in_a_chain_is_never_picked(self):
         chain = [{"provider": "cursor", "model": "grok-4.7-high"},

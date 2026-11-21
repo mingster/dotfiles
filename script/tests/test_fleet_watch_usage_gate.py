@@ -160,9 +160,9 @@ class ProviderPause(Base):
         self.assertNotIn('grok', model)
         self.assertNotEqual(agent, 'grok')
 
-    def test_a_claude_built_pr_gets_an_antigravity_verifier_before_grok_even_after_the_pause(self):
+    def test_a_claude_built_pr_gets_a_grok_verifier_before_antigravity_once_the_pause_ends(self):
         agent, model, _tag = self.pick_verifier('2000-01-01')
-        self.assertEqual((agent, model), ('antigravity', 'gemini-4-argon-high'))
+        self.assertEqual((agent, model), ('grok', 'grok-4.7'))
 
 
 if __name__ == '__main__':
