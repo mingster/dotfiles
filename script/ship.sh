@@ -141,6 +141,13 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]"
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
+# Run from the repo checkout: a wrong cwd otherwise surfaces later as "cannot read head" (#1326).
+top=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "run from inside the ${repo##*/} checkout (cwd is not a git repo)"
+origin_url=$(git -C "$top" remote get-url origin 2>/dev/null || true)
+if [[ "$origin_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+  origin_repo=${BASH_REMATCH[1]%.git}
+  [ "$origin_repo" = "$repo" ] || refuse "run from inside the ${repo##*/} checkout (cwd origin is $origin_repo)"
+fi
 
 read_pr() {
   info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
