@@ -4797,22 +4797,6 @@ def _host_caps_present(config):
     return isinstance(caps, dict) and bool(caps)
 
 
-def _keep_standing_verifier(dest, source):
-    """Carry babysit.standing_verifier (or a top-level standing_verifier) from the stub into the pass config (#1272)."""
-    if not isinstance(dest, dict) or not isinstance(source, dict):
-        return
-    block = (source.get('babysit') or {}).get('standing_verifier') if isinstance(source.get('babysit'), dict) else None
-    if not isinstance(block, dict):
-        block = source.get('standing_verifier')
-    if not isinstance(block, dict):
-        return
-    babysit = dest.get('babysit')
-    if not isinstance(babysit, dict):
-        babysit = {}
-        dest['babysit'] = babysit
-    babysit.setdefault('standing_verifier', block)
-
-
 def resolve_pass_config(config, config_path):
     """Use the coordinator file when the scheduled stub has no runs.
 
@@ -4833,7 +4817,6 @@ def resolve_pass_config(config, config_path):
             adopted = coordinator_config_path()
     source = config if given_is_stub and isinstance(config, dict) else _read_json_object(stub_path)
     _fill_missing_stub_keys(pass_config, source)
-    _keep_standing_verifier(pass_config, source)
     if isinstance(pass_config, dict) and not _host_caps_present(pass_config):
         log_fleet_watch('pass_config_no_host_caps')
     return pass_config, adopted
@@ -5933,17 +5916,6 @@ TRIAL_COLUMNS = (
 )
 
 
-def _first_remote_code_host(config):
-    """The first host in worker_placement.order, else host_caps, that is not the coordinator's own host (#1272)."""
-    placement = config.get('worker_placement') if isinstance(config.get('worker_placement'), dict) else {}
-    order = placement.get('order') if isinstance(placement.get('order'), list) else []
-    caps = config.get('host_caps') if isinstance(config.get('host_caps'), dict) else {}
-    for host in list(order) + list(caps):
-        if isinstance(host, str) and host and not _is_local_coordinator_host(host, config):
-            return [host]
-    return []
-
-
 def standing_settings(config):
     """babysit.standing_verifier merged over its defaults. Disabled unless the config enables it."""
     cfg = dict(STANDING_DEFAULTS)
@@ -5956,9 +5928,7 @@ def standing_settings(config):
         except (TypeError, ValueError):
             cfg[key] = STANDING_DEFAULTS[key]
     hosts = cfg.get('hosts')
-    cfg['hosts'] = [h for h in hosts if isinstance(h, str) and h] if isinstance(hosts, list) else []
-    if cfg.get('enabled') and cfg['hosts'] in ([], ['auto']):
-        cfg['hosts'] = _first_remote_code_host(config)
+    cfg['hosts'] = [h for h in hosts if isinstance(h, str) and h and h != 'auto'] if isinstance(hosts, list) else []
     cfg['enabled'] = bool(cfg.get('enabled')) and bool(cfg['hosts'])
     return cfg
 
