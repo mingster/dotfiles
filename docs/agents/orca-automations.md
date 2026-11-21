@@ -4,6 +4,8 @@ Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs 
 
 Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds the hand-kept keys (`repo_roots`, `host_caps`, and the per-host monitor paths). The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
+Orca's own listings are slow under load (terminals and worktrees can take minutes), so a scheduled wrap-up round lists terminals once. The first repo's child reuses the listing its terminal close step already made for the worktree check and the idle worktree sweep, and saves it (without the terminals it closed) as `wrap-up-scheduled.terminals` in the state directory; later repos read that file. The first repo reads the whole worktree list once and reuses it in the sweep (it lists again only when the run removed worktrees in between). Each later repo asks only for its own worktrees (`orca worktree list --repo path:<repo>`), falls back to the whole list when that fails, and does not fall back when it timed out. Refs #1314.
+
 ## Commands
 
 ```bash

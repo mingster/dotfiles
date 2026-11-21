@@ -1,0 +1,1 @@
+Scheduled wrap-up lists Orca terminals once per round (the first repo reuses its close step listing, later repos read a saved copy) and worktrees once for the first repo and per repo for the rest, so the repo step stays inside its time budget on a loaded host. Refs #1314
