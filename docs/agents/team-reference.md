@@ -159,6 +159,8 @@ These are the only team tools we keep or build. Full contracts live in each proj
 
 Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
 
+The command guard also refuses a builder (`Worker role:` first line of the brief is `fullstack-dev`, `fullstack-dev-*` or `builder`) an Edit or Write on an owner only path from `script/lib/protected-paths.sh` unless the brief's `Allowed files:` names it. A brief with no stamp (a coordinator hand start) is not refused.
+
 ## Agent team template
 
 Use `script/agent-team.sh` for machine setup (`machine`), new projects (`project`) and drift checks (`check`). See [Agent team setup](#agent-team-setup) below for commands and user steps.

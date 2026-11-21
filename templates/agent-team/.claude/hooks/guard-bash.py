@@ -1257,6 +1257,73 @@ def session_role():
     return role
 
 
+def stamped_worker_role(text):
+    """The role in the brief's first line, `Worker role: <role>`, which worker-startup.sh stamps (#1328).
+    No stamp (a coordinator hand start) returns nothing, so nothing is refused."""
+    first = (text or "").lstrip("\ufeff").split("\n", 1)[0].rstrip("\r")
+    named = re.fullmatch(r"Worker role: ([a-z0-9-]+)", first)
+    return named.group(1) if named else ""
+
+
+def is_builder_stamp(role):
+    return role in ("builder", "fullstack-dev") or role.startswith("fullstack-dev-")
+
+
+def brief_allowed_files(text):
+    """The paths the brief's `Allowed files:` line or `## Allowed files` section names. CRLF is stripped."""
+    allowed, sec = set(), ""
+    for line in (text or "").splitlines():
+        line = line.rstrip("\r")
+        body = ""
+        for prefix in ("**Allowed files:**", "Allowed files:"):
+            if line.startswith(prefix):
+                sec, body = "inline", line[len(prefix):]
+                break
+        else:
+            if line.startswith("## Allowed files"):
+                sec = "heading"
+                continue
+            if line.startswith("## "):
+                sec = ""
+            elif not line.strip():
+                if sec != "heading":
+                    sec = ""
+            elif sec:
+                body = line
+        for tok in re.split(r"[\s,`\"']+", body):
+            tok = re.sub(r"^(?:\./)+", "", tok).rstrip(".;:)")
+            if tok:
+                allowed.add(tok)
+    return allowed
+
+
+def git_root_of(path):
+    cur = os.path.dirname(os.path.abspath(path))
+    while True:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def check_builder_owner_path(tool, full):
+    """A builder is refused an Edit or Write on an owner gated path its brief does not allow (#1328)."""
+    text = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
+    if not is_builder_stamp(stamped_worker_role(text)):
+        return
+    root = git_root_of(full)
+    if not root:
+        return
+    rel = os.path.relpath(os.path.realpath(full), os.path.realpath(root)).replace("\\", "/")
+    if rel.startswith("../") or rel in brief_allowed_files(text):
+        return
+    if rel in ship_protected({rel}):
+        deny(f"{tool} on `{rel}` is refused: that path needs the owner, and this brief's `Allowed files:` does not name it. "
+             "Take it out of the change, or ask the coordinator to widen the brief.")
+
+
 GIT_ENV_ASSIGN = re.compile(r"^GIT_[A-Za-z0-9_]*=")
 
 
@@ -3037,6 +3104,8 @@ def check_edit(tool, path):
         rel, _ = relative_project_path(full, GATE_CWD)
         if is_template_managed_rel(rel):
             deny_template_managed(rel)
+
+    check_builder_owner_path(tool, full)
 
 
 BACKGROUND_WAIT = re.compile(r"orchestration\s+check\b[^;|]*--wait[^;|]*?(?<!&)&\s*(?:$|;|\n)")

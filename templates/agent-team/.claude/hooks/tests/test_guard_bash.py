@@ -1553,6 +1553,83 @@ class DeployFactsRollbackWording(unittest.TestCase):
         self.assertNotIn("a promotion or rollback needs no user approval", text)
         self.assertIn("A rollback is a force push and still needs the owner's go.", text)
 
+WORKER_ROLE_LIB = os.path.join(os.path.dirname(HOOK), "..", "..", "..", "..", "script", "lib", "worker-role.sh")
+
+
+class BuilderOwnerPathGate(GuardTest):
+    """#1328: a builder is refused Edit and Write on an owner gated path its brief does not allow.
+    Briefs come from the real stamp_worker_role that worker-startup.sh and start-cursor-worker.sh call."""
+    HOOK_PATH = "templates/agent-team/.claude/hooks/guard-bash.py"
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.home, "repo")
+        os.makedirs(os.path.join(self.repo, ".git"))
+        os.makedirs(os.path.join(self.repo, os.path.dirname(self.HOOK_PATH)))
+
+    def brief(self, title, allowed=None, eol="\n"):
+        body = "Read these files before any work:\n- /tmp/agents/x.md\n\n# task\n\nRefs #1\n"
+        if allowed is not None:
+            body += "\n## Allowed files\n" + "".join(f"- {a}\n" for a in allowed)
+        spec = os.path.join(self.home, "spec.md")
+        with open(spec, "w", newline="") as f:
+            f.write(body.replace("\n", eol))
+        out = subprocess.run(["bash", "-c", f'. "{WORKER_ROLE_LIB}"; stamp_worker_role "$1" "$2"', "_", spec, title],
+                             capture_output=True, text=True, check=True)
+        with open(out.stdout.strip(), newline="") as f:
+            return f.read()
+
+    def session(self, *briefs):
+        path = os.path.join(self.home, "transcript.jsonl")
+        with open(path, "w") as f:
+            f.write("".join(json.dumps({"type": "user", "message": {"role": "user", "content": b}}) + "\n" for b in briefs))
+        self.transcript = path
+
+    def write(self, rel):
+        payload = {"tool_name": "Write", "tool_input": {"file_path": os.path.join(self.repo, rel), "content": "x"},
+                   "cwd": self.repo, "transcript_path": self.transcript}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home), cwd=self.repo, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def test_every_builder_stamp_is_refused(self):
+        for title in ("#7|fullstack-dev", "#7|fullstack-dev-small", "#7|fullstack-dev-strong",
+                      "#7|fullstack-dev-debug", "#7|builder", "fullstack-dev - rework", "fullstack-dev - babysit"):
+            with self.subTest(title=title):
+                brief = self.brief(title)
+                self.assertTrue(brief.startswith("Worker role: "), brief)
+                self.session(brief)
+                reason = self.write("AGENTS.md")
+                self.assertIsNotNone(reason)
+                self.assertIn("needs the owner", reason)
+
+    def test_same_task_retry_brief_is_refused(self):
+        first = self.brief("#7|fullstack-dev")
+        self.session(first, "retry: the same task, please continue")
+        self.assertIsNotNone(self.write("AGENTS.md"))
+
+    def test_other_roles_and_unstamped_briefs_are_not_refused(self):
+        for title in ("#7|qa-sdet", "#7|architect-pm", "#7|release-manager", "free text title"):
+            with self.subTest(title=title):
+                self.session(self.brief(title))
+                self.assertIsNone(self.write("AGENTS.md"))
+
+    def test_builder_on_a_normal_path_is_not_refused(self):
+        self.session(self.brief("#7|fullstack-dev"))
+        self.assertIsNone(self.write("script/foo.sh"))
+
+    def test_allowed_files_name_lets_the_builder_through(self):
+        for eol in ("\n", "\r\n"):
+            for path in ("AGENTS.md", self.HOOK_PATH):
+                with self.subTest(path=path, eol=repr(eol)):
+                    self.session(self.brief("#7|fullstack-dev", allowed=[path, "docs/x.md"], eol=eol))
+                    self.assertIsNone(self.write(path))
+
+    def test_allowed_files_for_another_path_does_not_help(self):
+        self.session(self.brief("#7|fullstack-dev", allowed=["docs/x.md"]))
+        self.assertIsNotNone(self.write(self.HOOK_PATH))
+
 
 if __name__ == "__main__":
     unittest.main()
