@@ -1,0 +1,1 @@
+bash bin/$'\144eploy-raw.sh'

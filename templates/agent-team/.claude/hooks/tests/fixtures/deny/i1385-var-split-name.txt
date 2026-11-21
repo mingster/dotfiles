@@ -1,0 +1,2 @@
+s=deploy
+bash bin/${s}-raw.sh

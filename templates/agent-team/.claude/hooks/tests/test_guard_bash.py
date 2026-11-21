@@ -584,12 +584,18 @@ class BlockedScriptMentions(GuardTest):
         return mod
 
     def test_plain_shell_line_grammar(self):
-        plain = self._module()._plain_shell_line
+        mod = self._module()
+        mod.BLOCKED_SCRIPTS = {"deploy-raw.sh"}
+        plain = mod._plain_shell_line
         for line in ("cat bin/deploy-raw.sh", "git commit -m 'fix deploy-raw.sh'", "echo \"a # b\" # it's",
-                     "cat > a.md <<'EOF'", "git commit -F - <<-\"EOF\"  # note", "ls; echo '<<x'", "# a \" in a comment"):
+                     "cat > a.md <<'EOF'", "git commit -F - <<-\"EOF\"  # note", "ls; echo '<<x'", "# a \" in a comment",
+                     "echo $x ${x} $? \"$HOME\"", "echo '$(x) $'", "echo \"built $(date)\"", "echo \"", "echo a#\""):
             with self.subTest(line=line):
                 self.assertIsNotNone(plain(line))
-        for line in ("echo \"", "echo a#\"", "echo $x", "echo `x`", "bash \\", "cat <(x)", "echo >(x)",
+        self.assertEqual(plain("echo \"open")[2], '"')  # a quote left open carries to the next line
+        self.assertEqual(plain("closes\" here", '"')[2], "")
+        for line in ("echo $'x'", "echo ${x:-y}", "echo $((1))", "echo $(echo 'x')", "echo $(a # )",
+                     "echo $(echo deploy-raw.sh)", "echo `x`", "bash \\", "cat <(x)", "echo >(x)",
                      "cat <<EOF", "cat <<'A' <<'B'", "cat <<'EOF-1'", "cat <<E'O'F", "cat <<'1'", "cat <<\\",
                      "cat <<'EOF' > f", "bash <<< x", "x\r"):
             with self.subTest(line=line):
@@ -600,12 +606,48 @@ class BlockedScriptMentions(GuardTest):
                         "git add bin/deploy-raw.sh && git commit -m 'fix: deploy-raw.sh exit code'",
                         "ls bin # deploy-raw.sh lives here",
                         "git commit -F - <<'EOF'\nbash bin/deploy-raw.sh $(x) was refused\nEOF",
-                        "mkdir -p /tmp/o\ncat > /tmp/o/a.md <<'EOF'\n`bash bin/deploy-raw.sh`\nEOF\nls /tmp/o"):
+                        "mkdir -p /tmp/o\ncat > /tmp/o/a.md <<'EOF'\n`bash bin/deploy-raw.sh`\nEOF\nls /tmp/o",
+                        "cat bin/deploy-raw.sh\necho \"\nx\"", "echo $HOME bin/deploy-raw.sh",
+                        "gh issue comment 1 --body \"ran deploy-raw.sh for $USER\nand again: deploy-raw.sh\""):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+    def test_a_name_built_from_pieces_is_denied(self):
+        for command in ("s=deploy; bash bin/${s}-raw.sh", "bash bin/deploy-{raw,x}.sh", "bash bin/$'\\x64eploy-raw.sh'",
+                        "bash bin/$'\\144eploy-raw.sh'", "bash bin/d*-raw.sh", "bash bin/deploy-raw.s?",
+                        "bash bin/deploy-$(echo raw).sh", "echo deploy-raw.sh | xargs -I{} bash bin/{}",
+                        "for n in raw; do bash bin/deploy-$n.sh; done"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "xargs" if "xargs" in command else "deploy-raw.sh")
+
+    def test_a_script_behind_a_shell_keyword_is_denied(self):
+        for command in ("if true; then bash bin/deploy-raw.sh; fi", "while true; do bash bin/deploy-raw.sh; done",
+                        "! bash bin/deploy-raw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "deploy-raw.sh")
+
+    def test_a_quote_in_a_comment_or_ansi_c_string_does_not_hide_the_next_command(self):
+        for command in ("# it's a note\ncat .env.local", "echo a # it's\ncat .env.local", "echo $'it\\'s'; cat .env.local"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "env-peek")
+
+    def test_ansi_c_decoding(self):
+        mod = self._module()
+        self.assertEqual(mod.ansi_c_decode(r"\x64\144\u0064\n"), "ddd\n")
+        self.assertEqual(mod.ansi_c_end("$'a\\'b' c", 0), 7)
+
+    def test_a_blocked_script_names_its_own_reason_or_a_generic_one(self):
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh", "keychain-unlock.sh"],
+                       "blocked_script_reasons": {"keychain-unlock.sh": "Only the owner unlocks the keychain."}}, f)
+        self.assertDenied("bash bin/keychain-unlock.sh", "Only the owner unlocks the keychain.")
+        generic = self.assertDenied("bash bin/deploy-raw.sh")
+        self.assertIn("deploy-raw.sh is a blocked script", generic)
+        self.assertNotIn("deploy pipeline", generic)
+
     def test_unplain_mentions_denied(self):
-        for command in ("cat bin/deploy-raw.sh\necho \"\nx\"", "echo $HOME bin/deploy-raw.sh",
+        for command in ("cat bin/deploy-raw.sh\necho \"\nx", "echo $'x' bin/deploy-raw.sh",
                         "python3 - <<'PY'\nprint(open('bin/deploy-raw.sh').read())\nPY",
                         "cat <<'EOF'\nbin/deploy-raw.sh\n", "echo \"$(echo \")\"; bash bin/deploy-ra\"w\".sh)\"",
                         "ls\nbash bin/deploy-raw.sh"):

@@ -221,6 +221,10 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | Audit and weekly update | Orca runs `team-audit.sh` and `script/team-audit-metrics.ts` weekly for one line; `architect-pm` runs `/team-audit` on the user's word; `weekly-update.sh` opens three upstream PRs that merge on green checks and a Verdict. | `/team-audit`, `script/weekly-update.sh` | `/team-audit Check this repo's team files, metrics and observations.` |
 | Support | The coordinator routes fixes and `support-csm` drafts the customer reply in the customer's language; the user approves before sending or closing. | Ask the coordinator to assign `support-csm` | The coordinator, resolve this support ticket and bring me the reply draft for approval. |
 
+### Blocked scripts in the Bash guard
+
+A project lists scripts that only a wrapper may run under `blocked_scripts` in `.claude/hooks/guard-config.json`. The guard denies running one, and reading, grepping, editing or committing it stays fine. A name spelled from a variable, a brace list, a `$'\x..'` escape, a glob, a substitution or `xargs` is read the same way (the guard fills in plain `name=value` assignments and `for` lists, opens brace lists, decodes `$'...'` and matches globs against the listed names). Anything it still cannot resolve and that could spell a listed name where a script runs is denied. A command that only mentions the name stays allowed when each shell line is plain: quotes may span lines, and `$name`, `${name}` and a flat `$(...)` are fine unless that substitution spells a listed name. The optional `blocked_script_reasons` object gives one script its own deny sentence (`{"keychain-unlock.sh": "Only the owner unlocks the keychain."}`); a script without an entry gets a generic sentence that names it.
+
 ## Fleet and load distribution
 
 The team runs across a fleet of Macs paired in Orca ADE (`orca environment list`) and coordinated from a single active coordinator host named in `agent-state/coordinator.conf`.

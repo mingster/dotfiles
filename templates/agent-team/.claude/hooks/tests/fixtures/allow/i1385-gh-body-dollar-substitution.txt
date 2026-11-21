@@ -1,0 +1,1 @@
+gh pr create --title "Guard note" --body "Built on $(date). The guard blocks deploy-raw.sh."
