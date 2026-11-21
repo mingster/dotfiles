@@ -280,6 +280,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `Worker role:` stamp | `worker-startup.sh` writes `Worker role: <role>` (the role from the `#<issue>\|<role>` title) as the first line of the brief copy it hands to Orca, once, on every start path. |
 | `script/start-remote-worker.sh` | Checks `usage-gate.py`, probes the remote CLI in an Orca terminal, refreshes remote `~/dotfiles` and `~/.orca/presets.json`, and calls `orca orchestration worker-start --on`. |
 | `script/start-cursor-worker.sh` | Creates a local or remote `--on` worktree, writes `.workspace-trusted` via Python 3 in an Orca terminal, checks `usage-gate.py`, and starts a Cursor worker. |
+| `Worker role:` stamp on Cursor | `start-cursor-worker.sh` stamps its brief with the same first line through the shared `script/lib/worker-role.sh`: the role from the `#<issue>\|<role>` title, else `--role`. |
 | `script/worktree-setup.sh` | Orca worktree setup hook: fetches and fast-forwards `origin/main` and runs `bun install --frozen-lockfile` when `node_modules` is missing. |
 | `script/usage-gate.py` | Reads real Claude, Cursor and Antigravity quota, publishes readings to runner hosts (`--publish`), checks the per provider ceiling (`check`; `--auto` marks an automatic start), and ranks candidates by headroom per day left (`pick`). Settings: `script/usage-gate.config.json`. |
 | `script/usage-gate-hook.py` | Fail-closed Claude `PreToolUse` hook blocking any `worker-start` that bypasses `usage-gate.py`, lacks fresh readings, or calls `--on` directly. |

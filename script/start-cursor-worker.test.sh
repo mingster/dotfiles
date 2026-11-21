@@ -69,6 +69,28 @@ grep -q 'orchestration worker-start' "$CURSOR_TEST_LOG" \
   || { echo "FAIL: qa-sdet on Cursor grok did not reach Orca" >&2; cat "$tmp/result"; exit 1; }
 grep -q -- '--model grok-4.7-high' "$CURSOR_TEST_LOG"
 echo 'PASS: qa-sdet on Cursor grok is accepted'
+# --- #1328: the brief sent to Orca starts with "Worker role: <role>", same helper as worker-startup.sh ---
+printf 'Do the fixture task.\n' > "$tmp/spec"
+stamp_check() { # <label> <expected role> <launch args...>
+  local label=$1 want=$2 first
+  shift 2
+  : > "$CURSOR_TEST_LOG"
+  launch "$@" --worktree-path '/tmp/example.repo/work tree.v1' > "$tmp/result"
+  first=$(grep 'orchestration worker-start' "$CURSOR_TEST_LOG" | head -1 | sed 's/.*--spec //')
+  [ "$first" = "Worker role: $want" ] \
+    || { echo "FAIL: stamp $label: first line '$first', want 'Worker role: $want'" >&2; exit 1; }
+  [ "$(grep -c 'Worker role:' "$CURSOR_TEST_LOG")" = 1 ] \
+    || { echo "FAIL: stamp $label: not exactly one stamp" >&2; exit 1; }
+  echo "PASS: stamp $label"
+}
+for r in fullstack-dev fullstack-dev-small fullstack-dev-debug qa-sdet; do
+  stamp_check "title #7|$r" "$r" --title "#7|$r"
+done
+stamp_check '--role only' fullstack-dev-small --title 'free text title' --role fullstack-dev-small
+stamp_check 'title wins over --role' fullstack-dev --title '#7|fullstack-dev' --role qa-sdet
+# Byte for byte what worker-startup.sh writes: both call stamp_worker_role from lib/worker-role.sh.
+grep -q 'lib/worker-role.sh' "$root/script/worker-startup.sh" "$root/script/start-cursor-worker.sh"
+echo 'PASS: both starters source the one stamp helper'
 printf 'Do the fixture task.\n' > "$tmp/spec"
 launch --name fixture --repo /tmp/example.repo --base-branch origin/main > "$tmp/result"
 grep -q 'worktree create.*--base-branch origin/main' "$CURSOR_TEST_LOG"
