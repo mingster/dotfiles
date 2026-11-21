@@ -20,6 +20,13 @@ printf '#!/usr/bin/env bash\necho "$*" >> "%s/orca-called"\ncase "$*" in "worktr
 chmod +x "$MF_DIR/fake-orca"
 export ORCA_CLI_COMMAND="$MF_DIR/fake-orca"
 
+# session-sync must not add its offline notice to ship output: the switch skips it even when the
+# dotfiles checkout cannot fetch (#1325).
+mkdir -p "$MF_DIR/dotfiles-offline"
+git -C "$MF_DIR/dotfiles-offline" init -q -b main
+git -C "$MF_DIR/dotfiles-offline" remote add origin "$MF_DIR/no-such-remote.git"
+export DOTFILES_DIR="$MF_DIR/dotfiles-offline" DOTFILES_FRESH_DONE=1
+
 pass=0 fail=0
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1: $2"; fail=$((fail + 1)); }
@@ -359,17 +366,16 @@ post_verdict 13 PASS "$h13" ctx_never_seen ctx_unknown_author
 : > "$MF_GH_LOG"
 rm -f "$MF_DIR/orca-called"
 printf '%s\n' '{"ok":true,"result":{"worktrees":[{"path":"/wt/issue-13","branch":"refs/heads/feat-no-self-review"},{"path":"/wt/other","branch":"refs/heads/other"}]}}' > "$MF_DIR/orca-list"
-mkdir -p "$MF_DIR/elsewhere"
-SHIP_OUT=$(cd "$MF_DIR/elsewhere" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
+SHIP_OUT=$(cd "$MF_REPO" && bash "$here/ship.sh" --repo example/repo --pr 13 2>&1); SHIP_RC=$?
 if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 13 ]] \
   && grep -Fxq 'worktree set --worktree path:/wt/issue-13 --workspace-status completed' "$MF_DIR/orca-called" \
   && ! grep -q 'branch:' "$MF_DIR/orca-called" && ! grep -q '/wt/other' "$MF_DIR/orca-called" \
   && ! grep -q -- '--environment' "$MF_DIR/orca-called" \
   && ! grep -q 'worker-list' "$MF_DIR/orca-called" \
   && ! grep -q "Self-review" <<<"$(jq -r .body "$MF_GH_DIR/pr-13.json")"; then
-  ok "no Self-review or cwd check; sets the merged branch's worktree completed by path on the local Orca"
+  ok "no Self-review check; sets the merged branch's worktree completed by path on the local Orca"
 else
-  bad "no Self-review or cwd check; sets the merged branch's worktree completed by path on the local Orca" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
+  bad "no Self-review check; sets the merged branch's worktree completed by path on the local Orca" "rc=$SHIP_RC out=$SHIP_OUT called=$(cat "$MF_DIR/orca-called" 2>/dev/null)"
 fi
 
 # 13a. A failing board call warns and does not undo or fail the merge
@@ -1246,6 +1252,8 @@ fleet_case() { # <pr> <repo> <expect called|silent> [fail|hang]
 fleet_case 1401 mingster/dotfiles called
 if [ "$SHIP_RC" -eq 0 ] && [ -f "$fp_dir/calls" ] && grep -q 'pr=1401 .*exit=0' <<<"$FP_LOG" && grep -q '^ok   hostA' <<<"$FP_LOG"; then ok "dotfiles merge triggers fleet-pull and logs ok"
 else bad "dotfiles merge triggers fleet-pull and logs ok" "rc=$SHIP_RC log=$FP_LOG out=$SHIP_OUT"; fi
+if grep -qE '^fleet-pull .* pr=1401 .*exit=0 duration_s=[0-9]+$' <<<"$FP_LOG"; then ok "the fleet-pull log header carries duration_s"
+else bad "the fleet-pull log header carries duration_s" "log=$FP_LOG"; fi
 fleet_case 1402 example/repo silent
 if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$fp_dir/calls" ] && [ -z "$FP_LOG" ]; then ok "a non dotfiles merge does not trigger fleet-pull"
 else bad "a non dotfiles merge does not trigger fleet-pull" "rc=$SHIP_RC log=$FP_LOG"; fi
@@ -1285,6 +1293,14 @@ sync_case 1406 docs/notes-1406.md silent
 if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$fp_dir/sync-calls" ] && [ -z "$SYNC_LOG" ]; then ok "a dotfiles merge without template changes does not start template sync"
 else bad "a dotfiles merge without template changes does not start template sync" "rc=$SHIP_RC log=$SYNC_LOG"; fi
 unset SHIP_FLEET_PULL SHIP_FLEET_PULL_LOG SHIP_TEMPLATE_SYNC SHIP_TEMPLATE_SYNC_LOG
+
+# #1325: an unreachable dotfiles remote adds nothing to ship output.
+run_ship --repo example/repo --pr 1
+if grep -q 'session-sync:' <<<"$SHIP_OUT"; then bad "ship output is free of session-sync notices" "$SHIP_OUT"; else ok "ship output is free of session-sync notices"; fi
+# #1326: a cwd outside any git repo is named, not reported as an unreadable head.
+SHIP_OUT=$(cd "$MF_DIR" && bash "$here/ship.sh" --repo example/repo --pr 1 2>&1); SHIP_RC=$?
+if [ "$SHIP_RC" -ne 0 ] && grep -q 'run from inside the repo checkout (cwd is not a git repo)' <<<"$SHIP_OUT" && ! grep -q 'cannot read head' <<<"$SHIP_OUT"; then ok "ship from a non-git cwd names the cwd"
+else bad "ship from a non-git cwd names the cwd" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

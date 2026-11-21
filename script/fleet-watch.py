@@ -1950,7 +1950,7 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
     """Report a fleet-pull that ship.sh ran after a dotfiles merge and that did not update every host (#1173).
 
     ship.sh appends one block per run: a header 'fleet-pull <utc> pr=<n> sha=<sha> exit=<rc>' then the ok/fail line
-    per host. Each block is read once (by byte offset); a block with a failed host or a nonzero exit is one notice.
+    per host (duration_s is optional). Each block is read once (by byte offset); a block with a failed host or a nonzero exit is one notice.
     """
     log = Path(path or os.environ.get('SHIP_FLEET_PULL_LOG') or FLEET_PULL_LOG_DEFAULT)
     try:
@@ -1964,9 +1964,9 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
     block['offset'] = len(data)
     runs = []
     for text in data[offset:].decode('utf-8', 'replace').splitlines():
-        header = re.match(r'^fleet-pull \S+ pr=(\S+) sha=(\S+) exit=(\d+)$', text)
+        header = re.match(r'^fleet-pull \S+ pr=(\S+) sha=(\S+) exit=(\d+)(?: duration_s=(\d+))?$', text)
         if header:
-            runs.append({'pr': header.group(1), 'exit': int(header.group(3)), 'failed': []})
+            runs.append({'pr': header.group(1), 'exit': int(header.group(3)), 'duration_s': header.group(4), 'failed': []})
         elif runs and text.startswith('fail '):
             runs[-1]['failed'].append(text[5:].strip())
     notices = []
@@ -1975,6 +1975,8 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
             continue
         why = 'timed out' if run['exit'] == 124 else 'exit %d' % run['exit']
         hosts = '; '.join(run['failed']) if run['failed'] else 'no host line'
+        if run['duration_s'] is not None:
+            why += ' duration_s=' + run['duration_s']
         notices.append('fleet-pull after the merge of PR %s did not finish clean (%s): %s' % (run['pr'], why, hosts))
     return notices
 
@@ -3643,9 +3645,13 @@ def build_head_checks_command(config, repo, pr_row):
     return ['bash', script, '--repo', root, '--pr', str(pr_row['number'])]
 
 
-def build_ship_command(repo, pr_row):
+def build_ship_command(repo, pr_row, root=None):
     script = str(Path(__file__).with_name('ship.sh'))
-    return ['bash', script, '--repo', repo, '--pr', str(pr_row['number'])]
+    command = ['bash', script, '--repo', repo, '--pr', str(pr_row['number'])]
+    if root:
+        # ship.sh refuses a cwd that is not the repo checkout (#1326), so start it from there.
+        return ['bash', '-c', 'cd "$1" || exit 1; shift; exec "$@"', 'ship-in-checkout', root] + command
+    return command
 
 
 def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
@@ -6364,6 +6370,41 @@ def _standing_wake(io, terminal, host, pre_last):
     return False
 
 
+def review_to_verifier_s(pr_row, head, now):
+    """Seconds from the newest Review: PASS at this head to now, or None when no such comment is dated (#1321)."""
+    stamps = []
+    for comment in pr_row.get('comments') or []:
+        if not isinstance(comment, dict) or not (comment.get('body') or '').startswith('Review: PASS head=' + head):
+            continue
+        try:
+            stamps.append(datetime.datetime.fromisoformat(str(comment.get('createdAt')).replace('Z', '+00:00')).timestamp())
+        except ValueError:
+            continue
+    return max(0, int(now - max(stamps))) if stamps else None
+
+
+def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_worker, lines, head):
+    """True when the PR body fails pr-body-gate. No verifier starts, and the builder gets one rework note per reason (#1323)."""
+    number = pr_row.get('number')
+    reason = _sibling('pr_body_gate', 'pr-body-gate.py').finish_block_reason(pr_row.get('body') or '')
+    if reason and reason.startswith('PR body needs a'):
+        reason = None  # a missing Builder line is not a verifier cost: builder_pair falls back to the dispatch record
+    notes = state.setdefault('body_gate_notes', {})
+    key = '%s#%s' % (repo, number)
+    if not reason:
+        notes.pop(key, None)
+        return False
+    lines.append(_babysit_line(repo, number, head, 'skip', 'body-gate'))
+    if dry_run or notes.get(key) == reason:
+        return True
+    notes[key] = reason
+    for worker in workers or []:
+        if isinstance(worker, dict) and worker_pr_number(worker) == number and not _worker_is_verifier(worker):
+            mail_worker(notify_worker, worker, 'verifier not started: ' + reason, allow_settled=True)
+            break
+    return True
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
@@ -6586,6 +6627,12 @@ def babysit_pass(
         else:
             lines.append(_babysit_line(repo, number, head, 'skip', 'pending'))
             continue
+        if kind == 'verifier' and body_gate_blocks_verifier(
+            pr_row, workers, state, repo, dry_run, notify_worker, lines, head,
+        ):
+            if not dry_run and persist_state:
+                persist_state()
+            continue
         if not run_id or not from_terminal or not root:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             log_bits.append('skip_root=%s' % number)
@@ -6690,8 +6737,11 @@ def babysit_pass(
                             headroom_pct='' if headroom is None else headroom)
         started += 1
         count_started()
-        lines.append(_babysit_line(repo, number, head, action, detail))
+        gap = review_to_verifier_s(pr_row, head, now) if action == 'verifier' else None
+        lines.append(_babysit_line(repo, number, head, action, detail if gap is None else '%s review_to_verifier_s=%d' % (detail, gap)))
         log_bits.append('%s=%s' % (action, number))
+        if gap is not None:
+            log_bits.append('review_to_verifier_s=%d' % gap)
         if persist_state:
             persist_state()
     return notices, lines, log_bits
@@ -6851,7 +6901,7 @@ def issue_scan_pass(
                 shipped[head] = True
                 if persist_state:
                     persist_state()
-                command = build_ship_command(repo, pr_row)
+                command = build_ship_command(repo, pr_row, root)
                 if start_worker(command) == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
                     log_bits.append('ship_start=%s' % head[:8])
@@ -8143,6 +8193,8 @@ def fleet_seat_report(config, config_path=None, state_path=None, workers=None):
     env_names = _resolve_env_names(workers, config, None)
     report = {}
     for host, cap in (config.get('host_caps') or {}).items():
+        if cap <= 0:
+            continue
         receipt = admit(host, config, workers=workers, env_names=env_names, released_ids=released)
         resources = receipt.get('resources') or []
         report[host] = {

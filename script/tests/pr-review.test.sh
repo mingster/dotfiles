@@ -610,4 +610,19 @@ out=$(
 ) || fail "empty pr with no matching PR must exit 0"
 grep -q 'PR already merged or closed; skipping review' <<<"$out" || fail "no PR skip message"
 
+# #1321: a posted Review: PASS starts one fleet-watch verifier pass; a FAIL does not
+printf '#!/usr/bin/env python3\nimport sys\nopen(sys.argv[0] + ".args", "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > "$tmp/fake-fleet-watch.py"
+rm -f "$tmp/fake-fleet-watch.py.args" "$tmp/posted" "$tmp/claude-args"
+issue_comments_set
+printf 'Review: PASS\nok\n' > "$tmp/answer"
+FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY=claude FLEET_WATCH_PY="$tmp/fake-fleet-watch.py" \
+  FLEET_WATCH_CONFIG=/c.json FLEET_WATCH_STATE=/s.json bash "$root/script/pr-review.sh" 7 "$sha" >"$tmp/kick.out" 2>&1 || fail "PASS review exits 0"
+grep -q 'Review: PASS' "$tmp/posted" || fail "kick case posts PASS"
+grep -q -- '--config /c.json --state /s.json --babysit-only' "$tmp/fake-fleet-watch.py.args" || fail "PASS starts one babysit pass"
+rm -f "$tmp/fake-fleet-watch.py.args" "$tmp/posted"
+printf 'Review: FAIL\nbad\n' > "$tmp/answer"
+FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY=claude FLEET_WATCH_PY="$tmp/fake-fleet-watch.py" \
+  FLEET_WATCH_CONFIG=/c.json FLEET_WATCH_STATE=/s.json bash "$root/script/pr-review.sh" 7 "$sha" >/dev/null 2>&1 || true
+[ ! -e "$tmp/fake-fleet-watch.py.args" ] || fail "FAIL review must not start a verifier pass"
+
 echo "pr-review tests passed"

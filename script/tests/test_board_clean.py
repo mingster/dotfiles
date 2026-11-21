@@ -9,7 +9,9 @@ import pathlib
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
+import unittest.mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("board_clean", ROOT / "script" / "board-clean.py")
@@ -435,6 +437,55 @@ class Report(unittest.TestCase):
         self.assertIsNone(clean.shell_quote("bad'name"))
         self.assertEqual(clean.branch_script("/remote/main", "verify-1", True),
                          "git -C '/remote/main' branch -D 'verify-1'; git -C '/remote/main' push origin --delete 'verify-1'; exit")
+
+
+class RoundBudget(unittest.TestCase):
+    def tearDown(self):
+        clean.DEADLINE = None
+
+    def test_no_budget_variable_means_no_deadline(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BOARD_CLEAN_BUDGET_S", None)
+            clean.start_budget()
+        self.assertIsNone(clean.DEADLINE)
+
+    def test_call_cut_by_the_budget_raises_out_of_time(self):
+        clean.DEADLINE = time.monotonic() + 1.5
+        with self.assertRaises(clean.OutOfTime):
+            clean.run_json(["sleep", "5"], 45)
+
+    def test_call_is_not_started_with_under_one_second_left(self):
+        clean.DEADLINE = time.monotonic() + 0.5
+        with self.assertRaises(clean.OutOfTime):
+            clean.run_json(["true"], 45)
+
+    def test_call_that_ran_its_own_full_timeout_is_a_normal_failure(self):
+        clean.DEADLINE = time.monotonic() + 60
+        data, err = clean.run_json(["sleep", "5"], 1)
+        self.assertIsNone(data)
+        self.assertIn("timed out", err)
+
+    def test_without_a_deadline_a_timeout_is_a_normal_failure(self):
+        clean.DEADLINE = None
+        data, err = clean.run_json(["sleep", "5"], 1)
+        self.assertIsNone(data)
+        self.assertIn("timed out", err)
+
+    def test_board_done_calls_go_through_the_budgeted_helper(self):
+        clean.DEADLINE = time.monotonic() + 1.5
+        with unittest.mock.patch.object(clean.board(), "orca_bin", return_value="sh"):
+            with self.assertRaises(clean.OutOfTime):
+                clean.board().orca_json("-c", "sleep 5")
+
+    def test_main_exits_0_with_the_budget_line_when_discovery_is_cut(self):
+        out = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {"BOARD_CLEAN_BUDGET_S": "5"}):
+            with unittest.mock.patch.object(clean.board(), "worktrees_for", side_effect=clean.OutOfTime):
+                with contextlib.redirect_stdout(out):
+                    code = clean.main(["--dry-run"])
+        self.assertEqual(code, 0)
+        self.assertIn(clean.BUDGET_LINE, out.getvalue())
+        self.assertIn("dry-run: clean=0 keep=0", out.getvalue())
 
 
 if __name__ == "__main__":

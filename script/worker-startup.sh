@@ -457,9 +457,17 @@ usage_run() {
 }
 
 # Owner rule 2026-11-18: every worker title is "#<issue>|<role>".
-require_title_form() { # <title>
+require_title_form() { # <title> [<spec_file>]
   if ! [[ $1 =~ ^#[0-9]+\|[a-z][a-z-]*(\|.+)?$ ]]; then
-    echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)" >&2
+    local issue='' role='' hint=''
+    if [ -n "${2:-}" ] && [ -f "$2" ]; then
+      issue=$(grep -m1 -oE '^#+[[:space:]].*#[0-9]+|^(Refs|Closes|Fixes|Resolves):?[[:space:]]+[A-Za-z0-9_./-]*#[0-9]+' "$2" | grep -oE '#[0-9]+$' | head -n 1 | tr -d '#' || true)
+      role=$(sed -n 's/^Role:[[:space:]]*\([a-z][a-z-]*\).*/\1/p' "$2" | head -n 1)
+    fi
+    [ -n "$role" ] || role=$(grep -oE '[a-z]+(-[a-z]+)+' <<<"$1" | head -n 1 || true)
+    [ -n "$role" ] || role=fullstack-dev
+    [ -z "$issue" ] || hint="; did you mean '#$issue|$role'?"
+    echo "worker-startup: refused: --title '$1' must look like '#<issue>|<role>', for example '#123|qa-sdet' (a verifier uses its PR number)$hint" >&2
     exit 2
   fi
 }
@@ -922,7 +930,7 @@ run_mode() {
     return 0
   fi
   [ -n "$run" ] && [ -n "$spec" ] && [ -n "$title" ] && [ -n "$agent" ] && [ -n "$model" ] || usage_run
-  require_title_form "$title"
+  require_title_form "$title" "$spec"
   [ -f "$spec" ] || die "spec file not found: $spec"
   [ -n "$(tr -d '[:space:]' <"$spec" || true)" ] || die "spec file is empty: $spec"
   local lint_out lint_dir dispatch_log orig_spec=$spec
@@ -1165,6 +1173,14 @@ run_mode() {
   return 0
 }
 
+# One line per successful start: duration_s feeds team-audit.sh --report (#1330).
+log_startup_duration() { # <run id> <seconds>
+  local line
+  line="worker-startup run=$1 duration_s=$2"
+  echo "$line" >&2
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$line" >>"$state_dir/durations.log" 2>/dev/null || true
+}
+
 case "${1:-}" in
   --host-check)
     host_check
@@ -1174,7 +1190,11 @@ case "${1:-}" in
     pick_host_only "$@"
     ;;
   --run)
-    run_mode "$@"
+    startup_began=$SECONDS
+    startup_rc=0
+    run_mode "$@" || startup_rc=$?
+    [ "$startup_rc" -ne 0 ] || log_startup_duration "${2:-}" "$((SECONDS - startup_began))"
+    exit "$startup_rc"
     ;;
   -h|--help)
     echo "Usage: worker-startup.sh --host-check | --run ..." >&2

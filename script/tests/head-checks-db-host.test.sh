@@ -200,6 +200,37 @@ else
   check "two concurrent runs use the remote checkout one after the other and each passes" bad
 fi
 
+# The database host's heavy-gate refusing admission within the wait cap is INFRA, naming the gate reason; the cap is passed on.
+cat > "$tmp/remote-heavy-cap.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$REMOTE_LOG.argv"
+echo 'heavy-gate: wait cap of 600s reached, not admitted: load 22.51 exceeds 5' >&2
+exit 75
+EOF2
+chmod +x "$tmp/remote-heavy-cap.sh"
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-cap.sh"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q '^Checks: INFRA' "$tmp/out" && grep -q '^Result: host busy; .*load 22.51 exceeds 5' "$tmp/out" \
+  && grep -qx 'Remote wait: 600s' "$tmp/out" && ! grep -q '^Checks: FAIL' "$tmp/out" \
+  && grep -qx -- '--max-wait' "$tmp/remote.log.argv" && grep -qx 600 "$tmp/remote.log.argv"; then
+  check "a database step the gate never admitted is INFRA with the gate reason" ok
+else
+  check "a database step the gate never admitted is INFRA with the gate reason" bad
+fi
+
+# The receipt carries the wait seconds of an admitted remote step.
+cat > "$tmp/remote-heavy-waited.sh" <<'EOF2'
+#!/usr/bin/env bash
+echo 'heavy-gate: waited 42s for admission' >&2
+exit 0
+EOF2
+chmod +x "$tmp/remote-heavy-waited.sh"
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-waited.sh"; rc=$?
+if [ "$rc" -eq 0 ] && grep -qx 'Remote wait: 42s' "$tmp/out"; then
+  check "the receipt logs the remote wait seconds" ok
+else
+  check "the receipt logs the remote wait seconds" bad
+fi
+
 # When the wait runs out the run reports host busy (INFRA), not FAIL, and the holder is untouched.
 mkdir -p "$HOME/orca/workspaces/repo"
 held="$HOME/orca/workspaces/repo/"

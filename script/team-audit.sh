@@ -212,6 +212,26 @@ for rp in repos:
     keys = ("median_ticket_start_to_merge_minutes", "first_pass_checks_fail_rate", "first_pass_verdict_rate",
             "reopened_or_hotfix_rate", "p0_filed_this_month", "p1_filed_this_month")
     print("Delivery: " + ", ".join(f"{k}={m.get(k, 'unknown')}" for k in keys))
+
+print("\n## Start and fleet-pull durations")
+import re, statistics
+home = os.path.expanduser("~")
+sources = (
+    ("worker-startup", os.path.join(os.environ.get("WORKER_STARTUP_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state"), "worker-startup"), "durations.log"), r"duration_s=(\d+)\s*$"),
+    ("fleet-pull", os.environ.get("SHIP_FLEET_PULL_LOG") or os.path.join(home, ".claude", "state", "fleet-pull-after-ship.log"), r"^fleet-pull .* duration_s=(\d+)\s*$"),
+)
+print("| step | median_s | max_s | samples |")
+print("| --- | --- | --- | --- |")
+for name, path, pattern in sources:
+    vals = []
+    try:
+        for raw in open(path, encoding="utf-8"):
+            hit = re.search(pattern, raw)
+            if hit:
+                vals.append(int(hit.group(1)))
+    except OSError:
+        pass
+    print(f"| {name} | {statistics.median(vals) if vals else 'unknown'} | {max(vals) if vals else 'unknown'} | {len(vals)} |")
 REPORT
   bases=""
   for d in "$DOTFILES" "${PROJECTS[@]}"; do

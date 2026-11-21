@@ -18,7 +18,7 @@ export ORCA_TERMINAL_HANDLE=t-own WORKER_PANE_CLOSE="$tmp/no-pane-script"
 cat > "$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 case "$*" in
-  'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
+  'repo view --json defaultBranchRef') sleep "${FAKE_GH_SLEEP:-0}"; echo '{"defaultBranchRef":{"name":"main"}}'; exit 0 ;;
   'api repos/{owner}/{repo}/pages') echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
   'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[{"name":"main"}]'; exit 0 ;;
 esac
@@ -70,7 +70,10 @@ clean_round() {
   ! grep -Fq 'time limit' "$tmp/output" "$tmp/errors" || fail 'time limit reached'
   grep -Fq 'Remove worktree' "$tmp/output" || fail 'merged worktree not removed'
 }
-export WRAP_UP_TOTAL_TIMEOUT=8 FAKE_RELEASE_SLEEP=1
+# The release guard compares the time left with half the limit, and startup work spends that time too. A busy host (the
+# parallel local checks) used 4s of an 8s limit before the first release, so no worker was released. Startup is slowed on
+# purpose (FAKE_GH_SLEEP) so the limit has to leave room for it, not just a quiet CI runner.
+export WRAP_UP_TOTAL_TIMEOUT=40 FAKE_RELEASE_SLEEP=1 FAKE_GH_SLEEP=5
 
 # Items 1 to 3: rows the concise list shows with no terminal and no terminal state are already released. Asking for each
 # again spent the time limit, so every later Orca and gh call was skipped and the merged worktree stayed.
@@ -83,6 +86,7 @@ echo 'ok 2 a 404 from the pages API is no Pages branch, and the protection looku
 echo 'ok 3 environment worktree lists are read in a scheduled sized time limit'
 
 # Items 1 to 3, the guard: many real releases stop at half the time limit so the cleanup after them still runs.
+export WRAP_UP_TOTAL_TIMEOUT=8 FAKE_GH_SLEEP=0
 { for i in $(seq 1 12); do row "d-slow-$i" reclaimable "t-$i"; done; } | wrap > "$tmp/workers-local"
 run --apply
 [ "$(releases)" -lt 12 ] || fail 'releases did not stop at half the time limit'
@@ -92,7 +96,7 @@ grep -Fq 'Remove worktree' "$tmp/output" || fail 'merged worktree not removed af
 echo 'ok 1 releases stop at half the time limit; the terminal and worktree steps still run'
 
 # Item 4: a retained worker is Orca's final answer, so it is not asked again; an ok:true receipt counts as released.
-export FAKE_RELEASE_SLEEP=0 FAKE_RELEASE_RC=1
+export WRAP_UP_TOTAL_TIMEOUT=40 FAKE_RELEASE_SLEEP=0 FAKE_RELEASE_RC=1
 { row d-retained retained t-2; row d-ext reclaimable t-3; } | wrap > "$tmp/workers-local"
 echo '{"ok":true,"result":{"state":"retained","reason":"external_terminal"}}' > "$tmp/receipt"
 run --apply

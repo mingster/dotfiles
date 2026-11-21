@@ -352,6 +352,29 @@ cmd_machine() {
   fi
 
   merge_machine_settings "$TEMPLATE_DIR/.claude/settings.json" "$HOME/.claude/settings.json" "$dry"
+  seed_grok_hosts "$dry"
+}
+
+# Seed an empty grok_hosts key in the fleet config so worker-startup's grok host check has a list to read (#1324).
+# Touches only an existing file with no grok_hosts key; never creates one and never changes a key already set.
+seed_grok_hosts() { # <dry>
+  local state=${AGENT_STATE_DIR:-$HOME/agent-state} cfg tmp_cfg
+  command -v jq >/dev/null 2>&1 || return 0
+  for cfg in "${FLEET_PULL_CONFIG:-}" "$state/fleet-pull.json" "$state/fleet-config.json"; do
+    [ -n "$cfg" ] && [ -f "$cfg" ] || continue
+    jq -e 'type == "object" and (has("hosts") or has("repos")) and (has("grok_hosts") | not)' "$cfg" >/dev/null 2>&1 || continue
+    if [ "$1" -eq 1 ]; then
+      echo "would add grok_hosts to $cfg"
+      return 0
+    fi
+    tmp_cfg=$(mktemp "${TMPDIR:-/tmp}/grok-hosts.XXXXXX") || return 0
+    if jq '. + {grok_hosts: []}' "$cfg" >"$tmp_cfg"; then
+      cat "$tmp_cfg" >"$cfg"
+      echo "agent-team: added grok_hosts to $cfg (list the hosts that have the grok CLI)"
+    fi
+    rm -f "$tmp_cfg"
+    return 0
+  done
 }
 
 validate_target_dir() {

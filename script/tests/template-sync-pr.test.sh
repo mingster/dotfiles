@@ -125,5 +125,19 @@ if grep -qx 'example-org/proj open 42' <<<"$OUT"; then ok "a stale lock from a d
 else bad "a stale lock from a dead run is taken over" "out=$OUT"; fi
 [ ! -d "$TEMPLATE_SYNC_LOCK_DIR/example-org_proj" ] && ok "the lock is released at exit" || bad "the lock is released at exit"
 
+# Green checks ship from the project checkout: ship.sh refuses any other cwd (#1326).
+cat >"$DF/script/ship.sh" <<EOF
+#!/usr/bin/env bash
+pwd -P >"$TMP/ship-cwd"
+echo "\$*" >"$TMP/ship-args"
+EOF
+echo '[{"bucket":"pass"}]' >"$TMP/checks"
+cd "$TMP" && run
+if [ "$RC" -eq 0 ] && grep -qx 'example-org/proj merged 42' <<<"$OUT" \
+  && [ "$(cat "$TMP/ship-cwd" 2>/dev/null)" = "$(cd "$PROJ" && pwd -P)" ] \
+  && grep -q -- '--repo example-org/proj --pr 42 --verdict-from example-org/dotfiles#5' "$TMP/ship-args"; then
+  ok "green checks run ship.sh from the project checkout"
+else bad "green checks run ship.sh from the project checkout" "rc=$RC out=$OUT cwd=$(cat "$TMP/ship-cwd" 2>/dev/null)"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -336,4 +336,41 @@ seat_env "$py3" "$py" pick --record >/dev/null 2>&1 || fail "recorded pick faile
 seat_env "$py3" "$py" unrecord --host "$(jq -r ".starts[0].host" "$tmp/recent-1273.json")"
 [ "$(jq -r '.starts | length' "$tmp/recent-1273.json")" = 0 ] || fail "unrecord should drop the failed start's claim"
 
+# 1337: host_caps 0 means no seats. A cap 0 host with a repo mapping and the lowest load is never
+# picked, never accepted by check-host, and absent from seats.
+cat >"$tmp/load-nocap.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-primary cores=8 load=2.0 2.0 2.0\n'
+printf 'host-nocap cores=8 load=0.1 0.1 0.1\n'
+EOS
+chmod +x "$tmp/load-nocap.sh"
+cat >"$tmp/nocap.json" <<'EOS'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 4, "host-nocap": 0},
+  "host_load_ceilings": {"host-primary": 12, "host-nocap": 12},
+  "worker_placement": {
+    "order": ["host-primary", "host-nocap"],
+    "repos": {"host-nocap": {"local-app-id": "id:nocap-app-id"}}
+  }
+}
+EOS
+out=$(pick "$tmp/nocap.json" "$tmp/load-nocap.sh" 2>/dev/null) || fail "cap 0 pick should fall back to the capped host: $out"
+grep -Fq 'host=host-primary' <<<"$out" || fail "cap 0 host must not be picked: $out"
+grep -Fq 'host-nocap' <<<"$out" && fail "cap 0 host must not appear in the pick: $out" || true
+cat >"$tmp/nocap-only.json" <<'EOS'
+{
+  "local_host": "host-nocap",
+  "host_caps": {"host-nocap": 0},
+  "host_load_ceilings": {"host-nocap": 12},
+  "worker_placement": {"order": ["host-nocap"], "repos": {}}
+}
+EOS
+out=$(pick "$tmp/nocap-only.json" "$tmp/load-nocap.sh" 2>/dev/null || true)
+grep -Fq 'host=host-nocap' <<<"$out" && fail "cap 0 only fleet must not pick the host: $out"
+out=$(FLEET_LOAD_SCRIPT="$tmp/load-nocap.sh" FLEET_WATCH_CONFIG="$tmp/nocap.json" python3 "$py" check-host --host host-nocap 2>/dev/null || true)
+[ "$(jq -r '.ok' <<<"$out" 2>/dev/null)" = false ] || fail "check-host must refuse a cap 0 host: $out"
+out=$(FLEET_LOAD_SCRIPT="$tmp/load-nocap.sh" FLEET_WATCH_CONFIG="$tmp/nocap.json" python3 "$py" check-host --host host-primary 2>/dev/null) || fail "check-host must accept a capped host: $out"
+[ "$(jq -r '.ok' <<<"$out")" = true ] || fail "check-host must accept a capped host: $out"
+
 echo "worker-placement.test.sh passed"

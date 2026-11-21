@@ -642,5 +642,11 @@ sed 's|^- \[ \] New script|1) New script|' "$tmp/refs-base.md" >"$tmp/numbered2.
 out=$(bash "$lint" "$tmp/numbered2.md" 2>&1); ec=$?
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "1) Acceptance should pass (ec=$ec, out=$out)"; fi
 
+# 1324. The dotfiles coordinator brief template passes the lint as written.
+tpl_doc="$(cd "$(dirname "$0")/../.." && pwd)/docs/agents/dotfiles-brief-template.md"
+sed -n '/^```markdown$/,/^```$/p' "$tpl_doc" | sed '1d;$d' >"$tmp/dotfiles-template.md"
+out=$(bash "$lint" "$tmp/dotfiles-template.md" 2>&1); ec=$?
+if [ -s "$tmp/dotfiles-template.md" ] && [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "dotfiles brief template should pass brief-lint (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

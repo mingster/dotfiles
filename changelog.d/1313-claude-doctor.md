@@ -1,0 +1,1 @@
+Claude doctor fixes. The usage gate hook caches an allowed reading for 30 seconds (a block is never cached), `setup-agent-hooks.sh` keeps one usage gate entry in the user settings, 11 skills the guide never names are set to `off` through `skillOverrides`, and the global browser line defers to a project `AGENTS.md` browser section.

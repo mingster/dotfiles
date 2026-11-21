@@ -26,12 +26,70 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CLEAN_DETAIL = "worktree, local branch, remote branch, terminals, session"
 THROWAWAY_PREFIXES = ("verify-", "qa-", "rm-")
 PROTECTED_BRANCHES = frozenset({"main", "master", "staging", "production", "HEAD"})
 _MODULE = None
+DEADLINE: float | None = None
+MIN_CALL_S = 1.0
+BUDGET_LINE = "board-clean: time budget spent; the cards left are cleaned next round"
+
+
+class OutOfTime(Exception):
+    """The round budget cut a call short or left too little time to start one."""
+
+
+def start_budget() -> None:
+    """Set the round deadline from BOARD_CLEAN_BUDGET_S. No variable means no deadline."""
+    global DEADLINE
+    DEADLINE = None
+    try:
+        seconds = float(os.environ.get("BOARD_CLEAN_BUDGET_S", ""))
+    except ValueError:
+        return
+    DEADLINE = time.monotonic() + seconds
+
+
+def check_budget() -> None:
+    if DEADLINE is not None and DEADLINE - time.monotonic() < MIN_CALL_S:
+        raise OutOfTime()
+
+
+def run_process(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    """Every subprocess starts here. The timeout drops to the time left in the round.
+
+    A call whose lowered timeout expires raises OutOfTime: its answer is unknown.
+    A call that ran its own full timeout raises TimeoutExpired, a normal failure.
+    """
+    allowed = timeout
+    if DEADLINE is not None:
+        left = DEADLINE - time.monotonic()
+        if left < MIN_CALL_S:
+            raise OutOfTime()
+        allowed = min(timeout, left)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=allowed, check=False)
+    except subprocess.TimeoutExpired:
+        if allowed < timeout:
+            raise OutOfTime() from None
+        raise
+
+
+def run_json(cmd: list[str], timeout: int) -> tuple[dict | list | None, str]:
+    """board-done's run_json, run through run_process. board() installs it."""
+    try:
+        proc = run_process(cmd, timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)
+    if proc.returncode != 0:
+        return None, (proc.stderr or proc.stdout or "exit %s" % proc.returncode).strip()
+    try:
+        return json.loads(proc.stdout), ""
+    except json.JSONDecodeError:
+        return None, "unreadable json"
 
 
 def board():
@@ -43,6 +101,7 @@ def board():
             raise RuntimeError("cannot load board-done.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.run_json = run_json
         _MODULE = module
     return _MODULE
 
@@ -51,7 +110,6 @@ def clock_ms() -> int:
     override = os.environ.get("BOARD_CLEAN_NOW_MS")
     if override and override.isdigit():
         return int(override)
-    import time
     return int(time.time() * 1000)
 
 
@@ -304,9 +362,7 @@ def load_fact_table() -> dict | None:
 
 def _git(path: str, *args: str) -> str | None:
     try:
-        done = subprocess.run(
-            ["git", "-C", path, *args], capture_output=True, text=True, timeout=30, check=False,
-        )
+        done = run_process(["git", "-C", path, *args], 30)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return done.stdout.strip() if done.returncode == 0 else None
@@ -362,7 +418,6 @@ PROBE_READS = 15
 
 
 def pause() -> None:
-    import time
     time.sleep(1)
 
 
@@ -470,14 +525,8 @@ def delete_local_branches(main: str, branch: str, throwaway: bool) -> None:
         return
     flag = "-D" if throwaway else "-d"
     try:
-        deleted = subprocess.run(
-            ["git", "-C", main, "branch", flag, branch],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        pushed = subprocess.run(
-            ["git", "-C", main, "push", "origin", "--delete", branch],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
+        deleted = run_process(["git", "-C", main, "branch", flag, branch], 30)
+        pushed = run_process(["git", "-C", main, "push", "origin", "--delete", branch], 30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print("board-clean: branch delete failed for %s (%s)" % (branch, exc), file=sys.stderr)
         return
@@ -665,6 +714,7 @@ def consider(tree: dict, listed: str, grouped: dict[str, list[dict]] | None, tre
 
 
 def main(argv: list[str] | None = None) -> int:
+    start_budget()
     import argparse
     parser = argparse.ArgumentParser(description="Clean Done Orca board cards after 30 minutes.")
     parser.add_argument("--apply", action="store_true", help="Clean the cards. The default is a dry run.")
@@ -679,56 +729,61 @@ def main(argv: list[str] | None = None) -> int:
         print("board-clean: --fleet and --environment are exclusive", file=sys.stderr)
         return 2
     apply = args.apply
-    targets = [args.environment]
-    if args.fleet:
-        targets = [""]
-        ids, err = board().environment_ids()
-        if ids is None:
-            print("board-clean: environment list unavailable; remote hosts retry next round")
-            if err:
-                print("board-clean: %s" % err, file=sys.stderr)
-        else:
-            targets.extend(ids)
-    table = load_fact_table()
-    stamps = board().load_stamps()
-    now = clock_ms()
-    limit = window_ms()
-    unreachable: set[str] = set()
-    gathered: list[tuple[str, list[dict], list[dict] | None]] = []
-    skipped = 0
-    for environment in targets:
-        label = normalize(environment)
-        trees, err = board().worktrees_for(environment)
-        if trees is None:
-            unreachable.add(label)
-            skipped += 1
-            print("board-clean: skip %s (unreachable), retry next round" % label)
-            if err:
-                print("board-clean: %s: %s" % (label, err), file=sys.stderr)
-            continue
-        workers, werr = workers_for_host(environment)
-        if workers is None:
-            print("board-clean: worker list unavailable on %s; cards stay this round" % label, file=sys.stderr)
-            if werr:
-                print("board-clean: %s: %s" % (label, werr), file=sys.stderr)
-            gathered.append((label, trees, None))
-        else:
-            gathered.append((label, trees, workers))
     cleaned = 0
     kept = 0
-    for label, trees, workers in gathered:
-        grouped = None if workers is None else workers_by_path(workers)
-        for tree in trees:
-            if (tree.get("workspaceStatus") or "") != "completed":
-                continue
-            path = tree.get("path") or tree.get("workspacePath") or ""
-            if not isinstance(path, str) or not path:
-                continue
-            outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
-            if outcome == "clean":
-                cleaned += 1
+    skipped = 0
+    try:
+        targets = [args.environment]
+        if args.fleet:
+            targets = [""]
+            ids, err = board().environment_ids()
+            if ids is None:
+                print("board-clean: environment list unavailable; remote hosts retry next round")
+                if err:
+                    print("board-clean: %s" % err, file=sys.stderr)
             else:
-                kept += 1
+                targets.extend(ids)
+        table = load_fact_table()
+        stamps = board().load_stamps()
+        now = clock_ms()
+        limit = window_ms()
+        unreachable: set[str] = set()
+        gathered: list[tuple[str, list[dict], list[dict] | None]] = []
+        for environment in targets:
+            check_budget()
+            label = normalize(environment)
+            trees, err = board().worktrees_for(environment)
+            if trees is None:
+                unreachable.add(label)
+                skipped += 1
+                print("board-clean: skip %s (unreachable), retry next round" % label)
+                if err:
+                    print("board-clean: %s: %s" % (label, err), file=sys.stderr)
+                continue
+            workers, werr = workers_for_host(environment)
+            if workers is None:
+                print("board-clean: worker list unavailable on %s; cards stay this round" % label, file=sys.stderr)
+                if werr:
+                    print("board-clean: %s: %s" % (label, werr), file=sys.stderr)
+                gathered.append((label, trees, None))
+            else:
+                gathered.append((label, trees, workers))
+        for label, trees, workers in gathered:
+            grouped = None if workers is None else workers_by_path(workers)
+            for tree in trees:
+                if (tree.get("workspaceStatus") or "") != "completed":
+                    continue
+                path = tree.get("path") or tree.get("workspacePath") or ""
+                if not isinstance(path, str) or not path:
+                    continue
+                check_budget()
+                outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
+                if outcome == "clean":
+                    cleaned += 1
+                else:
+                    kept += 1
+    except OutOfTime:
+        print(BUDGET_LINE)
     mode = "applied" if apply else "dry-run"
     print("%s: clean=%s keep=%s skipped_hosts=%s" % (mode, cleaned, kept, skipped))
     return 0

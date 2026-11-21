@@ -83,7 +83,8 @@ board_environment_for_branch() { # <branch>
 
 # After a dotfiles merge, pull latest dotfiles to every fleet host (#1173). Runs detached, so the merge never waits
 # on it and a failure never reaches ship's exit code. One block per run lands in the log fleet-watch reads:
-# "fleet-pull <utc> pr=<n> sha=<sha> exit=<rc>" then the ok/fail line per host. exit=124 means the timeout cut it off.
+# "fleet-pull <utc> pr=<n> sha=<sha> exit=<rc> duration_s=<n>" then the ok/fail line per host. exit=124 means the
+# timeout cut it off. team-audit.sh --report reads duration_s.
 # fleet-pull.sh pulls every host and repo in the fleet config, so only a dotfiles merge triggers it, not a project repo.
 fleet_pull_after_merge() { # <pr> <merge sha>
   local pr_n=$1 sha=$2
@@ -94,6 +95,7 @@ fleet_pull_after_merge() { # <pr> <merge sha>
   (
     trap - EXIT
     tmp=$(mktemp) || exit 0
+    began=$SECONDS
     bash "$cmd" >"$tmp" 2>&1 &
     pid=$!
     # Take the children first: killing only a child lets fleet-pull carry on to the next host.
@@ -103,7 +105,7 @@ fleet_pull_after_merge() { # <pr> <merge sha>
     wait "$pid" || rc=$?
     kill "$dog" 2>/dev/null || true
     [ "$rc" -lt 128 ] || rc=124
-    { printf 'fleet-pull %s pr=%s sha=%s exit=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pr_n" "$sha" "$rc"; cat "$tmp"; } >>"$log" 2>/dev/null || true
+    { printf 'fleet-pull %s pr=%s sha=%s exit=%s duration_s=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$pr_n" "$sha" "$rc" "$((SECONDS - began))"; cat "$tmp"; } >>"$log" 2>/dev/null || true
     rm -f "$tmp"
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
@@ -141,6 +143,13 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$repo" ] && [[ "$pr" =~ ^[0-9]+$ ]] || refuse "usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]"
 [ "$mechanical" = false ] || [ -z "$verdict_from" ] || refuse "--verdict-from and --mechanical are exclusive"
+# Run from the repo checkout: a wrong cwd otherwise surfaces later as "cannot read head" (#1326).
+top=$(git rev-parse --show-toplevel 2>/dev/null) || refuse "run from inside the ${repo##*/} checkout (cwd is not a git repo)"
+origin_url=$(git -C "$top" remote get-url origin 2>/dev/null || true)
+if [[ "$origin_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+  origin_repo=${BASH_REMATCH[1]%.git}
+  [ "$origin_repo" = "$repo" ] || refuse "run from inside the ${repo##*/} checkout (cwd origin is $origin_repo)"
+fi
 
 read_pr() {
   info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \

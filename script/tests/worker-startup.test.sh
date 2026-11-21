@@ -597,6 +597,17 @@ for bad_title in myjob "qa-sdet - verify #5" "#12" "#12|QA" "12|qa-sdet" "#12|qa
   grep -q "#<issue>|<role>" "$tmp/title.err" && ok || bad "title '$bad_title' refusal should show the expected form ($(cat "$tmp/title.err"))"
   [ ! -s "$tmp/orca-title.log" ] && ok || bad "title '$bad_title' must not reach orca"
 done
+# 1324: a refused title prints the corrected one when the brief heading names the issue.
+hint_spec="$tmp/hint-spec.md"
+printf '# Build #1324: worker-startup refusals\nRole: fullstack-dev\n' >"$hint_spec"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-title.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_title --spec "$hint_spec" --title "myjob" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n_title --repo "path:$clean" 2>"$tmp/title.err"
+set -e
+grep -q "did you mean '#1324|fullstack-dev'?" "$tmp/title.err" && ok || bad "refused title should print the corrected title ($(cat "$tmp/title.err"))"
 : >"$tmp/orca-title.log"
 set +e
 env -u BASH_ENV \
@@ -2029,6 +2040,12 @@ grep -Fxq -- 'issue edit 7950 -R acme/app --add-label status:進行中 --remove-
 : >"$GH_STUB_LOG"
 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --skip-dotfiles-first "test"
 grep -Fxq -- 'issue edit 5 --repo acme/dots --add-label status:接下來' "$GH_STUB_LOG" && ok || bad "the label gate should run at a hand start ($(cat "$GH_STUB_LOG"))"
+
+# A successful start logs one duration_s line for team-audit.sh --report (#1330).
+rm -f "$route_state/durations.log"
+GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --skip-dotfiles-first "test"
+grep -qE '^[0-9TZ:-]+ worker-startup run=run_route duration_s=[0-9]+$' "$route_state/durations.log" 2>/dev/null && ok || bad "a successful start should log duration_s ($(cat "$route_state/durations.log" 2>&1))"
+grep -qE '^worker-startup run=run_route duration_s=[0-9]+$' "$tmp/route.err" && ok || bad "a successful start should print duration_s on stderr"
 
 rm -f "$bin/hostname"
 
