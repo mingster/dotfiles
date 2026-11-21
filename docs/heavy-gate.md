@@ -19,7 +19,8 @@ still use measure mode.
 step and every process it started (TERM, then KILL after about ten seconds). It also
 passes `--exit-with-parent` to the gate: the gate then stops its command and leaves the
 queue once its parent process has exited, so a head-checks run killed with KILL (a
-cancelled CI job) cannot leave a gated command running.
+cancelled CI job) cannot leave a gated command running. The step runs with `exec`, so the
+gate sees head-checks itself as its parent on every platform.
 
 Slot waits still log `stamp host=H wait_s=S` lines to
 `~/.orca/logs/heavy-gate-wait.log` for `fleet-watch.py` and team audit metrics.

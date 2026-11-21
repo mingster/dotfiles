@@ -82,7 +82,7 @@ else
   slots=2
 fi
 [[ "$slots" =~ ^[1-9][0-9]*$ ]] || usage "HEAD_CHECKS_SLOTS must be a positive number"
-log=$(mktemp); receipt=$(mktemp)
+log=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX"); receipt=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")
 # Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
 finish() {
@@ -191,7 +191,7 @@ reap_step() {
   # shellcheck disable=SC2046
   pids="$step_pid $(step_descendants "$step_pid")"
   # shellcheck disable=SC2086
-  kill -TERM $pids 2>/dev/null
+  kill -TERM $pids 2>/dev/null || true
   # The gate stops its own process group (TERM, 3 seconds, KILL); give it time.
   while [ "$tries" -lt 100 ]; do
     alive=0
@@ -200,11 +200,11 @@ reap_step() {
     tries=$((tries + 1)); sleep 0.1
   done
   # shellcheck disable=SC2086
-  kill -KILL $pids 2>/dev/null
+  kill -KILL $pids 2>/dev/null || true
   step_pid=""
   return 0
 }
-finish_reaping() { local status=$?; reap_step; finish "$status"; }
+finish_reaping() { local status=$?; set +e; reap_step; rm -f "${output:-}"; finish "$status"; }
 trap finish_reaping EXIT
 # A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
 trap 'exit 143' TERM; trap 'exit 130' INT
@@ -354,7 +354,7 @@ config="${override:-$worktree/.agents/head-checks.conf}"
 [ -f "$config" ] || usage "missing .agents/head-checks.conf"
 if command -v shasum >/dev/null 2>&1; then checklist_sum=$(shasum -a 256 "$config"); else checklist_sum=$(sha256sum "$config"); fi
 printf "Checklist: %s\n" "$checklist_sum" >> "$log"
-changed=$(mktemp)
+changed=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX")
 : > "$changed.unchecked"
 git -C "$worktree" diff --no-renames --name-only -z "$base...$sha" -- > "$changed" 2>> "$log" || usage "cannot determine changed paths"
 files=""
@@ -500,7 +500,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   count=$((count+1))
   expanded=${command//\{files\}/$files}
   printf '\nCommand: %s\n' "$expanded" >> "$log"
-  output=$(mktemp); started=$SECONDS
+  output=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXX"); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_BUILD_INFO="$tsc_build_info")
   run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" "$bash_bin" -euo pipefail -c "$expanded")
   gate_prefix=()
@@ -534,7 +534,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   while :; do
     tsc_attempt=$((tsc_attempt + 1))
     # In the background so a TERM or INT trap runs at once (bash defers a trap until a foreground command ends).
-    (cd "$worktree" && "${runner[@]}") > "$output" 2>&1 &
+    (cd "$worktree" && exec "${runner[@]}") > "$output" 2>&1 &
     step_pid=$!
     step_status=0
     wait "$step_pid" 2>/dev/null || step_status=$?
