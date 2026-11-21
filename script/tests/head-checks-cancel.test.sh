@@ -161,7 +161,22 @@ with tempfile.TemporaryDirectory() as temp:
     for path in slot_root.glob('slot-*'):
         shutil.rmtree(path, ignore_errors=True)
 
+    def slot_released():
+        # The gate releases its slot just after its child dies, so wait for it.
+        if wait_for(lambda: not claimed_slots(), 5):
+            return []
+        return ['slot still claimed under ~/.cache/heavy-gate: ' + ', '.join(claimed_slots())]
+    case('gated step releases its slot when its child ignores TERM and head-checks is KILLed',
+         ': playwright; (trap "" TERM; exec sleep 300) & echo $! > PIDFILE; wait',
+         [(0, signal.SIGKILL)], kill=True, after=slot_released)
+    for path in slot_root.glob('slot-*'):
+        shutil.rmtree(path, ignore_errors=True)
+
     case('plain step dies on KILL of head-checks', plain, [(0, signal.SIGKILL)], kill=True)
+
+    case('plain step dies when head-checks is KILLed during its TERM grace',
+         '(trap "" TERM; exec sleep 300) & echo $! > PIDFILE; wait',
+         [(0, signal.SIGTERM), (1, signal.SIGKILL)], kill=True)
 
     case('INT then TERM still cleans up', '(trap "" TERM; exec sleep 300) & echo $! > PIDFILE; wait',
          [(0, signal.SIGINT), (1, signal.SIGTERM)], max_exit=6.5)

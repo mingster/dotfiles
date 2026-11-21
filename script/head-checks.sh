@@ -202,7 +202,8 @@ def send(sig):
     except OSError:
         return False
 if send(signal.SIGTERM):
-    for _ in range(30):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
         time.sleep(0.1)
         if not send(0):
             break
@@ -218,7 +219,6 @@ stop_watcher() {
 reap_step() {
   local deadline=$((SECONDS + 5))
   [ -n "$step_pid" ] || return 0
-  stop_watcher
   kill -TERM -- -"$step_pid" 2>/dev/null || true
   # A 5 second grace: the gate's own cleanup (TERM, 3 seconds, KILL) fits inside it, and it ends
   # before the runner follows its INT with TERM (7.5 seconds later) and KILL (2.5 more).
@@ -227,6 +227,7 @@ reap_step() {
     sleep 0.1
   done
   kill -KILL -- -"$step_pid" 2>/dev/null || true
+  stop_watcher
   step_pid=""
 }
 # The runner's cancel sends a second signal while this trap runs; it must not cut the cleanup short.

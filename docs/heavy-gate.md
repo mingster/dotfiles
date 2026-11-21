@@ -19,7 +19,9 @@ Each `head-checks.sh` step runs in its own process group. A cancelled run
 (TERM, INT, or the runner's INT then TERM) sends TERM to that group, waits up
 to 5 seconds, then sends KILL, so the gate's own cleanup (TERM, 3 seconds,
 KILL, release the slot) finishes first. A second signal during that cleanup is
-ignored. A small watcher stops the group when head-checks itself is killed.
+ignored. A small watcher stops the group when head-checks itself is killed,
+with the same 5 second grace before KILL, so the gate still releases its slot.
+It also covers a KILL of head-checks that lands during that 5 second grace.
 A step process that starts its own session or process group (the gate's
 command does) is stopped by its own parent, not by head-checks.
 
