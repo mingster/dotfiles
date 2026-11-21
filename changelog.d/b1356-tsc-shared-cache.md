@@ -1,0 +1,1 @@
+* `head-checks.sh` shares one incremental tsc cache per host and repo across check worktrees, keyed by the lockfile and tsconfig hash. A second worktree skips the full tsc run, and a changed key starts a full run that replaces the cache.
