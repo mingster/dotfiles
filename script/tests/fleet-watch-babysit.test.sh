@@ -166,9 +166,9 @@ row = {
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-%s" % number,
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
-    "comments": [{"body": "Review: PASS head=%s\n" % head}],
+    "comments": [{"body": "Review: PASS head=%s\n" % head, "createdAt": "2020-01-01T00:00:00Z"}],
     "statusCheckRollup": [
         {"name": "script-tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
         {"name": "shellcheck", "status": "COMPLETED", "conclusion": "SUCCESS"},
@@ -212,7 +212,7 @@ if grep -q -- '--model grok-4.7-high' "$BABYSIT_STARTS"; then
 else
   ok "verifier refuses the builder agent and model"
 fi
-if grep -q 'action=verifier agent=claude model=opus' "$tmp/green1.out"; then
+if grep -Eq 'action=verifier agent=claude model=opus review_to_verifier_s=[0-9]+' "$tmp/green1.out"; then
   ok "green line names the verifier"
 else
   bad "green line names the verifier ($(cat "$tmp/green1.out"))"
@@ -293,7 +293,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-8",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{
         "body": "Verdict: PASS head=%s verifier=ctx_v author=ctx_a agent=claude model=opus\n" % head,
@@ -327,7 +327,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-2",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -359,7 +359,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-3",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": ".claude/hooks/guard.sh"}],
     "comments": [],
     "statusCheckRollup": [
@@ -392,7 +392,7 @@ json.dump([{
     "isDraft": True,
     "headRefOid": head,
     "headRefName": "feature/pr-4",
-    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -428,7 +428,7 @@ json.dump([
         "mergedAt": "2026-11-13T20:01:52Z",
         "headRefOid": merged_head,
         "headRefName": "feature/pr-1021",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+        "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -440,7 +440,7 @@ json.dump([
         "closedAt": "2026-11-13T20:01:52Z",
         "headRefOid": closed_head,
         "headRefName": "feature/pr-8",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+        "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -452,7 +452,7 @@ json.dump([
         "mergedAt": "2026-11-13T20:01:52Z",
         "headRefOid": stale_head,
         "headRefName": "feature/pr-9",
-        "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+        "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nBuilder: agent=cursor model=grok-4.7-high\n",
         "files": [{"path": "script/fleet-watch.py"}],
         "comments": [],
         "statusCheckRollup": checks,
@@ -484,7 +484,7 @@ json.dump([{
     "isDraft": False,
     "headRefOid": head,
     "headRefName": "feature/pr-5",
-    "body": "No builder line here.\n",
+    "body": "No builder line here.\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n",
     "files": [{"path": "script/fleet-watch.py"}],
     "comments": [{"body": "Review: PASS head=%s\n" % head}],
     "statusCheckRollup": [
@@ -709,6 +709,37 @@ else
 fi
 startup_pass "$tmp/w-fail2.json" "$tmp/startup3.out"
 if [ "$(starts)" = 1 ]; then ok "parked PR is not started again"; else bad "parked PR is not started again (starts=$(starts))"; fi
+
+# --- #1323: a body without ## Self-check starts no verifier and mails the builder once ---
+empty_repos
+: > "$BABYSIT_STARTS"
+python3 - "$BABYSIT_GH_DIR/owner/app.json" "$HEAD_A" "$tmp/workers-gate.json" <<'PY'
+import json, sys
+prs, head, workers = sys.argv[1:]
+json.dump([{
+    "number": 21, "state": "OPEN", "isDraft": False, "headRefOid": head,
+    "headRefName": "feature/pr-21",
+    "body": "Why\n\nBuilder: agent=cursor model=grok-4.7-high\n",
+    "files": [{"path": "script/fleet-watch.py"}],
+    "comments": [{"body": "Review: PASS head=%s\n" % head}],
+    "statusCheckRollup": [{"name": "head-checks", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+}], open(prs, "w", encoding="utf-8"))
+json.dump([{"githubPullRequestNumber": 21, "dispatchId": "ctx_b21", "terminal": "term_b21"}], open(workers, "w", encoding="utf-8"))
+PY
+echo '{}' > "$tmp/state-gate.json"
+run_pass "$tmp/state-gate.json" only "$tmp/workers-gate.json" "$tmp/gate1.out" || true
+if [ "$(starts)" = 0 ] && grep -q 'action=skip body-gate' "$tmp/gate1.out"; then
+  ok "body without Self-check starts no verifier"
+else
+  bad "body without Self-check starts no verifier (starts=$(starts) out=$(cat "$tmp/gate1.out"))"
+fi
+run_pass "$tmp/state-gate.json" only "$tmp/workers-gate.json" "$tmp/gate2.out" || true
+if python3 - "$tmp/state-gate.json" <<'PY'
+import json, sys
+st = json.load(open(sys.argv[1], encoding="utf-8"))
+assert "Self-check" in st["body_gate_notes"]["owner/app#21"]
+PY
+then ok "one rework note is recorded per reason"; else bad "one rework note is recorded per reason"; fi
 
 echo "babysit-dispatch: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

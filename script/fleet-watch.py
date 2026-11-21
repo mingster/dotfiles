@@ -6287,6 +6287,41 @@ def _standing_wake(io, terminal, host, pre_last):
     return False
 
 
+def review_to_verifier_s(pr_row, head, now):
+    """Seconds from the newest Review: PASS at this head to now, or None when no such comment is dated (#1321)."""
+    stamps = []
+    for comment in pr_row.get('comments') or []:
+        if not isinstance(comment, dict) or not (comment.get('body') or '').startswith('Review: PASS head=' + head):
+            continue
+        try:
+            stamps.append(datetime.datetime.fromisoformat(str(comment.get('createdAt')).replace('Z', '+00:00')).timestamp())
+        except ValueError:
+            continue
+    return max(0, int(now - max(stamps))) if stamps else None
+
+
+def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_worker, lines, head):
+    """True when the PR body fails pr-body-gate. No verifier starts, and the builder gets one rework note per reason (#1323)."""
+    number = pr_row.get('number')
+    reason = _sibling('pr_body_gate', 'pr-body-gate.py').finish_block_reason(pr_row.get('body') or '')
+    if reason and reason.startswith('PR body needs a'):
+        reason = None  # a missing Builder line is not a verifier cost: builder_pair falls back to the dispatch record
+    notes = state.setdefault('body_gate_notes', {})
+    key = '%s#%s' % (repo, number)
+    if not reason:
+        notes.pop(key, None)
+        return False
+    lines.append(_babysit_line(repo, number, head, 'skip', 'body-gate'))
+    if dry_run or notes.get(key) == reason:
+        return True
+    notes[key] = reason
+    for worker in workers or []:
+        if isinstance(worker, dict) and worker_pr_number(worker) == number and not _worker_is_verifier(worker):
+            mail_worker(notify_worker, worker, 'verifier not started: ' + reason, allow_settled=True)
+            break
+    return True
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
@@ -6509,6 +6544,12 @@ def babysit_pass(
         else:
             lines.append(_babysit_line(repo, number, head, 'skip', 'pending'))
             continue
+        if kind == 'verifier' and body_gate_blocks_verifier(
+            pr_row, workers, state, repo, dry_run, notify_worker, lines, head,
+        ):
+            if not dry_run and persist_state:
+                persist_state()
+            continue
         if not run_id or not from_terminal or not root:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             log_bits.append('skip_root=%s' % number)
@@ -6613,8 +6654,11 @@ def babysit_pass(
                             headroom_pct='' if headroom is None else headroom)
         started += 1
         count_started()
-        lines.append(_babysit_line(repo, number, head, action, detail))
+        gap = review_to_verifier_s(pr_row, head, now) if action == 'verifier' else None
+        lines.append(_babysit_line(repo, number, head, action, detail if gap is None else '%s review_to_verifier_s=%d' % (detail, gap)))
         log_bits.append('%s=%s' % (action, number))
+        if gap is not None:
+            log_bits.append('review_to_verifier_s=%d' % gap)
         if persist_state:
             persist_state()
     return notices, lines, log_bits
