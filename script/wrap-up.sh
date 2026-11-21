@@ -1636,18 +1636,26 @@ worktree_board_open() {
   done < "$tmp/orca-board-open"
   return 1
 }
-guarded_orca_worktree_rm() { # <counter> <label> <path>
-  local counter=$1 label=$2 path=$3 rc=0 real_path
-  real_path=$(real "$path")
-  orca_call worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "Warning: could not deregister Orca worktree for $label." >&2
-    fail_item "$label" "orca worktree rm failed (exit $rc)"
-    guard_keep "$counter" "$label" 'orca worktree rm failed'
-    return 1
-  fi
-  orca_removed=$((${orca_removed:-0}+1))
-  return 0
+# Orphan Orca record rm. Returns 0 removed (or already gone), 1 kept with a warning, 2 unknown (cut by the repo deadline:
+# left alone, retried next run, never a keep or a failure). Not bounded: a failure here is a warning, never a failed round.
+guarded_orca_worktree_rm() { # <counter> <label> <path> [hostId]
+  local counter=$1 label=$2 path=$3 host=${4:-local} try left t rc out code
+  local env_args=(); [ "$host" = local ] || env_args=(--environment "$host")
+  for try in 1 2; do
+    left=$((deadline-SECONDS))
+    [ "$left" -ge 1 ] || return 2
+    t=$call_timeout; [ "$left" -ge "$t" ] || t=$left
+    rc=0; out=$(run_limited "$t" "$orca_bin" worktree rm --worktree "path:$path" ${env_args[@]+"${env_args[@]}"} --json 2>/dev/null) || rc=$?
+    if [ "$rc" -eq 124 ] && [ "$t" -lt "$call_timeout" ]; then return 2; fi
+    code=$(printf '%s' "$out" | jq -r 'if .ok == true then "ok" else (.error.code // "error") end' 2>/dev/null) || code=''
+    if [ "$code" = selector_not_found ] || { [ "$code" = ok ] && [ "$rc" -eq 0 ]; }; then
+      orca_removed=$((${orca_removed:-0}+1))
+      return 0
+    fi
+  done
+  echo "Warning: could not deregister Orca worktree for $label; kept." >&2
+  guard_keep "$counter" "$label" 'orca worktree rm failed'
+  return 1
 }
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
   local orca_rm orca_ok=0 remove_rc=0
@@ -2404,8 +2412,12 @@ if [ "$apply" -eq 1 ] && [ "$orca_pin_state" = ok ]; then
       [ -n "$op" ] || continue
       [ -d "$op" ] && continue
       worktree_pinned_in_orca "$op" && continue
+      if [ $((deadline-SECONDS)) -lt 1 ]; then
+        echo 'Warning: Orca record sweep stopped at the repo time limit; the rest waits for the next run.' >&2
+        break
+      fi
       printf 'Remove orca record %s (git worktree already gone)\n' "$op"
-      guarded_orca_worktree_rm kept "orca record $op" "$op" || true
+      guarded_orca_worktree_rm kept "orca record $op" "$op" "$orca_host_id" || true
     done < <(jq -r --arg rid "$orca_repo_id" --arg hid "$orca_host_id" '
       .result.worktrees[]? | select(.repoId == $rid and (.hostId // "local") == $hid)
       | select((.isMainWorktree == true or .git.isMainWorktree == true) | not)

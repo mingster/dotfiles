@@ -28,10 +28,20 @@ case "$*" in
   'worktree rm --worktree path:'*)
     path=""
     for a in "$@"; do case "$a" in path:*) path="${a#path:}" ;; esac; done
-    case " ${ORCA_RM_FAIL:-} " in
-      *" $path "*) echo "orca rm failed" >&2; exit 1 ;;
+    json=0; for a in "$@"; do [ "$a" = --json ] && json=1; done
+    mode=${FAKE_RM_MODE:-ok}; case "$path" in */workspaces/orphan*) ;; *) mode=ok ;; esac   # only orphan records misbehave
+    case "$mode" in
+      # Like the real CLI: plain mode prints the token on stderr only, --json prints the error on stdout only.
+      gone) code=selector_not_found ;;
+      envmissing) code=environment_not_found ;;
+      slow) sleep 3; code=ok ;;
+      hang) sleep 60; code=ok ;;
+      garbage) [ "$json" = 1 ] && echo 'not json'; exit 1 ;;
+      *) code=ok ;;
     esac
-    exit 0
+    if [ "$code" = ok ]; then [ "$json" = 1 ] && echo '{"ok":true,"result":{}}'; exit 0; fi
+    if [ "$json" = 1 ]; then printf '{"ok":false,"error":{"code":"%s"}}\n' "$code"; else echo "$code" >&2; fi
+    exit 1
     ;;
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
@@ -52,7 +62,7 @@ fixture() {
   d="$tmp/repo$n"; n=$((n+1))
   mkdir -p "$d"
   export ORCA_LOG="$d/orca.log"; : > "$ORCA_LOG"
-  unset ORCA_RM_FAIL
+  unset FAKE_RM_MODE
   export FAKE_PRS='[]' FAKE_TERMINALS='[]' FAKE_ORCA_WORKTREES='[]'
   "$real_git" init -q --bare "$d/origin"
   "$real_git" init -q -b main "$d/wt"
@@ -106,13 +116,61 @@ grep -Fq "worktree rm --worktree path:$tmp/workspaces/orphan2" "$ORCA_LOG" \
 grep -Fq 'Orca orphan sweep skipped' "$d/out" && ok 'orphan sweep skip prints one line' \
   || bad 'orphan sweep skip prints one line' "$(cat "$d/out")"
 
-fixture
-export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
-export ORCA_RM_FAIL="$tmp/workspaces/orphan"
+orphan_fixture() {
+  fixture
+  export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+}
+rm_calls() { grep -c "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG"; }
+no_ledger() { ! grep -Eq 'orca worktree rm|timed out|time limit' "$d/err"; }
+
+# selector_not_found: already removed. One call, no warning, counted.
+orphan_fixture; export FAKE_RM_MODE=gone
 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
-[ "$rc" -ne 0 ] && ok 'failed orphan orca rm fails the run' || bad 'failed orphan orca rm fails the run' "rc=$rc"
-grep -Fq 'orca worktree rm' "$d/err" "$d/out" && ok 'failed orphan orca rm reported' \
-  || bad 'failed orphan orca rm reported' "$(cat "$d/out" "$d/err")"
+[ "$rc" -eq 0 ] && ok 'selector_not_found keeps the round ok' || bad 'selector_not_found keeps the round ok' "rc=$rc $(cat "$d/err")"
+[ "$(rm_calls)" = 1 ] && ok 'selector_not_found is one call, no retry' || bad 'selector_not_found is one call, no retry' "$(cat "$ORCA_LOG")"
+grep 'worktree rm' "$ORCA_LOG" | grep -Fq -- '--json' && ok 'rm is called with --json' || bad 'rm is called with --json' "$(cat "$ORCA_LOG")"
+grep -Fq 'Warning' "$d/err" && bad 'selector_not_found prints no warning' "$(cat "$d/err")" || ok 'selector_not_found prints no warning'
+grep -Fq 'orca records=2' "$d/out" && ok 'selector_not_found counts as removed' || bad 'selector_not_found counts as removed' "$(cat "$d/out")"
+
+# Another error code or unparseable output: retried once, then kept with the warning. Never a failed round.
+for mode in envmissing garbage; do
+  orphan_fixture; export FAKE_RM_MODE=$mode
+  bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+  [ "$rc" -eq 0 ] && ok "$mode: exit 0" || bad "$mode: exit 0" "rc=$rc $(cat "$d/err")"
+  [ "$(rm_calls)" = 2 ] && ok "$mode: retried once" || bad "$mode: retried once" "$(cat "$ORCA_LOG")"
+  grep -Fq "Warning: could not deregister Orca worktree for orca record $tmp/workspaces/orphan" "$d/err" && ok "$mode: warning names the record" \
+    || bad "$mode: warning names the record" "$(cat "$d/err")"
+  grep -Fq 'Kept orca record' "$d/out" && ok "$mode: kept" || bad "$mode: kept" "$(cat "$d/out")"
+  grep -Fq 'orca records=1' "$d/out" && ok "$mode: not counted removed" || bad "$mode: not counted removed" "$(cat "$d/out")"
+done
+
+# A call that runs its full own timeout is a keep, not a failed round.
+orphan_fixture; export FAKE_RM_MODE=slow
+WRAP_UP_CALL_TIMEOUT=1 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+[ "$rc" -eq 0 ] && ok 'rm timeout: exit 0' || bad 'rm timeout: exit 0' "rc=$rc $(grep -A3 Failures "$d/out")"
+no_ledger && ok 'rm timeout: failure ledger empty' || bad 'rm timeout: failure ledger empty' "$(cat "$d/err")"
+grep -Fq "Warning: could not deregister Orca worktree for orca record $tmp/workspaces/orphan" "$d/err" && ok 'rm timeout: warning names the record' \
+  || bad 'rm timeout: warning names the record' "$(cat "$d/err")"
+
+
+# The repo deadline runs out during the first record's rm: that call is cut by the budget, so it is unknown (no keep,
+# no warning about the record, nothing in the ledger). The next record finds no time left: one stop warning, no call.
+orphan_fixture; export FAKE_RM_MODE=hang
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan-b\",\"pinned\":false}]"
+echo dirty > "$d/wt/untracked-file"   # a dirty main checkout skips the final pull, which the spent deadline would fail
+WRAP_UP_TOTAL_TIMEOUT=8 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+[ "$rc" -eq 0 ] && ok 'spent deadline: exit 0' || bad 'spent deadline: exit 0' "rc=$rc $(grep -A3 Failures "$d/out") $(cat "$d/err")"
+[ "$(grep -c 'worktree rm --worktree path:.*workspaces/orphan' "$ORCA_LOG")" = 1 ] && ok 'spent deadline: no rm call once time is gone' || bad 'spent deadline: no rm call once time is gone' "$(cat "$ORCA_LOG")"
+[ "$(grep -c 'the rest waits for the next run' "$d/err")" = 1 ] && ok 'spent deadline: one warning' || bad 'spent deadline: one warning' "$(cat "$d/err")"
+grep -Fq 'orphan-b (git worktree' "$d/out" && bad 'spent deadline: no Remove line after the stop' "$(cat "$d/out")" || ok 'spent deadline: no Remove line after the stop'
+grep -Fq 'could not deregister' "$d/err" && bad 'budget cut is not a keep' "$(cat "$d/err")" || ok 'budget cut is not a keep'
+grep -Fq 'Kept orca record' "$d/out" && bad 'budget cut has no keep count' "$(cat "$d/out")" || ok 'budget cut has no keep count'
+
+# A record on another host is removed with --environment <hostId>.
+orphan_fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"hostId\":\"h2\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"hostId\":\"h2\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err" || true
+grep -Fq "path:$tmp/workspaces/orphan --environment h2 --json" "$ORCA_LOG" && ok 'non-local host uses --environment' || bad 'non-local host uses --environment' "$(cat "$ORCA_LOG")"
 
 fixture
 export FAKE_ORCA_WORKTREES=''

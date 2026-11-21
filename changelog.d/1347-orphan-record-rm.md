@@ -1,0 +1,1 @@
+* `wrap-up.sh` no longer fails the round when it cannot remove an orphan Orca record. `selector_not_found` counts as already removed, any other result is retried once and then kept with a warning, and a cut by the repo time limit leaves the record for the next run (#1347).
