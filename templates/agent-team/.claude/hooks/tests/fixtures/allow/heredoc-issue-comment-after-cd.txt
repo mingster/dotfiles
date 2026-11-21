@@ -1,0 +1,4 @@
+cd /tmp
+gh issue comment 12 --body-file - <<'EOF'
+Ran `bash bin/deploy-raw.sh` and saw it fail.
+EOF

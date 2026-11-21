@@ -1,0 +1,3 @@
+cat > f.md <<'EOF' && bash bin/deploy-raw.sh
+note
+EOF

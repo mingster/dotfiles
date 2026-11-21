@@ -1,0 +1,5 @@
+cat > out/brief.md <<OUTER
+cat > /tmp/x <<'EOF'
+$(bash bin/deploy-raw.sh)
+EOF
+OUTER

