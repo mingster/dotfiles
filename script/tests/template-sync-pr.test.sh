@@ -100,5 +100,19 @@ if [ "$RC" -ne 0 ] && grep -qx 'example-org/proj red 42' <<<"$OUT" \
 else bad "red checks are recorded and nothing ships" "rc=$RC out=$OUT state=$(cat "$TEMPLATE_SYNC_STATE" 2>/dev/null)"; fi
 [ "$(git -C "$DF" worktree list --porcelain | grep -c '^worktree')" = 1 ] && ok "the dotfiles worktree is removed" || bad "the dotfiles worktree is removed" "$(git -C "$DF" worktree list)"
 
+# Green checks ship from the project checkout: ship.sh refuses any other cwd (#1326).
+cat >"$DF/script/ship.sh" <<EOF
+#!/usr/bin/env bash
+pwd -P >"$TMP/ship-cwd"
+echo "\$*" >"$TMP/ship-args"
+EOF
+echo '[{"bucket":"pass"}]' >"$TMP/checks"
+cd "$TMP" && run
+if [ "$RC" -eq 0 ] && grep -qx 'example-org/proj merged 42' <<<"$OUT" \
+  && [ "$(cat "$TMP/ship-cwd" 2>/dev/null)" = "$(cd "$PROJ" && pwd -P)" ] \
+  && grep -q -- '--repo example-org/proj --pr 42 --verdict-from example-org/dotfiles#5' "$TMP/ship-args"; then
+  ok "green checks run ship.sh from the project checkout"
+else bad "green checks run ship.sh from the project checkout" "rc=$RC out=$OUT cwd=$(cat "$TMP/ship-cwd" 2>/dev/null)"; fi
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -695,6 +695,16 @@ class IssueScanPass(unittest.TestCase):
             self.assertEqual(len(starts), 1, log)
             self.assertIn('head_checks_start=' + head[:8], ','.join(log))
 
+    def test_ship_command_runs_from_the_repo_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            command = fw.build_ship_command(REPO, {'number': 40}, td)
+            idx = command.index('bash', 4)  # the wrapped ship.sh command follows the root argument
+            probe = command[:idx] + ['pwd', '-P']
+            out = subprocess.run(probe, capture_output=True, text=True, cwd='/', check=True).stdout.strip()
+            self.assertEqual(out, os.path.realpath(td))
+        self.assertEqual(fw.build_ship_command(REPO, {'number': 40})[0:3:2][0], 'bash')
+        self.assertNotIn('-c', fw.build_ship_command(REPO, {'number': 40}))
+
     def test_babysit_class_a_ready_starts_ship_once_without_retry(self):
         state = {}
         head = 'a' * 40
@@ -711,6 +721,9 @@ class IssueScanPass(unittest.TestCase):
         self.assertEqual(len(starts), 1, log)
         self.assertTrue(any('ship.sh' in p for p in starts[0]))
         self.assertEqual(starts[0][-4:], ['--repo', REPO, '--pr', '40'])
+        # ship.sh refuses a cwd that is not the repo checkout (#1326): it starts from the repo_roots path.
+        self.assertIn('/tmp/app', starts[0])
+        self.assertEqual(starts[0][:2], ['bash', '-c'])
         _, _, starts2, _ = self.run_pass(state, prs_by_repo={REPO: [ready_pr]}, start_rc=0)
         self.assertEqual(starts2, [])
         with tempfile.TemporaryDirectory() as td:

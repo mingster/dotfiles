@@ -3568,9 +3568,13 @@ def build_head_checks_command(config, repo, pr_row):
     return ['bash', script, '--repo', root, '--pr', str(pr_row['number'])]
 
 
-def build_ship_command(repo, pr_row):
+def build_ship_command(repo, pr_row, root=None):
     script = str(Path(__file__).with_name('ship.sh'))
-    return ['bash', script, '--repo', repo, '--pr', str(pr_row['number'])]
+    command = ['bash', script, '--repo', repo, '--pr', str(pr_row['number'])]
+    if root:
+        # ship.sh refuses a cwd that is not the repo checkout (#1326), so start it from there.
+        return ['bash', '-c', 'cd "$1" || exit 1; shift; exec "$@"', 'ship-in-checkout', root] + command
+    return command
 
 
 def default_detached_start(command, extra_env=None, popen=subprocess.Popen):
@@ -6820,7 +6824,7 @@ def issue_scan_pass(
                 shipped[head] = True
                 if persist_state:
                     persist_state()
-                command = build_ship_command(repo, pr_row)
+                command = build_ship_command(repo, pr_row, root)
                 if start_worker(command) == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
                     log_bits.append('ship_start=%s' % head[:8])

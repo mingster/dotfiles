@@ -143,7 +143,8 @@ for proj in "${projects[@]}"; do
   done
   case "$cs" in
     pass)
-      if bash "$here/ship.sh" --repo "$slug" --pr "$pr_n" --verdict-from "$verdict_from"; then
+      # ship.sh refuses a cwd that is not the project checkout (#1326), so run it from there.
+      if (cd "$proj" && bash "$here/ship.sh" --repo "$slug" --pr "$pr_n" --verdict-from "$verdict_from"); then
         record "$slug" merged "$pr_n"
       else
         record "$slug" failed "$pr_n"; status=1
