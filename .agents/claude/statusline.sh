@@ -42,18 +42,6 @@ else
   ctx_color='\033[01;32m' # green
 fi
 
-# Git branch and dirty marker (skip optional locks)
-git_part=""
-if GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --git-dir > /dev/null 2>&1; then
-  branch=$(GIT_OPTIONAL_LOCKS=0 git -C "$cwd" symbolic-ref --short HEAD 2>/dev/null \
-    || GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
-  dirty=""
-  if [ -n "$(GIT_OPTIONAL_LOCKS=0 git -C "$cwd" status --porcelain 2>/dev/null | head -n 1)" ]; then
-    dirty="*"
-  fi
-  git_part=$(printf ' \033[01;32m%s%s\033[00m' "$branch" "$dirty")
-fi
-
 # Live Orca workers per machine, from a cache refreshed in the background at most once a minute
 fleet_part=""
 fleet_cache="$HOME/.claude/state/fleet-workers.txt"
@@ -67,5 +55,5 @@ if command -v orca > /dev/null 2>&1 && [ -x "$fleet_script" ]; then
   [ -n "$fleet" ] && fleet_part=$(printf ' | \033[01;35m%s\033[00m' "$fleet")
 fi
 
-printf '\033[90m[%s]\033[00m \033[01;36m%s\033[00m%s | ctx: %b%s%%\033[00m%s' \
-  "$model" "$dir" "$git_part" "$ctx_color" "$ctx_pct" "$fleet_part"
+printf '\033[90m[%s]\033[00m \033[01;36m%s\033[00m | ctx: %b%s%%\033[00m%s' \
+  "$model" "$dir" "$ctx_color" "$ctx_pct" "$fleet_part"
