@@ -54,6 +54,12 @@ esac
 # The target host must have clean, fast-forwarded checkouts of dotfiles, state dir, and the app repo,
 # and pass host_check on the target host before starting a worker.
 remote_repo=${REMOTE_REPO:-}
+# Grok asks to trust a new worktree and nothing answers (#1312). The trust script comes from the remote
+# ~/dotfiles, so it runs in the refresh below, after that checkout is pulled.
+grok_trust=""
+if [ "$agent" = grok ]; then
+  case "$worktree" in path:*) grok_trust=$(printf '%q' "${worktree#path:}") ;; esac
+fi
 # shellcheck disable=SC2016
 refresh='
 check_remote_repo() {
@@ -76,6 +82,9 @@ if [ -d "$HOME/dotfiles" ]; then
 fi
 if [ -f "$HOME/dotfiles/script/setup-orca.sh" ]; then
   bash "$HOME/dotfiles/script/setup-orca.sh" >/dev/null || exit 1
+fi
+if [ -n "'"$grok_trust"'" ]; then
+  bash "$HOME/dotfiles/script/grok-trust.sh" '"$grok_trust"' >/dev/null || exit 1
 fi
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 if [ -e "$state_dir/.git" ]; then
