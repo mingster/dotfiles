@@ -100,5 +100,30 @@ if [ "$RC" -ne 0 ] && grep -qx 'example-org/proj red 42' <<<"$OUT" \
 else bad "red checks are recorded and nothing ships" "rc=$RC out=$OUT state=$(cat "$TEMPLATE_SYNC_STATE" 2>/dev/null)"; fi
 [ "$(git -C "$DF" worktree list --porcelain | grep -c '^worktree')" = 1 ] && ok "the dotfiles worktree is removed" || bad "the dotfiles worktree is removed" "$(git -C "$DF" worktree list)"
 
+# An unrelated dotfiles commit keeps the branch named for the template commit, so the open PR is found (#1329).
+echo '[{"bucket":"pass"}]' >"$TMP/checks"
+: >"$GH_LOG"
+echo unrelated >"$DF/README.unrelated" && git -C "$DF" add -A && git -C "$DF" commit -qm Z && git -C "$DF" push -q origin main
+run --no-ship
+if grep -q -- "--head team-sync/$Y " "$GH_LOG" && ! grep -q 'pr create' "$GH_LOG"; then
+  ok "an unrelated dotfiles commit still finds the template bump PR"
+else bad "an unrelated dotfiles commit still finds the template bump PR" "out=$OUT gh=$(cat "$GH_LOG")"; fi
+
+# A second run on a project already being synced stops, and neither opens a PR nor records a state (#1329).
+: >"$GH_LOG"
+rm -f "$TEMPLATE_SYNC_STATE"
+export TEMPLATE_SYNC_LOCK_DIR="$TMP/locks"
+mkdir -p "$TEMPLATE_SYNC_LOCK_DIR/example-org_proj"
+echo $$ >"$TEMPLATE_SYNC_LOCK_DIR/example-org_proj/pid"
+run --no-ship
+if [ "$RC" -eq 0 ] && grep -qx 'example-org/proj busy -' <<<"$OUT" && [ ! -f "$TEMPLATE_SYNC_STATE" ] && ! grep -q 'pr ' "$GH_LOG"; then
+  ok "a project already being synced is skipped without a state"
+else bad "a project already being synced is skipped without a state" "rc=$RC out=$OUT gh=$(cat "$GH_LOG")"; fi
+echo 999999 >"$TEMPLATE_SYNC_LOCK_DIR/example-org_proj/pid"
+run --no-ship
+if grep -qx 'example-org/proj open 42' <<<"$OUT"; then ok "a stale lock from a dead run is taken over"
+else bad "a stale lock from a dead run is taken over" "out=$OUT"; fi
+[ ! -d "$TEMPLATE_SYNC_LOCK_DIR/example-org_proj" ] && ok "the lock is released at exit" || bad "the lock is released at exit"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

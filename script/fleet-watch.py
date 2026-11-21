@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import statistics
 import subprocess
 import sys
@@ -2044,21 +2045,31 @@ TEMPLATE_SYNC_LOG_DEFAULT = os.path.expanduser('~/.claude/state/template-sync-re
 
 
 def _default_template_check(path, dotfiles):
-    """True when agent-team.sh check finds drift in the project checkout (read-only, project rules only)."""
+    """True when agent-team.sh check finds drift in the project's origin/main (read-only, project rules only).
+
+    A bump PR merged on GitHub does not move the checkout on disk, so the check runs on a throwaway worktree of origin/main.
+    """
     script = os.path.join(dotfiles, 'script', 'agent-team.sh')
+    tmp = tempfile.mkdtemp(prefix='template-check-')
+    wt = os.path.join(tmp, 'wt')
     try:
-        proc = subprocess.run(['bash', script, 'check', '--project-only', path], capture_output=True, text=True,
+        if _git_out(path, 'worktree', 'add', '-q', '--detach', wt, 'origin/main') is None:
+            return False
+        proc = subprocess.run(['bash', script, 'check', '--project-only', wt], capture_output=True, text=True,
                               timeout=120, env=dict(os.environ, DOTFILES=dotfiles))
+        return proc.returncode != 0
     except (OSError, subprocess.SubprocessError):
         return False
-    return proc.returncode != 0
+    finally:
+        _git_out(path, 'worktree', 'remove', '--force', wt)
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _default_template_launch(path, verdict_from, dotfiles):
     """Start template-sync-pr.sh for one project, detached; its output goes to the reconcile log."""
     script = os.path.join(dotfiles, 'script', 'template-sync-pr.sh')
     log = os.environ.get('TEMPLATE_SYNC_RECONCILE_LOG') or TEMPLATE_SYNC_LOG_DEFAULT
-    os.makedirs(os.path.dirname(log), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(log)), exist_ok=True)
     with open(log, 'ab') as fh:
         subprocess.Popen(['bash', script, '--verdict-from', verdict_from, '--project', path],
                          stdout=fh, stderr=fh, stdin=subprocess.DEVNULL, start_new_session=True)
@@ -2070,7 +2081,7 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
     ship.sh starts template-sync-pr.sh once after a template merge. A failed or skipped run, or a merge outside
     ship.sh, leaves the project drifted for good. Each pass checks every pinned repo_roots checkout with
     agent-team.sh check and, on drift, starts template-sync-pr.sh for that project alone. It reuses the open PR,
-    and a project is tried again only after a new dotfiles origin/main commit or TEMPLATE_SYNC_RETRY seconds.
+    and a project is tried again only after a new template commit on dotfiles origin/main or TEMPLATE_SYNC_RETRY seconds.
     Returns notices for a launch that failed.
     """
     dotfiles = dotfiles or os.environ.get('DOTFILES') or str(Path(__file__).resolve().parent.parent)
@@ -2078,9 +2089,9 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
     check = check or (lambda path: _default_template_check(path, dotfiles))
     launch = launch or (lambda path, verdict_from: _default_template_launch(path, verdict_from, dotfiles))
     tried = state.setdefault('template_sync_run', {})
-    last = _git_out(dotfiles, 'log', '-1', '--format=%s', 'origin/main', '--', *TEMPLATE_PATHS)
-    head = _git_out(dotfiles, 'rev-parse', 'origin/main')
-    found = re.search(r'\(#(\d+)\)\s*$', last or '')
+    last = _git_out(dotfiles, 'log', '-1', '--format=%H %s', 'origin/main', '--', *TEMPLATE_PATHS)
+    head, _, subject = (last or '').partition(' ')
+    found = re.search(r'\(#(\d+)\)\s*$', subject)
     home = origin_of(dotfiles)
     if not (found and head and home):
         return []
@@ -2096,11 +2107,12 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
         if not check(path):
             tried.pop(repo, None)
             continue
-        tried[repo] = {'sha': head, 'at': now}
         try:
             launch(path, verdict_from)
         except (OSError, subprocess.SubprocessError) as error:
             notices.append('%s: could not start template-sync-pr.sh for the drifted team template: %s' % (repo, error))
+            continue
+        tried[repo] = {'sha': head, 'at': now}
     return notices
 
 

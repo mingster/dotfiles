@@ -48,11 +48,16 @@ fi
 
 git -C "$dotfiles" fetch -q origin || { echo "template-sync: cannot fetch dotfiles" >&2; exit 1; }
 dot_sha=$(git -C "$dotfiles" rev-parse --verify -q 'origin/main^{commit}') || { echo "template-sync: no dotfiles origin/main" >&2; exit 1; }
-branch="team-sync/$dot_sha"
+# Named for the last template commit, not origin/main, so an unrelated dotfiles commit finds the same PR (#1329).
+tpl_sha=$(git -C "$dotfiles" log -1 --format=%H "$dot_sha" -- templates/agent-team script/agent-team.sh 2>/dev/null)
+branch="team-sync/${tpl_sha:-$dot_sha}"
+lock_dir=${TEMPLATE_SYNC_LOCK_DIR:-$HOME/.claude/state/template-sync.lock.d}
+lock=""
 tmp=$(mktemp -d)
 dot_wt="$tmp/dotfiles"
 cleanup() {
   local w
+  [ -z "$lock" ] || rm -rf "$lock"
   for w in "$tmp"/proj-*; do
     [ -d "$w" ] || continue
     git -C "$w" worktree remove --force "$w" >/dev/null 2>&1 || true
@@ -96,6 +101,18 @@ for proj in "${projects[@]}"; do
   n=$((n + 1))
   slug=$(slug_of "$proj")
   [ -n "$slug" ] || { echo "template-sync: $proj has no origin" >&2; status=1; continue; }
+  # One run per project: ship.sh and fleet-watch both start this script (#1329).
+  [ -z "$lock" ] || { rm -rf "$lock"; lock=""; }
+  mkdir -p "$lock_dir" 2>/dev/null
+  lock="$lock_dir/${slug//\//_}"
+  if ! mkdir "$lock" 2>/dev/null; then
+    if kill -0 "$(cat "$lock/pid" 2>/dev/null)" 2>/dev/null; then
+      echo "$slug busy -"; lock=""; continue
+    fi
+    rm -rf "$lock"
+    mkdir "$lock" 2>/dev/null || { echo "$slug busy -"; lock=""; continue; }
+  fi
+  echo $$ >"$lock/pid"
   wt="$tmp/proj-$n"
   if ! git -C "$proj" fetch -q origin || ! git -C "$proj" worktree add -q --detach "$wt" origin/main; then
     record "$slug" failed ""; status=1; continue

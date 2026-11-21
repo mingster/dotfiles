@@ -89,6 +89,69 @@ class TemplateSync(unittest.TestCase):
         self.assertEqual(len(notices), 1)
         self.assertIn('o/drifted', notices[0])
 
+    def test_an_unrelated_dotfiles_commit_does_not_start_another_run(self):
+        other = tmp / 'dotfiles-unrelated'
+        subprocess.run(['git', 'clone', '-q', str(tmp / 'dotfiles'), str(other)], check=True)
+        g = ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-C', str(other)]
+        subprocess.run(['git', '-C', str(other), 'update-ref', 'refs/remotes/origin/main', 'HEAD'], check=True)
+        h, state = Harness(), {}
+        run = lambda now: watch.template_sync_reconcile(
+            CONFIG, state, now, dotfiles=str(other), check=h.check, launch=h.launch,
+            origin_of=lambda p: 'o/' + pathlib.Path(p).name)
+        run(1000)
+        (other / 'README.md').write_text('unrelated')
+        subprocess.run(g + ['add', '-A'], check=True)
+        subprocess.run(g + ['commit', '-qm', 'docs: unrelated (#78)'], check=True)
+        subprocess.run(['git', '-C', str(other), 'update-ref', 'refs/remotes/origin/main', 'HEAD'], check=True)
+        run(1000 + HOUR)
+        self.assertEqual(len(h.launched), 1)
+
+    def test_a_failed_launch_does_not_block_the_next_pass(self):
+        h, state = Harness(), {}
+        h.fail_launch = True
+        h.run(state, 1000)
+        h.fail_launch = False
+        h.run(state, 1000 + 300)
+        self.assertEqual(h.launched, [('drifted', 'o/dotfiles#77')])
+
+    def test_the_check_reads_origin_main_not_the_checkout_on_disk(self):
+        fake = tmp / 'fake-dotfiles'
+        (fake / 'script').mkdir(parents=True)
+        (fake / 'script' / 'agent-team.sh').write_text(
+            '#!/usr/bin/env bash\n[ -f "${@: -1}/drift" ] && exit 1\nexit 0\n')
+        git = lambda d, *a: subprocess.run(
+            ['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-C', str(d)] + list(a), check=True)
+        merged = tmp / 'merged-bump'
+        merged.mkdir()
+        git(merged, 'init', '-q', '-b', 'main')
+        (merged / 'a').write_text('a')
+        git(merged, 'add', '-A')
+        git(merged, 'commit', '-qm', 'clean')
+        git(merged, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        (merged / 'drift').write_text('stale checkout')
+        self.assertFalse(watch._default_template_check(str(merged), str(fake)))
+        stale = tmp / 'unmerged-bump'
+        stale.mkdir()
+        git(stale, 'init', '-q', '-b', 'main')
+        (stale / 'drift').write_text('x')
+        git(stale, 'add', '-A')
+        git(stale, 'commit', '-qm', 'drifted')
+        git(stale, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        (stale / 'drift').unlink()
+        self.assertTrue(watch._default_template_check(str(stale), str(fake)))
+
+    def test_a_bare_log_filename_does_not_stop_the_launch(self):
+        import os
+        cwd = os.getcwd()
+        os.chdir(tmp)
+        os.environ['TEMPLATE_SYNC_RECONCILE_LOG'] = 'reconcile.log'
+        try:
+            watch._default_template_launch(str(tmp / 'drifted'), 'o/dotfiles#77', str(tmp / 'fake-dotfiles'))
+        finally:
+            os.chdir(cwd)
+            del os.environ['TEMPLATE_SYNC_RECONCILE_LOG']
+        self.assertTrue((tmp / 'reconcile.log').exists())
+
     def test_no_pr_number_in_the_template_commit_means_no_run(self):
         other = tmp / 'dotfiles-nonumber'
         subprocess.run(['git', 'clone', '-q', str(tmp / 'dotfiles'), str(other)], check=True)
