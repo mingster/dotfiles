@@ -134,6 +134,7 @@ bash "$DOTFILES_ROOT/script/setup-obsidian.sh"
 bash "$DOTFILES_ROOT/script/setup-vscode.sh"
 bash "$DOTFILES_ROOT/script/setup-antigravity.sh"
 bash "$DOTFILES_ROOT/script/setup-zed.sh"
+bash "$DOTFILES_ROOT/script/setup-grok.sh"
 
 case "$OSTYPE" in
   darwin*)

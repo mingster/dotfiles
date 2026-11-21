@@ -1,0 +1,8 @@
+# Keys merged into ~/.grok/config.toml by script/setup-grok.sh. A key the user already set stays as it is.
+# The bell stays the notification method until kitty is confirmed. Then add `method` to the table below.
+
+[ui]
+kitty_keyboard = "query"
+
+[ui.notifications]
+condition = "always"
