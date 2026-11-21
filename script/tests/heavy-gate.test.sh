@@ -1003,6 +1003,29 @@ time.sleep(30)
         self.assertTrue(self.started('big'))
         self.assert_overlap({'l0': 1, 'l1': 1, 'big': 2}, 2)
 
+    def test_wait_cap_gives_up_without_running_the_command(self):
+        self.config(1)
+        self.set_reading('30 90')  # load above the limit: never admitted
+        self.env['HEAVY_GATE_WAIT_CAP_SECONDS'] = '0.5'
+        _, err = self.finish(self.job(), 75)
+        self.assertIn('wait cap of 0.5s reached, not admitted: load 30.00 exceeds', err)
+        self.assertEqual(self.events(), [])
+
+    def test_admission_reports_the_wait(self):
+        self.config(1)
+        self.set_reading('30 90')
+        p = self.job()
+        time.sleep(1.5)
+        self.set_reading('0 90')
+        _, err = self.finish(p)
+        self.assertRegex(err, r'heavy-gate: waited \d+s for admission')
+
+    def test_bad_wait_cap_is_refused(self):
+        self.config(1)
+        self.env['HEAVY_GATE_WAIT_CAP_SECONDS'] = 'soon'
+        _, err = self.finish(self.job(), 1)
+        self.assertIn('wait cap must be', err)
+
     def test_bad_max_wait_is_refused(self):
         self.config(2)
         self.env['HEAVY_GATE_MAX_WAIT_SECONDS'] = 'soon'
