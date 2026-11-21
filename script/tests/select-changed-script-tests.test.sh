@@ -125,16 +125,16 @@ case9_sync_team_skills_agent_team() {
   local out count want f
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/agent-team.sh 2>&1)
-  grep -Fq 'Selected: script/agent-team.test.sh' <<<"$out" \
-    || fail "case9 must select agent-team.test.sh for agent-team.sh"
+  grep -Fq 'Selected: script/tests/agent-team-cases-drifted.test.sh' <<<"$out" \
+    || fail "case9 must select the agent-team-cases parts for agent-team.sh"
   grep -Fq 'Selected: script/tests/release-guard-rules.test.sh' <<<"$out" \
     || fail "case9 must select release-guard-rules.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/agent-team-guard-migration.test.sh' <<<"$out" \
     || fail "case9 must select agent-team-guard-migration.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/agent-team-project-gaps.test.sh' <<<"$out" \
     || fail "case9 must select agent-team-project-gaps.test.sh for agent-team.sh"
-  # agent-team.test.sh + release-guard-rules.test.sh + the agent-team-*.test.sh prefix family + the always-run no-project-names guard
-  want=3
+  # release-guard-rules.test.sh + the agent-team-*.test.sh prefix family + the always-run no-project-names guard
+  want=2
   for f in "$root"/script/tests/agent-team-*.test.sh; do
     [ -e "$f" ] || continue
     grep -Fq "Selected: script/tests/$(basename "$f")" <<<"$out" \
@@ -274,7 +274,7 @@ case11_table_driven_mapped_paths() {
   out=$(list_selector_output templates/agent-team/changelog.d/README.md templates/agent-team/bin/changelog-compile.sh)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 agent-team pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 4 ] || fail "case11 agent-team pair want Script tests: 4 got ${count:-0}"
+  [ "${count:-0}" -eq 8 ] || fail "case11 agent-team pair want Script tests: 8 got ${count:-0}"
 
   out=$(list_selector_output script/unmapped-helper.sh)
   grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \
@@ -421,7 +421,7 @@ case22_model_routing_runs_usage_gate() {
   local out t
   out=$(bash "$root/script/select-changed-script-tests.sh" --list-only templates/agent-team/.claude/model-routing.md 2>&1) \
     || fail "case22 run failed: $out"
-  for t in script/tests/test_usage_gate.py script/agent-team.test.sh script/tests/release-guard-rules.test.sh script/tests/role-word-budget.test.sh; do
+  for t in script/tests/test_usage_gate.py script/tests/agent-team-cases-drifted.test.sh script/tests/release-guard-rules.test.sh script/tests/role-word-budget.test.sh; do
     grep -Fq "$t" <<<"$out" || fail "case22 missing $t: $out"
   done
   ok "case22 model-routing.md selects test_usage_gate.py and the template tests"

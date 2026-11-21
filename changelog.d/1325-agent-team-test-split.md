@@ -1,0 +1,1 @@
+* Split `script/agent-team.test.sh` into five parts under `script/tests/agent-team-cases-*.test.sh` (shared setup in `script/tests/lib/agent-team-cases.sh`) so `SELECT_SCRIPT_TESTS_JOBS` runs them in parallel. All 54 cases are kept. (#1325)
