@@ -10,7 +10,7 @@ Orca has no script only automation. An automation is an agent prompt, and its pr
 
 What to read instead: the precheck stdout on the run record starts with `ok <name>` (wrapper exit 1) or `FAILED <name>` (wrapper exit 2), and the log named on that line has the round. A real failure is exit 2. Exit 1 only means the job ran fine.
 
-A scheduled wrap-up round also keeps one slow part from failing the round: `board-clean` stops starting new cards 10 seconds before its step cap (`BOARD_CLEAN_BUDGET_S`) and finishes the rest next round, an Orca record that Orca cannot find or cannot remove is a warning that the next round retries, and a never settled dispatch is asked about once (`wrap-up-gone-dispatches` in the state directory).
+A scheduled wrap-up round also keeps one slow part from failing the round: `board-clean` counts `BOARD_CLEAN_BUDGET_S` (its step cap less 10 seconds) from process start, cuts every subprocess at it (dry run too) and finishes the rest next round, an Orca record is removed on the Orca that listed it and only the parsed error code `selector_not_found` counts as already gone while any other failure or a timeout is a warning that the next round retries, and an apply remembers a never settled dispatch so it is asked about once (`wrap-up-gone-dispatches` in the state directory; a dry run records nothing).
 
 ## Commands
 
