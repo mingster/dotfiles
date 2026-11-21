@@ -536,6 +536,52 @@ PY
   rm -rf "$tmp"
   return "$rc"
 }
+# .claude/hooks/guard-config.json is project owned (agent-team.sh sync keeps every project key and entry) and the
+# template only fills in missing defaults. So it is not a byte render. It counts as generated only when the head
+# is exactly the base file plus the template defaults at the render ref (#1366). A changed or removed project
+# key is a real edit and is refused.
+GUARD_CFG_REL=.claude/hooks/guard-config.json
+guard_config_is_template_fill() { # 0 when head == merge_fill(base, template)
+  local base_oid tmp rc=0
+  resolve_render_ref
+  git -C "$dotfiles_root" cat-file -e "$render_ref:templates/agent-team/$GUARD_CFG_REL" 2>/dev/null || return 1
+  base_oid=$(field .baseRefOid)
+  tmp=$(mktemp -d)
+  git -C "$dotfiles_root" cat-file blob "$render_ref:templates/agent-team/$GUARD_CFG_REL" >"$tmp/template" || { rm -rf "$tmp"; return 1; }
+  git cat-file blob "$head:$GUARD_CFG_REL" >"$tmp/head" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  if git cat-file -e "$base_oid:$GUARD_CFG_REL" 2>/dev/null; then
+    git cat-file blob "$base_oid:$GUARD_CFG_REL" >"$tmp/base" || { rm -rf "$tmp"; return 1; }
+  else
+    printf '{}' >"$tmp/base"
+  fi
+  python3 - "$tmp/base" "$tmp/template" "$tmp/head" <<'PY' || rc=$?
+import json, sys
+
+def merge_fill(base, overlay):
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = dict(base)
+        for key, value in overlay.items():
+            merged[key] = merge_fill(merged[key], value) if key in merged else value
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        merged = list(base)
+        for item in overlay:
+            if item not in merged:
+                merged.append(item)
+        return merged
+    return base
+
+try:
+    base, template, head = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:4])
+except (OSError, ValueError):
+    sys.exit(1)
+if not all(isinstance(x, dict) for x in (base, template, head)):
+    sys.exit(1)
+sys.exit(0 if merge_fill(base, template) == head else 1)
+PY
+  rm -rf "$tmp"
+  return "$rc"
+}
 # Paths check would tell this tree to delete. Same messages run_check prints, not a second list of names.
 demanded_deletions() { # <sha>; one rel path per line
   local sha=$1 dir out rc=0
@@ -694,6 +740,9 @@ generated)
     elif is_generated_copy "$f" "$skill_names"; then
       mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
       [ "$mode" != 120000 ] || refuse "--verdict-from refuses symlink $f"
+    elif [ "$f" = "$GUARD_CFG_REL" ] && ! grep -Fxq -- "$f" <<<"$deleted_paths" && guard_config_is_template_fill; then
+      # Template defaults the template PR already passed; the owner-only hook rule skips this verified fill.
+      lane_deletions="${lane_deletions}${f}"$'\n'
     elif grep -Fxq -- "$f" <<<"$deleted_paths"; then
       if [ "$demanded_ready" = false ]; then
         demanded=$(demanded_deletions "$base_oid")
@@ -804,7 +853,7 @@ review_fail_blocks_merge
 # 5. Protected paths (shared lib: owner-only, Owner-approved trailer, Countersign).
 if [ "$lane" = generated ]; then
   # Generated copies of role files carry no Owner-approved trailer by design; the template PR already passed that gate.
-  # A pure deletion of a shared hook check flags is the removal check demands, so the owner-only hook rule skips it.
+  # A pure deletion of a shared hook check flags, or a verified guard-config.json template fill, skips the owner-only hook rule.
   if [ -n "$lane_deletions" ]; then
     files_saved=$files
     files=$(jq -c --arg del "$lane_deletions" \

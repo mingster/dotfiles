@@ -928,6 +928,40 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   mkpr 200 "$kept_head" "$kept_files" "Body"; set_checks 200 "$green_checks"
   vf "verdict-from refuses deletion of a shared hook check keeps" 1 "is not"
 
+  # guard-config.json is project owned and the template only fills in missing defaults (#1366). A sync PR that
+  # only adds those defaults lands with the other generated copies. A changed or dropped project key is refused.
+  g checkout -q -B main "$seed_base"
+  printf '{\n  "project_key": ["keep-me"]\n}\n' > "$MF_REPO/.claude/hooks/guard-config.json"
+  g add -A && g commit -qm guard-base && g push -q -f origin main
+  guard_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  DOTFILES="$repo_root" bash "$here/agent-team.sh" sync "$MF_REPO" --project-name acme >/dev/null 2>&1
+  g add -A && g commit -qm guard-fill && g push -q -f origin feat-gen
+  guard_head=$(g rev-parse HEAD)
+  guard_files=$(g diff --name-only "$guard_base" "$guard_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$guard_base
+  mkpr 200 "$guard_head" "$guard_files" "Body"; set_checks 200 "$green_checks"
+  if jq -e 'index(".claude/hooks/guard-config.json") != null' <<<"$guard_files" >/dev/null \
+    && jq -e '.project_key == ["keep-me"] and has("worktree_env_allow")' <(g show "$guard_head:.claude/hooks/guard-config.json") >/dev/null; then
+    vf "verdict-from accepts guard-config.json that only gains template defaults" 0 "generated team copies"
+  else
+    bad "verdict-from accepts guard-config.json that only gains template defaults" "fixture sync did not fill guard-config.json: $guard_files"
+  fi
+  g checkout -q -B feat-gen "$guard_head"
+  printf '{"project_key":["changed"],"worktree_env_allow":[".env.example"]}\n' > "$MF_REPO/.claude/hooks/guard-config.json"
+  g add -A && g commit -qm guard-edit && g push -q -f origin feat-gen
+  guard_edit=$(g rev-parse HEAD)
+  guard_edit_files=$(g diff --name-only "$guard_base" "$guard_edit" | jq -Rsc 'split("\n")[:-1]')
+  mkpr 200 "$guard_edit" "$guard_edit_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses guard-config.json with a changed project key" 1 "guard-config.json is not"
+  g checkout -q -B feat-gen "$guard_head"
+  printf '{"project_key":["keep-me"],"extra":["new"],"worktree_env_allow":[".env.example",".env.sample",".env.template"]}\n' > "$MF_REPO/.claude/hooks/guard-config.json"
+  g add -A && g commit -qm guard-extra && g push -q -f origin feat-gen
+  guard_extra=$(g rev-parse HEAD)
+  guard_extra_files=$(g diff --name-only "$guard_base" "$guard_extra" | jq -Rsc 'split("\n")[:-1]')
+  mkpr 200 "$guard_extra" "$guard_extra_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses guard-config.json with a new project key" 1 "guard-config.json is not"
+
   # Verdict lane: a generated copy whose bytes equal the origin/main render (same project name
   # substitution as agent-team.sh) may ride with project edits and a deletion check demands.
   # A hand edit, a render of a template that is not on origin/main, or a deletion check does

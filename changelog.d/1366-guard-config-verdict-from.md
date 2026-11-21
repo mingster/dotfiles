@@ -1,0 +1,1 @@
+ship: `--verdict-from` accepts `.claude/hooks/guard-config.json` in a template sync PR when the head is exactly the base file plus the template defaults it lacked (sync keeps project keys, so the file is not a byte render). A changed, removed or new project key is still refused (#1366).

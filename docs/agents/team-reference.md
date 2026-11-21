@@ -452,6 +452,10 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 The PR owner runs `script/ship.sh --repo owner/name --pr N` on its own PR; a stack lands bottom up
 (add `--mechanical` for a pure substitution or deletion, `--verdict-from <owner/dotfiles#N>` for
 generated team copies that are not the current template render). No merge worker is dispatched.
+`.claude/hooks/guard-config.json` is project owned: sync keeps every project key and only fills in template
+defaults the file lacks, so it is not a byte render. `--verdict-from` counts it as a generated team copy only when
+the head equals the base file plus the missing template defaults at the pin. A changed, removed or new project
+key is a real edit and is refused (#1366).
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
