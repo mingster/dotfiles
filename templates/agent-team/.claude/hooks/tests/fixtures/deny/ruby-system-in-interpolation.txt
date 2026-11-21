@@ -1,0 +1,1 @@
+ruby -e 'puts "#{system("bash bin/deploy-raw.sh")}"'

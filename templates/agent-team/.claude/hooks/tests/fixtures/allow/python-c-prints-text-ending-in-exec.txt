@@ -1,0 +1,1 @@
+python3 -c 'print("find . -exec"); print("operating system"); print("system (prod)")'

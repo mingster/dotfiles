@@ -2794,11 +2794,27 @@ def check_team_gates(base, args):
 
 INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
-# Call sites, not words: `system`, `exec` and friends count only when called (`name(`, or perl/ruby's
-# `name "cmd"`), so text such as `find -exec stat` or a `"system"` dict key does not trip the check.
-STARTS_PROCESS = re.compile(r"\b(subprocess|child_process|pty|importlib|Open3)\b|"
-                            r"(?<![\"'])\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|__import__|eval|shell_exec|"
-                            r"passthru|proc_open)\b[ \t]*[(\"'`$]|\bqx\b[ \t]*[^\w\s]")
+# Words, not call shapes: a process start can be aliased, mapped, split over lines or called without
+# parentheses (`system c`, `system %w[...]`, `f = os.system`), so any of these words in code counts.
+# Only text inside a one line string literal is dropped first, so `print("find . -exec")` or a
+# `d["system"]` key does not trip the check. Code that reflects on names (getattr, __dict__ ...)
+# keeps its strings, because `getattr(os, "system")` names the call in a string.
+STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
+                            r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
+STRING_LITERAL = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'")
+REFLECTION = re.compile(r"getattr|__dict__|__getattribute__|__builtins__|\bglobals\b|\bvars\b|\bsend\b|"
+                        r"\bpublic_send\b|\bmethod\b|\bcall_user_func")
+
+
+def starts_process(code):
+    if REFLECTION.search(code):
+        return bool(STARTS_PROCESS.search(code))
+    # Keep a string that interpolates code (ruby `#{}`, perl `@{[ ]}`, backticks, `$(`).
+    code = STRING_LITERAL.sub(lambda m: m.group(0) if re.search(r"#\{|@\{|\$\{|\$\(|`", m.group(0)) else '""', code)
+    code = re.sub(r"(?m)(^|\s)#.*$", r"\1", code)
+    return bool(STARTS_PROCESS.search(code))
+
+
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 REDIRECT = re.compile(r"^[0-9]*(<|>|&>)")
 INDIRECT = []  # set by check_indirection; main denies once no specific gate has
@@ -2845,11 +2861,19 @@ def check_indirection(base, args):
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
         if idx is not None:
             code = " ".join(args[idx + 1:])
+            starts = starts_process(code)
         elif operand is None or "-" in args:
-            code = RAW_COMMAND
+            # Code on stdin: a heredoc body is the script (strings dropped), everything else in the
+            # command (`echo "os.system(...)" | python3`) is scanned as is.
+            code = report_command_text(RAW_COMMAND)
+            bodies = [body for _, body in heredocs(code)]
+            for body in bodies:
+                code = code.replace(body, "", 1)
+            starts = bool(STARTS_PROCESS.search(code)) or any(starts_process(body) for body in bodies)
+            code += "".join(bodies)
         else:
             return
-        if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
+        if starts or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
                             "hides the command from the guard. Run the command directly.")
 

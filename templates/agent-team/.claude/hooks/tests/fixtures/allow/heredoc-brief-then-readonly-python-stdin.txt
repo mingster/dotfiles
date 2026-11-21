@@ -1,0 +1,6 @@
+cat > brief.md <<'EOF'
+Use os.system( and subprocess.run in the fix.
+EOF
+python3 - <<'PY'
+print(1)
+PY

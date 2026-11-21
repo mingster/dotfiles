@@ -1,0 +1,1 @@
+python3 -c $'import os\nos.system\n("bash bin/deploy-raw.sh")'
