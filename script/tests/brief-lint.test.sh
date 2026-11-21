@@ -648,5 +648,33 @@ sed -n '/^```markdown$/,/^```$/p' "$tpl_doc" | sed '1d;$d' >"$tmp/dotfiles-templ
 out=$(bash "$lint" "$tmp/dotfiles-template.md" 2>&1); ec=$?
 if [ -s "$tmp/dotfiles-template.md" ] && [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "dotfiles brief template should pass brief-lint (ec=$ec, out=$out)"; fi
 
+# 1328. Allowed files naming an owner gated path warns (exit code unchanged); a normal path does not.
+allowed_brief() { # <out> <allowed-block>
+  { sed -n '1,/^## Verify/p' "$tmp/refs-base.md" | sed '$d'; printf '## Allowed files\n%b\n\n' "$2"; sed -n '/^## Verify/,$p' "$tmp/refs-base.md"; } >"$1"
+}
+warn_case() { # <label> <want: warn|quiet> <allowed-block> [cwd] [crlf]
+  local f="$tmp/allowed-$1.md" o e
+  allowed_brief "$f" "$3"
+  [ "${5:-}" != crlf ] || sed -i.bak 's/$/\r/' "$f"
+  o=$(cd "${4:-$tmp}" && bash "$lint" "$f" 2>&1); e=$?
+  if [ "$e" -ne 0 ]; then bad "$1: exit code should stay 0 ($e, $o)"; return; fi
+  case "$2:$o" in
+    warn:*"warning: Allowed files names owner gated path"*) ok ;;
+    quiet:) ok ;;
+    *) bad "$1: want $2, got: $o" ;;
+  esac
+}
+warn_case lf warn '- .claude/hooks/guard-bash.py'
+warn_case crlf warn '- .claude/settings.json' "$tmp" crlf
+warn_case comma warn 'script/a.sh, .claude/hooks/x.py, docs/b.md'
+warn_case backtick warn '- `docs/agents/team.md` and `script/a.sh`'
+warn_case template warn '- templates/agent-team/.claude/hooks/guard.py'
+warn_case normal quiet '- script/brief-lint.sh\n- docs/agents/team-reference.md\n- changelog.d/*'
+mkdir -p "$tmp/globdir" && : >"$tmp/globdir/AGENTS.md"
+warn_case glob quiet '- *.md' "$tmp/globdir"
+{ sed -n '1,/^## Verify/p' "$tmp/refs-base.md" | sed '$d'; printf 'Allowed files: script/a.sh, .claude/settings.json\n\n'; sed -n '/^## Verify/,$p' "$tmp/refs-base.md"; } >"$tmp/allowed-inline.md"
+out=$(bash "$lint" "$tmp/allowed-inline.md" 2>&1); ec=$?
+if [ "$ec" -eq 0 ] && [[ "$out" == *".claude/settings.json"* ]]; then ok; else bad "inline Allowed files line should warn ($ec, $out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

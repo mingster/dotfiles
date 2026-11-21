@@ -482,6 +482,20 @@ grep -q 'brief-lint: missing Acceptance' "$tmp/run-lint.err" && ok || bad "bad b
 grep -q 'brief-lint: missing Refs' "$tmp/run-lint.err" && bad "the title #1 supplies the Refs line, so lint must not report it missing" || ok
 grep -q 'orchestration worker-start' "$tmp/orca-lint.log" && bad "orca should not worker-start when brief-lint fails" || ok
 
+# 1328: a passing lint still shows its owner path warning on stderr
+warn_spec="$tmp/warn-spec.txt"
+{ cat "$spec_file"; printf '\n## Allowed files\n- .claude/settings.json\n'; } >"$warn_spec"
+: >"$tmp/orca-warn.log"
+set +e
+env -u BASH_ENV \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-warn.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_warn --spec "$warn_spec" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n1 --repo "path:$clean" 2>"$tmp/run-warn.err"
+set -e
+grep -q 'brief-lint: warning: Allowed files names owner gated path .claude/settings.json' "$tmp/run-warn.err" && ok || bad "passing lint should print the owner path warning ($(cat "$tmp/run-warn.err"))"
+grep -q 'orchestration worker-start' "$tmp/orca-warn.log" && ok || bad "a warning must not stop the start ($(cat "$tmp/run-warn.err"))"
+
 # 968: a brief with no Finish starts, and the spec the worker gets carries the fixed Finish block
 nofin_spec="$tmp/nofin-spec.txt"
 cat >"$nofin_spec" <<'EOS'

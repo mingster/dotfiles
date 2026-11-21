@@ -949,6 +949,7 @@ run_mode() {
     esac
   fi
   lint_out=$(bash "$here/brief-lint.sh" "$spec" "$lint_dir" 2>&1) || die "$lint_out"
+  [ -z "$lint_out" ] || printf '%s\n' "$lint_out" >&2
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
   enforce_builder_provider "$title" "$agent" "$route_override"
 
