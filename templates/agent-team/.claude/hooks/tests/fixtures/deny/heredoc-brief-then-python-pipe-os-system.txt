@@ -1,0 +1,4 @@
+cat > brief.md <<'EOF'
+note
+EOF
+echo 'import os; os.system("bash bin/deploy-raw.sh")' | python3

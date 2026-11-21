@@ -1,0 +1,1 @@
+guard-bash: a quoted heredoc to a text sink (`cat > f`, `git commit -F -`, `gh ... --body-file -`) is stripped whole at any top level line. The shell state tracker is ASCII safe and marks unmodeled expansions as unsure. An unsure state, an unclosed heredoc or an internal error leaves the command unstripped and fully checked. (#1327, #1359)

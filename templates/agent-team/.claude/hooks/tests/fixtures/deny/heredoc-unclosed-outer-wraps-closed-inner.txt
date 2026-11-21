@@ -1,0 +1,5 @@
+mkdir -p /tmp/out
+cat > /tmp/out/brief.md <<'OUTER'
+cat > /tmp/x <<'EOF'
+$(bash bin/deploy-raw.sh)
+EOF

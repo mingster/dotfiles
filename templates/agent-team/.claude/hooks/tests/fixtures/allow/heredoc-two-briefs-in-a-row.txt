@@ -1,0 +1,7 @@
+mkdir -p /tmp/out
+cat > a.md <<'EOF'
+bash bin/deploy-raw.sh
+EOF
+cat > b.md <<'EOF'
+$(bash bin/deploy-raw.sh)
+EOF

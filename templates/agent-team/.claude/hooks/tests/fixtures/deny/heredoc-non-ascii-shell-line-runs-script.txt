@@ -1,0 +1,5 @@
+echo 測試
+cat > brief.md <<'EOF'
+note
+EOF
+bash bin/deploy-raw.sh

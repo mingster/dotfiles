@@ -1,0 +1,6 @@
+mkdir -p /tmp/out
+cat > /tmp/out/brief.md <<'EOF'
+Run:
+bash bin/deploy-raw.sh
+Use os.system( and subprocess.run in the fix.
+EOF

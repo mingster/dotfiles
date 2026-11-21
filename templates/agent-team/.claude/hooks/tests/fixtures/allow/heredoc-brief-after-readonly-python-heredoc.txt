@@ -1,0 +1,9 @@
+python3 - <<'PY'
+# check owner's value (
+print(1)
+PY
+# write owner's brief
+cat > brief.md <<'EOF'
+Use os.system( and subprocess.run in the fix.
+bash bin/deploy-raw.sh
+EOF

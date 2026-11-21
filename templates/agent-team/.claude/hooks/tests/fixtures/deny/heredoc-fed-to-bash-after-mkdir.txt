@@ -1,0 +1,4 @@
+mkdir -p out
+bash <<'EOF'
+bash bin/deploy-raw.sh
+EOF

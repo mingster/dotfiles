@@ -1,0 +1,3 @@
+cat <<'EOF' | bash
+bash bin/deploy-raw.sh
+EOF
