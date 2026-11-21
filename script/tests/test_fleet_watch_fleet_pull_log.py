@@ -12,6 +12,9 @@ BAD = ('fleet-pull 2026-11-17T11:00:00Z pr=6 sha=bbb exit=1\n'
        'ok   hostA ~/dotfiles abc\nfail hostB ~/dotfiles (unreachable host)\n')
 HUNG = 'fleet-pull 2026-11-17T12:00:00Z pr=7 sha=ccc exit=124\nok   hostA ~/dotfiles abc\n'
 
+TIMED = ('fleet-pull 2026-11-17T13:00:00Z pr=8 sha=ddd exit=1 duration_s=42\n'
+         'fail hostB ~/dotfiles (dirty)\n')
+
 
 class FleetPullLog(unittest.TestCase):
     def setUp(self):
@@ -44,6 +47,12 @@ class FleetPullLog(unittest.TestCase):
         self.assertEqual(len(later), 1)
         self.assertIn('PR 7', later[0])
         self.assertIn('timed out', later[0])
+
+    def test_duration_is_in_the_notice(self):
+        self.log.write_text(TIMED)
+        notices = self.notices()
+        self.assertEqual(len(notices), 1)
+        self.assertIn('duration_s=42', notices[0])
 
 
 if __name__ == '__main__':

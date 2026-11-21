@@ -1165,6 +1165,14 @@ run_mode() {
   return 0
 }
 
+# One line per successful start: duration_s feeds team-audit.sh --report (#1330).
+log_startup_duration() { # <run id> <seconds>
+  local line
+  line="worker-startup run=$1 duration_s=$2"
+  echo "$line" >&2
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$line" >>"$state_dir/durations.log" 2>/dev/null || true
+}
+
 case "${1:-}" in
   --host-check)
     host_check
@@ -1174,7 +1182,11 @@ case "${1:-}" in
     pick_host_only "$@"
     ;;
   --run)
-    run_mode "$@"
+    startup_began=$SECONDS
+    startup_rc=0
+    run_mode "$@" || startup_rc=$?
+    [ "$startup_rc" -ne 0 ] || log_startup_duration "${2:-}" "$((SECONDS - startup_began))"
+    exit "$startup_rc"
     ;;
   -h|--help)
     echo "Usage: worker-startup.sh --host-check | --run ..." >&2

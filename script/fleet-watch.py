@@ -1949,7 +1949,7 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
     """Report a fleet-pull that ship.sh ran after a dotfiles merge and that did not update every host (#1173).
 
     ship.sh appends one block per run: a header 'fleet-pull <utc> pr=<n> sha=<sha> exit=<rc>' then the ok/fail line
-    per host. Each block is read once (by byte offset); a block with a failed host or a nonzero exit is one notice.
+    per host (duration_s is optional). Each block is read once (by byte offset); a block with a failed host or a nonzero exit is one notice.
     """
     log = Path(path or os.environ.get('SHIP_FLEET_PULL_LOG') or FLEET_PULL_LOG_DEFAULT)
     try:
@@ -1963,9 +1963,9 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
     block['offset'] = len(data)
     runs = []
     for text in data[offset:].decode('utf-8', 'replace').splitlines():
-        header = re.match(r'^fleet-pull \S+ pr=(\S+) sha=(\S+) exit=(\d+)$', text)
+        header = re.match(r'^fleet-pull \S+ pr=(\S+) sha=(\S+) exit=(\d+)(?: duration_s=(\d+))?$', text)
         if header:
-            runs.append({'pr': header.group(1), 'exit': int(header.group(3)), 'failed': []})
+            runs.append({'pr': header.group(1), 'exit': int(header.group(3)), 'duration_s': header.group(4), 'failed': []})
         elif runs and text.startswith('fail '):
             runs[-1]['failed'].append(text[5:].strip())
     notices = []
@@ -1974,6 +1974,8 @@ def fleet_pull_after_ship_notices(config, state, now, path=None):
             continue
         why = 'timed out' if run['exit'] == 124 else 'exit %d' % run['exit']
         hosts = '; '.join(run['failed']) if run['failed'] else 'no host line'
+        if run['duration_s'] is not None:
+            why += ' duration_s=' + run['duration_s']
         notices.append('fleet-pull after the merge of PR %s did not finish clean (%s): %s' % (run['pr'], why, hosts))
     return notices
 
