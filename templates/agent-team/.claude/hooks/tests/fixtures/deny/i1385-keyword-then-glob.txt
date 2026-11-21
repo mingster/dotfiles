@@ -1,0 +1,1 @@
+if true; then bash bin/d*-raw.sh; fi

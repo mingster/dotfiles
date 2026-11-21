@@ -1,0 +1,1 @@
+set -- bash; $1 bin/deploy-raw.sh

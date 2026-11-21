@@ -1,0 +1,1 @@
+echo bin/d*-raw.sh | xargs bash

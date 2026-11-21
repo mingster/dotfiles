@@ -577,7 +577,7 @@ def segments(command):
         elif c in "'\"" and not comment:
             quote = c
             buf.append(c)
-        elif c == "\\" and i + 1 < len(command):
+        elif c == "\\" and not comment and i + 1 < len(command):  # a comment ends at the newline, `\` or not
             buf.append(c + command[i + 1])
             i += 1
         elif c in ";|&\n" or (c in "({" and not "".join(buf).strip()):
@@ -616,9 +616,21 @@ def strip_comment(segment):
 
 def words(segment):
     try:
-        return shlex.split(strip_comment(segment))
+        text = strip_comment(segment)
+        return shlex.split(_decode_ansi_c(text) if "$'" in text else text)
     except ValueError:
         return segment.split()
+
+
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!"}
+
+
+def without_keywords(tokens):
+    """`then cmd`, `do cmd`: the keyword is not the program (a blocked script hid behind it)."""
+    i = 0
+    while i < len(tokens) and tokens[i] in SHELL_KEYWORDS:
+        i += 1
+    return tokens[i:]
 
 
 def program_and_args(tokens):
@@ -3032,11 +3044,7 @@ def check_indirection(base, args):
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
-    tokens = words(segment)
-    keywords = 0  # `then cmd`, `do cmd`: the keyword is not the program (a blocked script hid behind it)
-    while keywords < len(tokens) and tokens[keywords] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
-        keywords += 1
-    tokens = tokens[keywords:]
+    tokens = without_keywords(words(segment))
     prog, args = program_and_args(tokens)
     if not prog:
         return
@@ -3073,9 +3081,8 @@ def check_segment(segment, depth=0, cwd=None):
 
     # Heavy jobs must acquire the shared machine budget.
     try:
-        heavy_tokens = shlex.split(segment, comments=True)
-        while heavy_tokens and heavy_tokens[0] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
-            heavy_tokens = heavy_tokens[1:]
+        heavy_tokens = shlex.split(_decode_ansi_c(segment) if "$'" in segment else segment, comments=True)
+        heavy_tokens = without_keywords(heavy_tokens)
         heavy_prog, heavy_args = program_and_args(heavy_tokens)
     except ValueError:
         heavy_prog, heavy_args = None, []
@@ -3241,7 +3248,7 @@ def substitutions(command):
         if quote == "'":
             if c == "'":
                 quote = None
-        elif c == "\\" and i + 1 < len(command):
+        elif c == "\\" and not comment and i + 1 < len(command):
             i += 1
         elif c == "$" and quote is None and command.startswith("$'", i):
             i = ansi_c_end(command, i) - 1
@@ -4098,6 +4105,31 @@ def _deny_unplain_mention():
          "`cat > file <<'EOF'`.")
 
 
+DYNAMIC_PIECE = re.compile(r"\$\([^()]*\)|\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9?#@*]")
+
+
+def _dynamic_probes(seg):
+    """The segment with each unresolved `$x`, `${x}`, `$1` or flat `$(...)` read as a shell and as a blocked name, so
+    `$SHELL bin/x.sh`, `bash $1` and a lone `$X` deny the way the written out command would."""
+    pieces = list(DYNAMIC_PIECE.finditer(seg))
+    if not pieces:
+        return []
+    if len(pieces) > 8:
+        _deny_unplain_mention()
+    names = sorted(BLOCKED_SCRIPTS)
+    n = len(pieces)
+    fills = [["bash"] * n] + [[name] * n for name in names]
+    fills += [["bash" if j == k else name for j in range(n)] for k in range(n) for name in names]
+    out = []
+    for fill in fills:
+        text, last = [], 0
+        for piece, value in zip(pieces, fill):
+            text += [seg[last:piece.start()], value]
+            last = piece.end()
+        out.append("".join(text) + seg[last:])
+    return out
+
+
 def _check_plain_lines(command):
     """Check each plain shell line of a command that names a blocked script; deny when a line is not plain."""
     lines, i, cur_cwd = command.split("\n"), 0, GATE_CWD
@@ -4117,6 +4149,8 @@ def _check_plain_lines(command):
         shell_text = text[:len(text) - len(part) + heredoc.start()] if heredoc else text
         for seg in segments(shell_text):
             check_segment(seg, cwd=cur_cwd)
+            for probe in _dynamic_probes(seg):
+                check_segment(probe, cwd=cur_cwd)
             prog, args = program_and_args(words(seg))
             if prog in ("cd", "pushd") and args:
                 dest = next((a for a in args if not a.startswith("-")), None)
@@ -4135,7 +4169,10 @@ def _check_plain_lines(command):
 # and xargs. Each reading of the command that spells a blocked name goes through the same checks as the raw text.
 ASSIGN_VALUE = re.compile(
     r"(?:^|[\s;&|(])(?:export[ \t]+|local[ \t]+|declare[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)="
-    r"""(?:'([^'\n]*)'|"([^"`$\\\n]*)"|([^\s;&|<>()$`\\'"]*))""")
+    r"""((?:'[^'\n]*'|"[^"`\\\n]*"|[^\s;&|<>()`\\'"]+)*)""")
+QUOTED_PART = re.compile(r"""'([^']*)'|"([^"]*)\"""")
+DEFAULT_WORD = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*:?[-=+?]([^{}$`\n]*)\}")
+ECHO_SUB = re.compile(r"\$\((?:echo|printf)[ \t]+([^()$`\\\n]*)\)")
 FOR_VALUES = re.compile(r"\bfor[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]+in[ \t]+([^;\n]*)[;\n]")
 VAR_REF = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 BRACE_WORD = re.compile(r"\S*(?<!\$)\{[^{}\s]*,[^{}\s]*\}\S*")
@@ -4159,7 +4196,7 @@ def _decode_ansi_c(text):
 def _variable_values(text):
     values = {}
     for m in ASSIGN_VALUE.finditer(text):
-        values.setdefault(m[1], []).append(next(g for g in m.groups()[1:] if g is not None))
+        values.setdefault(m[1], []).append(QUOTED_PART.sub(lambda q: q[1] if q[1] is not None else q[2], m[2]))
     for m in FOR_VALUES.finditer(text):
         values.setdefault(m[1], []).extend(w.strip("'\"") for w in m[2].split())
     return values
@@ -4177,15 +4214,23 @@ def _blocked_variants(command):
     add(command)
     text = _decode_ansi_c(command) if "$'" in command else command
     add(text)
-    stage = [text]
-    values = _variable_values(text)
-    for _ in range(2):
+    literal = ECHO_SUB.sub(lambda m: QUOTED_PART.sub(lambda q: q[1] or q[2] or "", m[1]).strip(),
+                           DEFAULT_WORD.sub(lambda m: m[1], text))
+    add(literal)
+    stage = [literal]
+    values = _variable_values(literal)
+    for _ in range(3):  # a value may name another variable: `a=deploy; b="$a-raw"`
         for name, options in values.items():
             nxt = []
             for item in stage:
-                for value in options[:8]:
-                    nxt.append(VAR_REF.sub(lambda m: value if (m[1] or m[2]) == name else m[0], item))
-            stage = nxt[:MAX_VARIANTS]
+                if not any((m[1] or m[2]) == name for m in VAR_REF.finditer(item)):
+                    nxt.append(item)
+                    continue
+                for value in dict.fromkeys(options):
+                    nxt.append(VAR_REF.sub(lambda m, v=value: v if (m[1] or m[2]) == name else m[0], item))
+            stage = list(dict.fromkeys(nxt))
+            if len(stage) > MAX_VARIANTS:
+                _deny_unplain_mention()
     for item in stage:
         add(item)
     for item in list(out):
@@ -4249,7 +4294,7 @@ def _name_pattern(token):
             pattern.append(re.escape(c))
             solid += c.isalnum()
         i += 1
-    return "".join(pattern) if solid >= 4 else None
+    return "".join(pattern) if solid >= 4 or DYNAMIC not in part else None
 
 
 def _deny_built_name(name):
@@ -4259,7 +4304,7 @@ def _deny_built_name(name):
 
 XARGS_HARMLESS = {"echo", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff",
                   "shellcheck", "basename", "dirname", "sort", "uniq", "printf"}
-XARGS_VALUE_OPTIONS = {"-n", "-P", "-L", "-s", "-E", "-d", "-a", "-I", "-J", "-l", "-i"}
+XARGS_VALUE_OPTIONS = {"-n", "-P", "-L", "-s", "-E", "-d", "-a", "-I", "-J"}  # -l and -i take only a glued value
 
 
 def _xargs_target(tokens):
@@ -4278,9 +4323,11 @@ def _xargs_target(tokens):
 def _check_built_names(command):
     """Deny a variable, glob or substitution that can spell a blocked name where a script runs, and xargs that runs
     anything beyond read only programs while the command names a blocked script."""
-    mentions = _blocked_mention(command)
-    for seg in segments(_mask_dynamic(command).replace("{}", "X")):
-        tokens = words(seg)
+    segs = [without_keywords(words(seg)) for seg in segments(_mask_dynamic(command).replace("{}", "X"))]
+    mentions = _blocked_mention(command) or any(
+        _name_pattern(t) and any(re.fullmatch(_name_pattern(t), n, re.I) for n in BLOCKED_SCRIPTS)
+        for tokens in segs for t in tokens)
+    for tokens in segs:
         target = _xargs_target(tokens)
         if target is not None and mentions and target not in XARGS_HARMLESS | {""}:
             deny(f"xargs would run {target} on a command line that names a blocked script, so the guard cannot "
@@ -4299,7 +4346,21 @@ def _check_built_names(command):
                     _deny_built_name(name)
 
 
-def check_blocked_script_mentions(command):
+def _inner_commands(command):
+    """The command text a `$(...)`, backtick, `bash -c` or `eval` runs."""
+    command = report_command_text(command)  # a text sink heredoc body is data
+    out = substitutions(command)
+    for seg in segments(command):
+        prog, args = program_and_args(without_keywords(words(seg)))
+        base = os.path.basename(prog or "")
+        if base == "eval":
+            out.append(" ".join(args))
+        elif base in SHELLS and "-c" in args[:-1]:
+            out.append(args[args.index("-c") + 1])
+    return out
+
+
+def check_blocked_script_mentions(command, depth=0):
     """Deny a blocked script name outside the plain line grammar, and a blocked name built from pieces."""
     try:
         if not BLOCKED_SCRIPTS:
@@ -4308,6 +4369,10 @@ def check_blocked_script_mentions(command):
             if _blocked_mention(variant):
                 _check_plain_lines(variant)
             _check_built_names(variant)
+            if depth < 3:
+                for inner in _inner_commands(variant):
+                    if inner.strip() and inner != command:
+                        check_blocked_script_mentions(inner, depth + 1)
     except SystemExit:
         raise
     except Exception:
