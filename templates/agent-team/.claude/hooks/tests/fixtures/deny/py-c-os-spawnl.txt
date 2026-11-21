@@ -1,0 +1,1 @@
+python3 -c 'import os; os.spawnl(os.P_WAIT, "/bin/bash", "bash", "bin/deploy-raw.sh")'

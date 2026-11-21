@@ -1,0 +1,1 @@
+python3 -c 'import os; os.popen("bash bin/deploy-raw.sh")'

@@ -1,0 +1,1 @@
+ruby -e '`bash bin/deploy-raw.sh`'

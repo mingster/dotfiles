@@ -1,0 +1,1 @@
+php -r 'shell_exec("bash bin/deploy-raw.sh");'

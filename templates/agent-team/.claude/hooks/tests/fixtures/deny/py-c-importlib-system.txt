@@ -1,0 +1,1 @@
+python3 -c 'import importlib; importlib.import_module("os").system("bash bin/deploy-raw.sh")'

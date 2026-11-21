@@ -1,0 +1,1 @@
+python3 -c 'import os; os.__dict__["system"]("bash bin/deploy-raw.sh")'

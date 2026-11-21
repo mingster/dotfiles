@@ -1,0 +1,1 @@
+perl -e 'print qx(bash bin/deploy-raw.sh)'

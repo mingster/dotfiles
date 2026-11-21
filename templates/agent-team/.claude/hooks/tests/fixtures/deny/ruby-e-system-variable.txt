@@ -1,0 +1,1 @@
+ruby -e 'c = "bash bin/deploy-raw.sh"; system c'

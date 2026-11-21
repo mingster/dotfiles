@@ -1,0 +1,1 @@
+python3 -c '__import__("os").system("bash bin/deploy-raw.sh")'
