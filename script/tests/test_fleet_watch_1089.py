@@ -37,7 +37,7 @@ def pr_row():
         'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': NEW, 'headRefName': 'b',
         'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
         'comments': [{'body': 'Review: PASS head=%s' % NEW}], 'labels': [], 'mergeable': 'MERGEABLE',
-        'body': 'Builder: agent=claude model=opus',
+        'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=opus',
     }
 
 

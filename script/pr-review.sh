@@ -145,6 +145,15 @@ if [ -z "$pr" ]; then
   fi
 fi
 
+# Start one fleet-watch verifier pass now instead of waiting for the next scan (#1321). Best effort:
+# every fleet-watch gate still applies, and a failed pass leaves the PR for the next scan.
+kick_verifier_pass() {
+  [ -n "${FLEET_WATCH_CONFIG:-}" ] && [ -n "${FLEET_WATCH_STATE:-}" ] || return 0
+  python3 "${FLEET_WATCH_PY:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-watch.py}" \
+    --config "$FLEET_WATCH_CONFIG" --state "$FLEET_WATCH_STATE" --babysit-only >&2 ||
+    echo "pr-review: verifier pass failed; the next fleet-watch scan starts it" >&2
+}
+
 post_review_status() {
   local state=$1
   case "${REVIEW_POST_STATUS:-}" in
@@ -262,6 +271,7 @@ if [ "$carry_same_patch" -eq 1 ]; then
     echo "Review: PASS head=$head model=carried patch=$current_patch_id"
   } >"$review_f"
   gh pr comment "$pr" --repo "$repo" --body-file "$review_f"
+  kick_verifier_pass
   exit 0
 fi
 
@@ -296,6 +306,7 @@ if [ "$docs_only" -eq 1 ] && [ -n "$names" ] && ! grep -qE "$skill_md" <<<"$name
     fi
   } >"$review_f"
   gh pr comment "$pr" --repo "$repo" --body-file "$review_f"
+  kick_verifier_pass
   exit 0
 fi
 
@@ -423,3 +434,4 @@ else
   fi
 fi
 gh pr comment "$pr" --repo "$repo" --body-file "$work/review.md"
+[ "$verdict" != "Review: PASS" ] || kick_verifier_pass

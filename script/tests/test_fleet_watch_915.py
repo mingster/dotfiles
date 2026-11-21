@@ -163,7 +163,7 @@ class BabysitStartFailureNotice(unittest.TestCase):
             'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
             'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
             'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
-            'body': 'Builder: agent=claude model=sonnet',
+            'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
         }
         return fw.babysit_pass(
             config, state, [], pr_fetch=lambda _repo: [pr],
@@ -197,7 +197,7 @@ class BabysitLiveVerifier(unittest.TestCase):
                 'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
                 'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
                 'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
-                'body': 'Builder: agent=claude model=sonnet',
+                'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
             }
             state = {} if state is None else state
             _notices, lines, _log = fw.babysit_pass(
@@ -360,7 +360,7 @@ class BabysitStartReason(unittest.TestCase):
             'number': 7, 'state': 'OPEN', 'isDraft': False, 'headRefOid': HEAD, 'headRefName': 'b',
             'statusCheckRollup': [{'name': 'checks', 'conclusion': 'SUCCESS', 'status': 'COMPLETED'}],
             'comments': [{'body': 'Review: PASS head=%s' % HEAD}], 'labels': [], 'mergeable': 'MERGEABLE',
-            'body': 'Builder: agent=claude model=sonnet',
+            'body': '## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet',
         }
         return fw.babysit_pass(
             config, state, [], pr_fetch=lambda _repo: [pr],
