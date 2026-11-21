@@ -1,0 +1,1 @@
+perl -e 'system "bash bin/deploy-raw.sh"'

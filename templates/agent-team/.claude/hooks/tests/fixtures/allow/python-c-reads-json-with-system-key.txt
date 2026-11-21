@@ -1,0 +1,1 @@
+python3 -c 'import json; d = json.load(open("a.json")); print("system", d["exec"], d["system"])'

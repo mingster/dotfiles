@@ -2794,8 +2794,11 @@ def check_team_gates(base, args):
 
 INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
-STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
-                            r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
+# Call sites, not words: `system`, `exec` and friends count only when called (`name(`, or perl/ruby's
+# `name "cmd"`), so text such as `find -exec stat` or a `"system"` dict key does not trip the check.
+STARTS_PROCESS = re.compile(r"\b(subprocess|child_process|pty|importlib|Open3)\b|"
+                            r"(?<![\"'])\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|__import__|eval|shell_exec|"
+                            r"passthru|proc_open)\b[ \t]*[(\"'`$]|\bqx\b[ \t]*[^\w\s]")
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 REDIRECT = re.compile(r"^[0-9]*(<|>|&>)")
 INDIRECT = []  # set by check_indirection; main denies once no specific gate has

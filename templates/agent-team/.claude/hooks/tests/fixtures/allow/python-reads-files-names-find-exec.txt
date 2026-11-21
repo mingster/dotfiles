@@ -1,0 +1,8 @@
+python3 - <<'PY'
+import os, sys
+# the audit asked: find . -exec stat {} \;  (text only, nothing runs it)
+for p in sys.argv[1:]:
+    print(os.stat(p).st_size, "find x -exec stat")
+with open("/etc/hosts") as f:
+    print(f.read())
+PY

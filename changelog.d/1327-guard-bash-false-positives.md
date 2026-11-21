@@ -1,0 +1,1 @@
+* guard-bash: the "code that starts a process" check now matches call sites (`os.system(`, `subprocess`, perl `system "..."`) instead of the words `system` or `exec` anywhere in inline code, so read-only scripts that mention `find -exec stat` or a `"system"` key are no longer denied (#1327)

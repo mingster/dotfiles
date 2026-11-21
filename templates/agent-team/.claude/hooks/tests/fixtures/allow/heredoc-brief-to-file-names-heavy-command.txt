@@ -1,0 +1,5 @@
+cat > brief.md <<'EOF'
+Run bash script/checks-local.sh, then eval the result.
+Use subprocess.run and os.system in the fix. Also exec it, and system tests.
+bash bin/deploy-raw.sh is only named here, nothing runs it.
+EOF
