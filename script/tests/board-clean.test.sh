@@ -10,7 +10,7 @@ cat > "$tmp/bin/orca" <<'FAKE'
 echo "$*" >> "$ORCA_LOG"
 case "$*" in
   'environment list --json') cat "$FAKE_ENVS" ;;
-  'worktree list --json') cat "$FAKE_LOCAL" ;;
+  'worktree list --json') sleep "${FAKE_LIST_SLEEP:-0}"; cat "$FAKE_LOCAL" ;;
   'worktree list --environment down --json') echo 'board-clean-fake: down' >&2; exit 1 ;;
   'worktree list --environment up --json') cat "$FAKE_UP" ;;
   'orchestration run-list --json') echo '{"ok":true,"result":{"runs":[{"id":"run-local"}]}}' ;;
@@ -24,7 +24,7 @@ case "$*" in
   'terminal close '*) echo '{"ok":true,"result":{}}' ;;
   'terminal create '*) echo '{"ok":true,"result":{"handle":"t-del"}}' ;;
   'terminal wait '*) echo '{"ok":true,"result":{}}' ;;
-  'worktree rm '*) echo '{"ok":true,"result":{}}' ;;
+  'worktree rm '*) sleep "${FAKE_RM_SLEEP:-0}"; echo '{"ok":true,"result":{}}' ;;
   'worktree set '*) echo '{"ok":true,"result":{}}' ;;
   *) echo "unexpected orca: $*" >&2; exit 1 ;;
 esac
@@ -134,6 +134,41 @@ grep -Fq 'worktree rm --worktree path:/w/dirty' "$ORCA_LOG" && bad 'a dirty card
 grep -Fq "worktree rm --worktree path:/w/pushed" "$ORCA_LOG" && bad "a pushed, unmerged, no-PR card is not removed" "$(cat "$ORCA_LOG")" || ok "a pushed, unmerged, no-PR card is not removed"
 grep -Fq 'terminal close --terminal t-del --environment up --json' "$ORCA_LOG" \
   && ok 'the branch-delete session is closed' || bad 'the branch-delete session is closed' "$(cat "$ORCA_LOG")"
+
+# Round budget (#1346). Discovery is fast unless FAKE_LIST_SLEEP says otherwise.
+budget_line='board-clean: time budget spent; the cards left are cleaned next round'
+for mode in --apply --dry-run; do
+  : > "$ORCA_LOG"; SECONDS=0
+  out=$(FAKE_LIST_SLEEP=12 FAKE_RM_SLEEP=5 BOARD_CLEAN_BUDGET_S=5 python3 "$here/board-clean.py" --fleet "$mode" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "budget $mode: slow discovery exits 0" || bad "budget $mode: slow discovery exits 0" "rc=$rc $out"
+  grep -Fxq "$budget_line" <<<"$out" && ok "budget $mode: prints the budget line" || bad "budget $mode: prints the budget line" "$out"
+  grep -Eq '^(applied|dry-run): clean=0 keep=0' <<<"$out" && ok "budget $mode: prints the summary" || bad "budget $mode: prints the summary" "$out"
+  [ "$SECONDS" -lt 15 ] && ok "budget $mode: ends under the 15s step cap" || bad "budget $mode: ends under the 15s step cap" "${SECONDS}s"
+done
+
+: > "$ORCA_LOG"
+out=$(FAKE_LIST_SLEEP=4 BOARD_CLEAN_BUDGET_S=3 python3 "$here/board-clean.py" --fleet --dry-run 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok 'budget: slow first host exits 0' || bad 'budget: slow first host exits 0' "rc=$rc $out"
+grep -Fq -- '--environment up' "$ORCA_LOG" && bad 'budget: the second host is never contacted' "$(cat "$ORCA_LOG")" || ok 'budget: the second host is never contacted'
+
+# The budget ends inside worktree rm: no comment, exit 0, and the next round cleans the card.
+only="$tmp/only-clean.json"
+python3 - "$FAKE_LOCAL" "$only" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+data["result"]["worktrees"] = [w for w in data["result"]["worktrees"] if w["path"] == "/w/clean"]
+json.dump(data, open(sys.argv[2], "w"))
+PY
+: > "$ORCA_LOG"
+out=$(FAKE_LOCAL="$only" FAKE_RM_SLEEP=10 BOARD_CLEAN_BUDGET_S=4 python3 "$here/board-clean.py" --apply 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok 'budget: cut inside worktree rm exits 0' || bad 'budget: cut inside worktree rm exits 0' "rc=$rc $out"
+grep -Fq 'worktree rm --worktree path:/w/clean' "$ORCA_LOG" && ok 'budget: the cut landed in worktree rm' || bad 'budget: the cut landed in worktree rm' "$(cat "$ORCA_LOG")"
+grep -Fq 'worktree set' "$ORCA_LOG" && bad 'budget: a cut rm writes no board comment' "$(cat "$ORCA_LOG")" || ok 'budget: a cut rm writes no board comment'
+grep -Fxq "$budget_line" <<<"$out" && ok 'budget: cut inside rm prints the budget line' || bad 'budget: cut inside rm prints the budget line' "$out"
+grep -Fq 'could not remove' <<<"$out" && bad 'budget: a cut rm is not a failure' "$out" || ok 'budget: a cut rm is not a failure'
+: > "$ORCA_LOG"
+out=$(FAKE_LOCAL="$only" BOARD_CLEAN_BUDGET_S=20 python3 "$here/board-clean.py" --apply 2>&1); rc=$?
+grep -Fq 'applied: clean=1 keep=0' <<<"$out" && ok 'budget: the next round cleans the card' || bad 'budget: the next round cleans the card' "rc=$rc $out"
 
 printf 'passed %s, failed %s\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]
