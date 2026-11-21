@@ -8066,6 +8066,8 @@ def fleet_seat_report(config, config_path=None, state_path=None, workers=None):
     env_names = _resolve_env_names(workers, config, None)
     report = {}
     for host, cap in (config.get('host_caps') or {}).items():
+        if cap <= 0:
+            continue
         receipt = admit(host, config, workers=workers, env_names=env_names, released_ids=released)
         resources = receipt.get('resources') or []
         report[host] = {
