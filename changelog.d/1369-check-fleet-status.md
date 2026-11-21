@@ -1,0 +1,1 @@
+Added `script/check-fleet-status.py`: one line per fleet host (reachable, load, memory, workers reported active and really active), lists workers reported active but idle or gone, and exits non-zero on any mismatch or unreachable host. The coordinator's fill-seats step runs it first (#1369).

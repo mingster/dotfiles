@@ -492,3 +492,7 @@ changes nothing and says so. Pass `--dotfiles <dir>` to read the pins from anoth
 Tests that set `HOME` to a temp dir source `script/tests/lib/asdf-pin.sh` (python tests import
 `asdf_pin.py`) first. It exports the version pins and `ASDF_DATA_DIR`, since asdf looks for its
 installs under `$HOME/.asdf`. `script/tests/asdf-pin-coverage.test.sh` fails when a test skips it.
+
+## Fleet status check
+
+`script/check-fleet-status.py` compares what Orca reports with what runs. It asks this machine and every `orca environment list` host (aliases from `fleet-workers.local.json`) for live, in progress workers, then reads each worker's terminal. A worker is really active when its terminal has a live agent process and its screen changed in the last 10 minutes (`--window-minutes N`) or shows a running tool. Others are listed as "reported active, actually idle" or "actually gone" with the dispatch id and title. Load and memory come from the fleet load sensor `worker-placement.py` reads. An unreachable host is named, never counted as 0 or full. Exit 0 when report and reality match, 1 on any mismatch or unreachable host. It only reports; the coordinator nudges or frees the workers before filling seats.
