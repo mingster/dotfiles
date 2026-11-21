@@ -224,6 +224,19 @@ export FAKE_NEVER_SETTLED=1
 run --apply
 check 'a start_unknown row with no terminal or workspace, not found by worker-show, does not hold the old browser' has 'Close browser 493 (stale throwaway browser profile)'
 check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped, not asked about again.' "$tmp/output"
+# A dry run writes nothing: the state directory stays as it was, and a following apply still logs the warning and records the id.
+reset
+proc 493 1 $OLD "$DEV --user-data-dir=/tmp/never-settled"; cwd 493 /Users/someone/work
+export FAKE_NEVER_SETTLED=1
+run --dry-run
+check 'a dry run does not create the gone dispatch state' test ! -e "$tmp/state"
+run --apply
+check 'an apply after a dry run still warns once' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped, not asked about again.' "$tmp/output"
+check 'an apply after a dry run records the id' grep -Fxq d4 "$tmp/state/wrap-up-gone-dispatches"
+reset
+proc 493 1 $OLD "$DEV --user-data-dir=/tmp/never-settled"; cwd 493 /Users/someone/work
+export FAKE_NEVER_SETTLED=1
+run --apply
 # The next run does not ask Orca about that dispatch again, and does not repeat the warning.
 run --apply
 check 'a dispatch Orca no longer has is not asked about again' test "$(grep -c d4 "$tmp/show.log")" -eq 1

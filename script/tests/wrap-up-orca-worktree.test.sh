@@ -28,8 +28,18 @@ case "$*" in
   'worktree rm --worktree path:'*)
     path=""
     for a in "$@"; do case "$a" in path:*) path="${a#path:}" ;; esac; done
+    json=0; for a in "$@"; do [ "$a" = --json ] && json=1; done
+    case " ${ORCA_RM_SLEEP_PATHS:-} " in *" $path "*) sleep "${ORCA_RM_SLEEP:-3}" ;; esac
     case " ${ORCA_RM_NOTFOUND:-} " in
-      *" $path "*) echo '{"ok":false,"error":{"code":"selector_not_found"}}'; exit 1 ;;
+      # The real CLI: plain mode prints the code on stderr only, --json prints the error on stdout.
+      *" $path "*)
+        if [ "$json" = 1 ]; then echo '{"ok":false,"error":{"code":"selector_not_found"}}'; else echo selector_not_found >&2; fi
+        exit 1 ;;
+    esac
+    case " ${ORCA_RM_OTHER:-} " in
+      *" $path "*)
+        if [ "$json" = 1 ]; then echo '{"ok":false,"error":{"code":"environment_not_found","message":"selector_not_found is not here"}}'; fi
+        exit 1 ;;
     esac
     case " ${ORCA_RM_FAIL:-} " in
       *" $path "*) echo "orca rm failed" >&2; exit 1 ;;
@@ -55,7 +65,7 @@ fixture() {
   d="$tmp/repo$n"; n=$((n+1))
   mkdir -p "$d"
   export ORCA_LOG="$d/orca.log"; : > "$ORCA_LOG"
-  unset ORCA_RM_FAIL ORCA_RM_NOTFOUND
+  unset ORCA_RM_FAIL ORCA_RM_NOTFOUND ORCA_RM_OTHER ORCA_RM_SLEEP_PATHS
   export FAKE_PRS='[]' FAKE_TERMINALS='[]' FAKE_ORCA_WORKTREES='[]'
   "$real_git" init -q --bare "$d/origin"
   "$real_git" init -q -b main "$d/wt"
@@ -128,6 +138,43 @@ WRAP_UP_RM_RETRY_WAIT=0 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out"
 [ "$(grep -Fc "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG")" -eq 2 ] && ok 'a failing orca record remove is retried once' \
   || bad 'a failing orca record remove is retried once' "$(cat "$ORCA_LOG")"
 grep -Fq 'Warning: could not deregister Orca worktree' "$d/err" && ok 'the kept record is reported as a warning' || bad 'the kept record is reported as a warning' "$(cat "$d/err")"
+
+# A different error code is not "already gone": retried once, then kept with the warning, even when its message names selector_not_found.
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+export ORCA_RM_OTHER="$tmp/workspaces/orphan"
+WRAP_UP_RM_RETRY_WAIT=0 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+[ "$rc" -eq 0 ] && ok 'another error code is a warning, not a failed run' || bad 'another error code is a warning, not a failed run' "rc=$rc $(cat "$d/out" "$d/err")"
+[ "$(grep -Fc "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG")" -eq 2 ] && ok 'another error code is retried once' \
+  || bad 'another error code is retried once' "$(cat "$ORCA_LOG")"
+grep -Fq 'Warning: could not deregister Orca worktree' "$d/err" && ok 'another error code keeps the record with a warning' || bad 'another error code keeps the record with a warning' "$(cat "$d/err")"
+grep -Fq 'Kept orca record' "$d/out" && ok 'another error code lists the record as kept' || bad 'another error code lists the record as kept' "$(cat "$d/out")"
+
+# The rm goes to the Orca that listed the record: --environment for a record on a paired host, none for a local one.
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"hostId\":\"remote-1\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"hostId\":\"remote-1\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err" || true
+grep -Fq "worktree rm --worktree path:$tmp/workspaces/orphan --json --environment remote-1" "$ORCA_LOG" && ok 'a record on a paired host is removed with --environment' \
+  || bad 'a record on a paired host is removed with --environment' "$(cat "$ORCA_LOG")"
+
+# A timed out orphan rm is a warning: the round exits 0, the failure ledger stays empty and the record is named.
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+export ORCA_RM_SLEEP_PATHS="$tmp/workspaces/orphan" ORCA_RM_SLEEP=3
+WRAP_UP_CALL_TIMEOUT=1 WRAP_UP_RM_RETRY_WAIT=0 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+[ "$rc" -eq 0 ] && ok 'a timed out orphan rm does not fail the run' || bad 'a timed out orphan rm does not fail the run' "rc=$rc $(cat "$d/out" "$d/err")"
+grep -Fq 'timed out after' "$d/err" && bad 'a timed out orphan rm writes no failure item' "$(cat "$d/err")" || ok 'a timed out orphan rm writes no failure item'
+grep -Fq "Warning: could not deregister Orca worktree for orca record $tmp/workspaces/orphan" "$d/err" && ok 'a timed out orphan rm names the record in a warning' \
+  || bad 'a timed out orphan rm names the record in a warning' "$(cat "$d/err")"
+
+# The repo deadline runs out during the first rm: the next record gets no call, one warning, and the round still exits 0.
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan-b\",\"pinned\":false}]"
+export ORCA_RM_SLEEP_PATHS="$tmp/workspaces/orphan" ORCA_RM_SLEEP=4
+WRAP_UP_TOTAL_TIMEOUT=2 WRAP_UP_RM_RETRY_WAIT=0 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+grep -Fq "path:$tmp/workspaces/orphan-b" "$ORCA_LOG" && bad 'a spent deadline makes no further orphan rm call' "$(cat "$ORCA_LOG")" || ok 'a spent deadline makes no further orphan rm call'
+[ "$(grep -Fc 'the rest waits for the next run' "$d/err")" -eq 1 ] && ok 'a spent deadline stops the sweep with one warning' || bad 'a spent deadline stops the sweep with one warning' "$(cat "$d/err")"
+grep -Fq 'orca worktree rm' "$d/err" && bad 'a spent deadline writes no failure item for the sweep' "$(cat "$d/err")" || ok 'a spent deadline writes no failure item for the sweep'
 
 fixture
 export FAKE_ORCA_WORKTREES=''

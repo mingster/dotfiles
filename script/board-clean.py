@@ -305,9 +305,7 @@ def load_fact_table() -> dict | None:
 
 def _git(path: str, *args: str) -> str | None:
     try:
-        done = subprocess.run(
-            ["git", "-C", path, *args], capture_output=True, text=True, timeout=30, check=False,
-        )
+        done = board().run_capped(["git", "-C", path, *args], 30)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return done.stdout.strip() if done.returncode == 0 else None
@@ -362,6 +360,11 @@ PROBE_COMMAND = (
 PROBE_READS = 15
 
 
+def out_of_time() -> bool:
+    deadline = board().DEADLINE
+    return deadline is not None and time.monotonic() >= deadline
+
+
 def pause() -> None:
     import time
     time.sleep(1)
@@ -381,7 +384,7 @@ def remote_facts(path: str, environment: str) -> dict:
     parsed = parse_probe(text_from_read(data))
     if handle:
         for attempt in range(PROBE_READS):
-            if parsed["done"]:
+            if parsed["done"] or out_of_time():
                 break
             if attempt:
                 pause()
@@ -472,18 +475,11 @@ def delete_local_branches(main: str, branch: str, throwaway: bool) -> None:
     flag = "-D" if throwaway else "-d"
     try:
         # worktree rm --delete-branch usually removed it already; a missing branch is done, not a failure.
-        has_branch = subprocess.run(
-            ["git", "-C", main, "show-ref", "--verify", "--quiet", "refs/heads/%s" % branch],
-            capture_output=True, text=True, timeout=30, check=False,
+        has_branch = board().run_capped(
+            ["git", "-C", main, "show-ref", "--verify", "--quiet", "refs/heads/%s" % branch], 30,
         ).returncode == 0
-        deleted = None if not has_branch else subprocess.run(
-            ["git", "-C", main, "branch", flag, branch],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
-        pushed = subprocess.run(
-            ["git", "-C", main, "push", "origin", "--delete", branch],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
+        deleted = None if not has_branch else board().run_capped(["git", "-C", main, "branch", flag, branch], 30)
+        pushed = board().run_capped(["git", "-C", main, "push", "origin", "--delete", branch], 30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print("board-clean: branch delete failed for %s (%s)" % (branch, exc), file=sys.stderr)
         return
@@ -685,6 +681,9 @@ def main(argv: list[str] | None = None) -> int:
         print("board-clean: --fleet and --environment are exclusive", file=sys.stderr)
         return 2
     apply = args.apply
+    # The budget starts here, before any discovery: every subprocess below is cut at it (board().cap_timeout).
+    budget = os.environ.get("BOARD_CLEAN_BUDGET_S", "")
+    board().DEADLINE = time.monotonic() + int(budget) if budget.isdigit() else None
     targets = [args.environment]
     if args.fleet:
         targets = [""]
@@ -703,6 +702,8 @@ def main(argv: list[str] | None = None) -> int:
     gathered: list[tuple[str, list[dict], list[dict] | None]] = []
     skipped = 0
     for environment in targets:
+        if out_of_time():
+            break
         label = normalize(environment)
         trees, err = board().worktrees_for(environment)
         if trees is None:
@@ -722,9 +723,6 @@ def main(argv: list[str] | None = None) -> int:
             gathered.append((label, trees, workers))
     cleaned = 0
     kept = 0
-    budget = os.environ.get("BOARD_CLEAN_BUDGET_S", "")
-    deadline = time.monotonic() + int(budget) if budget.isdigit() else None
-    spent = False
     for label, trees, workers in gathered:
         grouped = None if workers is None else workers_by_path(workers)
         for tree in trees:
@@ -733,18 +731,17 @@ def main(argv: list[str] | None = None) -> int:
             path = tree.get("path") or tree.get("workspacePath") or ""
             if not isinstance(path, str) or not path:
                 continue
-            if apply and deadline is not None and time.monotonic() >= deadline:
-                # Stop between cards: the caller's step cap would otherwise end this run with 124 mid-cleanup.
-                spent = True
+            if out_of_time():
+                # Stop between cards, in apply and dry run: the caller's step cap would otherwise end this run with 124.
                 break
             outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
             if outcome == "clean":
                 cleaned += 1
             else:
                 kept += 1
-        if spent:
+        if out_of_time():
             break
-    if spent:
+    if out_of_time():
         print("board-clean: time budget spent; the cards left are cleaned next round")
     mode ="applied" if apply else "dry-run"
     print("%s: clean=%s keep=%s skipped_hosts=%s" % (mode, cleaned, kept, skipped))

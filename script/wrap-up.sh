@@ -1319,7 +1319,8 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
           echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped, not asked about again." >&2
-          { mkdir -p "$(dirname "$gone_dispatches")" && printf '%s\n' "$dispatch" >> "$gone_dispatches"; } 2>/dev/null || true
+          # Only an apply remembers it; a dry run reads the file but never creates or changes it.
+          [ "$apply" -ne 1 ] || { mkdir -p "$(dirname "$gone_dispatches")" && printf '%s\n' "$dispatch" >> "$gone_dispatches"; } 2>/dev/null || true
         elif jq -e '.error.code == "remote_runtime_unavailable" or .error.code == "peer_changed" or (.error.message | startswith("Unknown environment") or startswith("Remote Dispatch"))' "$tmp/show" >/dev/null 2>&1; then
           # Ran on a host this one no longer pairs with (peer_changed), or one that is offline now (issue 855): its worktree and browser live
           # there, that host's wrap-up owns them. A path its row names may still be here, so that one stays.
@@ -1643,17 +1644,27 @@ worktree_board_open() {
   done < "$tmp/orca-board-open"
   return 1
 }
-guarded_orca_worktree_rm() { # <counter> <label> <path>
-  local counter=$1 label=$2 path=$3 rc=0 real_path out try
+guarded_orca_worktree_rm() { # <counter> <label> <path> [hostId]: return 2 when the repo deadline is spent
+  local counter=$1 label=$2 path=$3 host=${4:-local} rc=0 real_path out try left t
+  local -a rm_args
   real_path=$(real "$path")
-  # The record's directory is already gone, so this only tidies the sidebar. Orca answers selector_not_found when it has
-  # no such record here (a worker started on another host keeps its record there): that is done. Any other failure is
-  # retried once, then kept with a warning; it never fails the round, and the next round tries again.
+  rm_args=(worktree rm --worktree "path:$real_path" --json)
+  [ "$host" = local ] || rm_args+=(--environment "$host")
+  # The record's directory is already gone, so this only tidies the sidebar. The rm goes to the Orca that listed the record.
+  # That Orca's parsed error code selector_not_found means it no longer has the record: done. Any other failure is retried
+  # once, then kept with a warning; it never fails the round, and the next round tries again. This does not use bounded:
+  # a timeout here is a warning, not a failure item, and a spent deadline stops the sweep instead of failing the round.
   for try in 1 2; do
+    left=$((deadline-SECONDS))
+    if [ "$left" -le 0 ]; then
+      echo 'Warning: Orca record sweep stopped at the time limit; the rest waits for the next run.' >&2
+      return 2
+    fi
+    t=$call_timeout; [ "$left" -ge "$t" ] || t=$left
     rc=0
-    out=$(orca_call worktree rm --worktree "path:$real_path" 2>/dev/null) || rc=$?
+    out=$(run_limited "$t" "$orca_bin" "${rm_args[@]}" 2>/dev/null) || rc=$?
     [ "$rc" -ne 0 ] || break
-    case "$out" in *selector_not_found*) rc=0; break ;; esac
+    if [ "$(printf '%s' "$out" | jq -r '.error.code // empty' 2>/dev/null)" = selector_not_found ]; then rc=0; break; fi
     [ "$try" -eq 2 ] || sleep "${WRAP_UP_RM_RETRY_WAIT:-2}"
   done
   if [ "$rc" -ne 0 ]; then
@@ -2420,7 +2431,7 @@ if [ "$apply" -eq 1 ] && [ "$orca_pin_state" = ok ]; then
       [ -d "$op" ] && continue
       worktree_pinned_in_orca "$op" && continue
       printf 'Remove orca record %s (git worktree already gone)\n' "$op"
-      guarded_orca_worktree_rm kept "orca record $op" "$op" || true
+      guarded_orca_worktree_rm kept "orca record $op" "$op" "$orca_host_id" || [ $? -ne 2 ] || break
     done < <(jq -r --arg rid "$orca_repo_id" --arg hid "$orca_host_id" '
       .result.worktrees[]? | select(.repoId == $rid and (.hostId // "local") == $hid)
       | select((.isMainWorktree == true or .git.isMainWorktree == true) | not)

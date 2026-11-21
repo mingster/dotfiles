@@ -142,5 +142,32 @@ out=$(BOARD_CLEAN_BUDGET_S=0 python3 "$here/board-clean.py" --fleet --apply 2>&1
 grep -Fq 'board-clean: time budget spent' <<<"$out" && ok 'a spent budget says what is left for the next round' || bad 'a spent budget says what is left for the next round' "$out"
 grep -Fq 'worktree rm ' "$ORCA_LOG" && bad 'a spent budget starts no cleanup' "$(cat "$ORCA_LOG")" || ok 'a spent budget starts no cleanup'
 
+# A slow Orca stands in for a loaded host: every subprocess is cut at the budget, so the run ends inside the caller's step cap.
+cat > "$tmp/bin/orca-slow" <<'FAKE'
+#!/usr/bin/env bash
+case "$*" in
+  'worktree list --json') sleep "${SLOW_LOCAL_LIST:-0}" ;;
+  'worktree rm '*) sleep "${SLOW_RM:-0}" ;;
+esac
+exec "$REAL_FAKE_ORCA" "$@"
+FAKE
+chmod +x "$tmp/bin/orca-slow"
+for mode in --apply --dry-run; do
+  : > "$ORCA_LOG"
+  start=$SECONDS
+  out=$(REAL_FAKE_ORCA="$tmp/bin/orca" ORCA_CLI_COMMAND="$tmp/bin/orca-slow" SLOW_LOCAL_LIST=12 SLOW_RM=5 BOARD_CLEAN_BUDGET_S=5 \
+    perl -e 'alarm 15; exec @ARGV' python3 "$here/board-clean.py" --fleet "$mode" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "$mode with a slow Orca exits 0 inside the cap" || bad "$mode with a slow Orca exits 0 inside the cap" "rc=$rc $out"
+  grep -Fq 'board-clean: time budget spent; the cards left are cleaned next round' <<<"$out" && grep -Eq '^(applied|dry-run): clean=' <<<"$out" \
+    && ok "$mode with a slow Orca prints the budget and summary lines" || bad "$mode with a slow Orca prints the budget and summary lines" "$out"
+  [ $((SECONDS - start)) -lt 15 ] && ok "$mode with a slow Orca ends under 15s" || bad "$mode with a slow Orca ends under 15s" "$((SECONDS - start))s"
+done
+
+# Discovery stops between hosts: the first host outlasts the budget, so the second is never contacted.
+: > "$ORCA_LOG"
+out=$(REAL_FAKE_ORCA="$tmp/bin/orca" ORCA_CLI_COMMAND="$tmp/bin/orca-slow" SLOW_LOCAL_LIST=3 BOARD_CLEAN_BUDGET_S=2 python3 "$here/board-clean.py" --fleet --dry-run 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok 'a slow first host exits 0' || bad 'a slow first host exits 0' "rc=$rc $out"
+grep -Fq -- '--environment up' "$ORCA_LOG" && bad 'a spent budget does not contact the next host' "$(cat "$ORCA_LOG")" || ok 'a spent budget does not contact the next host'
+
 printf 'passed %s, failed %s\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

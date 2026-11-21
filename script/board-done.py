@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -23,6 +24,15 @@ FINAL = frozenset({"succeeded", "completed", "failed", "cancelled", "released", 
 FAILED = frozenset({"failed"})
 STOPPED = frozenset({"stopped"})
 RELEASED = frozenset({"succeeded", "completed", "released"})
+# Set by board-clean from its time budget (time.monotonic seconds). None means no cap.
+DEADLINE: float | None = None
+
+
+def cap_timeout(timeout: int) -> int:
+    """A subprocess never outlives the deadline: at most what is left, at least 1 second."""
+    if DEADLINE is None:
+        return timeout
+    return max(1, min(timeout, math.ceil(DEADLINE - time.monotonic())))
 
 
 def orca_bin() -> str:
@@ -148,9 +158,24 @@ def decide(worktree: dict, workers: list[dict], prs: list[dict], issues: list[di
     return None
 
 
+def run_capped(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """subprocess.run with the deadline cap. A timeout kills the whole process group, so a grandchild cannot hold the pipe open."""
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(timeout=cap_timeout(timeout))
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def run_json(cmd: list[str], timeout: int) -> tuple[dict | list | None, str]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = run_capped(cmd, timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, str(exc)
     if proc.returncode != 0:
