@@ -14,7 +14,7 @@ Fail closed (owner 2026-11-06): a worker-start with no usable reading is denied,
 a worker-start without --agent, gate exit 4 (no or stale reading), any gate error and any error here.
 Every other command passes untouched. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
-import importlib.util, json, os, re, shlex, subprocess, sys
+import importlib.util, json, os, re, shlex, subprocess, sys, time
 from datetime import datetime, timezone
 
 GATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "usage-gate.py")
@@ -221,6 +221,38 @@ def coordinator_overflow(repo=None):
     return None
 
 
+CACHE_TTL = 30  # seconds a cached allow stands; a block is never cached (#1313)
+
+
+def cache_file(provider, model):
+    state = os.environ.get("USAGE_GATE_STATE", os.path.expanduser("~/.claude/state/usage-gate"))
+    return os.path.join(state, "hook-allow-" + re.sub(r"[^\w.-]", "_", f"{provider}-{model or ''}") + ".json")
+
+
+def cached_allow(provider, model):
+    """The gate's last allowed reading for this provider and pool, if it is fresh."""
+    try:
+        with open(cache_file(provider, model)) as f:
+            entry = json.load(f)
+        if 0 <= time.time() - entry["at"] < CACHE_TTL:
+            return entry["detail"]
+    except Exception:
+        pass
+    return None
+
+
+def remember_allow(provider, model, detail):
+    try:
+        path = cache_file(provider, model)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump({"at": time.time(), "detail": detail}, f)
+        os.replace(tmp, path)
+    except Exception:
+        pass
+
+
 def emit(blocked):
     if blocked:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -266,6 +298,8 @@ def main():
             blocked.append(f"Usage gate: no usage reading for agent {provider or '(none given)'}; "
                            "name a gated agent with --agent.")
             continue
+        if cached_allow(provider, model) is not None:
+            continue
         try:
             args = [sys.executable, GATE, "check", "--provider", provider]
             # Preserve unknown for a named pool; another pool cannot supply its quota.
@@ -281,8 +315,10 @@ def main():
                 blocked.append(reason(provider, detail))
             except Exception:
                 blocked.append(f"Usage gate blocked {provider}: {detail.get('reason', 'see usage-gate.py show')}.")
-        elif r.returncode == 0 and detail.get("note"):
-            print("usage-gate-hook: " + detail["note"], file=sys.stderr)
+        elif r.returncode == 0:
+            remember_allow(provider, model, detail)
+            if detail.get("note"):
+                print("usage-gate-hook: " + detail["note"], file=sys.stderr)
         elif r.returncode != 0:
             blocked.append(f"Usage gate: no usage reading for {provider} (gate exit {r.returncode}); "
                            f"source {detail.get('source', 'unknown')}: {detail.get('reason', 'unknown')}. "

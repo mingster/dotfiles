@@ -56,7 +56,14 @@ class Hook(unittest.TestCase):
         os.chmod(path, 0o755)
         return path
 
-    def run_hook(self, command, tool="Bash", presets=True, orca="false"):
+    def clear_allow_cache(self):
+        for name in os.listdir(self.state):
+            if name.startswith("hook-allow-"):
+                os.remove(os.path.join(self.state, name))
+
+    def run_hook(self, command, tool="Bash", presets=True, orca="false", keep_cache=False):
+        if not keep_cache:
+            self.clear_allow_cache()  # each call reads the gate, unless a test is about the cache
         env = dict(os.environ, HOME=self.tmp.name, PATH=self.tmp.name + "/bin:" + os.environ["PATH"], USAGE_GATE_STATE=self.state, USAGE_GATE_ORCA=orca, USAGE_GATE_PRESETS=self.presets)
         env["FLEET_WATCH_TEST_LOAD_PER_CORE"] = "0.20"
         env["FLEET_WATCH_TEST_FREE_GB"] = "12"
@@ -83,6 +90,21 @@ class Hook(unittest.TestCase):
         deny, _ = self.run_hook("orca orchestration worker-start --task t --worktree current --agent claude")
         self.assertIn("blocked claude: weekly ceiling", deny)
         self.assertIn("Resets " + time.strftime("%a %d %b %H:%M %Z", time.localtime(FUT)) + " (local time)", deny)
+
+    def test_allow_is_cached_and_a_block_is_never_cached(self):
+        cmd = "orca orchestration worker-start --task t --agent claude --json"
+        self.claude(11)
+        self.assertIsNone(self.run_hook(cmd, keep_cache=True)[0])
+        self.assertTrue(os.path.isfile(self.state + "/hook-allow-claude-.json"))
+        self.claude(100)  # the gate would block now, but the allow is 30 s fresh
+        self.assertIsNone(self.run_hook(cmd, keep_cache=True)[0])
+        entry = json.load(open(self.state + "/hook-allow-claude-.json"))
+        entry["at"] -= 60  # expired: the next call reads the gate again
+        json.dump(entry, open(self.state + "/hook-allow-claude-.json", "w"))
+        self.assertIn("blocked claude: weekly ceiling", self.run_hook(cmd, keep_cache=True)[0] or "")
+        os.remove(self.state + "/hook-allow-claude-.json")
+        self.assertIn("blocked claude: weekly ceiling", self.run_hook(cmd, keep_cache=True)[0] or "")
+        self.assertFalse(os.path.exists(self.state + "/hook-allow-claude-.json"))
 
     def test_daily_cap_does_not_deny_a_start(self):
         self.claude(65, baseline=40)  # 25 spent; cap = 55 left over about 3.5 days
@@ -156,7 +178,9 @@ class Hook(unittest.TestCase):
                 "weekly_used": 0 if allowed else 100, "ceiling": 95}))
 
         data = {"tool_name": "Bash", "tool_input": {"command": command}}
+        self.clear_allow_cache()
         with mock.patch("sys.stdin", io.StringIO(json.dumps(data))), \
+                mock.patch.dict(os.environ, {"USAGE_GATE_STATE": self.state}), \
                 mock.patch.object(hook.subprocess, "run", side_effect=gate) as run, \
                 mock.patch.object(hook, "routing", return_value=None), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
