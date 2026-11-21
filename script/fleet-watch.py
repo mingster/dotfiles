@@ -7884,6 +7884,62 @@ def _worker_issue_number(worker):
     return None
 
 
+_NEEDS_OWNER_RE = re.compile(r'needs[ -]owner', re.I)
+
+
+def answered_owner_asks(messages, workers, state, config, run=subprocess.run):
+    """Notice lines for "needs owner" issues in a PM worker_done that the owner already answered (#1298).
+
+    Runs script/owner-decisions.sh for each #N in the message. Exit 0 means a recorded answer: the line
+    tells the coordinator "already answered" so it applies the answer instead of asking. Any other exit
+    stays silent (the coordinator's own check still runs). Each (message, issue) is told once.
+    """
+    lines = []
+    told = state.setdefault('owner_answered', [])
+    if not isinstance(told, list):
+        told = []
+        state['owner_answered'] = told
+    by_dispatch = {}
+    for worker in workers or []:
+        if isinstance(worker, dict):
+            dispatch = worker.get('dispatchId') or worker.get('dispatch_id')
+            if isinstance(dispatch, str) and dispatch:
+                by_dispatch[dispatch] = worker
+    script = str(Path(__file__).resolve().parent / 'owner-decisions.sh')
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
+            continue
+        message_id = message.get('id')
+        if not isinstance(message_id, str) or not message_id:
+            continue
+        payload = _message_payload(message)
+        text = ' '.join(str(v) for v in (message.get('subject'), message.get('body'), payload.get('body')) if v)
+        if not _NEEDS_OWNER_RE.search(text):
+            continue
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
+        worker = by_dispatch.get(dispatch)
+        if worker is None or _builder_role(worker) != 'architect-pm':
+            continue
+        repo = repo_for_worker(worker, config)
+        if not repo:
+            continue
+        for number in sorted({int(n) for n in re.findall(r'(?:^|[^A-Za-z0-9/])#(\d+)', text)}):
+            key = '%s:%s' % (message_id, number)
+            if key in told:
+                continue
+            try:
+                result = run([script, repo, str(number)], capture_output=True, text=True, timeout=60)
+            except (subprocess.SubprocessError, OSError):
+                continue
+            if result.returncode != 0:
+                continue
+            told.append(key)
+            first = (result.stdout.strip().splitlines() or [''])[0][:160]
+            lines.append('already answered: %s#%s has a recorded owner answer, apply it and do not ask the owner (%s)'
+                         % (repo, number, first))
+    return lines
+
+
 def bounce_builder_dones(messages, workers, body_of, notify, state, config):
     """Tell a builder its worker_done does not count when the PR body fails the finish gate."""
     lines = []
@@ -8174,6 +8230,10 @@ def main():
                 print('fleet-watch: ' + line)
         except Exception as error:
             print('fleet-watch: builder bounce skipped: %s' % (repr(error),), file=sys.stderr)
+        try:
+            notices += answered_owner_asks(inv['messages'], workers, state, config)
+        except Exception as error:
+            print('fleet-watch: owner answer check skipped: %s' % (repr(error),), file=sys.stderr)
     term_times = {}
     term_branches = {}
     terminal_list_ok = True

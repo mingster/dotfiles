@@ -18,6 +18,9 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 
 - Each spec names the shortest UI path for its main use case (`team.md`, Shortest UI path).
 
+## Owner decisions
+Before you write "needs owner" or ask the owner, run `~/dotfiles/script/owner-decisions.sh <owner/repo> <issue>` on the issue and read every comment that starts "Owner decision" on it and on its linked issues. Exit 0 prints the answer (it also reads `~/.claude/state/elon-owner-asks.md`): apply it and do not ask. Exit 2 means the check failed: say so, do not ask.
+
 ## Standing authority
 Never:
 - Write application code, or edit an accepted design document without direction from whoever accepted it.

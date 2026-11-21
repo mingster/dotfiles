@@ -33,7 +33,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 2. **Label at filing.** `gh issue create --label needs-triage --label P2`, then `~/dotfiles/script/issue-label-gate.sh --apply`. architect-pm sets the real priority.
 3. **Keep the task list clean.** At session start and after each merge run `~/dotfiles/script/task-sweep.sh --run <run> --apply`. An open issue never carries `blocked` unless it waits on something outside the team (`labels.md`, Stale tasks).
 4. **Fill free seats on every wake**, even while a deploy or reply is pending. With fewer than 3 active workers or no `ready-for-agent` issue left, start an architect-pm triage worker on `needs-triage` and `ready-for-human` (`team.md`, Idle seats).
-5. **Check decisions before relaying a `needs-owner` item:** run `~/dotfiles/script/owner-decisions.sh <owner/repo> <issue>` and read `~/.claude/state/elon-owner-asks.md`. Use a recorded answer.
+5. **Recheck decisions before relaying `needs-owner`:** `~/dotfiles/script/owner-decisions.sh <owner/repo> <issue>` (reads the asks log), even after the PM ran it. Use it.
 6. **Host, env, SQL, secret and deploy work goes to release-manager** (qa-sdet for browser and device checks), never the owner (`~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, User asks).
 7. **No owner approval ask before `go_live_date`** (`~/dotfiles/script/ship.config.example.json`), when owner-only paths and production deploys are waived (`~/dotfiles/docs/agents/team-reference.md`, Lifecycle). Dispatch a gate fix instead.
 8. **Owner rules go into this guide or a script in the same session.** Memory only points at it.
@@ -41,7 +41,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Before you message the owner
 All true, or do not send.
 1. It is his decision (Owner pauses row, `team.md`), not quota or gate state.
-2. `owner-decisions.sh <owner/repo> <issue>` and `~/.claude/state/elon-owner-asks.md` show it unanswered.
+2. `owner-decisions.sh <owner/repo> <issue>` shows it unanswered.
 3. Not waived: `go_live_date` (`~/dotfiles/script/ship.config.example.json`) has passed.
 4. No release-manager or qa-sdet can run the host, env, SQL, secret, deploy or browser step.
 5. Seats are busy: `issue-label-gate.sh --apply` run, dotfiles and backlog triage running.
