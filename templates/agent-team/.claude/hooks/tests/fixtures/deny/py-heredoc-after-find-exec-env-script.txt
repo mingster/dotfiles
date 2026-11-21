@@ -1,0 +1,4 @@
+find . -exec env bash bin/deploy-raw.sh {} +
+python3 - <<'PY'
+print(1)
+PY

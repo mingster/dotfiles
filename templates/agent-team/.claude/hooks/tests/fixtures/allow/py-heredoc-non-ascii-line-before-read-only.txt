@@ -1,0 +1,4 @@
+echo 測試 café
+python3 - <<'PY'
+print("hello")
+PY

@@ -520,6 +520,43 @@ class ShellIndirection(GuardTest):
                 with self.subTest(command=command):
                     self.assertDenied(command)
 
+    def _module(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_stdin_body", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_python_stdin_body_is_proven_only_for_the_allowlisted_form(self):
+        body = self._module().proven_python_stdin_body
+        proven = {"python3 - <<'PY'\nprint(1)\nPY": "print(1)",
+                  "python3 <<'PY'\nprint(1)\nPY\n\n": "print(1)",
+                  "python3 - /tmp/a.json <<'PY'\nprint(1)\nPY": "print(1)",
+                  "find . -name '*.json' -exec stat -f %z {} + > s.txt\npython3 - <<'PY'\nprint(1)\nPY": "print(1)",
+                  "find . -exec stat {} \\; | python3 - <<'PY'\nprint(1)\nPY": "print(1)"}
+        for command, expected in proven.items():
+            with self.subTest(command=command):
+                self.assertEqual(body(command), expected)
+        for command in ("echo hi\npython3 - <<'PY'\nprint(1)\nPY", "python3 - <<PY\nprint(1)\nPY",
+                        "python3 -I - <<'PY'\nprint(1)\nPY", "python3 - $(x) <<'PY'\nprint(1)\nPY",
+                        "python3 - <<'PY'\nprint(1)\nPY\nls", "python3 - <<'PY'\nprint(1)", "python3 - <<'PY'\r\nPY",
+                        "python - <<'PY'\nprint(1)\nPY", "find . -exec bash x {} +\npython3 - <<'PY'\nPY",
+                        "find . -exec stat {} + -exec bash x {} +\npython3 - <<'PY'\nPY",
+                        "find . '-exec' bash x {} + -exec stat {} +\npython3 - <<'PY'\nPY",
+                        "find . -delete -exec stat {} +\npython3 - <<'PY'\nPY", "find * -exec stat {} +\npython3 - <<'PY'\nPY",
+                        "find . -exec stat {} + > $(x)\npython3 - <<'PY'\nPY"):
+            with self.subTest(command=command):
+                self.assertIsNone(body(command))
+
+    def test_an_error_in_the_stdin_body_check_scans_the_whole_command(self):
+        mod = self._module()
+        with mock.patch.object(mod, "_PYTHON_STDIN", mock.Mock(match=mock.Mock(side_effect=RuntimeError("boom")))):
+            self.assertIsNone(mod.proven_python_stdin_body("python3 - <<'PY'\nprint(1)\nPY"))
+        mod.RAW_COMMAND = mod.CODE_COMMAND = "find . -exec stat {} + > s.txt\npython3 - <<'PY'\nprint(1)\nPY"
+        mod.INDIRECT.clear()
+        with mock.patch.object(mod, "proven_python_stdin_body", return_value=None):
+            mod.check_indirection("python3", ["-"])
+        self.assertTrue(mod.INDIRECT)
+
     def test_normal_use_allowed(self):
         for command in ("bash script.sh", "echo hi | bash script.sh", "sh -x script.sh < input.txt", "bash script.sh <<< data",
                         "sh < script.sh", "bash -c 'cd $(git rev-parse --show-toplevel) && ls'", "bash -c 'echo hi'",

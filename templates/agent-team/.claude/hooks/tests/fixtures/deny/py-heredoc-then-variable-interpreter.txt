@@ -1,0 +1,5 @@
+python3 - <<'PY'
+print(1)
+PY
+P=python3
+echo 'import os; os.system("bash bin/deploy-raw.sh")' | $P

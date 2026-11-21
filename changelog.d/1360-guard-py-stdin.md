@@ -1,0 +1,1 @@
+* The guard no longer denies a read only `python3 - <<'TAG'` heredoc because an earlier `find -exec stat` line or a path argument names `system`. Only that exact form has its heredoc body judged alone. Every other command is still judged whole, as before, and a new regression test checks that no command the old guard denied is now allowed (#1360).

@@ -2892,6 +2892,30 @@ def shell_reads_stdin(args):
     return True
 
 
+# An allowlist, not a parser (#1360). A word is plain text or one whole single quoted string, never a find
+# action that runs a program or writes a file. Any command outside this grammar scans the whole command.
+_PLAIN = r"[A-Za-z0-9_.,/%=+:@-]+"
+_WORD = rf"(?!'?-(?:exec|ok|delete|fprint|fls))(?:{_PLAIN}|'[^'\n]*')"
+_FIND_STAT = rf"find(?: {_WORD})*? -exec stat(?: {_WORD})*? \{{\}} (?:\+|\\;)"
+_PYTHON_STDIN = re.compile(
+    rf"(?:{_FIND_STAT}(?: > {_PLAIN})?\n)*(?:{_FIND_STAT} \| )?python3(?: -(?: {_PLAIN})*)? "
+    r"<<'([A-Za-z_][A-Za-z0-9_]*)'\n")
+
+
+def proven_python_stdin_body(command):
+    """The heredoc body when the whole command is `find ... -exec stat {} +` lines and then one
+    `python3 - <<'TAG'` heredoc that ends the command. None for any other command (fail closed)."""
+    try:
+        m = _PYTHON_STDIN.match(command)
+        if not m:
+            return None
+        lines = command[m.end():].split("\n")
+        end = lines.index(m.group(1))
+        return None if any(lines[end + 1:]) else "\n".join(lines[:end])
+    except Exception:
+        return None
+
+
 def check_indirection(base, args):
     if base in SHELLS:
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
@@ -2911,7 +2935,9 @@ def check_indirection(base, args):
         if idx is not None:
             code = " ".join(args[idx + 1:])
         elif operand is None or "-" in args:
-            code = CODE_COMMAND
+            code = proven_python_stdin_body(RAW_COMMAND) if base == "python3" else None
+            if code is None:
+                code = CODE_COMMAND
         else:
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
