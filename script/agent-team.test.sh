@@ -118,6 +118,23 @@ else
   check "machine mode writes rendered roles and session-start, links hooks, bins, Tier 1+2 skills and merges settings" bad
 fi
 
+# 1324: machine seeds an empty grok_hosts into an existing fleet config and keeps keys already set.
+seed_state="$tmp/seed-state"
+mkdir -p "$seed_state"
+printf '{"hosts":["box"],"repos":["~/r"]}\n' >"$seed_state/fleet-config.json"
+AGENT_STATE_DIR="$seed_state" bash "$SCRIPT" machine >/dev/null 2>&1
+if jq -e '.grok_hosts == [] and .hosts == ["box"]' "$seed_state/fleet-config.json" >/dev/null 2>&1; then
+  printf '{"hosts":["box"],"grok_hosts":["box"]}\n' >"$seed_state/fleet-config.json"
+  AGENT_STATE_DIR="$seed_state" bash "$SCRIPT" machine >/dev/null 2>&1
+  if jq -e '.grok_hosts == ["box"]' "$seed_state/fleet-config.json" >/dev/null 2>&1; then
+    check "machine seeds grok_hosts into the fleet config and never overwrites it" ok
+  else
+    check "machine seeds grok_hosts into the fleet config and never overwrites it" bad
+  fi
+else
+  check "machine seeds grok_hosts into the fleet config and never overwrites it" bad
+fi
+
 printf '{broken json\n' > "$HOME/.claude/settings.json"
 if ! bash "$SCRIPT" machine >/dev/null 2>&1; then
   check "machine mode refuses invalid JSON in ~/.claude/settings.json" ok

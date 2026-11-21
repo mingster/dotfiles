@@ -97,4 +97,14 @@ fi
 grep -q 'MISSING agy global rule orca-agy.md' "$tmp/miss-out"
 echo 'PASS: missing link with agy present is named'
 
-echo 'PASS: 9 tests'
+# 1324: warn when hosts are listed but grok_hosts is empty; stay quiet when it is set.
+printf '{"hosts":["box"],"grok_hosts":[]}\n' >"$tmp/fleet-warn.json"
+FLEET_PULL_CONFIG="$tmp/fleet-warn.json" HOME="$home4" bash "$root/script/check-agent-startup.sh" >/dev/null 2>"$tmp/warn-out" || true
+grep -q 'WARN grok_hosts is empty' "$tmp/warn-out"
+echo 'PASS: empty grok_hosts is warned about'
+printf '{"hosts":["box"],"grok_hosts":["box"]}\n' >"$tmp/fleet-ok.json"
+FLEET_PULL_CONFIG="$tmp/fleet-ok.json" HOME="$home4" bash "$root/script/check-agent-startup.sh" >/dev/null 2>"$tmp/warn-out" || true
+! grep -q 'WARN grok_hosts' "$tmp/warn-out"
+echo 'PASS: set grok_hosts is not warned about'
+
+echo 'PASS: 11 tests'
