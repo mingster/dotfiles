@@ -141,7 +141,6 @@ map_file() {
       ;;
     script/agent-team.sh)
       map_script_sh_base "agent-team"
-      add_if_exists "script/agent-team.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
     script/automation-precheck-*.sh)
@@ -200,12 +199,12 @@ map_file() {
       ;;
     templates/agent-team/.claude/model-routing.md)
       add_if_exists "script/tests/test_usage_gate.py"
-      add_if_exists "script/agent-team.test.sh"
+      add_glob_under_root "script/tests/agent-team-cases-*.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       add_if_exists "script/tests/role-word-budget.test.sh"
       ;;
     templates/agent-team/*)
-      add_if_exists "script/agent-team.test.sh"
+      add_glob_under_root "script/tests/agent-team-cases-*.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       add_if_exists "script/tests/role-word-budget.test.sh"
       ;;
