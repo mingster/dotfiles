@@ -177,6 +177,19 @@
     "type": "command",
     "command": "~/.claude/statusline.sh"
   },
+  "skillOverrides": {
+    "jira-tickets": "off",
+    "linear-tickets": "off",
+    "orca-jira": "off",
+    "orca-linear": "off",
+    "orca-plugin-authoring": "off",
+    "orca-per-workspace-env": "off",
+    "weekly-review": "off",
+    "what-did-i-get-done": "off",
+    "make-pr-easy-to-review": "off",
+    "fix-ci": "off",
+    "run-smoke-tests": "off"
+  },
   "enabledPlugins": {
     "mattpocock-skills@mattpocock": false
   },
