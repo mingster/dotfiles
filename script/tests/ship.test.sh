@@ -1246,6 +1246,8 @@ fleet_case() { # <pr> <repo> <expect called|silent> [fail|hang]
 fleet_case 1401 mingster/dotfiles called
 if [ "$SHIP_RC" -eq 0 ] && [ -f "$fp_dir/calls" ] && grep -q 'pr=1401 .*exit=0' <<<"$FP_LOG" && grep -q '^ok   hostA' <<<"$FP_LOG"; then ok "dotfiles merge triggers fleet-pull and logs ok"
 else bad "dotfiles merge triggers fleet-pull and logs ok" "rc=$SHIP_RC log=$FP_LOG out=$SHIP_OUT"; fi
+if grep -qE '^fleet-pull .* pr=1401 .*exit=0 duration_s=[0-9]+$' <<<"$FP_LOG"; then ok "the fleet-pull log header carries duration_s"
+else bad "the fleet-pull log header carries duration_s" "log=$FP_LOG"; fi
 fleet_case 1402 example/repo silent
 if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$fp_dir/calls" ] && [ -z "$FP_LOG" ]; then ok "a non dotfiles merge does not trigger fleet-pull"
 else bad "a non dotfiles merge does not trigger fleet-pull" "rc=$SHIP_RC log=$FP_LOG"; fi

@@ -217,7 +217,10 @@ if ! command -v bun >/dev/null 2>&1; then fail=$((fail+1)); echo "FAIL --report 
 else
   setup; withremote; for r in "$D" "$P"; do ( cd "$r" && { [ -d .git ] || git init -q; } && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base ); done
   printf 'date\tfinding\tevidence\tcount\tfix ticket\tstatus\n2026-11-08\tworker skipped the receipt\tPR #9, PR #12\t2\t-\topen\n' > "$tmp/obs.tsv"
-  rep=$(TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
+  mkdir -p "$tmp/wsstate"
+  printf '2026-11-20T10:00:00Z worker-startup run=a duration_s=10\n2026-11-20T11:00:00Z worker-startup run=b duration_s=30\n' > "$tmp/wsstate/durations.log"
+  printf 'fleet-pull 2026-11-20T10:00:00Z pr=1 sha=a exit=0 duration_s=20\nok   hostA ~/dotfiles abc\nfleet-pull 2026-11-20T11:00:00Z pr=2 sha=b exit=0 duration_s=60\n' > "$tmp/fp.log"
+  rep=$(WORKER_STARTUP_STATE="$tmp/wsstate" SHIP_FLEET_PULL_LOG="$tmp/fp.log" TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
     DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1); code=$?
   rcheck() { # name regex
     if echo "$rep" | grep -qE -- "$2"; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; echo "$rep"; fi
@@ -226,6 +229,8 @@ else
   rcheck "--report has the problems section" '^## Problems with evidence$'
   rcheck "--report has the proposals section" '^## Proposals with a recommended option$'
   rcheck "--report has the stage times section" '^## Stage times$'
+  rcheck "--report has worker-startup durations" '^\| worker-startup \| 20(\.0)? \| 30 \| 2 \|$'
+  rcheck "--report has fleet-pull durations" '^\| fleet-pull \| 40(\.0)? \| 60 \| 2 \|$'
   rcheck "--report lists TSV rows with evidence" '^- worker skipped the receipt \(logged 2026-11-08, count 2, evidence PR #9, PR #12'
   rcheck "--report recommends a fix ticket at count 2" 'worker skipped the receipt: Recommended: A, open a fix ticket'
   rcheck "--report prints sample and verified counts" '^Samples: 3, fully verified: 2$'

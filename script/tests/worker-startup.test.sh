@@ -2030,6 +2030,12 @@ grep -Fxq -- 'issue edit 7950 -R acme/app --add-label status:進行中 --remove-
 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --skip-dotfiles-first "test"
 grep -Fxq -- 'issue edit 5 --repo acme/dots --add-label status:接下來' "$GH_STUB_LOG" && ok || bad "the label gate should run at a hand start ($(cat "$GH_STUB_LOG"))"
 
+# A successful start logs one duration_s line for team-audit.sh --report (#1330).
+rm -f "$route_state/durations.log"
+GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --skip-dotfiles-first "test"
+grep -qE '^[0-9TZ:-]+ worker-startup run=run_route duration_s=[0-9]+$' "$route_state/durations.log" 2>/dev/null && ok || bad "a successful start should log duration_s ($(cat "$route_state/durations.log" 2>&1))"
+grep -qE '^worker-startup run=run_route duration_s=[0-9]+$' "$tmp/route.err" && ok || bad "a successful start should print duration_s on stderr"
+
 rm -f "$bin/hostname"
 
 echo "worker-startup: $pass passed, $fail failed"
