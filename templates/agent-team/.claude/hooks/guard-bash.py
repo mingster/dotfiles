@@ -3421,6 +3421,34 @@ def interpreter_stdin_body(command, base):
         return command
 
 
+def _shell_parse_unsure(command):
+    shell, lines, i = ShellLines(), command.splitlines(keepends=True), 0
+    while i < len(lines):
+        shell.scan(lines[i])
+        i += 1
+        if shell.unsure:
+            return True
+        if shell.pending and not shell.quote and not shell.continued:
+            for dash, delim in shell.pending:
+                while i < len(lines):
+                    body = lines[i]
+                    i += 1
+                    if (body.rstrip("\r\n").lstrip("\t") if dash else body.rstrip("\r\n")) == delim:
+                        break
+                else:
+                    return True
+            shell.pending = []
+    return not shell.at_top_level()
+
+
+def shell_parse_unsure(command):
+    """True when the shell syntax of `command` cannot be told apart from a quote spanning lines (fail closed)."""
+    try:
+        return _shell_parse_unsure(command)
+    except Exception:
+        return True
+
+
 # ---------------------------------------------------------------- Exact only scripts
 
 EXACT_ONLY_UNSAFE = re.compile("[\n$`;|&<>(){}]")
@@ -3978,6 +4006,9 @@ def check_command(command):
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
+    if shell_parse_unsure(command):
+        # segments() may hide a line inside a quote it mis-tracked, so check each line on its own too.
+        texts += [line for line in command.splitlines() if line.strip()]
     for text in texts:
         cur_cwd = GATE_CWD
         for seg in segments(text):
