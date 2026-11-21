@@ -1818,6 +1818,48 @@ def kept_hooks():
     _kept_hooks_cache = kept
     return kept
 
+# A kept hook (and its test) is the project's own, but a copy that is byte for byte an older template
+# release is not a customization: it is a stale stock copy that sync never refreshed (#1392). Those
+# follow the template; a copy no template release ever had is left alone (#1179).
+STALE_COPY_FILES = [".claude/hooks/guard-bash.py", ".claude/hooks/tests/test_guard_bash.py"]
+_history_blobs = {}
+
+
+def template_history_blobs(rel):
+    if rel not in _history_blobs:
+        blobs = set()
+        res = subprocess.run(
+            ["git", "-C", dotfiles, "log", "--no-abbrev", "--raw", "--format=", "--", f"templates/agent-team/{rel}"],
+            capture_output=True,
+            text=True,
+        )
+        for line in res.stdout.splitlines():
+            parts = line.split("\t")[0].split()
+            if len(parts) >= 5:
+                blobs.update(parts[2:4])
+        _history_blobs[rel] = blobs
+    return _history_blobs[rel]
+
+
+def stale_template_copies():
+    stale = []
+    for rel in STALE_COPY_FILES:
+        full = os.path.join(target, rel)
+        src = os.path.join(template_dir, rel)
+        if not os.path.isfile(full) or os.path.islink(full) or not os.path.isfile(src):
+            continue
+        if read_text(full) == read_text(src):
+            continue
+        res = subprocess.run(["git", "hash-object", full], capture_output=True, text=True)
+        if res.stdout.strip() in template_history_blobs(rel):
+            stale.append(rel)
+    return stale
+
+
+def refresh_stale_template_copies():
+    for rel in stale_template_copies():
+        write_text(rel, read_text(os.path.join(template_dir, rel)), executable=os.access(os.path.join(target, rel), os.X_OK))
+
 
 def remove_legacy_copies():
     for role_file in CANONICAL_ROLES:
@@ -2246,6 +2288,9 @@ def run_check():
         if (os.path.exists(full) or os.path.islink(full)) and hook not in kept:
             drifts.append(f"shared hook copy or link in project: {rel}")
 
+    for rel in stale_template_copies():
+        drifts.append(f"kept hook file is a stale template copy: {rel}")
+
     for b in SHARED_BINS:
         rel = f".claude/bin/{b}"
         full = os.path.join(target, rel)
@@ -2401,6 +2446,7 @@ if mode == "project":
     extract_role_facts(model_bullets)
     seed_and_sync_project(proj_settings_mem)
     remove_legacy_copies()
+    refresh_stale_template_copies()
 elif mode == "check":
     run_check()
 else:
