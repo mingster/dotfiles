@@ -1,0 +1,3 @@
+ruby -EUTF-8 <<'RB'
+system("bash", "bin/deploy-raw.sh")
+RB

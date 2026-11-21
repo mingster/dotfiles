@@ -1,0 +1,7 @@
+echo "$(echo "$(cat <<'EOF'
+echo 'import os; os.system("bash bin/deploy-raw.sh")' | python3
+EOF
+)")"
+python3 - <<'PY'
+print(1)
+PY

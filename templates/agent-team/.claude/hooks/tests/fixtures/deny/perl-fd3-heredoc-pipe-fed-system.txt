@@ -1,0 +1,3 @@
+echo system qw:bash bin/deploy-raw.sh: | perl - 3<<'PL'
+1
+PL

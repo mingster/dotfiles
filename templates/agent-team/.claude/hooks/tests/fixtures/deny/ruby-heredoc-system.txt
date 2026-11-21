@@ -1,0 +1,3 @@
+ruby - <<'RB'
+system "bash bin/deploy-raw.sh"
+RB

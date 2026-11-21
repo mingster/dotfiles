@@ -1,0 +1,5 @@
+python3 - <<'PY'
+  PY
+x = '\'"'
+PY
+find . -prune -exec bash bin/deploy-raw.sh {} +

@@ -1,0 +1,5 @@
+echo 測試
+python3 - <<'PY'
+import os
+os.system("bash bin/deploy-raw.sh")
+PY

@@ -1,0 +1,690 @@
+[
+ {
+  "name": "pr1382-review-001",
+  "command": "bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-003",
+  "command": "find . -prune -exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-004",
+  "command": "perl -e 'system qw/bash bin/deploy-raw.sh/'"
+ },
+ {
+  "name": "pr1382-review-005",
+  "command": "# '\necho \"$(bash bin/deploy-raw.sh)\"\n# '"
+ },
+ {
+  "name": "pr1382-review-006",
+  "command": "# \"\nbash \\\n-c \"bash bin/deploy-raw.sh\"\n# \""
+ },
+ {
+  "name": "pr1382-review-007",
+  "command": "python3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-008",
+  "command": "perl -esystem+q:bash:,q:bin/deploy-raw.sh: <<'PL'\n1\nPL"
+ },
+ {
+  "name": "pr1382-review-009",
+  "command": "perl -lesystem+q:bash:,q:bin/deploy-raw.sh: <<'PL'\n1\nPL"
+ },
+ {
+  "name": "pr1382-review-010",
+  "command": "perl -neeval <<'PL'\n\"sys\".\"tem('bash bin/deploy-raw.sh')\"\nPL"
+ },
+ {
+  "name": "pr1382-review-011",
+  "command": "perl -eexec 'bash bin/deploy-raw.sh' <<'PL'\n1\nPL"
+ },
+ {
+  "name": "pr1382-review-012",
+  "command": "perl -esystem 'bash bin/deploy-raw.sh' <<'PL'\n1\nPL"
+ },
+ {
+  "name": "pr1382-review-013",
+  "command": "cat <<\\\nOUTER; echo \"\n\\\ncat > /tmp/x <<'EOF'\n$(bash bin/deploy-raw.sh)\nEOF\n\" # \"\nOUTER"
+ },
+ {
+  "name": "pr1382-review-014",
+  "command": "cat <<$'\\'' ; echo '\n'\n$\\ ; echo \ncat > /tmp/x <<'EOF'\n'\n$(bash bin/deploy-raw.sh)\nEOF"
+ },
+ {
+  "name": "pr1382-review-015",
+  "command": "cat <<a$'\\'' ; echo '\n'\na$\\ ; echo \ncat > /tmp/x <<'EOF'\na'\n$(bash bin/deploy-raw.sh)\nEOF"
+ },
+ {
+  "name": "pr1382-review-016",
+  "command": "python3 - <<PY\nprint(\"$(bash bin/deploy-raw.sh)\")\nPY"
+ },
+ {
+  "name": "pr1382-review-017",
+  "command": "python3 - <<$'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-018",
+  "command": "cat <<'A'$'\\'' ; echo '\n\"'\nA'\necho 'import os,sys; os.system(sys.argv[1])' | python3 - 'bash bin/deploy-raw.sh'\n: \"\nA$\\ ; echo \n\"; # \"\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-019",
+  "command": "echo 'import os; os.system(\"bash bin/deploy-raw.sh\")' |\npython3 - 3<<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-020",
+  "command": "python3 - 0<<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-021",
+  "command": "echo 'import os; os.system(\"bash bin/deploy-raw.sh\")' |\npython3 - 9<<-'PY'\n\tprint(1)\n\tPY"
+ },
+ {
+  "name": "pr1382-review-022",
+  "command": "python3 - <<'PY' < /tmp/payload.py\nprint(1)\nPY\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3"
+ },
+ {
+  "name": "pr1382-review-023",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\npython3 - <<< 'import os; os.system(\"bash bin/deploy-raw.sh\")'"
+ },
+ {
+  "name": "pr1382-review-024",
+  "command": "python3 - <<'PY' | python3\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-025",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3"
+ },
+ {
+  "name": "pr1382-review-026",
+  "command": "python3 - <<'PY'; bash bin/deploy-raw.sh\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-027",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\ntrue && echo 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3"
+ },
+ {
+  "name": "pr1382-review-028",
+  "command": "false || echo 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-029",
+  "command": "echo 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3 &\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-030",
+  "command": "echo $(cat <<'EOF')\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3\nEOF\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-031",
+  "command": "eval `cat <<'EOF'\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3\nEOF\n`\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-032",
+  "command": "echo \"$(\necho \")\"\npython3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY\n)\""
+ },
+ {
+  "name": "pr1382-review-033",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\neval 'echo \"import os; os.system(\\\"bash bin/deploy-raw.sh\\\")\" | python3'"
+ },
+ {
+  "name": "pr1382-review-034",
+  "command": "eval $(\ncat <<'EOF' )\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | python3\nEOF\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-035",
+  "command": "python3 -c 'import os; os.system(\"bash bin/deploy-raw.sh\")' <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-036",
+  "command": "python3 -Es - <<'PY'\nimport subprocess\nsubprocess.run([\"bash\", \"bin/deploy-raw.sh\"])\nPY"
+ },
+ {
+  "name": "pr1382-review-037",
+  "command": "ruby -EUTF-8 <<'RB'\nsystem(\"bash\", \"bin/deploy-raw.sh\")\nRB"
+ },
+ {
+  "name": "pr1382-review-038",
+  "command": "ruby -esystem+%{bash},%{bin/deploy-raw.sh} <<'RB'\n1\nRB"
+ },
+ {
+  "name": "pr1382-review-039",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nP=python3\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | $P"
+ },
+ {
+  "name": "pr1382-review-040",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | py\thon3"
+ },
+ {
+  "name": "pr1382-review-041",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\necho 'import os; os.system(\"bash bin/deploy-raw.sh\")' | py\"thon\"3"
+ },
+ {
+  "name": "pr1382-review-042",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nbash -c 'echo \"import os; os.system(\\\"bash bin/deploy-raw.sh\\\")\" | $0$1' py thon3"
+ },
+ {
+  "name": "pr1382-review-043",
+  "command": "python3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY trailing"
+ },
+ {
+  "name": "pr1382-review-044",
+  "command": "python3 - <<'PY'\nx = '\\'\"\\\"\\''\nPY\nfind . -prune -exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-045",
+  "command": "python3 - <<'PY'\nx = '\\'\"\\\"\\''\nPY\nperl -e 'system qw/bash bin/deploy-raw.sh/'"
+ },
+ {
+  "name": "pr1382-review-046",
+  "command": "python3 - <<'PY'\n# \"\\\"\nPY\nfind . -prune -exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-047",
+  "command": "cat <<'EOF'\nnote\nEOF\npython3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-048",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\npython3 - <<'PY2'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY2"
+ },
+ {
+  "name": "pr1382-review-049",
+  "command": "python3 - <<'PY'\r\nimport os\r\nos.system(\"bash bin/deploy-raw.sh\")\r\nPY"
+ },
+ {
+  "name": "pr1382-review-050",
+  "command": "python3 - <<-'PY'\n\tprint(1)\n\tPY\npython3 - <<< 'import os; os.system(\"bash bin/deploy-raw.sh\")'"
+ },
+ {
+  "name": "pr1382-review-051",
+  "command": "python3 - <<'PY'\n  PY\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-052",
+  "command": "python3 - <<'PY'\n  PY\nx = '\\'\"'\nPY\nfind . -prune -exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-053",
+  "command": "cat <<'EOF'\n  EOF\n\"\nEOF\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-054",
+  "command": "# \"\nbash bin/deploy-raw.sh\n# \""
+ },
+ {
+  "name": "pr1382-review-055",
+  "command": "echo `# \"`\nbash bin/deploy-raw.sh\necho `# \"`"
+ },
+ {
+  "name": "pr1382-review-056",
+  "command": "# \"\\\"\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-057",
+  "command": "# '\"'\"\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-058",
+  "command": "echo \"#\" # \"\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-059",
+  "command": "cat <<'EOF'\n\"\\\"\nEOF\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-060",
+  "command": "cat <<\\EOF\n\"\nEOF\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-061",
+  "command": "\"blocked_scripts\": [\"deploy-raw.sh\"]"
+ },
+ {
+  "name": "pr1382-review-063",
+  "command": "python3 -c '\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\n'"
+ },
+ {
+  "name": "pr1382-review-065",
+  "command": "bash -c \"bash bin/deploy-raw.sh\""
+ },
+ {
+  "name": "pr1382-review-066",
+  "command": "-c \"bash bin/deploy-raw.sh\""
+ },
+ {
+  "name": "pr1382-review-069",
+  "command": "\npython3 -c '\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\n'\necho "
+ },
+ {
+  "name": "pr1382-review-070",
+  "command": ") to count as a comment. Calling `strip_comment(line)` per line with `quote = None` strips continuation lines that start with `#` inside a multi-line `-c` string (`# \"\nbash -c 'echo \"\n# \" && bash bin/deploy-raw.sh'` and `# '\npython3 -c '\nimport os; \"\"\"\n# \"\"\" + str(os.system(\"bash bin/deploy-raw.sh\"))\n'`), while `strip_comment` leaves `# \"` unstripped in"
+ },
+ {
+  "name": "pr1382-review-071",
+  "command": "echo \"$(echo \")\"; bash bin/deploy-raw.sh)\""
+ },
+ {
+  "name": "pr1382-review-072",
+  "command": "echo \"$(echo \")\"\nbash \\\n-c \"bash bin/deploy-raw.sh\"\n)\""
+ },
+ {
+  "name": "pr1382-review-073",
+  "command": "echo \"$( # )\nbash bin/deploy-raw.sh\n)\""
+ },
+ {
+  "name": "pr1382-review-074",
+  "command": "echo \"$(echo \\); bash bin/deploy-raw.sh)\""
+ },
+ {
+  "name": "pr1382-review-075",
+  "command": "echo \"$(echo '\"')\"\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-076",
+  "command": "echo \"$(echo \"${x:-\")\"}\";\nbash bin/deploy-raw.sh\n)\""
+ },
+ {
+  "name": "pr1382-review-077",
+  "command": "echo $(echo $'\\')'\nbash bin/deploy-raw.sh\n: $'\\'' )"
+ },
+ {
+  "name": "pr1382-review-078",
+  "command": "cat <<$'\\'' ; echo '\"\n\\\ncat > /tmp/x <<'EOF'\n$(bash bin/deploy-raw.sh)\nEOF\n\" # '\n' ; echo "
+ },
+ {
+  "name": "pr1382-review-079",
+  "command": "cat <<'EOF'\n'\nEOF\necho \"$(bash bin/deploy-raw.sh)\""
+ },
+ {
+  "name": "pr1382-review-080",
+  "command": "# \"\npython3 -c '\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\n'\n# \""
+ },
+ {
+  "name": "pr1382-review-081",
+  "command": "echo \"$(echo \")\" '\"';\npython3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY\n)\""
+ },
+ {
+  "name": "pr1382-review-082",
+  "command": "python3 - <<'PY'\nx = '\\'\"\"\\''\nPY\nperl -e 'system qw/bash bin/deploy-raw.sh/'"
+ },
+ {
+  "name": "pr1382-review-083",
+  "command": "python3 - <<'PY'\nx = '\\'\"\"\\''\nPY\nfind . -prune -exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-084",
+  "command": "python3 - <<'PY' < /tmp/in.py\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-085",
+  "command": "python3 - <<'PY' > /tmp/out.txt\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-086",
+  "command": "echo a | cat | python3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-087",
+  "command": "bash bin/deploy-raw.sh && python3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-088",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\ntrue || bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-089",
+  "command": "bash bin/deploy-raw.sh &\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-090",
+  "command": "echo $(bash bin/deploy-raw.sh)\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-091",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\neval 'echo \"import os; os.system(\\\"bash bin/deploy-raw.sh\\\")\" | 'py'thon3'"
+ },
+ {
+  "name": "pr1382-review-092",
+  "command": "python3 - <<'PY'\nprint(1)\nPY \nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-093",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-094",
+  "command": "python3 - <<'PY'\nprint(1)\nPY trailing\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-095",
+  "command": "python3 - <<'A' <<'B'\nprint(1)\nA\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nB"
+ },
+ {
+  "name": "pr1382-review-096",
+  "command": "cat <<'A' <<'B'\nA\n\"\nB\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-097",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\r\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-098",
+  "command": "# \"\r\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-099",
+  "command": "python3 - <<-'PY'\n\timport os\n\tos.system(\"bash bin/deploy-raw.sh\")\n\tPY"
+ },
+ {
+  "name": "pr1382-review-100",
+  "command": "cat <<-'EOF'\n  EOF\n\"\n\tEOF\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-101",
+  "command": "python3 - <<'PY'\nprint(\"PY\")\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+ },
+ {
+  "name": "pr1382-review-102",
+  "command": "cat <<'EOF-1'\nEOF\n\"\nEOF-1\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-103",
+  "command": "echo \"<<EOF\" # \"\nbash \\\n-c \"bash bin/deploy-raw.sh\"\nEOF"
+ },
+ {
+  "name": "pr1382-review-104",
+  "command": ": \"<<EOF\" # \"\nbash \\\n-c \"bash bin/deploy-raw.sh\"\n# \""
+ },
+ {
+  "name": "pr1382-review-105",
+  "command": "# \"\nbash -c 'echo \"\n# \" && bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-106",
+  "command": "# '\npython3 -c '\nimport os; \"\"\"\n# \"\"\" + str(os.system(\"bash bin/deploy-raw.sh\"))\n'"
+ },
+ {
+  "name": "pr1382-review-107",
+  "command": "cat <<'1'\n\"\n1\nbash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-108",
+  "command": "cat <<E'O'F\n'\nEOF\nbash \\\n-c \"bash bin/deploy-raw.sh\""
+ },
+ {
+  "name": "pr1382-review-109",
+  "command": "cat <<'EOF-1'\n\"\nEOF-1\nbash \\\n-c \"bash bin/deploy-raw.sh\"\n# \""
+ },
+ {
+  "name": "pr1382-review-110",
+  "command": "echo \"$(echo \")\" '\"'; bash bin/deploy-raw.sh; echo '\"')\""
+ },
+ {
+  "name": "pr1382-review-111",
+  "command": "echo \"$(echo \")\" '\"';\nbash \\\n-c \"bash bin/deploy-raw.sh\"\necho '\"')\""
+ },
+ {
+  "name": "pr1382-review-112",
+  "command": "echo `# \"`\nbash \\\n-c \"bash bin/deploy-raw.sh\"\necho `# \"`"
+ },
+ {
+  "name": "pr1382-review-113",
+  "command": "git rebase --exec 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-114",
+  "command": "watch --exec bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-115",
+  "command": "nodemon --exec 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-116",
+  "command": "emacs --batch --eval 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-117",
+  "command": "perl -e-system+qw:bash:,qw:bin/deploy-raw.sh: dummy"
+ },
+ {
+  "name": "pr1382-review-118",
+  "command": "./system bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-119",
+  "command": "bin/system bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-120",
+  "command": "os.system 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-121",
+  "command": "subprocess.run 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-122",
+  "command": "cp bin/deploy-raw.sh /tmp/stat"
+ },
+ {
+  "name": "pr1382-review-123",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\ngit rebase --exec 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-124",
+  "command": "git rebase --exec 'bash bin/deploy-raw.sh'\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-125",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\ngit rebase --exec=bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-126",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nwatch --exec bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-127",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nnodemon --exec 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-128",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nemacs --batch --eval 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-129",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nperl -e-system+qw:bash:,qw:bin/deploy-raw.sh: dummy"
+ },
+ {
+  "name": "pr1382-review-130",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\n./system bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-131",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nbin/system bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-132",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nos.system 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-133",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nsubprocess.run 'bash bin/deploy-raw.sh'"
+ },
+ {
+  "name": "pr1382-review-134",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nfind . -exec ./stat {} +"
+ },
+ {
+  "name": "pr1382-review-135",
+  "command": "cp bin/deploy-raw.sh /tmp/stat\nfind . -prune -exec /tmp/stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-136",
+  "command": "find . -exec stat {} + -exec bash bin/deploy-raw.sh {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-137",
+  "command": "find . '-exec' bash bin/deploy-raw.sh {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-138",
+  "command": "find . -exec 'stat' {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-139",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\nbin/exec bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-140",
+  "command": "find . -exec 2>/tmp/stat bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-141",
+  "command": "-exec bash bin/deploy-raw.sh {} +"
+ },
+ {
+  "name": "pr1382-review-142",
+  "command": "echo 'qx/bash deploy-raw.sh/' | perl -Isrc"
+ },
+ {
+  "name": "pr1382-review-143",
+  "command": "system.sh bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "pr1382-review-145",
+  "command": "echo $'\\''\nbash bin/deploy-raw.sh\necho $'\\''"
+ },
+ {
+  "name": "pr1382-review-146",
+  "command": "find . -exec >/tmp/stat bash bin/deploy-raw.sh {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "pr1382-review-147",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\necho 'Kernel.system %{bash bin/deploy-raw.sh}' | ruby -Iapp"
+ },
+ {
+  "name": "pr1382-review-148",
+  "command": "echo \"$( (true); echo \")\"\nbash bin/deploy-raw.sh\n)\""
+ },
+ {
+  "name": "probe-find-execdir-before-stat",
+  "command": "find . -execdir bash bin/deploy-raw.sh {} + -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-ok-after-stat",
+  "command": "find . -exec stat {} \\; -ok bash bin/deploy-raw.sh {} \\;\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-quoted-exec-before-stat",
+  "command": "find . '-exec' bash bin/deploy-raw.sh {} + -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-delete-with-stat",
+  "command": "find . -delete -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-fprint-with-stat",
+  "command": "find . -fprint /tmp/out -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-glob-word",
+  "command": "find . -name *.sh -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-dollar-word",
+  "command": "find $(bash bin/deploy-raw.sh) -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-backtick-word",
+  "command": "find `bash bin/deploy-raw.sh` -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-dq-word",
+  "command": "find \"$(bash bin/deploy-raw.sh)\" -exec stat {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-stat-semicolon-script",
+  "command": "find . -exec stat {} +; bash bin/deploy-raw.sh\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-stat-and-script",
+  "command": "find . -exec stat {} + && bash bin/deploy-raw.sh\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-stat-redirect-subst",
+  "command": "find . -exec stat {} + > $(bash bin/deploy-raw.sh)\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-find-stat-pipe-script",
+  "command": "find . -exec stat {} + | bash bin/deploy-raw.sh\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-env-prefix-python",
+  "command": "PYTHONSTARTUP=bin/deploy-raw.sh python3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-python-flag-before-dash",
+  "command": "python3 -I - <<'PY'\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-python-arg-subst",
+  "command": "python3 - $(bash bin/deploy-raw.sh) <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-python-body-os-system",
+  "command": "python3 - <<'PY'\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-python-body-subprocess-after-find",
+  "command": "find . -exec stat {} + > s.txt\npython3 - <<'PY'\nimport subprocess\nsubprocess.run(['bash', 'bin/deploy-raw.sh'])\nPY"
+ },
+ {
+  "name": "probe-python-pipe-body-exec",
+  "command": "find . -exec stat {} + | python3 - <<'PY'\nexec(open('bin/deploy-raw.sh').read())\nPY"
+ },
+ {
+  "name": "probe-python-unterminated",
+  "command": "python3 - <<'PY'\nimport os\nos.system('bash bin/deploy-raw.sh')"
+ },
+ {
+  "name": "probe-python-cr-tag",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\r\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-python-indented-tag",
+  "command": "python3 - <<'PY'\n PY\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-python-dash-tag",
+  "command": "python3 - <<-'PY'\n\tprint(1)\n\tPY\nos.system bash bin/deploy-raw.sh"
+ },
+ {
+  "name": "probe-python-unquoted-tag",
+  "command": "python3 - <<PY\nprint('$(bash bin/deploy-raw.sh)')\nPY"
+ },
+ {
+  "name": "probe-python-dq-tag",
+  "command": "python3 - <<\"PY\"\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-python-two-heredocs",
+  "command": "python3 - <<'PY'\nprint(1)\nPY\npython3 - <<'PY'\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-ruby-find-stat",
+  "command": "find . -exec stat {} + | ruby - <<'RB'\nsystem('bash bin/deploy-raw.sh')\nRB"
+ },
+ {
+  "name": "probe-python2-find-stat",
+  "command": "find . -exec stat {} + > s.txt\npython - <<'PY'\nimport os\nos.system('bash bin/deploy-raw.sh')\nPY"
+ },
+ {
+  "name": "probe-leading-blank-line",
+  "command": "\nfind . -exec bash bin/deploy-raw.sh {} +\npython3 - <<'PY'\nprint(1)\nPY"
+ },
+ {
+  "name": "probe-path-python3",
+  "command": "find . -exec stat {} + > s.txt\n./python3 - <<'PY'\nprint(1)\nPY"
+ }
+]
