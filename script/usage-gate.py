@@ -15,7 +15,7 @@ show [--json] includes the exact source and reading age; pick --role ROLE retain
 its existing flags. every role takes the first allowed entry of the provider priority
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
-A Claude-built PR gets an Antigravity verifier first. Strong roles other than
+A Claude-built PR gets a Grok verifier first (owner 2026-11-21), then Antigravity. Strong roles other than
 qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
@@ -1251,10 +1251,10 @@ def order_builder_chain(chain):
 
 
 def order_reviewer_chain(chain):
-    """Claude, Antigravity, Grok grok-4.7 for a reviewer; other providers keep their place after Claude."""
-    rank = {"claude": 0, "antigravity": 1, "grok": 2}
+    """Claude, Grok grok-4.7, Antigravity for a reviewer (owner 2026-11-21); other providers rank like Antigravity."""
+    rank = {"claude": 0, "grok": 1, "antigravity": 2}
     rest = [entry for entry in chain if entry.get("provider") != "grok"]
-    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 1))
+    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 2))
 
 
 def family(entry):
