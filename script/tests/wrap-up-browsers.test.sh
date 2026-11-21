@@ -45,6 +45,7 @@ case "$*" in
   'orchestration worker-show --dispatch d1 --json') printf '{"ok":true,"result":{"dispatchId":"d1","state":"running","liveness":"running","terminal":"term_x","workspace":"wt-id::%s"}}\n' "$FAKE_ACTIVE_CWD" ;;
   'orchestration worker-show --dispatch d2 --json') exit 1 ;;
   'orchestration worker-show --dispatch d4 --json')
+    echo d4 >> "${FAKE_SHOW_LOG:-/dev/null}"
     printf '{"ok":false,"error":{"code":"%s","message":"Worker Dispatch d4 was not found."}}\n' "${FAKE_NEVER_ERR:-dispatch_not_found}"; exit 1 ;;
   'orchestration worker-show --dispatch d3 --json') echo '{"ok":true,"result":{"dispatchId":"d3","state":"running","liveness":"exited","terminal":"term_y","workspace":"wt-id::/gone"}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
@@ -92,8 +93,8 @@ T=$'\t'
 # proc <pid> <ppid> <age seconds> <command...>: one process table line; the start is derived from the pid.
 proc() { local pid=$1 ppid=$2 age=$3; shift 3; printf '%s\t%s\t%s\tstart-%s\t%s\n' "$pid" "$ppid" "$age" "$pid" "$*" >> "$FAKE_PS"; }
 cwd() { printf '%s\n' "$2" > "$FAKE_CWDS/$1"; }
-reset() { : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD FAKE_NEVER_SETTLED FAKE_NEVER_TERM FAKE_NEVER_ERR; }
-run() { (cd "$tmp/repo" && WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1) || true; }
+reset() { rm -rf "$tmp/state" "$tmp/show.log"; : > "$FAKE_PS"; : > "$FAKE_KILLS"; rm -f "${FAKE_CWDS:?}"/*; unset FAKE_PS_NOW FAKE_KILL_FAIL FAKE_ACTIVE_CWD FAKE_TERM_CWD FAKE_OLD_PENDING FAKE_OLD_EXITED FAKE_ORCA_BAD FAKE_NEVER_SETTLED FAKE_NEVER_TERM FAKE_NEVER_ERR; }
+run() { (cd "$tmp/repo" && WRAP_UP_STATE_DIR="$tmp/state" FAKE_SHOW_LOG="$tmp/show.log" WRAP_UP_PS_CMD="$tmp/ps-seam" WRAP_UP_KILL_CMD="$tmp/kill-seam" bash "$root/script/wrap-up.sh" "$@" > "$tmp/output" 2>&1) || true; }
 DEV='/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev'
 STABLE='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 CHROMIUM='/Users/someone/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium'
@@ -222,7 +223,22 @@ proc 493 1 $OLD "$DEV --user-data-dir=/tmp/never-settled"; cwd 493 /Users/someon
 export FAKE_NEVER_SETTLED=1
 run --apply
 check 'a start_unknown row with no terminal or workspace, not found by worker-show, does not hold the old browser' has 'Close browser 493 (stale throwaway browser profile)'
-check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped.' "$tmp/output"
+check 'that row is skipped with a warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped, not asked about again.' "$tmp/output"
+# A dry run may read the memory file but never creates or changes it; the next --apply records the id once.
+reset
+proc 496 1 $OLD "$DEV --user-data-dir=/tmp/never-settled-dry"; cwd 496 /Users/someone/work
+export FAKE_NEVER_SETTLED=1
+mkdir -p "$tmp/state"; (cd "$tmp/state" && ls -A > "$tmp/state-before")
+run --dry-run
+check 'a dry run leaves the state directory unchanged' sh -c '[ ! -e "$1/wrap-up-gone-dispatches" ] && [ "$(cd "$1" && ls -A)" = "$(cat "$2")" ]' _ "$tmp/state" "$tmp/state-before"
+run --apply
+check 'the first apply logs the one time warning' grep -Fq 'worker-show failed for never-settled dispatch d4; skipped, not asked about again.' "$tmp/output"
+check 'the first apply records the id' grep -Fxq d4 "$tmp/state/wrap-up-gone-dispatches"
+run --apply
+check 'a second apply does not ask about it again' test "$(grep -c d4 "$tmp/show.log")" -eq 2
+check 'its warning is not repeated' sh -c '! grep -Fq "never-settled dispatch d4" "$1"' _ "$tmp/output"
+check 'the id is recorded once' test "$(grep -Fxc d4 "$tmp/state/wrap-up-gone-dispatches")" -eq 1
+unset FAKE_NEVER_SETTLED
 # A dispatch on a host this one no longer pairs with keeps its work on that host, so it holds nothing here.
 reset
 proc 494 1 $OLD "$DEV --user-data-dir=/tmp/gone-host"; cwd 494 /Users/someone/work
