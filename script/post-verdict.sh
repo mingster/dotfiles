@@ -6,6 +6,7 @@
 # --agent and --model record the verifier's own agent and model on the Verdict line (together, or neither).
 # ship.sh needs them and refuses a verifier whose agent and model match the builder's.
 # --author other than ctx_* or unknown must be listed in coordinator_ids of script/ship.local.json.
+# The PR's current head must equal --head, or it refuses (stale head) and posts nothing.
 # --print shows the comment body and posts nothing. The comment is always new: an edit never counts.
 # A FAIL needs --command and at least one "- [ ]" fix line in --notes. PASS does not.
 set -euo pipefail
@@ -69,6 +70,8 @@ body="Verdict: $result head=$head verifier=$verifier author=$author"
 [ -z "$notes" ] || body+=$'\n\n'"$notes"
 
 if [ "$print_only" = true ]; then printf '%s\n' "$body"; exit 0; fi
+current=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid) || die "cannot read the PR head"
+[ "$current" = "$head" ] || die "stale head: PR is at $current, re-verify"
 printf '%s\n' "$body" | gh pr comment "$pr" --repo "$repo" --body-file - >/dev/null
 status_state=failure; [ "$result" = FAIL ] || status_state=success
 gh api -X POST "repos/$repo/statuses/$head" -f state="$status_state" -f context=review -f description="Verdict: $result ($verifier)" >/dev/null

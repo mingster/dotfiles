@@ -127,5 +127,12 @@ out=$(verdict 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_au
 out=$(verdict 50 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent 'cl aude' --model opus --print); code=$?
 [ "$code" -ne 0 ] && ok "--agent with a space is refused" || bad "agent with space: $out"
 
+# Issue 1386: a Verdict for a head the PR has moved past is refused and nothing is posted
+h=$(new_pr 51)
+old=$(printf '%040d' 1)
+before=$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")
+out=$(verdict 51 --result PASS --head "$old" --verifier ctx_verify --author ctx_author); code=$?
+[ "$code" -ne 0 ] && [[ "$out" == *"stale head: PR is at $h"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")" = "$before" ] && ok "a stale head is refused, nothing posted" || bad "stale head: $out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
