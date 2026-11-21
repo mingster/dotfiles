@@ -1,8 +1,29 @@
 # Keys merged into ~/.grok/config.toml by script/setup-grok.sh. A key the user already set stays as it is.
-# The bell stays the notification method until kitty is confirmed. Then add `method` to the table below.
+# Fleet defaults (owner 2026-11-21). Machine state (privacy banner, marketplace flags and sources) stays out: Grok writes it itself.
+
+[cli]
+installer = "internal"
+show_tips = false
+auto_update = true
+
+[models]
+default = "grok-4.7"
+default_reasoning_effort = "medium"
 
 [ui]
+max_thoughts_width = 120
+yolo = false
+compact_mode = true
+show_timeline = true
+combine_queued_prompts = true
+single_ctrl_c_quit = true
+follow_up_behavior = "steer"
+permission_mode = "always-approve"
+hunk_tracker_mode = "all_dirty"
+default_selected_permission = "always_allow_all_sessions"
+fork_secondary_model = "grok-4.7"
 kitty_keyboard = "query"
 
 [ui.notifications]
 condition = "always"
+method = "none"
