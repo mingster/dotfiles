@@ -1,0 +1,1 @@
+* A builder (`fullstack-dev`) is now refused at edit time on a path in `script/lib/protected-paths.sh` unless its brief's `Allowed files:` line names it, so no PR waits for an `Owner-approved:` trailer found late. `brief-lint.sh` warns when that line names an owner-gated path (#1328).

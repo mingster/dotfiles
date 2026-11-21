@@ -29,6 +29,22 @@ if [ -n "$repo_dir" ] && [ -d "$repo_dir" ] && [ ! -f "$repo_dir/script/checks-l
   need_checks_local=0
 fi
 
+# A builder brief's "Allowed files:" line that names an owner-gated path only warns (#1328): the guard hook
+# lets the builder edit it, but ship.sh then holds the PR for the owner.
+protected_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/protected-paths.sh"
+if [ -f "$protected_lib" ] && [ -f "$file" ]; then
+  # shellcheck source=lib/protected-paths.sh
+  . "$protected_lib"
+  while IFS= read -r line; do
+    for p in $(printf '%s' "${line#*:}" | tr ',`' '  '); do
+      p=${p#./}
+      if owner_only_path "$p" || protected_path "$p"; then
+        echo "brief-lint: warning: Allowed files names $p, which needs the owner (ship.sh holds the PR)" >&2
+      fi
+    done
+  done < <(grep -iE '^Allowed files:' "$file" || true)
+fi
+
 awk -v need_checks_local="$need_checks_local" -v need_refs="$need_refs" '
 function note_search(cmd,    key) {
   key = cmd

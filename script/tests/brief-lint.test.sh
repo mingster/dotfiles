@@ -642,5 +642,13 @@ sed 's|^- \[ \] New script|1) New script|' "$tmp/refs-base.md" >"$tmp/numbered2.
 out=$(bash "$lint" "$tmp/numbered2.md" 2>&1); ec=$?
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "1) Acceptance should pass (ec=$ec, out=$out)"; fi
 
+# 1328. An Allowed files line that names an owner-gated path warns on stderr and still passes.
+{ cat "$tmp/refs-base.md"; echo "Allowed files: script/foo.sh, AGENTS.md"; } >"$tmp/gated.md"
+set +e; out=$(bash "$lint" "$tmp/gated.md" 2>&1); ec=$?; set -e
+if [ "$ec" -eq 0 ] && [ "$out" = "brief-lint: warning: Allowed files names AGENTS.md, which needs the owner (ship.sh holds the PR)" ]; then ok; else bad "owner-gated Allowed files should warn (ec=$ec, out=$out)"; fi
+{ cat "$tmp/refs-base.md"; echo "Allowed files: script/foo.sh"; } >"$tmp/plain.md"
+set +e; out=$(bash "$lint" "$tmp/plain.md" 2>&1); ec=$?; set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "ordinary Allowed files should stay silent (ec=$ec, out=$out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

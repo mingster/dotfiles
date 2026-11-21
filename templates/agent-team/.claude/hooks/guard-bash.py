@@ -3038,6 +3038,33 @@ def check_edit(tool, path):
         if is_template_managed_rel(rel):
             deny_template_managed(rel)
 
+    check_builder_owner_path(tool, full)
+
+
+BUILDER_ROLES = {"fullstack-dev"}
+ALLOWED_FILES_LINE = re.compile(r"(?mi)^Allowed files:[ \t]*(.*)$")
+
+
+def brief_allowed_files():
+    """Paths the brief's `Allowed files:` line names (comma or space separated, backticks allowed)."""
+    text = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
+    out = set()
+    for line in ALLOWED_FILES_LINE.findall(text or ""):
+        out |= {re.sub(r"^\./", "", t) for t in re.split(r"[\s,`]+", line) if t}
+    return out
+
+
+def check_builder_owner_path(tool, full):
+    """A builder cannot edit a path ship.sh holds for the owner unless its brief names that path (#1328)."""
+    if session_role() not in BUILDER_ROLES:
+        return
+    rel = os.path.relpath(full, find_project_root(full)).replace("\\", "/")
+    if rel.startswith("../") or not ship_protected({rel}) or rel in brief_allowed_files():
+        return
+    deny(f"{tool} on {rel} is blocked: that path needs the owner (ship.sh holds a PR that touches it until an "
+         "`Owner-approved:` trailer). Take it out of the change, or report to Elon so the brief's "
+         "`Allowed files:` line names it.")
+
 
 BACKGROUND_WAIT = re.compile(r"orchestration\s+check\b[^;|]*--wait[^;|]*?(?<!&)&\s*(?:$|;|\n)")
 

@@ -1544,6 +1544,47 @@ class ProductionTestData(GuardTest):
         self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
 
 
+class BuilderOwnerGatedEdit(GuardTest):
+    """A builder is refused at edit time on an owner-gated path unless the brief's Allowed files line names it (#1328)."""
+
+    def setUp(self):
+        super().setUp()
+        lib = os.path.join(os.path.dirname(HOOK), "..", "..", "..", "..", "script", "lib", "protected-paths.sh")
+        self.extra_env = {"PROTECTED_PATHS_LIB": os.path.abspath(lib)}
+
+    def brief(self, role, allowed=""):
+        path = os.path.join(self.home, "transcript.jsonl")
+        text = f"# {role} - build\n\nRole: {role}\n" + (f"Allowed files: {allowed}\n" if allowed else "")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+        self.transcript = path
+
+    def edit(self, rel):
+        payload = {"tool_name": "Edit", "tool_input": {"file_path": os.path.join(self.home, rel)},
+                   "cwd": self.home, "transcript_path": self.transcript}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home, **self.extra_env), cwd=self.home, timeout=20)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def test_builder_is_refused_on_owner_gated_paths(self):
+        self.brief("fullstack-dev")
+        for rel in ("AGENTS.md", "web/AGENTS.md","docs/intent/x/intent.md"):
+            with self.subTest(rel=rel):
+                self.assertIn("needs the owner", self.edit(rel) or "")
+
+    def test_builder_may_edit_when_the_brief_names_the_path(self):
+        self.brief("fullstack-dev", "AGENTS.md, README.md")
+        self.assertIsNone(self.edit("AGENTS.md"))
+
+    def test_builder_may_edit_ordinary_paths(self):
+        self.brief("fullstack-dev")
+        self.assertIsNone(self.edit("script/foo.sh"))
+
+    def test_other_roles_are_not_blocked(self):
+        self.brief("elon")
+        self.assertIsNone(self.edit("AGENTS.md"))
+
+
 class DeployFactsRollbackWording(unittest.TestCase):
     def test_test_data_does_not_waive_a_rollback(self):
         path = os.path.normpath(os.path.join(
