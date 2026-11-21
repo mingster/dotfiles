@@ -649,6 +649,15 @@ if [ "$ec" -eq 0 ] && [ "$out" = "brief-lint: warning: Allowed files names AGENT
 { cat "$tmp/refs-base.md"; echo "Allowed files: script/foo.sh"; } >"$tmp/plain.md"
 set +e; out=$(bash "$lint" "$tmp/plain.md" 2>&1); ec=$?; set -e
 if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "ordinary Allowed files should stay silent (ec=$ec, out=$out)"; fi
+# CRLF line ends (GitHub issue bodies) still warn.
+{ cat "$tmp/refs-base.md"; printf 'Allowed files: script/foo.sh, AGENTS.md\r\n'; } >"$tmp/gated-crlf.md"
+set +e; out=$(bash "$lint" "$tmp/gated-crlf.md" 2>&1); ec=$?; set -e
+if [ "$ec" -eq 0 ] && [ "$out" = "brief-lint: warning: Allowed files names AGENTS.md, which needs the owner (ship.sh holds the PR)" ]; then ok; else bad "CRLF Allowed files should warn (ec=$ec, out=$out)"; fi
+# A glob token is checked as written, not expanded against the working directory.
+mkdir "$tmp/globdir"; : >"$tmp/globdir/AGENTS.md"
+{ cat "$tmp/refs-base.md"; echo "Allowed files: *.md"; } >"$tmp/glob.md"
+set +e; out=$(cd "$tmp/globdir" && bash "$lint" "$tmp/glob.md" 2>&1); ec=$?; set -e
+if [ "$ec" -eq 0 ] && [ -z "$out" ]; then ok; else bad "glob token must not expand (ec=$ec, out=$out)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

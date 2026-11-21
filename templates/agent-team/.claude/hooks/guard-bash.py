@@ -3041,7 +3041,12 @@ def check_edit(tool, path):
     check_builder_owner_path(tool, full)
 
 
-BUILDER_ROLES = {"fullstack-dev"}
+BUILDER_ROLE = r"fullstack-dev(?:-small|-strong|-debug)?"
+BUILDER_SIGNALS = (
+    re.compile(r"(?m)^Role:\s*" + BUILDER_ROLE + r"\b"),
+    re.compile(r"(?m)^#\s*" + BUILDER_ROLE + r"\s+-\s+\S"),
+    re.compile(r"(?m)^[-*]\s*\S*/\.claude/agents/" + BUILDER_ROLE + r"\.md\s*$"),
+)
 ALLOWED_FILES_LINE = re.compile(r"(?mi)^Allowed files:[ \t]*(.*)$")
 
 
@@ -3054,11 +3059,31 @@ def brief_allowed_files():
     return out
 
 
+def is_builder_brief(text):
+    """A dispatched builder brief names its role by a `Role:` line, a title, or the preamble's role file line.
+    Any one counts: a wrongly matched brief is only refused more, never allowed more."""
+    return any(sig.search(text or "") for sig in BUILDER_SIGNALS)
+
+
+def git_root(path):
+    """The nearest folder with `.git` (a file in a linked worktree). `.claude` alone does not end the walk,
+    since templates/agent-team has its own."""
+    cur = os.path.abspath(path)
+    while True:
+        if os.path.exists(os.path.join(cur, ".git")):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return find_project_root(path)
+        cur = parent
+
+
 def check_builder_owner_path(tool, full):
     """A builder cannot edit a path ship.sh holds for the owner unless its brief names that path (#1328)."""
-    if session_role() not in BUILDER_ROLES:
+    brief = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
+    if not is_builder_brief(brief):
         return
-    rel = os.path.relpath(full, find_project_root(full)).replace("\\", "/")
+    rel = os.path.relpath(full, git_root(full)).replace("\\", "/")
     if rel.startswith("../") or not ship_protected({rel}) or rel in brief_allowed_files():
         return
     deny(f"{tool} on {rel} is blocked: that path needs the owner (ship.sh holds a PR that touches it until an "

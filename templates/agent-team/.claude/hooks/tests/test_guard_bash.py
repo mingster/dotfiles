@@ -1552,9 +1552,10 @@ class BuilderOwnerGatedEdit(GuardTest):
         lib = os.path.join(os.path.dirname(HOOK), "..", "..", "..", "..", "script", "lib", "protected-paths.sh")
         self.extra_env = {"PROTECTED_PATHS_LIB": os.path.abspath(lib)}
 
-    def brief(self, role, allowed=""):
+    def brief(self, role, allowed="", text=None):
         path = os.path.join(self.home, "transcript.jsonl")
-        text = f"# {role} - build\n\nRole: {role}\n" + (f"Allowed files: {allowed}\n" if allowed else "")
+        if text is None:
+            text = f"# {role} - build\n\nRole: {role}\n" + (f"Allowed files: {allowed}\n" if allowed else "")
         with open(path, "w") as f:
             f.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
         self.transcript = path
@@ -1583,6 +1584,40 @@ class BuilderOwnerGatedEdit(GuardTest):
     def test_other_roles_are_not_blocked(self):
         self.brief("elon")
         self.assertIsNone(self.edit("AGENTS.md"))
+
+    def test_builder_presets_are_refused(self):
+        for role in ("fullstack-dev-small", "fullstack-dev-strong", "fullstack-dev-debug"):
+            with self.subTest(role=role):
+                self.brief(role)
+                self.assertIn("needs the owner", self.edit("AGENTS.md") or "")
+
+    def test_dispatched_brief_without_a_title_is_refused(self):
+        # fleet-watch and worker-startup briefs carry the role only in the preamble's role file line.
+        text = ("Read these files before any work:\n- /h/.agents/skills/poteto-mode/SKILL.md\n"
+                "- /h/.agents/skills/orca-adapter/ORCA-ADAPTER.md\n- /h/.claude/agents/fullstack-dev.md\n\nType: build\n")
+        self.brief("", text=text)
+        self.assertIn("needs the owner", self.edit("AGENTS.md") or "")
+
+    def test_role_line_without_a_title_is_refused(self):
+        self.brief("", text="Role: fullstack-dev. Fix this PR.\n")
+        self.assertIn("needs the owner", self.edit("AGENTS.md") or "")
+
+    def test_other_role_file_line_is_not_blocked(self):
+        self.brief("", text="Read these files before any work:\n- /h/.claude/agents/qa-sdet.md\n")
+        self.assertIsNone(self.edit("AGENTS.md"))
+
+    def test_allowed_files_under_templates_agent_team(self):
+        rel = "templates/agent-team/.claude/hooks/guard-bash.py"
+        os.makedirs(os.path.join(self.home, "templates", "agent-team", ".claude"))
+        os.makedirs(os.path.join(self.home, ".git"))
+        self.brief("fullstack-dev", rel)
+        self.assertIsNone(self.edit(rel))
+
+    def test_templates_agent_team_path_is_refused_when_not_allowed(self):
+        os.makedirs(os.path.join(self.home, "templates", "agent-team", ".claude"))
+        os.makedirs(os.path.join(self.home, ".git"))
+        self.brief("fullstack-dev")
+        self.assertIn("needs the owner", self.edit("templates/agent-team/AGENTS.md") or "")
 
 
 class DeployFactsRollbackWording(unittest.TestCase):

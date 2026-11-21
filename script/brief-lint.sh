@@ -35,14 +35,16 @@ protected_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/protected-paths
 if [ -f "$protected_lib" ] && [ -f "$file" ]; then
   # shellcheck source=lib/protected-paths.sh
   . "$protected_lib"
+  set -f # a token such as *.md is a path to check, not a glob to expand here
   while IFS= read -r line; do
-    for p in $(printf '%s' "${line#*:}" | tr ',`' '  '); do
+    for p in $(printf '%s' "${line#*:}" | tr ',`\r' '   '); do
       p=${p#./}
       if owner_only_path "$p" || protected_path "$p"; then
         echo "brief-lint: warning: Allowed files names $p, which needs the owner (ship.sh holds the PR)" >&2
       fi
     done
   done < <(grep -iE '^Allowed files:' "$file" || true)
+  set +f
 fi
 
 awk -v need_checks_local="$need_checks_local" -v need_refs="$need_refs" '
