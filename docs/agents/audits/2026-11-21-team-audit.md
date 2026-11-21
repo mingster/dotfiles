@@ -9,15 +9,17 @@ Refs `mingster/dotfiles#1304`. Window: 2026.11.14 to 2026.11.21 (7 days). All nu
 | 1 | `mingster/dotfiles#1321` | `fleet-watch.py` verifier start | Review PASS to Verdict median 14.2 min, dispatch to Verdict median 8.1 min: about 6 min per PR waiting for a verifier, about 69 Verdicts a day | about 3 min per PR, about 200 PR minutes a day | S |
 | 2 | `mingster/dotfiles#1322` | `heavy-gate.py` on the DB host, `head-checks.sh` DB step | DB step 425 min a week; 16 gate waits hold 270 min; 85 of 124 runs on fallback limits | about 35 min a day | S |
 | 3 | `<project-a>#9049` | Playground regression `unit` job | 4.4 rounds a day, round median 24.9 min, `unit` job median 5.2 min repeats head-checks tests | about 22 min a day | M |
-| 4 | `<project-a>#9050` | `head-checks-tsc.sh` | 145 min a week, median 29 s, max 765 s | about 10 min a day | S |
+| 4 | `<project-a>#9050` | `head-checks-tsc.sh` | 145 min a week (about 21 min a day), median 29 s, max 765 s | ceiling about 21 min a day (145 min a week ÷ 7); the share saved by an incremental build is not measured | S |
 | 5 | `mingster/dotfiles#1323` | Verifier start before `pr-body-gate.py` | One full verifier round spent on a PR without `## Self-check` | about 8 min a day | S |
-| 6 | `mingster/dotfiles#1324` | `worker-startup.sh` refusals (Verify line, title, `grok_hosts`) | 15 refusals a week, 8 by brief-lint; every grok start refused today | about 8 min a day | M |
-| 7 | `mingster/dotfiles#1325` | `ship.test.sh` and slow script tests | 395 s and a false FAIL on a host that cannot fetch | about 5 min a day | S |
-| 8 | `mingster/dotfiles#1327` | `guard-bash.py` false positives | A heredoc brief and three read only commands denied | about 5 min a day | M |
-| 9 | `mingster/dotfiles#1326` | `ship.sh` from a non git cwd | Misleading `cannot read head` error | about 2 min a day | S |
+| 6 | `mingster/dotfiles#1324` | `worker-startup.sh` refusals (Verify line, title, `grok_hosts`) | 15 refusals a week, each costing the coordinator about 2 min (rewrite and restart); every grok start refused today | about 4 min a day (15 refusals a week × 2 min ÷ 7) | M |
+| 7 | `mingster/dotfiles#1325` | `ship.test.sh` and slow script tests | 395 s and a false FAIL on a host that cannot fetch | not estimated per day: the heavy pick is rare and no daily count was measured; 6.6 min saved on each run that picks it | S |
+| 8 | `mingster/dotfiles#1327` | `guard-bash.py` false positives | A heredoc brief and three read only commands denied, 1 to 3 min each | about 4 to 12 min in this audit window (4 denials × 1 to 3 min); no daily rate measured | M |
+| 9 | `mingster/dotfiles#1326` | `ship.sh` from a non git cwd | Misleading `cannot read head` error, about 5 min of diagnosis once | about 5 min per occurrence (1 today); no daily rate measured | S |
 | 10 | `mingster/dotfiles#1328` | Builder edits to owner gated files | A passing PR held for an owner trailer | one held PR per event | S |
 | 11 | `mingster/dotfiles#1329` | `agent-team.sh` sync drift | DRIFT in two project repos, same class as 2026.11.19 | removes a repeat finding | S |
 | 12 | `mingster/dotfiles#1330` | Duration logs for `worker-startup.sh` and `fleet-pull.sh` | No median or max can be measured today | makes the next audit measurable | S |
+
+Ranks 7 to 9 and the tsc ceiling carry no measured daily rate, so their order is a judgment, not a ranking by minutes.
 
 Already open, so not filed again: `#1303` and `#1314` (wrap-up round 206 s median, 571 s max), `#1312` (grok workspace trust), `#1305` (Grok first verifier order), `<project-a>#9007` (orphan tsc after a cancelled run). `<project-a>#9035` is closed; its contract test step now runs median 20.5 s.
 
@@ -36,8 +38,8 @@ Already open, so not filed again: `#1303` and `#1314` (wrap-up round 206 s media
 | `head-checks` DB step, `--db-only` (n=118) | 6 s | 91.7 min | `#1322` | about 35 |
 | `head-checks` total per run, `<project-a>` (n=180) | 1.8 min | 92.5 min | `#1322`, `#9050` | included above |
 | Playground regression round (n=35) | 24.9 min | 78.8 min | `<project-a>#9049` | about 22 |
-| `head-checks-tsc.sh` (n=178) | 29 s | 12.8 min | `<project-a>#9050` | about 10 |
-| `checks-local.sh` with `ship.test.sh` selected | 6.6 min | 6.6 min | `#1325` | about 5 |
+| `head-checks-tsc.sh` (n=178) | 29 s | 12.8 min | `<project-a>#9050` | ceiling about 21 (145 min a week ÷ 7) |
+| `checks-local.sh` with `ship.test.sh` selected (one 395 s run) | 6.6 min | 6.6 min | `#1325` | not estimated per day (395 s run, pick is rare) |
 | GitHub Actions Checks, `<project-a>` (n=300) | 4.4 min | 102 min | no new fix; the `head-checks` job is 3.3 min average | 0 |
 | Coordinator heavy-gate wait (n=37) | 28 s | 27.9 min | covered by `#1322` limits work | 0 |
 | `wrap-up.sh --scheduled` round (n=606) | 3.4 min | 9.5 min | open `#1303`, `#1314` | not counted |
