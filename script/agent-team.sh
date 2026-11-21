@@ -333,7 +333,7 @@ cmd_machine() {
     render_one "$f" "$HOME/.claude/agents/$(basename "$f")" "$dry"
   done
 
-  for name in guard-bash.py strikes.py worker-budget.py session-start.md; do
+  for name in guard-bash.py strikes.py worker-budget.py owner-decisions-stop.py session-start.md; do
     [ -f "$TEMPLATE_DIR/.claude/hooks/$name" ] || continue
     if [ "$name" = session-start.md ]; then
       render_one "$TEMPLATE_DIR/.claude/hooks/$name" "$HOME/.claude/hooks/$name" "$dry"
@@ -557,6 +557,7 @@ SHARED_HOOKS = [
     "guard-bash.py",
     "strikes.py",
     "worker-budget.py",
+    "owner-decisions-stop.py",
     "session-start.md",
     "production-hosts.txt",
 ]
@@ -604,6 +605,7 @@ PROTECTED_HOOK_SCRIPTS = {
     "guard-bash.py",
     "strikes.py",
     "worker-budget.py",
+    "owner-decisions-stop.py",
     "session-start.md",
     "production-hosts.txt",
     "env-peek.py",
