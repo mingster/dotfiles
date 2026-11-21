@@ -332,8 +332,46 @@ class ShellScriptBoundary(GuardTest):
     def test_consecutive_leading_reports_keep_literal_bodies(self):
         self.assertAllowed("cat > /tmp/a.md <<'ONE'\n$(bun test x)\nONE\ncat > /tmp/b.md <<'TWO'\n`bun test x`\nTWO")
 
-    def test_report_after_other_command_is_conservatively_checked(self):
-        self.assertDenied("echo ready\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF", "heavy-gate")
+    def test_report_after_plain_command_keeps_literal_body(self):
+        self.assertAllowed("echo ready\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
+
+    def test_unclosed_text_sink_heredoc_after_another_command_is_checked(self):
+        self.assertDenied("mkdir -p /tmp/out\ncat > /tmp/out/r.md <<'EOF'\n$(bunx playwright test)", "heavy-gate")
+
+    def test_apostrophe_in_earlier_comment_or_heredoc_body_keeps_brief_literal(self):
+        self.assertAllowed("# owner's note\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
+        self.assertAllowed("python3 - <<'PY'\n# it's (\nprint(1)\nPY\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
+
+    def test_comment_paren_or_case_label_in_substitution_does_not_close_it(self):
+        self.assertDenied("echo $(\n# )\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF\n)", "heavy-gate")
+        self.assertDenied("echo $(case x in a) ;; esac\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF\n)",
+                          "heavy-gate")
+
+    def test_quoted_paren_inside_substitution_does_not_close_it(self):
+        self.assertDenied("echo \"$(echo \"${x:-\")\" #}\")\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF\n\"",
+                          "heavy-gate")
+        self.assertDenied("echo $(echo $'\\')' # '\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF\n)",
+                          "heavy-gate")
+
+    def test_non_ascii_text_on_a_shell_line(self):
+        self.assertDenied("echo 測試 && bunx playwright test", "heavy-gate")
+        self.assertAllowed("echo 測試\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
+
+    def test_exception_in_the_strip_path_returns_the_unstripped_command(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_strip_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        command = "cat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF"
+        for name in ("_strip_report_heredocs", "text_sink_heredoc"):
+            with self.subTest(patched=name), mock.patch.object(mod, name, side_effect=RuntimeError("boom")):
+                self.assertEqual(mod.report_command_text(command), command)
+        with mock.patch.object(mod, "text_sink_heredoc", side_effect=RuntimeError("boom")):
+            payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": os.getcwd()})
+            buf = io.StringIO()
+            with mock.patch("sys.stdin", io.StringIO(payload)), mock.patch("sys.stdout", buf):
+                with self.assertRaises(SystemExit):
+                    mod.main()
+            self.assertEqual(json.loads(buf.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_single_quoted_shell_script_active_dollar_denied(self):
         self.assertDenied("bash -c 'echo \"$(bunx playwright test)\"'", "heavy-gate")

@@ -202,6 +202,7 @@ TIER2_SKILLS = {"ceo", "deploy", "elon", "poteto-mode", "team-audit"}
 
 GATE_CWD = None
 RAW_COMMAND = ""
+CODE_COMMAND = ""  # RAW_COMMAND without the quoted text sink heredocs: what an interpreter on stdin could run
 HOOK_INPUT: dict = {}
 
 
@@ -2910,7 +2911,7 @@ def check_indirection(base, args):
         if idx is not None:
             code = " ".join(args[idx + 1:])
         elif operand is None or "-" in args:
-            code = RAW_COMMAND
+            code = CODE_COMMAND
         else:
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
@@ -3166,7 +3167,7 @@ def substitutions(command):
 # `gh ... --body-file -`), after plain `&&` steps (those steps are still checked). Its body is data.
 QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2")
 _WORD = r"[A-Za-z0-9_./=~-]+"
-_PATH = r"(?:[A-Za-z0-9_./~-]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\"(?:[^\"`$\\]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)*\"|'[^']*')+"
+_PATH = r"(?:[A-Za-z0-9_./~-]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\"(?:[^\"`$\\<>]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)*\"|'[^'<>]*')+"
 TEXT_SINK = re.compile(
     rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*&&[ \t]*)*"
     rf"(?:cat[ \t]+>>?[ \t]*{_PATH}"
@@ -3178,39 +3179,183 @@ TEXT_SINK = re.compile(
 def text_sink_heredoc(line):
     """The heredoc operator match when `line` only feeds a quoted heredoc to a text sink, else None."""
     ops = list(QUOTED_HEREDOC.finditer(line))
-    if len(ops) != 1:
+    if len(ops) != 1 or line[ops[0].end():].strip():
         return None
-    rest = line[:ops[0].start()] + " " + line[ops[0].end():]
+    rest = line[:ops[0].start()]
     if "<<" in rest or not TEXT_SINK.fullmatch(" ".join(rest.split())):
         return None
     return ops[0]
 
 
-def report_command_text(command):
-    """Remove literal data only for a standalone quoted heredoc that feeds a text sink."""
+HEREDOC_OP = re.compile(r"<<(-?)[ \t]*")
+SHELL_WORD = re.compile(r"[A-Za-z0-9_./-]+")
+
+
+class ShellLines:
+    """Shell syntax state across the shell lines of a command (never heredoc bodies): the open quote, the
+    `$(` / `(` / backtick stack, `case` nesting, a `\\` continuation, pending heredocs, and `unsure`."""
+
+    def __init__(self):
+        self.quote, self.stack, self.case_stack, self.continued, self.pending, self.unsure = "", [], [], False, [], False
+
+    def at_top_level(self):
+        return not (self.unsure or self.quote or self.stack or self.case_stack or self.continued or self.pending)
+
+    def _push(self, kind):
+        self.stack.append((kind, self.quote, self.case_stack))
+        self.quote, self.case_stack = "", []
+
+    def _pop(self):
+        _, self.quote, self.case_stack = self.stack.pop()
+
+    def _delimiter(self, text, j):
+        """(closing_delimiter_or_None, next_index) for a heredoc operator whose word starts at `text[j]`."""
+        delim, q = "", ""
+        while j < len(text):
+            c = text[j]
+            if q:
+                if c == q:
+                    q = ""
+                else:
+                    delim += c
+            elif c in "'\"":
+                q = c
+            elif c == "\\" and j + 1 < len(text):
+                j += 1
+                delim += text[j]
+            elif c in " \t;&|<>()":
+                break
+            else:
+                delim += c
+            j += 1
+        return (delim if delim and not q else None), j
+
+    def scan(self, line):
+        text = line.rstrip("\r\n")
+        self.continued = False
+        i, n = 0, len(text)
+        while i < n:
+            c = text[i]
+            if c == "\\" and self.quote != "'":
+                if i + 1 >= n:
+                    self.continued = True
+                i += 2
+                continue
+            if self.quote == "'":
+                if c == "'":
+                    self.quote = ""
+            elif self.quote == "`":
+                if c == "`":
+                    self._pop()
+            elif c == "`":
+                self._push("`")
+                self.quote = "`"
+            elif c == "$" and text[i + 1:i + 2] == "(":
+                if text[i + 2:i + 3] == "(":
+                    self.unsure = True
+                    return
+                self._push("(")
+                i += 2
+                continue
+            elif c == "$" and text[i + 1:i + 2] in "{'\"":
+                self.unsure = True
+                return
+            elif self.quote:
+                if c == self.quote:
+                    self.quote = ""
+            elif c in "'\"":
+                self.quote = c
+            elif c == "#" and (i == 0 or text[i - 1] in " \t;&|()<>"):
+                break
+            elif c in "<>" and text[i + 1:i + 2] == "(":
+                self.unsure = True
+                return
+            elif c == "(":
+                if self.case_stack and len(self.stack) <= self.case_stack[-1]:
+                    self.unsure = True
+                    return
+                self._push("(")
+            elif c == ")":
+                if self.case_stack and len(self.stack) <= self.case_stack[-1]:
+                    pass
+                elif self.stack:
+                    self._pop()
+                else:
+                    self.unsure = True
+                    return
+            elif c == "<" and text.startswith("<<", i):
+                op = HEREDOC_OP.match(text, i)
+                if text.startswith("<<<", i) or text.startswith("<<=", i):
+                    i += 3 if text.startswith("<<<", i) else 2
+                    continue
+                delim, end_j = self._delimiter(text, op.end())
+                if delim is None:
+                    self.unsure = True
+                    return
+                self.pending.append((bool(op[1]), delim))
+                i = end_j
+                continue
+            elif c.isascii() and (c.isalnum() or c in "_./-"):
+                word = SHELL_WORD.match(text, i)
+                if word[0] == "case":
+                    self.case_stack.append(len(self.stack))
+                elif word[0] == "esac":
+                    if not self.case_stack:
+                        self.unsure = True
+                        return
+                    self.case_stack.pop()
+                i = word.end()
+                continue
+            i += 1
+
+
+def _strip_report_heredocs(command):
     lines = command.splitlines(keepends=True)
-    out, i = [], 0
+    shell, out, i = ShellLines(), [], 0
     while i < len(lines):
-        match = text_sink_heredoc(lines[i].rstrip("\r\n"))
-        out.append(lines[i])
+        line = lines[i]
         i += 1
-        if not match:
-            if lines[i - 1].strip():
-                out.extend(lines[i:])
-                break
-            continue
-        end = i
-        while end < len(lines):
-            delimiter = lines[end].rstrip("\r\n")
-            if match[1]:
-                delimiter = delimiter.lstrip("\t")
-            if delimiter == match[3]:
-                break
-            end += 1
-        if end < len(lines):
-            out.append("\n")
+        bare = line.rstrip("\r\n")
+        match = text_sink_heredoc(bare) if shell.at_top_level() else None
+        if match:
+            end = i
+            while end < len(lines):
+                delimiter = lines[end].rstrip("\r\n")
+                if match[1]:
+                    delimiter = delimiter.lstrip("\t")
+                if delimiter == match[3]:
+                    break
+                end += 1
+            if end >= len(lines):
+                return command
+            out.append(bare[:match.start()].rstrip() + bare[match.end():] + "\n")
             i = end + 1
+            continue
+        shell.scan(line)
+        if shell.unsure:
+            return command
+        out.append(line)
+        if shell.pending and not shell.quote and not shell.continued:
+            for dash, delim in shell.pending:
+                while i < len(lines):
+                    body = lines[i]
+                    out.append(body)
+                    i += 1
+                    if (body.rstrip("\r\n").lstrip("\t") if dash else body.rstrip("\r\n")) == delim:
+                        break
+                else:
+                    return command
+            shell.pending = []
     return "".join(out)
+
+
+def report_command_text(command):
+    """Remove each closed quoted heredoc that feeds a text sink, at a top level line. Any exception or
+    unsure parser state falls back to returning `command` unstripped (fail closed)."""
+    try:
+        return _strip_report_heredocs(command)
+    except Exception:
+        return command
 
 
 # ---------------------------------------------------------------- Exact only scripts
@@ -3766,6 +3911,8 @@ def check_hidden_script_paths(command, cwd):
 
 def check_command(command):
     command = report_command_text(command)
+    global CODE_COMMAND
+    CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
     for text in texts:
