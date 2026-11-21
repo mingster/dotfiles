@@ -162,7 +162,7 @@ class ProviderPause(Base):
 
     def test_a_claude_built_pr_gets_a_verifier_from_the_roomier_family_once_the_pause_ends(self):
         agent, model, _tag = self.pick_verifier('2000-01-01')
-        self.assertEqual((agent, model), ('antigravity', 'gemini-4-argon-high'))  # no reading for either: chain order
+        self.assertEqual((agent, model), ('grok', 'grok-4.7'))  # no reading for Antigravity, idle Grok ranks first
 
 
 if __name__ == '__main__':

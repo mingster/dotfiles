@@ -17,6 +17,7 @@ its existing flags. every role takes the first allowed entry of the provider pri
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
 The verifier is a different family than the builder; among the qualified families pick takes the one
 with the most headroom (pts/day, as in show), unknown last, ties in chain order (owner 2026-11-21).
+Grok has no usage reading, so an allowed Grok (no live worker) counts as idle and ranks first.
 Strong roles other than qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
@@ -1342,6 +1343,14 @@ def _gated_model(entry):
     return None
 
 
+def _verifier_score(candidate):
+    """Grok has no usage API, so an allowed Grok (no live worker) is idle and ranks first; an unread family ranks last."""
+    if candidate["provider"] == "grok":
+        return float("inf")
+    pace_ = candidate["headroom_per_day"]
+    return -float("inf") if pace_ is None else pace_
+
+
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
     chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
@@ -1387,8 +1396,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
     if allowed:
         chosen = allowed[0][1]
         if reviewer and avoid:  # builder known: most usage left wins; an unread family ranks last; max keeps chain order on ties
-            chosen = max((c for _, c in allowed),
-                         key=lambda c: -float("inf") if c["headroom_per_day"] is None else c["headroom_per_day"])
+            chosen = max((c for _, c in allowed), key=_verifier_score)
     if (role == "qa-sdet" and avoid and chosen is None
             and _other_families_quota_blocked(chain, avoid, rows)):
         fallback = _mark_claude_fallback(candidates, chain, rows)

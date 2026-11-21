@@ -2228,7 +2228,7 @@ class BuilderCursorRoute(unittest.TestCase):
                     "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
-        self.assertEqual((picked["provider"], picked["model"]), ("antigravity", "gemini-4-argon-high"))  # tie: chain order
+        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))  # idle Grok (no usage API) ranks first
 
     VERIFIER_CHAIN = [{"provider": "claude", "model": "opus", "effort": "high"},
                       {"provider": "antigravity", "model": "gemini-4-argon-high"}]
@@ -2252,8 +2252,29 @@ class BuilderCursorRoute(unittest.TestCase):
 
     def test_a_claude_built_pr_gets_whichever_of_antigravity_and_grok_has_more_headroom(self):
         """Owner 2026-11-21 (#1305): a different family than the builder, the one with most usage left."""
-        self.assertEqual(self.verifier("claude", {"antigravity": 20, "grok": 60}), "antigravity")
+        self.assertEqual(self.verifier("claude", {"antigravity": 20, "grok": 60}), "grok")  # Grok has no usage reading: idle
         self.assertEqual(self.verifier("claude", {"antigravity": 60, "grok": 20}), "grok")
+        self.assertEqual(self.verifier("claude", {"antigravity": 20, "grok:verdict": "blocked"}), "antigravity")
+
+    def test_an_idle_grok_beats_a_used_antigravity_with_the_real_grok_reading(self):
+        """Grok has no weekly_used (no usage API): its real reading must still rank by idleness, not last."""
+        roles = {"qa-sdet": {"tier": "strong", "chain": self.VERIFIER_CHAIN + [
+            {"provider": "grok", "model": "grok-4.7"}]}}
+        path = os.path.join(self.tmp, "real-grok.json")
+        with open(path, "w") as handle:
+            json.dump({"roles": roles}, handle)
+        real_run = ug.run
+        for antigravity in ({"weekly_used": 90, "ceiling": 95, "reserve": 0}, {"blind": True}):
+            def run(provider, *args, _row=antigravity, **kwargs):
+                if provider == "grok":
+                    return real_run(provider, *args, **kwargs)
+                return {"provider": provider, "verdict": "allowed", **_row}
+            with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                    mock.patch.object(ug, "live_workers", return_value=[]), \
+                    mock.patch.object(ug, "run", side_effect=run), \
+                    mock.patch.object(ug, "antigravity_models", return_value=None):
+                picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
+            self.assertEqual(picked["provider"], "grok", antigravity)
 
     def test_a_grok_built_pr_never_gets_a_grok_verifier(self):
         self.assertEqual(self.verifier("grok", {"claude": 10, "antigravity": 1, "grok": 1}), "claude")
