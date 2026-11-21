@@ -2862,7 +2862,6 @@ def check_team_gates(base, args):
 
 INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|php[0-9.]*)$")
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
-GLUED_CODE_FLAG = re.compile(r"^-[ceE](?=.)")  # `perl -esystem...`: the code follows the flag in one word
 STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
                             r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
@@ -2909,13 +2908,12 @@ def check_indirection(base, args):
     elif INTERPRETERS.match(base):
         idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
-        glued = next((i for i, a in enumerate(args) if GLUED_CODE_FLAG.match(a)), None)
         if idx is not None:
             code = " ".join(args[idx + 1:])
-        elif glued is not None:
-            code = " ".join([args[glued][2:], *args[glued + 1:]])
         elif operand is None or "-" in args:
-            code = interpreter_stdin_body(CODE_COMMAND, base)
+            # A code word glued to a flag (`perl -esystem...`) has no `\b` before it, so look past the flag too.
+            code = " ".join([interpreter_stdin_body(CODE_COMMAND, base),
+                             *(re.sub(r"^-[A-Za-z]*?[ceE]", "", a) for a in args if a.startswith("-"))])
         else:
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
@@ -3363,77 +3361,19 @@ def report_command_text(command):
         return command
 
 
-_STDIN_WORD = r"[A-Za-z0-9_./=:+,@%{}*-]+"
-_STDIN_PREFIX = re.compile(rf"(?:{_STDIN_WORD}(?:[ \t]+{_STDIN_WORD})*[ \t]*\|[ \t]*)?({_STDIN_WORD}(?:[ \t]+{_STDIN_WORD})*)[ \t]*")
-
-
-def _stdin_heredoc_line(line, base):
-    """The heredoc match when `line` is `[plain words | ]BASE [plain args] <<[-]'TAG'`, else None."""
-    ops = list(QUOTED_HEREDOC.finditer(line))
-    if len(ops) != 1 or line.count("<<") != 1 or line[ops[0].end():].strip():
-        return None
-    head = line[:ops[0].start()]
-    if head and head[-1] not in " \t":
-        return None
-    rest = _STDIN_PREFIX.fullmatch(head)
-    if not rest or os.path.basename(rest[1].split()[0]) != base:
-        return None
-    for arg in rest[1].split()[1:]:
-        if arg.startswith("-") and arg not in ("-", "--") and not (re.fullmatch(r"-[A-Za-z]+", arg) and not set(arg) & set("ceEpr")):
-            return None
-    return ops[0]
-
-
-def _interpreter_stdin_body(command, base):
-    """The quoted heredoc body fed to the one interpreter line `base`, or `command` when unsure."""
-    mention = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])")
-    quote_marks = re.compile(r"[\\'\"]")
-    lines = command.splitlines(keepends=True)
-    shell, i, body, found = ShellLines(), 0, [], False
-    while i < len(lines):
-        line = lines[i]
-        i += 1
-        bare = line.rstrip("\r\n")
-        if bare.count("<<") != len(QUOTED_HEREDOC.findall(bare)):
-            return command
-        match = _stdin_heredoc_line(bare, base) if shell.at_top_level() else None
-        loose = quote_marks.sub("", bare)
-        if match and (len(mention.findall(bare)) != 1 or len(mention.findall(loose)) != 1):
-            return command
-        if match and found:
-            return command
-        if not match and (mention.search(bare) or mention.search(loose)):
-            return command
-        shell.scan(line)
-        if shell.unsure or shell.quote or (shell.pending and shell.stack):
-            return command
-        if not shell.pending:
-            continue
-        pending, shell.pending = shell.pending, []
-        for dash, delim in pending:
-            chunk = []
-            while i < len(lines):
-                text = lines[i]
-                i += 1
-                if (text.rstrip("\r\n").lstrip("\t") if dash else text.rstrip("\r\n")) == delim:
-                    break
-                chunk.append(text)
-            else:
-                return command
-            if match:
-                found, body = True, chunk
-    if not found or not shell.at_top_level():
-        return command
-    return "".join(body)
-
-
 def interpreter_stdin_body(command, base):
-    """Judge only the heredoc body an interpreter reads from stdin. Any exception or unsure shape returns
-    `command` whole (fail closed)."""
-    try:
-        return _interpreter_stdin_body(command, base)
-    except Exception:
+    """The heredoc body when the WHOLE command is exactly `BASE [-] <<'TAG'`, the body and one closing TAG
+    line (a quoted delimiter, fd 0, nothing else). Any other shape returns `command` whole (fail closed)."""
+    lines = command.splitlines()
+    if len(lines) < 2:
         return command
+    head = re.fullmatch(rf"{re.escape(base)}(?:[ \t]+-)?[ \t]*<<[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\1[ \t]*", lines[0])
+    if not head:
+        return command
+    tag, end = head[2], len(lines) - 1
+    if lines[end] != tag or tag in lines[1:end]:
+        return command
+    return "\n".join(lines[1:end])
 
 
 def _shell_parse_unsure(command):

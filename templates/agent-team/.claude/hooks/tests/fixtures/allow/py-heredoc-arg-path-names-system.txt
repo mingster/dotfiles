@@ -1,4 +1,0 @@
-python3 - /tmp/file-system.json <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1])))
-PY

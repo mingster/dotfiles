@@ -1,4 +1,0 @@
-find . -name '*.json' -exec stat -f %z {} + > sizes.txt
-python3 - <<'PY'
-print(sum(int(x) for x in open("sizes.txt").read().split()))
-PY
