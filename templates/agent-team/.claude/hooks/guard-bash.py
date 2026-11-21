@@ -44,6 +44,7 @@ backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
 """
 from __future__ import annotations
 
+import ast
 import datetime
 import fnmatch
 import glob
@@ -2796,6 +2797,8 @@ INTERPRETERS = re.compile(r"^(python[0-9.]*|perl[0-9.]*|ruby[0-9.]*|node|nodejs|
 INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
 STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
                             r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
+PY_PROCESS_NAME = re.compile(r"^(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|pty|importlib|__import__|"
+                             r"eval|compile|getattr|vars|globals|__dict__|Popen|run)$")
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 REDIRECT = re.compile(r"^[0-9]*(<|>|&>)")
 INDIRECT = []  # set by check_indirection; main denies once no specific gate has
@@ -2824,6 +2827,36 @@ def shell_reads_stdin(args):
     return True
 
 
+def python_code_starts_process(code):
+    """True when python code names a process start or an indirect route to one. Parses only, never runs.
+    A string constant alone is text, not a process start. Code that does not parse counts as a start."""
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return True
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Name):
+            names.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.append(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                names.extend(node.module.split("."))
+            for alias in node.names:
+                names.extend(alias.name.split("."))
+                names.append(alias.asname or "")
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+        elif isinstance(node, ast.arg):
+            names.append(node.arg)
+        elif isinstance(node, ast.keyword):
+            names.append(node.arg or "")
+        if any(PY_PROCESS_NAME.match(n) for n in names):
+            return True
+    return False
+
+
 def check_indirection(base, args):
     if base in SHELLS:
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
@@ -2846,7 +2879,11 @@ def check_indirection(base, args):
             code = RAW_COMMAND
         else:
             return
-        if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
+        if idx is not None and base.startswith("python") and args[idx].endswith("c") and idx + 1 < len(args):
+            starts = python_code_starts_process(args[idx + 1])
+        else:
+            starts = STARTS_PROCESS.search(code)
+        if starts or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
                             "hides the command from the guard. Run the command directly.")
 

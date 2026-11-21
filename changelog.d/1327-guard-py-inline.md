@@ -1,0 +1,1 @@
+guard: `python -c` code is judged on its parsed tree, so a read-only script that only prints or reads text such as `system` or `post-exec` is allowed, while any process start or indirect route to one stays denied (#1327).
