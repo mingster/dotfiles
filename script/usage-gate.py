@@ -15,15 +15,19 @@ show [--json] includes the exact source and reading age; pick --role ROLE retain
 its existing flags. every role takes the first allowed entry of the provider priority
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
-A Claude-built PR gets an Antigravity verifier first. Strong roles other than
-qa-sdet never select Grok.
+The verifier of a PR (qa-sdet, reviewer) comes from VERIFIERS, one table of builder family to
+ordered verifier families (owner 2026-11-21, #1305): a Claude builder gets Antigravity or Grok,
+whichever has more weekly percent left (unreadable counts as UNKNOWN_LEFT, a tie goes to
+Antigravity); an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
+builder gets Claude only. Strong roles other than qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
 A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
 treat that provider as blocked until the date; "grok" also covers Cursor grok models.
 family --agent A --model M prints the model family from the one map ship.sh and
-fleet-watch share. When qa-sdet is asked to avoid a family and every other family
-is out of quota, pick returns a different Claude model with same_family_fallback.
+fleet-watch share. When qa-sdet is asked to avoid claude and Antigravity and Grok are both
+blocked, pick returns a different Claude model with same_family_fallback. Any other builder
+family with every verifier blocked queues (exit 3).
 Claude has no daily cap (owner 2026-11-21): its headroom is the weekly percent left against the
 time to the weekly reset, summed over every managed Orca account (show prints the combined figure).
 The active account switches to a free one before a start is blocked, and an account whose reading
@@ -64,6 +68,15 @@ CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
 STRONG_NO_GROK = ("elon", "architect-pm", "secops-finops")  # these roles never take Cursor or Grok
 GROK_MODEL = "grok-4.7"
 GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
+UNKNOWN_LEFT = 50  # weekly percent left counted for a provider with no fresh reading
+# Verifier table (#1305): builder family -> (verifier families in order, rank them by percent left).
+# A ranked row sorts by left, most first, and the order here breaks a tie. An unranked row takes the
+# first allowed family. A family not listed is never a verifier for that builder.
+VERIFIERS = {
+    "claude": (("gemini", "grok"), True),
+    "gemini": (("claude", "grok"), False),
+    "grok": (("claude",), False),
+}
 
 
 def load_config():
@@ -1250,13 +1263,6 @@ def order_builder_chain(chain):
     return [*claude, *antigravity, grok_entry(chain)]
 
 
-def order_reviewer_chain(chain):
-    """Claude, Antigravity, Grok grok-4.7 for a reviewer; other providers keep their place after Claude."""
-    rank = {"claude": 0, "antigravity": 1, "grok": 2}
-    rest = [entry for entry in chain if entry.get("provider") != "grok"]
-    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 1))
-
-
 def family(entry):
     """One model-family map. ship.sh and fleet-watch call model_family, which uses this."""
     provider, model = entry["provider"], entry["model"]
@@ -1285,20 +1291,23 @@ _CLAUDE_FALLBACK = (
 )
 
 
-def _other_families_quota_blocked(chain, avoid, rows):
-    """True when at least one other family is in the chain and every one of them is quota-blocked."""
+def _verifiers_blocked(chain, families, rows):
+    """True when the chain has a verifier family and every such entry is quota-blocked."""
     saw = False
     for entry in chain:
-        fam = family(entry)
-        if not fam or fam == avoid:
-            continue
-        if avoid == "grok" and fam != "claude":
+        if family(entry) not in families:
             continue
         saw = True
-        row = rows[(entry["provider"], _gated_model(entry))]
-        if row["verdict"] != "blocked":
+        if rows[(entry["provider"], _gated_model(entry))]["verdict"] != "blocked":
             return False
     return saw
+
+
+def _left(row):
+    """Weekly percent left from a fresh reading; no reading counts as UNKNOWN_LEFT."""
+    if row.get("verdict") == "unknown" or "weekly_used" not in row:
+        return UNKNOWN_LEFT
+    return 100 - row["weekly_used"]
 
 
 def _mark_claude_fallback(candidates, chain, rows):
@@ -1344,11 +1353,11 @@ def _gated_model(entry):
 def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
     chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
-    reviewer = role in ("qa-sdet", "reviewer")
+    verifiers, ranked = VERIFIERS.get(avoid, (None, False)) if role in ("qa-sdet", "reviewer") else (None, False)
     if builder:
         chain = order_builder_chain(chain)
-    elif reviewer:
-        chain = order_reviewer_chain(chain)
+    elif role in ("qa-sdet", "reviewer") and not any(entry["provider"] == "grok" for entry in chain):
+        chain = [*chain, grok_entry(chain)]
     chain = [entry for entry in chain
              if entry["provider"] != "cursor"
              and not (entry["provider"] == "grok" and role in STRONG_NO_GROK)]
@@ -1367,9 +1376,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
         room, fraction = headroom(row)
         eligible = (row["verdict"] == "allowed" if entry["provider"] in READERS or entry["provider"] == "grok"
                     else fallback)
-        excluded = avoid is not None and family(entry) == avoid
-        if avoid == "grok" and family(entry) != "claude":
-            excluded = True  # Claude always reviews Grok authored work (owner 2026-11-09)
+        excluded = (family(entry) not in verifiers if verifiers is not None
+                    else avoid is not None and family(entry) == avoid)
         excluded_provider = entry["provider"] == avoid_provider
         if entry["provider"] == "antigravity" and known is not None and entry["model"] not in known:
             eligible, row = False, {**row, "verdict": "model not recognized"}
@@ -1383,10 +1391,16 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
         if candidate["eligible"]:
             allowed.append((index, candidate))
     chosen = None
+    if verifiers is not None:
+        def order(pair):
+            index, candidate = pair
+            left = _left(rows[(candidate["provider"], _gated_model(candidate))]) if ranked else 0
+            return -left, verifiers.index(family(candidate)), index
+        allowed.sort(key=order)
     if allowed:
         chosen = allowed[0][1]
-    if (role == "qa-sdet" and avoid and chosen is None
-            and _other_families_quota_blocked(chain, avoid, rows)):
+    if (role == "qa-sdet" and avoid == "claude" and chosen is None
+            and _verifiers_blocked(chain, verifiers, rows)):
         fallback = _mark_claude_fallback(candidates, chain, rows)
         if fallback is not None:
             chosen = fallback
@@ -1461,7 +1475,8 @@ def main(argv=None):
             else:
                 print(f"queue: Claude, Antigravity and Grok are all unavailable; earliest reset: "
                       f"{result['blocked_until_local']}", file=sys.stderr)
-        return 0 if result["selected"] else (3 if all(c["verdict"] == "blocked" for c in result["candidates"]) else 4)
+        open_rows = [c for c in result["candidates"] if not c["excluded_family"]] or result["candidates"]
+        return 0 if result["selected"] else (3 if all(c["verdict"] == "blocked" for c in open_rows) else 4)
     names = [a.provider] if a.provider else list(READERS)
     if a.cmd == "show" and not a.provider:
         names += list(NOT_GATED)
