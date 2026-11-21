@@ -15,6 +15,14 @@ checks wrap nothing). A type check killed with exit 137 is retried once, then
 reported as INFRA, so no rework starts. Type checks that an agent runs by hand
 still use measure mode.
 
+Each `head-checks.sh` step runs in its own process group. A cancelled run
+(TERM, INT, or the runner's INT then TERM) sends TERM to that group, waits up
+to 5 seconds, then sends KILL, so the gate's own cleanup (TERM, 3 seconds,
+KILL, release the slot) finishes first. A second signal during that cleanup is
+ignored. A small watcher stops the group when head-checks itself is killed.
+A step process that starts its own session or process group (the gate's
+command does) is stopped by its own parent, not by head-checks.
+
 Slot waits still log `stamp host=H wait_s=S` lines to
 `~/.orca/logs/heavy-gate-wait.log` for `fleet-watch.py` and team audit metrics.
 

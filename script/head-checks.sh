@@ -86,7 +86,7 @@ log=$(mktemp); receipt=$(mktemp)
 # Fixed cap on the posted receipt; GitHub rejects a comment body over 65536 characters.
 receipt_cap=${HEAD_CHECKS_RECEIPT_CAP:-20000}
 finish() {
-  local status=$? result=${check_result:-FAIL}
+  local status=${1:-$?} result=${check_result:-FAIL}
   trap - EXIT
   set +e
   [ -z "$lock" ] || rm -rf "$lock"
@@ -179,7 +179,58 @@ sys.stdout.write(text)
   [ -z "$changed" ] || rm -f "$changed" "$changed.unchecked"
   [ "$status" -eq 0 ] || exit 1
 }
-trap finish EXIT
+# A cancelled run must not leave its step running: the next job would start beside it.
+# Each step runs in its own process group, and reap_step signals the whole group.
+step_pid="" watcher_pid=""
+group_live() {
+  # A zombie only group holds nothing, so it must not hold the grace loop.
+  ps -axo pgid=,stat= | awk -v g="$1" '$1 == g && $2 !~ /^Z/ { live = 1 } END { exit !live }'
+}
+# A KILLed head-checks runs no trap. The watcher sees its parent change and stops the step group.
+# It checks the parent pid, not kill -0: a KILLed head-checks can linger as a zombie.
+start_watcher() {
+  python3 -c '
+import os, signal, sys, time
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+parent, group = int(sys.argv[1]), int(sys.argv[2])
+while os.getppid() == parent:
+    time.sleep(1)
+def send(sig):
+    try:
+        os.killpg(group, sig)
+        return True
+    except OSError:
+        return False
+if send(signal.SIGTERM):
+    for _ in range(30):
+        time.sleep(0.1)
+        if not send(0):
+            break
+    send(signal.SIGKILL)
+' "$$" "$step_pid" > /dev/null 2>&1 &
+  watcher_pid=$!
+  disown "$watcher_pid" 2>/dev/null || true
+}
+stop_watcher() {
+  [ -z "$watcher_pid" ] || kill "$watcher_pid" 2>/dev/null || true
+  watcher_pid=""
+}
+reap_step() {
+  local tries=0
+  [ -n "$step_pid" ] || return 0
+  stop_watcher
+  kill -TERM -- -"$step_pid" 2>/dev/null || true
+  # A 5 second grace: the gate's own cleanup (TERM, 3 seconds, KILL) fits inside it, and it ends
+  # before the runner follows its INT with TERM (7.5 seconds later) and KILL (2.5 more).
+  while [ "$tries" -lt 50 ] && group_live "$step_pid"; do
+    tries=$((tries + 1)); sleep 0.1
+  done
+  kill -KILL -- -"$step_pid" 2>/dev/null || true
+  step_pid=""
+}
+# The runner's cancel sends a second signal while this trap runs; it must not cut the cleanup short.
+finish_reaping() { local status=$?; trap '' TERM INT; set +e; reap_step; rm -f "${output:-}"; finish "$status"; }
+trap finish_reaping EXIT
 # A killed run must not read as a pass: bash hands the EXIT trap status 0 after SIGTERM.
 trap 'exit 143' TERM; trap 'exit 130' INT
 if [ -n "$pr" ]; then
@@ -507,7 +558,18 @@ while IFS= read -r command || [ -n "$command" ]; do
   tsc_attempt=0
   while :; do
     tsc_attempt=$((tsc_attempt + 1))
-    if (cd "$worktree" && "${runner[@]}") > "$output" 2>&1; then
+    # In the background so a TERM or INT trap runs at once (bash defers a trap until a foreground
+    # command ends). Job control gives the step its own process group, whose id is step_pid.
+    set -m
+    (cd "$worktree" && exec "${runner[@]}") > "$output" 2>&1 &
+    step_pid=$!
+    set +m
+    start_watcher
+    step_status=0
+    wait "$step_pid" 2>/dev/null || step_status=$?
+    stop_watcher
+    step_pid=""
+    if [ "$step_status" -eq 0 ]; then
       sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
@@ -518,7 +580,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       [ -z "$db_lock" ] || { rm -rf "$db_lock"; db_lock=""; }
       break
     else
-      status=$?
+      status=$step_status
       sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
       sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
