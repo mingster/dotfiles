@@ -4,6 +4,14 @@ Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs 
 
 Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds the hand-kept keys (`repo_roots`, `host_caps`, and the per-host monitor paths). The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
+## Why Orca shows every run as an error
+
+Orca has no script only automation. An automation is an agent prompt, and its precheck is the only place to run a shell command without an agent. Orca (1.4.x) starts the agent only on precheck exit 0, and records any other exit as `skipped_precheck` with the error text `Precheck exited with code N.` There is no exit code Orca treats as a normal skip. So an ok round and a failed round both look like errors in the run history, and a change to the exit codes cannot fix that.
+
+What to read instead: the precheck stdout on the run record starts with `ok <name>` (wrapper exit 1) or `FAILED <name>` (wrapper exit 2), and the log named on that line has the round. A real failure is exit 2. Exit 1 only means the job ran fine.
+
+A scheduled wrap-up round also keeps one slow part from failing the round: `board-clean` stops starting new cards 10 seconds before its step cap (`BOARD_CLEAN_BUDGET_S`) and finishes the rest next round, an Orca record that Orca cannot find or cannot remove is a warning that the next round retries, and a never settled dispatch is asked about once (`wrap-up-gone-dispatches` in the state directory).
+
 ## Commands
 
 ```bash

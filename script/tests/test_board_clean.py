@@ -318,6 +318,18 @@ class LocalGit(unittest.TestCase):
                 clean.local_git_facts(str(repo)), {"dirty": False, "unpushed": False, "unmerged": False},
             )
 
+    def test_local_branch_already_removed_is_not_reported_as_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp) / "repo"
+            subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "T"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "initial", "--allow-empty"], check=True)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                clean.delete_local_branches(str(repo), "gone-branch", False)
+            self.assertNotIn("local branch delete failed", err.getvalue())
+
     def test_remote_probe_command_agrees_with_local_facts(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = pathlib.Path(tmp) / "repo"

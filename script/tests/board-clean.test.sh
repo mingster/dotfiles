@@ -135,5 +135,12 @@ grep -Fq "worktree rm --worktree path:/w/pushed" "$ORCA_LOG" && bad "a pushed, u
 grep -Fq 'terminal close --terminal t-del --environment up --json' "$ORCA_LOG" \
   && ok 'the branch-delete session is closed' || bad 'the branch-delete session is closed' "$(cat "$ORCA_LOG")"
 
+# A spent time budget stops new cleanups and exits 0, so the caller's step cap never ends it with 124.
+: > "$ORCA_LOG"
+out=$(BOARD_CLEAN_BUDGET_S=0 python3 "$here/board-clean.py" --fleet --apply 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok 'a spent budget exits 0' || bad 'a spent budget exits 0' "rc=$rc $out"
+grep -Fq 'board-clean: time budget spent' <<<"$out" && ok 'a spent budget says what is left for the next round' || bad 'a spent budget says what is left for the next round' "$out"
+grep -Fq 'worktree rm ' "$ORCA_LOG" && bad 'a spent budget starts no cleanup' "$(cat "$ORCA_LOG")" || ok 'a spent budget starts no cleanup'
+
 printf 'passed %s, failed %s\n' "$passed" "$failed"
 [ "$failed" -eq 0 ]

@@ -28,6 +28,9 @@ case "$*" in
   'worktree rm --worktree path:'*)
     path=""
     for a in "$@"; do case "$a" in path:*) path="${a#path:}" ;; esac; done
+    case " ${ORCA_RM_NOTFOUND:-} " in
+      *" $path "*) echo '{"ok":false,"error":{"code":"selector_not_found"}}'; exit 1 ;;
+    esac
     case " ${ORCA_RM_FAIL:-} " in
       *" $path "*) echo "orca rm failed" >&2; exit 1 ;;
     esac
@@ -52,7 +55,7 @@ fixture() {
   d="$tmp/repo$n"; n=$((n+1))
   mkdir -p "$d"
   export ORCA_LOG="$d/orca.log"; : > "$ORCA_LOG"
-  unset ORCA_RM_FAIL
+  unset ORCA_RM_FAIL ORCA_RM_NOTFOUND
   export FAKE_PRS='[]' FAKE_TERMINALS='[]' FAKE_ORCA_WORKTREES='[]'
   "$real_git" init -q --bare "$d/origin"
   "$real_git" init -q -b main "$d/wt"
@@ -106,13 +109,25 @@ grep -Fq "worktree rm --worktree path:$tmp/workspaces/orphan2" "$ORCA_LOG" \
 grep -Fq 'Orca orphan sweep skipped' "$d/out" && ok 'orphan sweep skip prints one line' \
   || bad 'orphan sweep skip prints one line' "$(cat "$d/out")"
 
+# An orphan record the local Orca cannot find (selector_not_found, for example a worker started on another host) is already gone: no failure.
+fixture
+export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
+export ORCA_RM_NOTFOUND="$tmp/workspaces/orphan"
+bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+unset ORCA_RM_NOTFOUND
+[ "$rc" -eq 0 ] && ok 'orca record that is not found does not fail the run' || bad 'orca record that is not found does not fail the run' "rc=$rc $(cat "$d/out" "$d/err")"
+[ "$(grep -Fc "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG")" -eq 1 ] && ok 'a record that is not found is not retried' \
+  || bad 'a record that is not found is not retried' "$(cat "$ORCA_LOG")"
+
+# Any other orca rm failure is retried once and, when it keeps failing, is a warning: the record is kept and the round is not failed.
 fixture
 export FAKE_ORCA_WORKTREES="[{\"repoId\":\"repo-a\",\"isMainWorktree\":true,\"path\":\"$d/wt\",\"pinned\":false},{\"repoId\":\"repo-a\",\"isMainWorktree\":false,\"path\":\"$tmp/workspaces/orphan\",\"pinned\":false}]"
 export ORCA_RM_FAIL="$tmp/workspaces/orphan"
-bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
-[ "$rc" -ne 0 ] && ok 'failed orphan orca rm fails the run' || bad 'failed orphan orca rm fails the run' "rc=$rc"
-grep -Fq 'orca worktree rm' "$d/err" "$d/out" && ok 'failed orphan orca rm reported' \
-  || bad 'failed orphan orca rm reported' "$(cat "$d/out" "$d/err")"
+WRAP_UP_RM_RETRY_WAIT=0 bash "$here/wrap-up.sh" --repo "$d/wt" --apply >"$d/out" 2>"$d/err"; rc=$?
+[ "$rc" -eq 0 ] && ok 'a failing orca record remove is a warning, not a failed run' || bad 'a failing orca record remove is a warning, not a failed run' "rc=$rc $(cat "$d/out" "$d/err")"
+[ "$(grep -Fc "worktree rm --worktree path:$tmp/workspaces/orphan" "$ORCA_LOG")" -eq 2 ] && ok 'a failing orca record remove is retried once' \
+  || bad 'a failing orca record remove is retried once' "$(cat "$ORCA_LOG")"
+grep -Fq 'Warning: could not deregister Orca worktree' "$d/err" && ok 'the kept record is reported as a warning' || bad 'the kept record is reported as a warning' "$(cat "$d/err")"
 
 fixture
 export FAKE_ORCA_WORKTREES=''

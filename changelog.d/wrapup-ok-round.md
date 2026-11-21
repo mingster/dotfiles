@@ -1,0 +1,1 @@
+Fix the scheduled wrap-up round: board-clean stops at its own time budget instead of exit 124, an Orca record that is already gone or fails to remove is a warning, and a dispatch Orca no longer has is asked about once. Docs explain why Orca shows every precheck run as an error. Refs #1303

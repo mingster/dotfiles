@@ -252,10 +252,11 @@ scheduled_round() {
         round_log "skip: $step (round budget spent)"
         continue
       fi
+      # The step stops itself between cards 10 seconds before its cap, so a long card list ends the step ok, not 124.
       if [[ "$step_bin" == *.py ]]; then
-        run_limited "$step_limit" python3 "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+        BOARD_CLEAN_BUDGET_S=$((step_limit - 10)) run_limited "$step_limit" python3 "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
       else
-        run_limited "$step_limit" bash "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+        BOARD_CLEAN_BUDGET_S=$((step_limit - 10)) run_limited "$step_limit" bash "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
       fi
       step_code=$?
       [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
@@ -1284,6 +1285,7 @@ if [ "$host_wide" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1 && terminal_
   done < <(jq -r '.result.environments[] | .id // .name // empty' "$tmp/envs")
   [ -z "${WRAP_UP_SCHEDULED_CHILD:-}" ] || printf 'step terminals seconds=%s\n' "$SECONDS"
 fi
+gone_dispatches=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}/wrap-up-gone-dispatches
 if command -v "$orca_bin" >/dev/null 2>&1; then
   if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
     # Unknown ownership is retained too: a live terminal can belong to another Run.
@@ -1303,6 +1305,10 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
       cat "$tmp/workers" >> "$tmp/worker-pages"
       while IFS=$'\t' read -r dispatch status owned row_path; do
         [ -n "$dispatch" ] || continue
+        # A never-settled dispatch Orca already could not show owns nothing, and the Run home does not get it back: do not ask again.
+        if [ "$status" = start_unknown ] && [ "$owned" = free ] && grep -Fxq -- "$dispatch" "$gone_dispatches" 2>/dev/null; then
+          continue
+        fi
         if "$orca" orchestration worker-show --dispatch "$dispatch" --json > "$tmp/show"; then
           # Any dispatch still live on this host may hold a temp browser; its output names no run, so do not guess from words.
           [ -z "$(jq -c 'select(.result | ((.state // .dispatch.status) as $s | ["succeeded","completed","failed","cancelled","released","stopped"] | index($s)) or .stage == "released" or .terminalState == "released" or .liveness == "exited" | not)' "$tmp/show")" ] || dispatch_run=1
@@ -1312,7 +1318,8 @@ if command -v "$orca_bin" >/dev/null 2>&1; then
           echo "Warning: worker-show failed for pending dispatch $dispatch; skipped." >&2
         elif [ "$status" = start_unknown ] && [ "$owned" = free ] && jq -e '.error.code == "dispatch_not_found"' "$tmp/show" >/dev/null 2>&1; then
           # Never settled: Orca keeps no terminal, workspace or time for it, and cannot show it, so it owns no browser and no worktree.
-          echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped." >&2
+          echo "Warning: worker-show failed for never-settled dispatch $dispatch; skipped, not asked about again." >&2
+          { mkdir -p "$(dirname "$gone_dispatches")" && printf '%s\n' "$dispatch" >> "$gone_dispatches"; } 2>/dev/null || true
         elif jq -e '.error.code == "remote_runtime_unavailable" or .error.code == "peer_changed" or (.error.message | startswith("Unknown environment") or startswith("Remote Dispatch"))' "$tmp/show" >/dev/null 2>&1; then
           # Ran on a host this one no longer pairs with (peer_changed), or one that is offline now (issue 855): its worktree and browser live
           # there, that host's wrap-up owns them. A path its row names may still be here, so that one stays.
@@ -1637,12 +1644,20 @@ worktree_board_open() {
   return 1
 }
 guarded_orca_worktree_rm() { # <counter> <label> <path>
-  local counter=$1 label=$2 path=$3 rc=0 real_path
+  local counter=$1 label=$2 path=$3 rc=0 real_path out try
   real_path=$(real "$path")
-  orca_call worktree rm --worktree "path:$real_path" >/dev/null 2>&1 || rc=$?
+  # The record's directory is already gone, so this only tidies the sidebar. Orca answers selector_not_found when it has
+  # no such record here (a worker started on another host keeps its record there): that is done. Any other failure is
+  # retried once, then kept with a warning; it never fails the round, and the next round tries again.
+  for try in 1 2; do
+    rc=0
+    out=$(orca_call worktree rm --worktree "path:$real_path" 2>/dev/null) || rc=$?
+    [ "$rc" -ne 0 ] || break
+    case "$out" in *selector_not_found*) rc=0; break ;; esac
+    [ "$try" -eq 2 ] || sleep "${WRAP_UP_RM_RETRY_WAIT:-2}"
+  done
   if [ "$rc" -ne 0 ]; then
-    echo "Warning: could not deregister Orca worktree for $label." >&2
-    fail_item "$label" "orca worktree rm failed (exit $rc)"
+    echo "Warning: could not deregister Orca worktree for $label (exit $rc); kept, tried again next round." >&2
     guard_keep "$counter" "$label" 'orca worktree rm failed'
     return 1
   fi

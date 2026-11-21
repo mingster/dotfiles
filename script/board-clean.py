@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 CLEAN_DETAIL = "worktree, local branch, remote branch, terminals, session"
@@ -470,7 +471,12 @@ def delete_local_branches(main: str, branch: str, throwaway: bool) -> None:
         return
     flag = "-D" if throwaway else "-d"
     try:
-        deleted = subprocess.run(
+        # worktree rm --delete-branch usually removed it already; a missing branch is done, not a failure.
+        has_branch = subprocess.run(
+            ["git", "-C", main, "show-ref", "--verify", "--quiet", "refs/heads/%s" % branch],
+            capture_output=True, text=True, timeout=30, check=False,
+        ).returncode == 0
+        deleted = None if not has_branch else subprocess.run(
             ["git", "-C", main, "branch", flag, branch],
             capture_output=True, text=True, timeout=30, check=False,
         )
@@ -481,7 +487,7 @@ def delete_local_branches(main: str, branch: str, throwaway: bool) -> None:
     except (OSError, subprocess.TimeoutExpired) as exc:
         print("board-clean: branch delete failed for %s (%s)" % (branch, exc), file=sys.stderr)
         return
-    if deleted.returncode != 0:
+    if deleted is not None and deleted.returncode != 0:
         print("board-clean: local branch delete failed for %s" % branch, file=sys.stderr)
     if pushed.returncode != 0:
         print("board-clean: remote branch delete failed for %s" % branch, file=sys.stderr)
@@ -716,6 +722,9 @@ def main(argv: list[str] | None = None) -> int:
             gathered.append((label, trees, workers))
     cleaned = 0
     kept = 0
+    budget = os.environ.get("BOARD_CLEAN_BUDGET_S", "")
+    deadline = time.monotonic() + int(budget) if budget.isdigit() else None
+    spent = False
     for label, trees, workers in gathered:
         grouped = None if workers is None else workers_by_path(workers)
         for tree in trees:
@@ -724,12 +733,20 @@ def main(argv: list[str] | None = None) -> int:
             path = tree.get("path") or tree.get("workspacePath") or ""
             if not isinstance(path, str) or not path:
                 continue
+            if apply and deadline is not None and time.monotonic() >= deadline:
+                # Stop between cards: the caller's step cap would otherwise end this run with 124 mid-cleanup.
+                spent = True
+                break
             outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
             if outcome == "clean":
                 cleaned += 1
             else:
                 kept += 1
-    mode = "applied" if apply else "dry-run"
+        if spent:
+            break
+    if spent:
+        print("board-clean: time budget spent; the cards left are cleaned next round")
+    mode ="applied" if apply else "dry-run"
     print("%s: clean=%s keep=%s skipped_hosts=%s" % (mode, cleaned, kept, skipped))
     return 0
 
