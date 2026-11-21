@@ -18,6 +18,9 @@ Read before reporting status or reviewing process performance.
 Read before your first dispatch. Worker accounting follows pstack Orchestrate, Supervision.
 
 - At start and each wake, settle every unreleased dispatch from `orca orchestration worker-list --run <your run> --json`; a stopped or failed one follows the lifecycle transition in the Orca orchestration guide, preserving unmerged work. A new coordinator session adopts every live worker before new work.
+- Dispatch a verifier only after the PR's Review has posted PASS at the current head.
+- Before you dispatch a fix to a PR, release every live verifier on it.
+- A `worker-release` that returns `ok:false` must be retried, or the terminal stopped, before the fix goes out.
 - Answer a worker only with `~/dotfiles/script/orca-reply.sh --to <handle> --id <msg id> --body "<text>"`; a bare `orca orchestration reply` does not wake an idle worker.
 - **Small task method** (brief to MERGED under 3 minutes): exact edits in the brief, worktree pre-created at `~/orca/workspaces/{{PROJECT_NAME}}/<lane>`, one Grok worker (`--agent grok --model grok-4.7`), merge on checks.
 

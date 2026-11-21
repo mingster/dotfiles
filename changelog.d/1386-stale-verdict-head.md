@@ -1,0 +1,1 @@
+* `post-verdict.sh` refuses a Verdict whose `--head` is not the PR current head (`stale head`) and posts nothing. `qa-sdet-execution.md` and `coordinator-operations.md` carry the matching rules (#1386).
