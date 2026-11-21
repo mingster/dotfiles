@@ -1,1 +1,0 @@
-Fix: a Claude-built PR now gets a Grok verifier first, then Antigravity (#1305). `usage-gate.py` ranks reviewers Claude, Grok, Antigravity; builders keep Claude, Antigravity, Grok. `elon`, `architect-pm` and `secops-finops` still never take Grok.

@@ -2212,8 +2212,6 @@ class BuilderCursorRoute(unittest.TestCase):
         roles = {"qa-sdet": {"tier": "strong", "chain": chain}}
         status, out = self.flags("qa-sdet", roles, {"claude": 40, "antigravity": 5})
         self.assertEqual((status, out), (0, "--agent claude --model opus --effort medium"))
-        status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 5})
-        self.assertEqual((status, out), (0, self.GROK))
         status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 5, "grok:verdict": "blocked"})
         self.assertEqual((status, out), (0, "--agent antigravity --model gemini-4-argon-high"))
         status, out = self.flags("qa-sdet", roles, {"claude": 96, "antigravity": 96})
@@ -2230,7 +2228,39 @@ class BuilderCursorRoute(unittest.TestCase):
                     "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
-        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))
+        self.assertEqual((picked["provider"], picked["model"]), ("antigravity", "gemini-4-argon-high"))  # tie: chain order
+
+    VERIFIER_CHAIN = [{"provider": "claude", "model": "opus", "effort": "high"},
+                      {"provider": "antigravity", "model": "gemini-4-argon-high"}]
+
+    def verifier(self, avoid, weekly):
+        roles = {"qa-sdet": {"tier": "strong", "chain": self.VERIFIER_CHAIN}}
+        path = os.path.join(self.tmp, "presets.json")
+        with open(path, "w") as handle:
+            json.dump({"roles": roles}, handle)
+
+        def fake_run(provider, *_args, **_kwargs):
+            used = weekly.get(provider, 10)
+            verdict = weekly.get(provider + ":verdict") or ("blocked" if used >= 95 else "allowed")
+            return {"provider": provider, "verdict": verdict, "ceiling": 95, "weekly_used": used, "reserve": 0}
+
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": path}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            picked = ug.pick("qa-sdet", avoid, None, None, None)["selected"]
+        return picked["provider"] if picked else None
+
+    def test_a_claude_built_pr_gets_whichever_of_antigravity_and_grok_has_more_headroom(self):
+        """Owner 2026-11-21 (#1305): a different family than the builder, the one with most usage left."""
+        self.assertEqual(self.verifier("claude", {"antigravity": 20, "grok": 60}), "antigravity")
+        self.assertEqual(self.verifier("claude", {"antigravity": 60, "grok": 20}), "grok")
+
+    def test_a_grok_built_pr_never_gets_a_grok_verifier(self):
+        self.assertEqual(self.verifier("grok", {"claude": 10, "antigravity": 1, "grok": 1}), "claude")
+
+    def test_an_exhausted_family_is_skipped_for_the_verifier(self):
+        self.assertEqual(self.verifier("claude", {"antigravity": 96, "grok": 90}), "grok")
+        self.assertEqual(self.verifier("claude", {"antigravity": 90, "grok": 96}), "antigravity")
 
     def test_a_cursor_entry_in_a_chain_is_never_picked(self):
         chain = [{"provider": "cursor", "model": "grok-4.7-high"},

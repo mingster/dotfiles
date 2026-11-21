@@ -1,0 +1,1 @@
+Fix: the verifier is a different model family than the builder, and among the qualified families `usage-gate.py pick` takes the one with the most usage left (#1305, owner 2026-11-21). A Claude-built PR goes to Antigravity or Grok by headroom; a Grok-built PR never gets Grok. `elon`, `architect-pm` and `secops-finops` still never take Grok.

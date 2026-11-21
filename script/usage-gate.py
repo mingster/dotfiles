@@ -15,8 +15,9 @@ show [--json] includes the exact source and reading age; pick --role ROLE retain
 its existing flags. every role takes the first allowed entry of the provider priority
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
-A Claude-built PR gets a Grok verifier first (owner 2026-11-21), then Antigravity. Strong roles other than
-qa-sdet never select Grok.
+The verifier is a different family than the builder; among the qualified families pick takes the one
+with the most headroom (pts/day, as in show), unknown last, ties in chain order (owner 2026-11-21).
+Strong roles other than qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
 A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
@@ -1251,10 +1252,10 @@ def order_builder_chain(chain):
 
 
 def order_reviewer_chain(chain):
-    """Claude, Grok grok-4.7, Antigravity for a reviewer (owner 2026-11-21); other providers rank like Antigravity."""
-    rank = {"claude": 0, "grok": 1, "antigravity": 2}
+    """Claude, Antigravity, Grok grok-4.7 for a reviewer: the tie order. pick then ranks by headroom (owner 2026-11-21)."""
+    rank = {"claude": 0, "antigravity": 1, "grok": 2}
     rest = [entry for entry in chain if entry.get("provider") != "grok"]
-    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 2))
+    return sorted([*rest, grok_entry(chain)], key=lambda entry: rank.get(entry["provider"], 1))
 
 
 def family(entry):
@@ -1385,6 +1386,9 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
     chosen = None
     if allowed:
         chosen = allowed[0][1]
+        if reviewer and avoid:  # builder known: most usage left wins; an unread family ranks last; max keeps chain order on ties
+            chosen = max((c for _, c in allowed),
+                         key=lambda c: -float("inf") if c["headroom_per_day"] is None else c["headroom_per_day"])
     if (role == "qa-sdet" and avoid and chosen is None
             and _other_families_quota_blocked(chain, avoid, rows)):
         fallback = _mark_claude_fallback(candidates, chain, rows)
