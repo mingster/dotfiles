@@ -1,0 +1,1 @@
+- Grok fleet defaults: `ide/grok/config.defaults.toml` now carries the owner's Grok settings (model grok-4.7, medium effort, UI and permission choices). `install.sh` merges them into each host's `~/.grok/config.toml` without changing keys a host already set.
