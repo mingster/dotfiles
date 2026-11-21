@@ -1,0 +1,3 @@
+# "
+bash bin/deploy-raw.sh
+# "

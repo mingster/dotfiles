@@ -1,0 +1,5 @@
+cat <<'A' <<'B'
+A
+"
+B
+bash bin/deploy-raw.sh

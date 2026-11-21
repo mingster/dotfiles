@@ -1,0 +1,4 @@
+echo "$(echo ")" '"';
+bash \
+-c "bash bin/deploy-raw.sh"
+echo '"')"

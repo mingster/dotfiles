@@ -567,6 +567,68 @@ class ShellIndirection(GuardTest):
                 self.assertAllowed(command)
 
 
+class BlockedScriptMentions(GuardTest):
+    """A blocked script name outside the plain line grammar denies, fail closed (#1381, #1383)."""
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh"]}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg}
+
+    def _module(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_mentions", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_plain_shell_line_grammar(self):
+        plain = self._module()._plain_shell_line
+        for line in ("cat bin/deploy-raw.sh", "git commit -m 'fix deploy-raw.sh'", "echo \"a # b\" # it's",
+                     "cat > a.md <<'EOF'", "git commit -F - <<-\"EOF\"  # note", "ls; echo '<<x'", "# a \" in a comment"):
+            with self.subTest(line=line):
+                self.assertIsNotNone(plain(line))
+        for line in ("echo \"", "echo a#\"", "echo $x", "echo `x`", "bash \\", "cat <(x)", "echo >(x)",
+                     "cat <<EOF", "cat <<'A' <<'B'", "cat <<'EOF-1'", "cat <<E'O'F", "cat <<'1'", "cat <<\\",
+                     "cat <<'EOF' > f", "bash <<< x", "x\r"):
+            with self.subTest(line=line):
+                self.assertIsNone(plain(line))
+
+    def test_plain_mentions_allowed(self):
+        for command in ("cat bin/deploy-raw.sh", "grep -n set bin/deploy-raw.sh | head",
+                        "git add bin/deploy-raw.sh && git commit -m 'fix: deploy-raw.sh exit code'",
+                        "ls bin # deploy-raw.sh lives here",
+                        "git commit -F - <<'EOF'\nbash bin/deploy-raw.sh $(x) was refused\nEOF",
+                        "mkdir -p /tmp/o\ncat > /tmp/o/a.md <<'EOF'\n`bash bin/deploy-raw.sh`\nEOF\nls /tmp/o"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_unplain_mentions_denied(self):
+        for command in ("cat bin/deploy-raw.sh\necho \"\nx\"", "echo $HOME bin/deploy-raw.sh",
+                        "python3 - <<'PY'\nprint(open('bin/deploy-raw.sh').read())\nPY",
+                        "cat <<'EOF'\nbin/deploy-raw.sh\n", "echo \"$(echo \")\"; bash bin/deploy-ra\"w\".sh)\"",
+                        "ls\nbash bin/deploy-raw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_an_error_in_the_mention_check_denies(self):
+        mod = self._module()
+        mod.BLOCKED_SCRIPTS = {"deploy-raw.sh"}
+        with mock.patch.object(mod, "_plain_shell_line", side_effect=RuntimeError("boom")), \
+                mock.patch.object(mod, "deny", side_effect=SystemExit(0)) as deny:
+            with self.assertRaises(SystemExit):
+                mod.check_blocked_script_mentions("cat bin/deploy-raw.sh")
+        deny.assert_called_once()
+
+    def test_perl_glued_code_flag_is_scanned(self):
+        for flag in ("-e", "-le", "-ne", "-E"):
+            command = f"perl {flag}system+q:ba:.q:sh:,q:x.sh:"
+            with self.subTest(command=command):
+                self.assertDenied(command, "starts a process")
+        self.assertAllowed("perl -lne print file.txt")
+
+
 class ProjectConfigRules(GuardTest):
     """Rules a project turns on in guard-config.json, driven by a sample config."""
     SHA = "0123456789abcdef0123456789abcdef01234567"

@@ -1,0 +1,4 @@
+python3 - <<'PY'
+# it's
+PY
+bash bin/deploy-raw.sh

@@ -1,0 +1,5 @@
+# '
+python3 -c '
+import os; """
+# """ + str(os.system("bash bin/deploy-raw.sh"))
+'

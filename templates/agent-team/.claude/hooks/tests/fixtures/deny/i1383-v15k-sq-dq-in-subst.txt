@@ -1,0 +1,2 @@
+echo "$(echo '"')"
+bash bin/deploy-raw.sh

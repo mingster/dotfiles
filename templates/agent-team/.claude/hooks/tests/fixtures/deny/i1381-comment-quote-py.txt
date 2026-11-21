@@ -1,0 +1,6 @@
+# "
+python3 - <<'PY'
+import os
+os.system("bash bin/deploy-raw.sh")
+PY
+# "
