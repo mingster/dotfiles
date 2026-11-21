@@ -1170,10 +1170,11 @@ class Pick(unittest.TestCase):
         self.assertEqual((status, result["selected"], result["blocked_until"]),
                          (3, None, FUT))
 
-    def test_reviewer_avoid_claude_picks_other_when_allowed(self):
+    def test_reviewer_avoid_claude_ignores_a_family_the_table_does_not_list(self):
+        # The verifier table (#1305) lists gemini and grok for a Claude builder, so a gpt entry never verifies.
         status, out, _ = self.invoke(role="reviewer", chain=REVIEWER_CHAIN, claude=95, other=44,
                                      extra=("--avoid-family", "claude"))
-        self.assertEqual((status, out.strip()), (0, "--agent other --model gpt-6.1-sol --effort medium"))
+        self.assertEqual((status, out.strip()), (0, "--agent antigravity --model gemini-3.8-flash"))
 
     def test_reviewer_avoid_claude_picks_antigravity_flash_when_other_blocked(self):
         pools = {"gemini-flash": {"pct": 5, "resets_at": FUT, "observed_at": NOW}}
@@ -2406,3 +2407,107 @@ class Pauses(unittest.TestCase):
 
     def test_the_committed_config_has_no_pause(self):
         self.assertEqual(ug.load_config()["pauses"], [])
+
+
+class VerifierTable1305(unittest.TestCase):
+    """One test per row of the verifier decision table (#1305), through the real pick() and the real Grok gate.
+
+    Mocked: the Claude and Antigravity readings and the live Grok worker count. Grok's row is the real
+    grok_result(), so it has no weekly_used and counts as UNKNOWN_LEFT.
+    """
+
+    PRESETS = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
+    real_run = staticmethod(ug.run)
+
+    def pick(self, role="qa-sdet", avoid="claude", claude=10, agy=10, grok_live=0):
+        """claude and agy: weekly percent used, "blocked", or None (Antigravity unreadable). grok_live: live Grok workers."""
+        def fake_run(provider, *args, **kwargs):
+            if provider == "grok":
+                return self.real_run(provider, *args, **kwargs)
+            value = claude if provider == "claude" else agy
+            if value is None:
+                return {"provider": provider, "verdict": "allowed", "blind": True}
+            blocked = value == "blocked"
+            return {"provider": provider, "verdict": "blocked" if blocked else "allowed", "ceiling": 95,
+                    "weekly_used": 96 if blocked else value, "reserve": 0,
+                    "blocked_until": FUT if blocked else None}
+
+        live = [{"agent": "grok"}] * grok_live
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "live_workers", return_value=live), \
+                mock.patch.object(ug, "antigravity_models", return_value=None), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
+            status = ug.main(["pick", "--role", role, "--avoid-family", avoid, "--json"])
+        return status, json.loads(out.getvalue())
+
+    def chosen(self, result):
+        selected = result["selected"]
+        return selected["provider"] if selected else None
+
+    # Row: claude builder.
+    def test_claude_builder_antigravity_has_more_left_than_unreadable_grok(self):
+        status, result = self.pick(agy=30)  # 70 left against 50
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+
+    def test_claude_builder_unreadable_grok_beats_antigravity_below_fifty_left(self):
+        status, result = self.pick(agy=80)  # 20 left against 50
+        self.assertEqual((status, self.chosen(result)), (0, "grok"))
+
+    def test_claude_builder_tie_goes_to_antigravity(self):
+        status, result = self.pick(agy=50)  # 50 left against 50
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+
+    def test_claude_builder_unreadable_antigravity_ties_with_grok_and_wins(self):
+        status, result = self.pick(agy=None)
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+
+    def test_claude_builder_antigravity_blocked_picks_grok(self):
+        status, result = self.pick(agy="blocked")
+        self.assertEqual((status, self.chosen(result)), (0, "grok"))
+
+    def test_claude_builder_grok_blocked_picks_antigravity_even_with_little_left(self):
+        status, result = self.pick(agy=90, grok_live=1)
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+
+    def test_claude_builder_both_blocked_gets_a_different_claude_model(self):
+        status, result = self.pick(agy="blocked", grok_live=1)
+        selected = result["selected"]
+        self.assertEqual((status, selected["provider"], selected["model"]), (0, "claude", "opus"))
+        self.assertTrue(selected["same_family_fallback"])
+        self.assertEqual([c["model"] for c in result["candidates"] if c.get("same_family_fallback")],
+                         ["opus", "sonnet"])
+
+    def test_claude_builder_a_lower_rank_is_not_a_fallback(self):
+        status, result = self.pick(agy=80)
+        self.assertFalse(result["selected"].get("same_family_fallback"))
+
+    # Row: Antigravity builder.
+    def test_antigravity_builder_gets_claude_even_when_grok_is_idle(self):
+        status, result = self.pick(avoid="gemini", claude=90, agy=10)
+        self.assertEqual((status, self.chosen(result)), (0, "claude"))
+
+    def test_antigravity_builder_gets_grok_only_when_claude_is_blocked(self):
+        status, result = self.pick(avoid="gemini", claude="blocked")
+        self.assertEqual((status, self.chosen(result)), (0, "grok"))
+
+    def test_antigravity_builder_with_claude_and_grok_blocked_queues(self):
+        status, result = self.pick(avoid="gemini", claude="blocked", grok_live=1)
+        self.assertEqual((status, result["queue"], result["selected"]), (3, True, None))
+
+    # Row: Grok builder.
+    def test_grok_builder_gets_claude(self):
+        status, result = self.pick(avoid="grok")
+        self.assertEqual((status, self.chosen(result)), (0, "claude"))
+
+    def test_grok_builder_queues_when_claude_is_blocked_and_never_gets_grok(self):
+        status, result = self.pick(avoid="grok", claude="blocked", agy=10)
+        self.assertEqual((status, result["queue"], result["selected"]), (3, True, None))
+
+    # Roles that never take Grok, with a Claude builder and Antigravity blocked.
+    def test_never_grok_roles_queue_instead_of_taking_grok(self):
+        for role in ug.STRONG_NO_GROK:
+            with self.subTest(role=role):
+                status, result = self.pick(role=role, agy="blocked")
+                self.assertEqual((status, result["queue"], result["selected"]), (3, True, None))
+                self.assertNotIn("grok", [c["provider"] for c in result["candidates"]])
