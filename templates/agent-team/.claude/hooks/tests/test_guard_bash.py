@@ -373,6 +373,19 @@ class ShellScriptBoundary(GuardTest):
                     mod.main()
             self.assertEqual(json.loads(buf.getvalue())["hookSpecificOutput"]["permissionDecision"], "deny")
 
+    def test_exception_in_the_interpreter_stdin_helper_scans_the_whole_command(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_stdin_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        command = "python3 - <<'PY'\nimport os\nos.system(\"bash bin/deploy-raw.sh\")\nPY"
+        with mock.patch.object(mod, "_interpreter_stdin_body", side_effect=RuntimeError("boom")):
+            self.assertEqual(mod.interpreter_stdin_body(command, "python3"), command)
+            mod.INDIRECT.clear()
+            mod.CODE_COMMAND = command
+            mod.check_indirection("python3", ["-", "<<'PY'"])
+            self.assertTrue(mod.INDIRECT)
+        mod.INDIRECT.clear()
+
     def test_single_quoted_shell_script_active_dollar_denied(self):
         self.assertDenied("bash -c 'echo \"$(bunx playwright test)\"'", "heavy-gate")
 

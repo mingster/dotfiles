@@ -2911,7 +2911,7 @@ def check_indirection(base, args):
         if idx is not None:
             code = " ".join(args[idx + 1:])
         elif operand is None or "-" in args:
-            code = CODE_COMMAND
+            code = interpreter_stdin_body(CODE_COMMAND, base)
         else:
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
@@ -3354,6 +3354,69 @@ def report_command_text(command):
     unsure parser state falls back to returning `command` unstripped (fail closed)."""
     try:
         return _strip_report_heredocs(command)
+    except Exception:
+        return command
+
+
+_STDIN_WORD = r"[A-Za-z0-9_./=:+,@%{}*-]+"
+_STDIN_PREFIX = re.compile(rf"(?:{_STDIN_WORD}(?:[ \t]+{_STDIN_WORD})*[ \t]*\|[ \t]*)?({_STDIN_WORD}(?:[ \t]+{_STDIN_WORD})*)[ \t]*")
+
+
+def _stdin_heredoc_line(line, base):
+    """The heredoc match when `line` is `[plain words | ]BASE [plain args] <<[-]'TAG'`, else None."""
+    ops = list(QUOTED_HEREDOC.finditer(line))
+    if len(ops) != 1 or line.count("<<") != 1 or line[ops[0].end():].strip():
+        return None
+    rest = _STDIN_PREFIX.fullmatch(line[:ops[0].start()])
+    if not rest or os.path.basename(rest[1].split()[0]) != base:
+        return None
+    return ops[0]
+
+
+def _interpreter_stdin_body(command, base):
+    """The quoted heredoc body fed to the one interpreter line `base`, or `command` when unsure."""
+    mention = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(base)}(?![A-Za-z0-9_])")
+    lines = command.splitlines(keepends=True)
+    shell, i, body, found = ShellLines(), 0, [], False
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        bare = line.rstrip("\r\n")
+        match = _stdin_heredoc_line(bare, base) if shell.at_top_level() else None
+        if match and len(mention.findall(bare)) != 1:
+            return command
+        if match and found:
+            return command
+        if not match and mention.search(bare):
+            return command
+        shell.scan(line)
+        if shell.unsure or shell.quote or shell.continued:
+            return command
+        if not shell.pending:
+            continue
+        pending, shell.pending = shell.pending, []
+        for dash, delim in pending:
+            chunk = []
+            while i < len(lines):
+                text = lines[i]
+                i += 1
+                if (text.rstrip("\r\n").lstrip("\t") if dash else text.rstrip("\r\n")) == delim:
+                    break
+                chunk.append(text)
+            else:
+                return command
+            if match:
+                found, body = True, chunk
+    if not found or not shell.at_top_level():
+        return command
+    return "".join(body)
+
+
+def interpreter_stdin_body(command, base):
+    """Judge only the heredoc body an interpreter reads from stdin. Any exception or unsure shape returns
+    `command` whole (fail closed)."""
+    try:
+        return _interpreter_stdin_body(command, base)
     except Exception:
         return command
 
