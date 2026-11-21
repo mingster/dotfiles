@@ -2798,7 +2798,14 @@ INLINE_CODE_FLAG = re.compile(r"^(-[A-Za-z]*[ceEpr]|--eval|--print)$")
 STARTS_PROCESS = re.compile(r"\b(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|child_process|pty|"
                             r"__import__|importlib|eval|qx|Open3|shell_exec|passthru|proc_open)\b")
 PY_PROCESS_NAME = re.compile(r"^(system|popen\w*|exec\w*|spawn\w*|posix_spawn\w*|subprocess|pty|importlib|__import__|"
-                             r"eval|compile|getattr|vars|globals|__dict__|Popen|run)$")
+                             r"eval|compile|getattr|__getattribute__|__getattr__|vars|globals|locals|__dict__|Popen|run|"
+                             r"operator|attrgetter|methodcaller|ctypes|CDLL|cdll|timeit|code|codeop|runpy|run_path|"
+                             r"run_module|runsource|runcode|interact|InteractiveInterpreter|InteractiveConsole)$")
+# Name lookups that reach a process start through a string. The raw text fallback denies them too.
+PY_LOOKUP_TEXT = re.compile(r"\b(getattr|__getattribute__|vars|globals|locals|__dict__|operator|attrgetter|methodcaller|"
+                            r"ctypes|timeit|code|codeop|runpy|compile)\b")
+# Plain interpreter flags that take no argument and change nothing about how -c is read.
+PY_PLAIN_FLAGS = {"-B", "-s", "-S", "-u", "-q", "-O", "-OO", "-b", "-bb"}
 SHELL_OPTS_WITH_ARG = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 REDIRECT = re.compile(r"^[0-9]*(<|>|&>)")
 INDIRECT = []  # set by check_indirection; main denies once no specific gate has
@@ -2827,13 +2834,47 @@ def shell_reads_stdin(args):
     return True
 
 
+def python_safe_strings(tree):
+    """Ids of string constants used as plain text: a print() argument, a subscript key, a comparison
+    operand, a dict key or a bare statement. A string anywhere else could be looked up as a name
+    ("{0.system}".format(os)), so it stays judged by the raw text match."""
+    safe = set()
+
+    def mark(node):
+        if isinstance(node, ast.Constant):
+            safe.add(id(node))
+        elif isinstance(node, ast.JoinedStr):
+            safe.update(id(v) for v in node.values if isinstance(v, ast.Constant))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print":
+            for arg in node.args:
+                mark(arg)
+        elif isinstance(node, ast.Subscript):
+            mark(node.slice)
+        elif isinstance(node, ast.Compare):
+            mark(node.left)
+            for c in node.comparators:
+                mark(c)
+        elif isinstance(node, ast.Dict):
+            for k in node.keys:
+                if k is not None:
+                    mark(k)
+        elif isinstance(node, ast.Expr):
+            mark(node.value)
+    return safe
+
+
 def python_code_starts_process(code):
     """True when python code names a process start or an indirect route to one. Parses only, never runs.
-    A string constant alone is text, not a process start. Code that does not parse counts as a start."""
+    Never allows less than the raw text match except for a string used as plain text (see
+    python_safe_strings). Code that does not parse (bash $'...' quoting, a syntax error) falls back to
+    the raw text match."""
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return True
+        return bool(STARTS_PROCESS.search(code) or PY_LOOKUP_TEXT.search(code))
+    safe = python_safe_strings(tree)
     for node in ast.walk(tree):
         names = []
         if isinstance(node, ast.Name):
@@ -2852,6 +2893,10 @@ def python_code_starts_process(code):
             names.append(node.arg)
         elif isinstance(node, ast.keyword):
             names.append(node.arg or "")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)) and id(node) not in safe:
+            text = node.value if isinstance(node.value, str) else node.value.decode("latin-1")
+            if STARTS_PROCESS.search(text) or PY_PROCESS_NAME.match(text.strip()):
+                return True
         if any(PY_PROCESS_NAME.match(n) for n in names):
             return True
     return False
@@ -2871,7 +2916,9 @@ def check_indirection(base, args):
                     INDIRECT.append(f"`{base} -c` running the output of a command substitution hides the command "
                                     "from the guard. Run the inner command directly.")
     elif INTERPRETERS.match(base):
-        idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
+        # A lone `-` ends option parsing and reads the program from stdin, so a later -c is only an argument.
+        opts = args[:args.index("-")] if "-" in args else args
+        idx = next((i for i, a in enumerate(opts) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
         if idx is not None:
             code = " ".join(args[idx + 1:])
@@ -2879,10 +2926,15 @@ def check_indirection(base, args):
             code = RAW_COMMAND
         else:
             return
-        if idx is not None and base.startswith("python") and args[idx].endswith("c") and idx + 1 < len(args):
-            starts = python_code_starts_process(args[idx + 1])
+        # Parse the code only for the plain shape `python [plain flags] -c <code>`. Anything else (-E, -W <arg>,
+        # -X, -m, attached -c<code>, a lone -, extra arguments) keeps the raw text match, which never allows less.
+        flags = 0
+        while flags < len(args) and args[flags] in PY_PLAIN_FLAGS:
+            flags += 1
+        if base.startswith("python") and flags + 2 == len(args) and args[flags] == "-c":
+            starts = python_code_starts_process(args[flags + 1])
         else:
-            starts = STARTS_PROCESS.search(code)
+            starts = STARTS_PROCESS.search(code) or (base.startswith("python") and PY_LOOKUP_TEXT.search(code))
         if starts or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
                             "hides the command from the guard. Run the command directly.")

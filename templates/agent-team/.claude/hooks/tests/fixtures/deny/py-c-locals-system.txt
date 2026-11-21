@@ -1,0 +1,1 @@
+python3 -c 'from os import *; locals()["system"]("bash bin/deploy-raw.sh")'

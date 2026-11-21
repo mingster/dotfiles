@@ -1,0 +1,1 @@
+python3 -c 'import runpy; runpy.run_path("bin/deploy-raw.sh")'

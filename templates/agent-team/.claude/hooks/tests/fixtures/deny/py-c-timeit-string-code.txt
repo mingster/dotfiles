@@ -1,0 +1,1 @@
+python3 -c 'import timeit; timeit.timeit("import os; os.system(1)", number=1)'

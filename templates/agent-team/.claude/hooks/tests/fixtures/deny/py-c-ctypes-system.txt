@@ -1,0 +1,1 @@
+python3 -c 'import ctypes; ctypes.CDLL(None)["system"](b"bash bin/deploy-raw.sh")'
