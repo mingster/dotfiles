@@ -1,0 +1,3 @@
+perl -esystem+q:bash:,q:bin/deploy-raw.sh: <<'PL'
+1
+PL

@@ -1,0 +1,8 @@
+cat <<\
+OUTER; echo "
+\
+cat > /tmp/x <<'EOF'
+$(bash bin/deploy-raw.sh)
+EOF
+" # "
+OUTER

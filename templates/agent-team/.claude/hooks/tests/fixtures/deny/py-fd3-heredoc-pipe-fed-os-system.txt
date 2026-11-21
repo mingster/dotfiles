@@ -1,0 +1,4 @@
+echo 'import os; os.system("bash bin/deploy-raw.sh")' |
+python3 - 3<<'PY'
+print(1)
+PY
