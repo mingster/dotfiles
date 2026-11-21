@@ -19,7 +19,9 @@ cat > "$tmp/bin/orca" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ORCA_LOG"
 case "$*" in
-  'terminal list --json') echo '{"ok":true,"result":{"terminals":[]}}' ;;
+  'terminal list --json') if [ -n "${FAKE_TERMINALS:-}" ]; then printf '%s\n' "$FAKE_TERMINALS"; else echo '{"ok":true,"result":{"terminals":[]}}'; fi ;;
+  'worktree list --repo '*) [ -z "${FAKE_SCOPED_SLOW:-}" ] || sleep 3; echo '{"ok":true,"result":{"worktrees":[],"page":{"hasMore":false}}}' ;;
+  'orchestration run-list '*) echo '{"ok":true,"result":{"runs":[],"page":{"hasMore":false}}}' ;;
   'environment list --json') echo '{"ok":true,"result":{"environments":[]}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"worktrees":[],"page":{"hasMore":false}}}' ;;
 esac
@@ -45,11 +47,27 @@ export WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TERMINALS_SNAPSHOT="$snap"
 : > "$ORCA_LOG"
 bash "$root/script/wrap-up.sh" --apply > "$tmp/out1" 2>&1 || true
 check 'first repo saves the terminal listing' test -s "$snap"
+check 'first repo lists terminals once' test "$(grep -c '^terminal list' "$ORCA_LOG")" -eq 1
+check 'first repo lists every worktree once' test "$(grep -c '^worktree list --json' "$ORCA_LOG")" -eq 1
+
+# A terminal the first repo plans to close never reaches the shared listing (dry run closes nothing).
+rm -f "$snap"
+: > "$ORCA_LOG"
+FAKE_TERMINALS='{"ok":true,"result":{"terminals":[{"handle":"t-gone","liveness":"exited","connected":false,"worktreePath":"'"$tmp"'/nowhere"},{"handle":"t-live","liveness":"alive","connected":true,"writable":true,"lastOutputAt":'"$(( $(date +%s) * 1000 ))"',"worktreePath":"'"$tmp"'/other"}]}}' \
+  bash "$root/script/wrap-up.sh" > "$tmp/out0" 2>&1 || true
+check 'planned close is reported' grep -q 'Close terminal t-gone' "$tmp/out0"
+check 'shared listing omits a terminal the first repo closes' test "$(jq -r '[.result.terminals[].handle] | join(",")' "$snap")" = t-live
 
 : > "$ORCA_LOG"
 WRAP_UP_SKIP_HOST_WIDE=1 bash "$root/script/wrap-up.sh" --apply > "$tmp/out2" 2>&1 || true
 check 'later repo does not list terminals' test "$(grep -c '^terminal list' "$ORCA_LOG")" -eq 0
 check 'later repo lists only its own worktrees' grep -q "^worktree list --repo path:$tmp/repo --json" "$ORCA_LOG"
 check 'later repo never lists every worktree' test "$(grep -c '^worktree list --json' "$ORCA_LOG")" -eq 0
+
+# A scoped listing that times out is not retried with the whole list.
+: > "$ORCA_LOG"
+FAKE_SCOPED_SLOW=1 WRAP_UP_CALL_TIMEOUT=1 WRAP_UP_SKIP_HOST_WIDE=1 bash "$root/script/wrap-up.sh" --apply > "$tmp/out3" 2>&1 || true
+check 'timed out scoped listing is tried once' test "$(grep -c '^worktree list --repo' "$ORCA_LOG")" -eq 1
+check 'timed out scoped listing is not retried unscoped' test "$(grep -c '^worktree list --json' "$ORCA_LOG")" -eq 0
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
