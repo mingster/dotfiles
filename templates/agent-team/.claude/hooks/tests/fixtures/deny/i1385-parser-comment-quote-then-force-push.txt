@@ -1,0 +1,2 @@
+git status # don't panic
+git push --force origin main

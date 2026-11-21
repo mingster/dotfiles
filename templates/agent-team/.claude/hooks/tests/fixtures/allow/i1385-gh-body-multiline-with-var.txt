@@ -1,0 +1,2 @@
+gh issue comment 12 --body "The guard refused bash bin/deploy-raw.sh for $USER.
+It named deploy-raw.sh on the second line too."

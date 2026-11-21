@@ -1,0 +1,1 @@
+echo deploy-raw.sh | xargs -I % bash bin/%

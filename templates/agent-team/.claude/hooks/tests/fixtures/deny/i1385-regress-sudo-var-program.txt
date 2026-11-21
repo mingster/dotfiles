@@ -1,0 +1,1 @@
+sudo $X bin/deploy-raw.sh

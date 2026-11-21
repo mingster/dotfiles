@@ -1,0 +1,1 @@
+while true; do bash bin/deploy-raw.s?; done

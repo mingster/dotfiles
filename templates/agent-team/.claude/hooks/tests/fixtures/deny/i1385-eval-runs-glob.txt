@@ -1,0 +1,1 @@
+eval "bash bin/d*-raw.sh"
