@@ -1134,6 +1134,9 @@ run_mode() {
     "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
     [ "$rc" = 0 ]
   }
+  grok_trust_worktree() { # <worktree path>: Grok blocks on its folder-trust question in a new worktree (#1312)
+    bash "$here/grok-trust.sh" "$1" >&2
+  }
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
   start_failed() { # <exit code>
     local ec=$1 rm_args
@@ -1163,6 +1166,9 @@ run_mode() {
   board_status_set "path:$wt" in-progress "$environment"
   board_display_name_set "path:$wt" "$title" "$environment"
   start_agent_worker() { # starts the worker for the current agent, model and brief
+    if [ "$agent" = grok ] && [ -z "$environment" ]; then
+      grok_trust_worktree "$wt" || { echo "worker-startup: could not pre-trust $wt for grok (#1312)" >&2; start_failed 1; }
+    fi
     if [ -n "$environment" ]; then
       start_with_startup_retry bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?

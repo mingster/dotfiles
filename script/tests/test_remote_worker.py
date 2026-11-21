@@ -113,6 +113,42 @@ else: sys.exit(99)
         self.assertIn('pull', (self.home / 'git-calls').read_text())
         self.assertTrue((self.home / 'preset-linked').exists())
 
+    def grok_fixture(self, trust_rc=0):
+        for name in ('grok', 'agy'):
+            (self.bin / name).write_text('#!/bin/sh\nexit 0\n')
+            (self.bin / name).chmod(0o700)
+        (self.bin / 'bash').symlink_to('/bin/bash')
+        (self.home / 'dotfiles').mkdir(parents=True)
+        # grok-trust.sh appears only when the dotfiles pull runs, as on a host that has not pulled this change yet.
+        (self.home / 'trust-body').write_text(f'echo "$@" >> "$HOME/order"\nexit {trust_rc}\n')
+        (self.bin / 'git').write_text(
+            '#!/bin/sh\necho "git $@" >> "$HOME/order"\n'
+            'mkdir -p "$HOME/dotfiles/script"\n'
+            'cp "$HOME/trust-body" "$HOME/dotfiles/script/grok-trust.sh"\n')
+        (self.bin / 'git').chmod(0o700)
+        (self.bin / 'cp').symlink_to('/bin/cp')
+        (self.bin / 'mkdir').symlink_to('/bin/mkdir')
+
+    def test_grok_start_trusts_the_worktree_after_the_dotfiles_pull(self):
+        self.grok_fixture()
+        result = self.launch(agent='grok', worktree='path:/srv/fixture dir')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        order = (self.home / 'order').read_text().splitlines()
+        self.assertEqual(order[-1], '/srv/fixture dir')
+        self.assertTrue(any(line.startswith('git ') and 'pull' in line for line in order[:-1]))
+
+    def test_failed_grok_trust_refuses_dispatch(self):
+        self.grok_fixture(trust_rc=1)
+        result = self.launch(agent='grok')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('worker-start', self.log.read_text())
+
+    def test_other_agents_never_run_grok_trust(self):
+        self.grok_fixture()
+        result = self.launch(agent='antigravity')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(not l.startswith('git ') for l in (self.home / 'order').read_text().splitlines()))
+
     def test_tilde_remote_repo_expands_to_the_remote_home(self):
         (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
         (self.bin / 'agy').chmod(0o700)

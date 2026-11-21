@@ -30,6 +30,7 @@ use_test_git_identity "$tmp"
 export USAGE_GATE_PRESETS="${USAGE_GATE_PRESETS:-$root/.orca/presets.json}"
 export WORKER_STARTUP_STATE="$tmp/state" TEAM_AUDIT_DISPATCHES="$tmp/team-dispatches.tsv"
 export WORKER_STARTUP_READINESS_WAIT=0
+export GROK_HOME="$tmp/grok-home"
 # The label gate and the dotfiles first check call gh; they run only in the tests that stub it.
 export DOTFILES_REPO=off
 mkdir -p "$WORKER_STARTUP_STATE"
@@ -812,6 +813,7 @@ cp "$here/../lib/board-status.sh" "$helper_dir/lib/board-status.sh"
 cp "$here/../lib/dotfiles-fresh.sh" "$helper_dir/lib/dotfiles-fresh.sh"
 [ ! -f "$here/../brief-lint.sh" ] || cp "$here/../brief-lint.sh" "$helper_dir/brief-lint.sh"
 cp "$here/../worker-placement.py" "$helper_dir/worker-placement.py"
+cp "$here/../grok-trust.sh" "$helper_dir/grok-trust.sh"
 cp "$here/../usage-gate.py" "$helper_dir/usage-gate.py"
 chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"
 cat >"$helper_dir/start-cursor-worker.sh" <<EOS
@@ -1463,6 +1465,12 @@ grep -q '^elon$' "$tmp/pick-stub.log" && bad "strong role must not be asked to y
 PICK_STUB_MODE=grok route_run "#5|fullstack-dev" grok grok-4.7
 [ "$route_ec" = 0 ] && ok || bad "local grok start exits 0 (ec=$route_ec) $(cat "$tmp/route.err")"
 grep -Fq -- '--agent grok --model grok-4.7' "$tmp/orca-route.log" && ok || bad "local grok start should reach worker-start ($(cat "$tmp/orca-route.log"))"
+grep -Fq "[folders.\"$(cd "$wt_proof" && pwd -P)\"]" "$GROK_HOME/trusted_folders.toml" && ok || bad "local grok start should trust the worktree (#1312) ($(cat "$GROK_HOME/trusted_folders.toml" 2>&1))"
+: >"$tmp/grok-bad-home"
+: >"$tmp/orca-route.log"
+GROK_HOME="$tmp/grok-bad-home/x" PICK_STUB_MODE=grok route_run "#5|fullstack-dev" grok grok-4.7
+[ "$route_ec" -ne 0 ] && ok || bad "grok start must fail when the worktree cannot be trusted (ec=$route_ec)"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "untrusted grok start must not reach worker-start" || ok
 cat >"$helper_dir/start-remote-worker.sh" <<EOS
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$tmp/grok-remote.args"
