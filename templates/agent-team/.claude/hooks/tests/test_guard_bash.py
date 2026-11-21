@@ -711,6 +711,7 @@ class ProjectConfigRules(GuardTest):
     def test_pre_go_live_secret_needs_no_approval_before_the_date(self):
         self.go_live("2999-12-31")
         self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --host prod-1 STORE_DOCUMENTS_KEY")
+        self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --host prod-1 LINE_EGRESS_IP")
         self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --host prod-1 --copy-to-standby STORE_DOCUMENTS_KEY")
         self.assertAllowed(f"bin/set-production-secret.sh {self.SHA} --copy-to-standby OTHER_KEY")
 
@@ -782,8 +783,18 @@ class ProjectConfigRules(GuardTest):
         self.promote_go_live("2999-12-31")
         self.assertDenied(f"git push origin {self.SHA}:production", "owner-approve.sh")
         self.assertDenied("git push origin --delete production", "never an agent")
-        self.assertDenied(f"bin/rollback-production.sh {self.SHA}", "rollback")
         self.assertDenied(f"bin/apply-production-sql.sh {self.SHA} x.sql", "--schema --apply")
+
+    def test_pre_go_live_rollback_needs_no_approval_before_the_date(self):
+        self.promote_go_live("2999-12-31")
+        self.assertAllowed(f"bin/rollback-production.sh {self.SHA}")
+
+    def test_pre_go_live_rollback_denied_on_and_after_the_date(self):
+        today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
+        for until in (today, "2000-01-01", None, "soon"):
+            with self.subTest(until=until):
+                self.promote_go_live(until)
+                self.assertDenied(f"bin/rollback-production.sh {self.SHA}", "rollback")
 
     def test_pre_go_live_date_exempts_no_other_apply_script(self):
         self.go_live("2999-12-31")

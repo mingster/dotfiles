@@ -74,20 +74,20 @@ APPLY_SCRIPTS: set[str] = {"apply-production-sql.sh", "set-production-secret.sh"
 PRE_GO_LIVE_SCRIPT = "set-production-secret.sh"
 PRE_GO_LIVE_UNTIL: str | None = None
 # `pre_go_live_host.until` (ISO date, compared with today in Asia/Taipei): the `host` approval is waived before
-# it. Absent or malformed means no waiver. The same date also waives approval for the promote script and the
-# SCHEMA_APPROVED schema check. Nothing else is waived: a hand push to a production branch, rollback, force
-# push, deletion, the apply scripts and credential writes keep their gates.
+# it. Absent or malformed means no waiver. The same date also waives approval for the promote and rollback
+# scripts and the SCHEMA_APPROVED schema check. Nothing else is waived: a hand push to a production branch,
+# force push, deletion, the apply scripts and credential writes keep their gates.
 PRE_GO_LIVE_HOST_UNTIL: str | None = None
 
 
 def pre_go_live_command(script_args):
-    """Only `<sha> --host prod-1 STORE_DOCUMENTS_<NAME>` or a `--copy-to-standby` run skips the approval."""
+    """Only `<sha> --host prod-1 STORE_DOCUMENTS_<NAME>`, `<sha> --host prod-1 LINE_EGRESS_IP` or a `--copy-to-standby` run skips the approval."""
     rest = script_args[1:]
     if "--copy-to-standby" in rest:
         return True
     if rest[:2] != ["--host", "prod-1"]:
         return False
-    return len(rest) == 3 and re.fullmatch(r"STORE_DOCUMENTS_[A-Z0-9_]+", rest[2]) is not None
+    return len(rest) == 3 and re.fullmatch(r"STORE_DOCUMENTS_[A-Z0-9_]+|LINE_EGRESS_IP", rest[2]) is not None
 SCHEMA_OVERRIDE: str = "SCHEMA_APPROVED"
 APPROVAL_NAMESPACE: str = ""
 APPROVAL_FILE_OVERRIDE: str = ""
@@ -2250,7 +2250,7 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
             deny(f"Pass {script} the literal sha, so it can be matched against the owner's "
                  f"approval: {script} <sha>. The owner approves it with `{APPROVE} rollback <sha>`.")
         sha = resolve(sha_arg) or sha_arg or "<sha>"
-        ok, why = approval_for({"rollback"}, lambda t: same_commit(sha_arg, t))
+        ok, why = approval_for({"rollback"}, lambda t: same_commit(sha_arg, t), pre_go_live=True)
         if not ok:
             owner_go(f"Rolling production back to {sha}", f"{APPROVE} rollback {sha}", why)
 
