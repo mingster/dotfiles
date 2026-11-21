@@ -277,6 +277,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | Tool | Purpose |
 | --- | --- |
 | `script/worker-startup.sh` | Unified worker launcher and daily `--host-check`: aligns `~/dotfiles`, Orca presets, repo `main`, Node `.tool-versions` via `asdf` and Bun pins, checks `usage-gate.py`, and delegates to the provider starter. |
+| `Worker role:` stamp | `worker-startup.sh` writes `Worker role: <role>` (the role from the `#<issue>\|<role>` title) as the first line of the brief copy it hands to Orca, once, on every start path. |
 | `script/start-remote-worker.sh` | Checks `usage-gate.py`, probes the remote CLI in an Orca terminal, refreshes remote `~/dotfiles` and `~/.orca/presets.json`, and calls `orca orchestration worker-start --on`. |
 | `script/start-cursor-worker.sh` | Creates a local or remote `--on` worktree, writes `.workspace-trusted` via Python 3 in an Orca terminal, checks `usage-gate.py`, and starts a Cursor worker. |
 | `script/worktree-setup.sh` | Orca worktree setup hook: fetches and fast-forwards `origin/main` and runs `bun install --frozen-lockfile` when `node_modules` is missing. |

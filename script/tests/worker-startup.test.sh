@@ -2047,6 +2047,98 @@ GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#79
 grep -qE '^[0-9TZ:-]+ worker-startup run=run_route duration_s=[0-9]+$' "$route_state/durations.log" 2>/dev/null && ok || bad "a successful start should log duration_s ($(cat "$route_state/durations.log" 2>&1))"
 grep -qE '^worker-startup run=run_route duration_s=[0-9]+$' "$tmp/route.err" && ok || bad "a successful start should print duration_s on stderr"
 
+
+# --- #1328: the brief copy handed to worker-start starts with "Worker role: <role>" on every dispatch path ---
+role_stamp_start() { # <label> <expected role> <worker-startup args...>; checks the brief copy worker-start received
+  local label=$1 want=$2 log="$tmp/orca-stamp.log" first ec
+  shift 2
+  : >"$log"
+  set +e
+  env -u BASH_ENV \
+    PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    WORKER_STARTUP_STATE="$launch_state" \
+    bash --noprofile --norc "$script" "$@" >/dev/null 2>"$tmp/stamp.err"
+  ec=$?
+  set -e
+  [ "$ec" = 0 ] || { bad "stamp $label: start exits 0 ($ec) $(head -3 "$tmp/stamp.err")"; return; }
+  first=$(grep 'orchestration worker-start' "$log" | head -1 | sed 's/.*--spec //')
+  [ "$first" = "Worker role: $want" ] && ok || bad "stamp $label: first line is 'Worker role: $want' (got '$first')"
+}
+for preset in fullstack-dev fullstack-dev-small fullstack-dev-strong fullstack-dev-debug builder; do
+  role_stamp_start "preset $preset" "$preset" --run run_x --spec "$spec_file" --title "#1|$preset" --agent claude \
+    --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean"
+done
+role_stamp_start "sweep" architect-pm --run run_x --spec "$spec_file" --title "#0|architect-pm" --agent claude \
+  --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean"
+
+# fleet-watch builds the command; the real worker-startup.sh runs it against the stub orca.
+fw_cmds="$tmp/fw-cmds.txt"
+"$python3_real" - "$here/.." >"$fw_cmds" <<'PY'
+import importlib.util, sys
+from pathlib import Path
+from unittest.mock import patch
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / 'tests'))
+spec = importlib.util.spec_from_file_location('fleet_watch', root / 'fleet-watch.py')
+fw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fw)
+from test_fleet_watch_park import REPO, issue_row, scan_config
+MODEL = 'claude-sonnet-5-5-medium'
+config = scan_config('/work/app')
+config['issue_scan'].update({'agent': 'claude', 'model': MODEL, 'role': 'fullstack-dev'})
+config['babysit'] = {'enabled': True, 'startup_script': '/x/worker-startup.sh', 'run': 'run_x',
+                     'from_terminal': 'term_coord', 'repo_roots': {REPO: '/work/app'}}
+repos = {'repos': [{'id': 'repo-1', 'path': '/work/app'}]}
+def fake_rpc(*a):
+    if a[:2] == ('repo', 'list'):
+        return repos
+    raise fw.OrcaReadError('unexpected')
+pr = {'number': 7, 'headRefOid': 'a' * 40, 'headRefName': 'b', 'title': 't', 'body': ''}
+with patch.object(fw, 'rpc', side_effect=fake_rpc), patch.object(fw, 'pr_base_ref', return_value='main'):
+    small = fw.issue_scan_route({'labels': [{'name': 'size:S'}]})
+    large = fw.issue_scan_route({'labels': [{'name': 'size:L'}]})
+    cases = [
+        ('scan size:S', fw.build_issue_start_command(config, REPO, issue_row(11, 'x'), None, (small[0], 'claude', MODEL))),
+        ('scan size:L', fw.build_issue_start_command(config, REPO, issue_row(12, 'x'), None, (large[0], 'claude', MODEL))),
+        ('scan no label', fw.build_issue_start_command(config, REPO, issue_row(13, 'x'), None, None)),
+        ('rework', fw.build_rework_start_command(config, REPO, pr)),
+        ('babysit fix', fw.build_babysit_command(config, REPO, pr, 'fix', 'claude', MODEL, None)),
+    ]
+for label, cmd in cases:
+    title = cmd[cmd.index('--title') + 1]
+    print('\t'.join([label, title.split('|', 1)[1], title] + [cmd[cmd.index(f) + 1] for f in ('--spec', '--agent', '--model')]))
+PY
+while IFS=$'\t' read -r label want title cspec cagent cmodel; do
+  role_stamp_start "$label" "$want" --run run_x --spec "$cspec" --title "$title" --agent "$cagent" \
+    --model "$cmodel" --from term_coord --name n1 --repo "path:$clean"
+done <"$fw_cmds"
+[ "$(wc -l <"$fw_cmds" | tr -d ' ')" = 5 ] && ok || bad "stamp: fleet-watch built all five commands ($(cat "$fw_cmds"))"
+
+# A same task retry sends no spec: the task's stored brief is the stamped copy from the first start.
+: >"$tmp/orca-stamp-retry.log"
+env -u BASH_ENV PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-stamp-retry.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  bash --noprofile --norc "$script" --run run_x --task task_s --retry-of disp_s --worktree "wt::/p" --agent claude \
+  --from term_coord >/dev/null 2>&1
+retry_line=$(grep 'orchestration worker-start' "$tmp/orca-stamp-retry.log" | head -1)
+case "$retry_line" in
+  *"--task task_s --retry-of disp_s"*) ;;
+  *) retry_line="" ;;
+esac
+case "$retry_line" in
+  "") bad "stamp: same task retry reaches worker-start" ;;
+  *"--spec"*) bad "stamp: same task retry must not resend a spec" ;;
+  *) ok ;;
+esac
+
+# Idempotent: a brief that already carries a stamp gets exactly one, for the title's role.
+printf 'Worker role: stale-role\n' >"$tmp/spec-prestamped.md"
+cat "$spec_file" >>"$tmp/spec-prestamped.md"
+role_stamp_start "prestamped" fullstack-dev --run run_x --spec "$tmp/spec-prestamped.md" --title "#1|fullstack-dev" \
+  --agent claude --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean"
+[ "$(grep -c 'Worker role:' "$tmp/orca-stamp.log")" = 1 ] && ok || bad "stamp: a prestamped brief ends with one stamp"
+
 rm -f "$bin/hostname"
 
 echo "worker-startup: $pass passed, $fail failed"

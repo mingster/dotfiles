@@ -1,0 +1,1 @@
+* `worker-startup.sh` stamps the first line of every brief copy it hands to Orca with `Worker role: <role>`, taken from the `#<issue>|<role>` title. Every dispatch path (title presets, issue scan, rework, babysit fix, sweeps) gets it, so the edit time guard can read the role from one place. A brief that already has a stamp keeps one (#1328).

@@ -504,6 +504,23 @@ prepend_role_preamble() { # <spec_file> <title>
   printf '%s\n' "$out"
 }
 
+# First line of the brief copy: "Worker role: <role>" from the title, the one role every dispatch path sets (#1328).
+# A leading stamp is replaced, never doubled. No parsed role means no stamp. A same task retry sends no spec, so the stored brief keeps its stamp.
+stamp_worker_role() { # <spec_file> <title> -> prints the stamped copy's path
+  local spec_file=$1 title=$2 role out
+  role=$(role_from_title "$title" || true)
+  if [ -z "$role" ]; then
+    printf '%s\n' "$spec_file"
+    return 0
+  fi
+  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-role.XXXXXX") || die "cannot write the spec copy"
+  {
+    printf 'Worker role: %s\n' "$role"
+    sed '/^Worker role: [a-z0-9-]*$/d' "$spec_file"
+  } >"$out"
+  printf '%s\n' "$out"
+}
+
 role_from_title() { # "#<issue>|<role>" or the old "<role> - <job>" -> role; anything else prints nothing
   local title=$1 role
   case "$title" in
@@ -663,7 +680,8 @@ build_brief_spec() { # <orig_spec> <run> <title> <agent> <model>
   local s
   s=$(with_finish_block "$1" "$2" "$4" "$5")
   s=$(with_refs_line "$s" "$3")
-  prepend_role_preamble "$s" "$3"
+  s=$(prepend_role_preamble "$s" "$3")
+  stamp_worker_role "$s" "$3"
 }
 
 # A builder brief for a backlog line ("#<issue> L<n>" in the title or the brief's first heading) is refused
