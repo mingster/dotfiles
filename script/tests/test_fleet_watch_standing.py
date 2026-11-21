@@ -342,7 +342,7 @@ class StandingVerifier(unittest.TestCase):
 
 
 class StandingTrialActivation(unittest.TestCase):
-    def test_resolve_pass_config_keeps_standing_verifier_from_the_stub(self):
+    def test_resolve_pass_config_does_not_carry_standing_verifier_from_the_stub(self):
         import json
         with tempfile.TemporaryDirectory() as home:
             stub = Path(home) / '.config' / 'fleet-watch' / 'config.json'
@@ -356,22 +356,17 @@ class StandingTrialActivation(unittest.TestCase):
                 config = json.loads(stub.read_text())
                 resolved, adopted = fw.resolve_pass_config(config, str(stub))
         self.assertEqual(adopted, coordinator)
-        self.assertEqual(resolved['babysit']['standing_verifier'], block)
+        self.assertNotIn('standing_verifier', resolved.get('babysit') or {})
+        self.assertFalse(fw.standing_settings(resolved)['enabled'])
         self.assertTrue(resolved['runs'])
 
-    def test_auto_host_picks_the_first_non_local_code_host(self):
+    def test_auto_or_empty_host_stays_disabled(self):
         base = {'local_host': 'me', 'worker_placement': {'order': ['me', 'far-a', 'far-b']},
                 'host_caps': {'me': 5, 'far-a': 5}}
         for hosts in (['auto'], []):
             config = dict(base, babysit={'standing_verifier': {'enabled': True, 'hosts': hosts}})
             cfg = fw.standing_settings(config)
-            self.assertEqual((cfg['enabled'], cfg['hosts']), (True, ['far-a']), hosts)
-        caps_only = {'local_host': 'me', 'host_caps': {'me': 5, 'far-b': 5},
-                     'babysit': {'standing_verifier': {'enabled': True, 'hosts': ['auto']}}}
-        self.assertEqual(fw.standing_settings(caps_only)['hosts'], ['far-b'])
-        only_local = {'local_host': 'me', 'host_caps': {'me': 5},
-                      'babysit': {'standing_verifier': {'enabled': True, 'hosts': ['auto']}}}
-        self.assertFalse(fw.standing_settings(only_local)['enabled'])
+            self.assertEqual((cfg['enabled'], cfg['hosts']), (False, []), hosts)
 
 
 class RemoteStandingTerminal(unittest.TestCase):

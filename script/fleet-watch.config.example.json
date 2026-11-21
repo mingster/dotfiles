@@ -40,7 +40,7 @@
     "per_pass_cap": 2,
     "standing_verifier": {
       "enabled": false,
-      "hosts": ["auto"],
+      "hosts": [],
       "agent": "antigravity",
       "model": "gemini-4-argon-high",
       "max_prs": 5,
