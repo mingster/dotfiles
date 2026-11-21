@@ -1,0 +1,1 @@
+ship: `--verdict-from` checks every file the sync merges (guard-config.json, settings.json) by running `agent-team.sh sync` on the base tree at the render ref and accepting the head only when it equals that result. A changed project key is still refused (#1374).

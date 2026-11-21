@@ -962,6 +962,35 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   mkpr 200 "$guard_extra" "$guard_extra_files" "Body"; set_checks 200 "$green_checks"
   vf "verdict-from refuses guard-config.json with a new project key" 1 "guard-config.json is not"
 
+  # .claude/settings.json is compiled from the template and the project's settings.project.json (#1374). The same
+  # sync path as guard-config.json decides: a sync result lands, a hand edit of a project permission is refused.
+  g checkout -q -B main "$seed_base"
+  mkdir -p "$MF_REPO/.claude"
+  printf '{"permissions":{"allow":["Bash(acme-tool:*)"],"deny":[]},"hooks":{}}\n' > "$MF_REPO/.claude/settings.project.json"
+  g add -A && g commit -qm settings-base && g push -q -f origin main
+  settings_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  DOTFILES="$repo_root" bash "$here/agent-team.sh" sync "$MF_REPO" --project-name acme >/dev/null 2>&1
+  g add -A && g commit -qm settings-fill && g push -q -f origin feat-gen
+  settings_head=$(g rev-parse HEAD)
+  settings_files=$(g diff --name-only "$settings_base" "$settings_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$settings_base
+  mkpr 200 "$settings_head" "$settings_files" "Body"; set_checks 200 "$green_checks"
+  if jq -e 'index(".claude/settings.json") != null' <<<"$settings_files" >/dev/null \
+    && jq -e '.permissions.allow | index("Bash(acme-tool:*)") != null' <(g show "$settings_head:.claude/settings.json") >/dev/null; then
+    vf "verdict-from accepts a settings.json that is the sync merge" 0 "generated team copies"
+  else
+    bad "verdict-from accepts a settings.json that is the sync merge" "fixture sync did not write settings.json: $settings_files"
+  fi
+  g checkout -q -B feat-gen "$settings_head"
+  jq '.permissions.allow += ["Bash(rm:*)"]' "$MF_REPO/.claude/settings.json" > "$MF_REPO/.claude/settings.edit" \
+    && mv "$MF_REPO/.claude/settings.edit" "$MF_REPO/.claude/settings.json"
+  g add -A && g commit -qm settings-edit && g push -q -f origin feat-gen
+  settings_edit=$(g rev-parse HEAD)
+  settings_edit_files=$(g diff --name-only "$settings_base" "$settings_edit" | jq -Rsc 'split("\n")[:-1]')
+  mkpr 200 "$settings_edit" "$settings_edit_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses a settings.json with a changed project key" 1 "settings.json is not"
+
   # Verdict lane: a generated copy whose bytes equal the origin/main render (same project name
   # substitution as agent-team.sh) may ride with project edits and a deletion check demands.
   # A hand edit, a render of a template that is not on origin/main, or a deletion check does

@@ -536,49 +536,46 @@ PY
   rm -rf "$tmp"
   return "$rc"
 }
-# .claude/hooks/guard-config.json is project owned (agent-team.sh sync keeps every project key and entry) and the
-# template only fills in missing defaults. So it is not a byte render. It counts as generated only when the head
-# is exactly the base file plus the template defaults at the render ref (#1366). A changed or removed project
-# key is a real edit and is refused.
-GUARD_CFG_REL=.claude/hooks/guard-config.json
-guard_config_is_template_fill() { # 0 when head == merge_fill(base, template)
-  local base_oid tmp rc=0
+# Project files the sync merges into rather than copies (project keys kept, template defaults filled in or
+# recompiled): not a byte render. They count as generated only when the head equals what `agent-team.sh sync`
+# produces from the BASE file at the render ref (#1374). A changed, removed or new project key is a real edit
+# and is refused. Adding a file here is the only change a new merged file needs.
+MERGED_FILES=(.claude/hooks/guard-config.json .claude/settings.json)
+is_merged_file() { # <path>
+  local m
+  for m in "${MERGED_FILES[@]}"; do [ "$m" = "$1" ] && return 0; done
+  return 1
+}
+merge_expected_dir="" merge_expected_failed=""
+# Runs the real sync once on the base tree, against the dotfiles tree at the render ref.
+merge_expected_prepare() {
+  if [ -n "$merge_expected_dir" ] || [ -n "$merge_expected_failed" ]; then return 0; fi
+  local base_oid dot name
   resolve_render_ref
-  git -C "$dotfiles_root" cat-file -e "$render_ref:templates/agent-team/$GUARD_CFG_REL" 2>/dev/null || return 1
   base_oid=$(field .baseRefOid)
-  tmp=$(mktemp -d)
-  git -C "$dotfiles_root" cat-file blob "$render_ref:templates/agent-team/$GUARD_CFG_REL" >"$tmp/template" || { rm -rf "$tmp"; return 1; }
-  git cat-file blob "$head:$GUARD_CFG_REL" >"$tmp/head" 2>/dev/null || { rm -rf "$tmp"; return 1; }
-  if git cat-file -e "$base_oid:$GUARD_CFG_REL" 2>/dev/null; then
-    git cat-file blob "$base_oid:$GUARD_CFG_REL" >"$tmp/base" || { rm -rf "$tmp"; return 1; }
-  else
-    printf '{}' >"$tmp/base"
+  if [ "$copy_project_name_ready" = false ]; then
+    copy_project_name=$(detect_copy_project_name "$head") || { merge_expected_failed=1; return 0; }
+    copy_project_name_ready=true
   fi
-  python3 - "$tmp/base" "$tmp/template" "$tmp/head" <<'PY' || rc=$?
-import json, sys
-
-def merge_fill(base, overlay):
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged = dict(base)
-        for key, value in overlay.items():
-            merged[key] = merge_fill(merged[key], value) if key in merged else value
-        return merged
-    if isinstance(base, list) and isinstance(overlay, list):
-        merged = list(base)
-        for item in overlay:
-            if item not in merged:
-                merged.append(item)
-        return merged
-    return base
-
-try:
-    base, template, head = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:4])
-except (OSError, ValueError):
-    sys.exit(1)
-if not all(isinstance(x, dict) for x in (base, template, head)):
-    sys.exit(1)
-sys.exit(0 if merge_fill(base, template) == head else 1)
-PY
+  name=$copy_project_name
+  dot=$(mktemp -d) merge_expected_dir=$(mktemp -d)
+  if ! git -C "$dotfiles_root" archive "$render_ref" templates script .agents 2>/dev/null | tar -x -C "$dot" 2>/dev/null \
+    || ! git archive "$base_oid" 2>/dev/null | tar -x -C "$merge_expected_dir" 2>/dev/null; then
+    rm -rf "$dot" "$merge_expected_dir"; merge_expected_dir="" merge_expected_failed=1; return 0
+  fi
+  git -C "$merge_expected_dir" init -q 2>/dev/null || true
+  if ! (export DOTFILES="$dot"; bash "$dot/script/agent-team.sh" sync "$merge_expected_dir" --project-name "$name" >/dev/null 2>&1); then
+    merge_expected_failed=1
+  fi
+  rm -rf "$dot"
+}
+merged_file_is_expected() { # <path>; 0 when head's blob == the sync result for the base file
+  merge_expected_prepare
+  [ -z "$merge_expected_failed" ] && [ -n "$merge_expected_dir" ] || return 1
+  local tmp rc=0
+  tmp=$(mktemp -d)
+  git cat-file blob "$head:$1" >"$tmp/head" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  cmp -s "$tmp/head" "$merge_expected_dir/$1" || rc=$?
   rm -rf "$tmp"
   return "$rc"
 }
@@ -740,8 +737,8 @@ generated)
     elif is_generated_copy "$f" "$skill_names"; then
       mode=$(git ls-tree "$head" -- "$f" 2>/dev/null | awk 'NR == 1 {print $1}')
       [ "$mode" != 120000 ] || refuse "--verdict-from refuses symlink $f"
-    elif [ "$f" = "$GUARD_CFG_REL" ] && ! grep -Fxq -- "$f" <<<"$deleted_paths" && guard_config_is_template_fill; then
-      # Template defaults the template PR already passed; the owner-only hook rule skips this verified fill.
+    elif is_merged_file "$f" && ! grep -Fxq -- "$f" <<<"$deleted_paths" && merged_file_is_expected "$f"; then
+      # The sync result the template PR already passed; the owner-only rule skips this verified merge.
       lane_deletions="${lane_deletions}${f}"$'\n'
     elif grep -Fxq -- "$f" <<<"$deleted_paths"; then
       if [ "$demanded_ready" = false ]; then
@@ -853,7 +850,7 @@ review_fail_blocks_merge
 # 5. Protected paths (shared lib: owner-only, Owner-approved trailer, Countersign).
 if [ "$lane" = generated ]; then
   # Generated copies of role files carry no Owner-approved trailer by design; the template PR already passed that gate.
-  # A pure deletion of a shared hook check flags, or a verified guard-config.json template fill, skips the owner-only hook rule.
+  # A pure deletion of a shared hook check flags, or a verified sync merge (guard-config.json, settings.json), skips the owner-only hook rule.
   if [ -n "$lane_deletions" ]; then
     files_saved=$files
     files=$(jq -c --arg del "$lane_deletions" \
