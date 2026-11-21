@@ -167,6 +167,7 @@ scheduled_round() {
   rotate_log "$log_file"; rotate_log "$detail_file"
   take_round_lock || exit 0
   trap release_round_lock EXIT
+  rm -f "$round_state/wrap-up-scheduled.terminals"
 
   orca_dir=$(find_orca_dir)
   export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin:/usr/sbin:/sbin"
@@ -214,6 +215,7 @@ scheduled_round() {
     # Each slow step has its own cap so one fetch, release, pane sweep or main update cannot spend the round.
     repo_mark=$SECONDS
     WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_SKIP_HOST_WIDE=$host_wide_done WRAP_UP_TOTAL_TIMEOUT=$child_limit \
+      WRAP_UP_TERMINALS_SNAPSHOT=$round_state/wrap-up-scheduled.terminals \
       WRAP_UP_CALL_TIMEOUT=${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30} \
       WRAP_UP_PANE_TIMEOUT=${WRAP_UP_SCHEDULED_PANE_TIMEOUT:-20} \
       WRAP_UP_MAIN_TIMEOUT=${WRAP_UP_SCHEDULED_MAIN_TIMEOUT:-20} \
@@ -1285,7 +1287,16 @@ if [ "$host_wide" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1 && terminal_
   [ -z "${WRAP_UP_SCHEDULED_CHILD:-}" ] || printf 'step terminals seconds=%s\n' "$SECONDS"
 fi
 if command -v "$orca_bin" >/dev/null 2>&1; then
-  if "$orca" terminal list --json > "$tmp/terminals" && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null; then
+  # One terminal listing per scheduled round: the first repo's child saves it after it has closed finished terminals, and
+  # later children read that file. A terminal closed since then only keeps a worktree one more round (#1314).
+  terminals_ok() { jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/terminals" >/dev/null 2>&1; }
+  terminals_shared=0
+  if [ -n "${WRAP_UP_TERMINALS_SNAPSHOT:-}" ] && [ -s "$WRAP_UP_TERMINALS_SNAPSHOT" ]; then
+    cp "$WRAP_UP_TERMINALS_SNAPSHOT" "$tmp/terminals" && terminals_ok && terminals_shared=1
+  fi
+  if [ "$terminals_shared" -eq 0 ]; then "$orca" terminal list --json > "$tmp/terminals" || : > "$tmp/terminals"; fi
+  if terminals_ok; then
+    if [ "$terminals_shared" -eq 0 ] && [ -n "${WRAP_UP_TERMINALS_SNAPSHOT:-}" ]; then cp "$tmp/terminals" "$WRAP_UP_TERMINALS_SNAPSHOT" 2>/dev/null || :; fi
     # Unknown ownership is retained too: a live terminal can belong to another Run.
     : > "$tmp/worker-pages"
     : > "$tmp/w-cursors"
@@ -1789,8 +1800,15 @@ orca_pin_state=unavailable
 : > "$tmp/orca-board-open"
 if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
   orca_pin_state=unknown
-  if orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null \
-    && jq -e '.ok != false and ((.result.worktrees // []) | type == "array") and (.result.truncated != true)' "$tmp/orca-worktrees" >/dev/null 2>&1; then
+  # A scheduled child needs only its own repo's records, so it asks for that repo (a host with many repos answers the whole
+  # list in minutes under load, #1314). A path Orca does not know as a repo falls back to the whole list.
+  orca_wt_ok() { jq -e '.ok != false and ((.result.worktrees // []) | type == "array") and (.result.truncated != true)' "$tmp/orca-worktrees" >/dev/null 2>&1; }
+  orca_wt_read=1
+  if [ -n "${WRAP_UP_SCHEDULED_CHILD:-}" ] && [ "$host_wide" -eq 0 ] \
+    && orca_call worktree list --repo "path:$repo" --json > "$tmp/orca-worktrees" 2>/dev/null && orca_wt_ok; then :
+  elif orca_call worktree list --json > "$tmp/orca-worktrees" 2>/dev/null && orca_wt_ok; then :
+  else orca_wt_read=0; fi
+  if [ "$orca_wt_read" -eq 1 ]; then
     orca_pin_state=ok
     jq -r '.result.worktrees[]? | select(.pinned == true) | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-pinned"
     jq -r '.result.worktrees[]? | select((.workspaceStatus // "completed") != "completed") | (.path // .workspacePath // empty)' "$tmp/orca-worktrees" > "$tmp/orca-board-open"
