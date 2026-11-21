@@ -463,6 +463,9 @@ They are not byte renders. `--verdict-from` runs `agent-team.sh sync` on the bas
 the pin, and counts such a file as a generated team copy only when the head equals that result. A changed, removed
 or new project key is a real edit and is refused (#1366, #1374). A new merged file needs one entry in
 `MERGED_FILES` in `script/ship.sh`.
+A kept `.claude/hooks/guard-bash.py` and `.claude/hooks/tests/test_guard_bash.py` belong to the project, with one
+exception: a copy that equals an older template release is a stale stock copy, so sync rewrites it to the current
+template and `check` reports it (#1392). A copy no template release had is a customization and stays (#1179).
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,
