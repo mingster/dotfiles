@@ -10,6 +10,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib/pr-review-gates.sh"
 # shellcheck source=lib/board-status.sh
 . "$here/lib/board-status.sh"
+# shellcheck source=lib/worker-role.sh
+. "$here/lib/worker-role.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
 run='' spec='' title='' model='' wt='' name='' repo='' base='' environment='' role=''
 from=${ORCA_TERMINAL_HANDLE:-}
@@ -67,7 +69,11 @@ PY
 ); then
   refuse_strong_role "$spec_role"
 fi
-brief=$spec_body
+brief_file=$(mktemp "${TMPDIR:-/tmp}/start-cursor-worker.XXXXXX")
+trap 'rm -f "$brief_file" "${stamped_file:-}"' EXIT
+printf '%s\n' "$spec_body" >"$brief_file"
+stamped_file=$(stamp_worker_role "$brief_file" "$title" "$role") || exit 1
+brief=$(cat "$stamped_file")
 python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider cursor --model "$model" >&2 \
   || { echo "start-cursor-worker: refused by the usage gate" >&2; exit 3; }
 if [ -z "$wt" ]; then

@@ -1,0 +1,1 @@
+* `start-cursor-worker.sh` stamps the brief it sends with its role as the first line, from the `#<issue>|<role>` title, else `--role`. It uses the same helper as `worker-startup.sh`, now in `script/lib/worker-role.sh` (#1328).
