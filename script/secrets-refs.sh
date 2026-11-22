@@ -11,6 +11,8 @@ case $dir in -*) echo "secrets-refs: dir may not start with a dash" >&2; exit 2 
 real=$(cd "$dir" && pwd -P) || exit 2
 case "/$real/" in */secrets/*) echo "secrets-refs: refuses to search inside a secrets folder" >&2; exit 2 ;; esac
 export SECRETS_REFS_PATTERN=$pattern
+echo | awk '$0 ~ ENVIRON["SECRETS_REFS_PATTERN"] { exit }' >/dev/null 2>&1 \
+  || { echo "secrets-refs: invalid pattern" >&2; exit 2; }
 find "$real" \( -name secrets -o -name .git -o -name node_modules \) -prune -o -type f \
   -exec awk '$0 ~ ENVIRON["SECRETS_REFS_PATTERN"] { print FILENAME ":" FNR }' {} + 2>/dev/null
 exit 0
