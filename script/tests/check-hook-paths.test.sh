@@ -3,6 +3,8 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SCRIPT="$ROOT/script/check-hook-paths.sh"
+# shellcheck source=lib/asdf-pin.sh
+. "$ROOT/script/tests/lib/asdf-pin.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME/dotfiles/script"
