@@ -15,7 +15,7 @@ esac
 mkdir -p "$support"
 live="$support/claude_desktop_config.json"
 tracked="$DOTFILES/init/claude_desktop_config.json"
-sibling="$tmp/Users/mtsai/x"
+sibling="$tmp/Users/mtx/x"
 jq -n --arg h "$HOME" --arg s "$sibling" '{
   coworkUserFilesPath: ($h + "/Claude"), exact: $h, sibling: $s,
   "quote\"d": "a \"b\" c",
