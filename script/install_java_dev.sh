@@ -11,7 +11,7 @@ fi
 
 asdf plugin list 2>/dev/null | grep -q '^java$' || asdf plugin add java https://github.com/halcyon/asdf-java.git
 
-asdf list java 2>/dev/null | grep -q 'openjdk-21' || asdf install java openjdk-21
+asdf list java 2>/dev/null | tr -d ' *' | grep -qx 'openjdk-21' || asdf install java openjdk-21
 asdf set -u java openjdk-21
 
 grep -qF 'java_macos_integration_enable=yes' "$HOME/.asdfrc" 2>/dev/null || echo 'java_macos_integration_enable=yes' >> "$HOME/.asdfrc"

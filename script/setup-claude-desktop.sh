@@ -5,6 +5,12 @@
 # Idempotent: safe to re-run.
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1568).
+if [ $# -gt 0 ]; then
+  echo "Usage: setup-claude-desktop.sh (takes no arguments)" >&2
+  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+fi
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 
 case "${OSTYPE:-}" in

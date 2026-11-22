@@ -39,4 +39,16 @@ msg=$(run pstack)
 [[ "$msg" == *WARN*sdlc-skill-map.md* ]] || fail "no WARN for a missing root: $msg"
 tests=$((tests + 1))
 
+# A citation is a whole word: "triaged" does not cite triage, "/triage" does (#1572).
+printf 'skills=triage to-spec\n' >"$d/.agents/skills/.mattpocock-upstream"
+printf 'The bug was triaged and a to-specific note.\n' >"$d/docs/agents/sdlc-skill-map.md"
+run mattpocock >/dev/null
+! grep -q 'sdlc-skill-map.md` cites `triage`' "$out" || fail 'triaged counted as a citation of triage'
+! grep -q 'sdlc-skill-map.md` cites `to-spec`' "$out" || fail 'to-specific counted as a citation of to-spec'
+printf 'Run /triage then /to-spec.\n' >"$d/docs/agents/sdlc-skill-map.md"
+run mattpocock >/dev/null
+grep -q 'sdlc-skill-map.md` cites `triage`' "$out" || fail '/triage not counted as a citation'
+grep -q 'sdlc-skill-map.md` cites `to-spec`' "$out" || fail '/to-spec not counted as a citation'
+tests=$((tests + 1))
+
 printf 'PASS: %s tests\n' "$tests"
