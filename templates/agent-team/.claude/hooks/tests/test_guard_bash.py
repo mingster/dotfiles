@@ -1061,6 +1061,11 @@ class ExactOnlyScripts(GuardTest):
         self.assertIsNotNone(reason, f"expected deny: {command}")
         self.assertIn(self.SCRIPT, reason)
 
+    def test_loop_variable_is_not_the_whole_command(self):
+        """#1407 Review: `"$f"` from a for list runs the script without the exact form."""
+        self.assertBlocked('for f in .claude/bin/*; do "$f"; done')
+        self.assertBlocked(f'for f in {self.SCRIPT}; do "$f" --list; done')
+
     def test_exact_relative_and_absolute_forms_allowed(self):
         absolute = os.path.join(self.repo, self.SCRIPT)
         self.assertRuns(f"{self.SCRIPT} --list")

@@ -1,0 +1,1 @@
+f() { cd /tmp; }; cp /tmp/a .claude/hooks/guard-bash.py

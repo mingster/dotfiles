@@ -1,0 +1,1 @@
+time -p cat .env.local

@@ -111,5 +111,111 @@ class FailClosed(GuardTest):
         self.assertDenied("# ; cd /tmp\ncp /tmp/a .env.local")
 
 
+class Pr1407Boundaries(unittest.TestCase):
+    """Where the lexer stops trusting itself (#1407 Review): a quote, expansion or test it cannot place is a LexError."""
+
+    def test_unreadable_shapes(self):
+        for text in (
+            "echo \"${HOME:-'}\"; cat .env.local; echo \"'}\"",   # quote inside a double quoted ${
+            "echo $(( $'it\\'))' ? 0 : 1 )); cat .env.local # \\'",  # quote inside $((
+            "(( x = 'a' ))",
+            "[[ -n a\n# '\n]] && cat .env.local # ' ]]",          # comment inside [[ ]]
+            "[[ -n a]]) ]]",                                       # `]]` glued to an operator
+            "f() if true; then cd /tmp; fi",                       # a function body that is not { } or ( )
+        ):
+            with self.subTest(text=text), self.assertRaises(guard.LexError):
+                list(guard.walk(text, "/w"))
+
+    def test_test_ends_at_close_bracket_beside_an_operator(self):
+        self.assertEqual([c.tokens[0] for c in guard.walk("echo $( [[ -n a ]]) && cat .env.local # ]] )", "/w")],
+                         ["[[", "echo", "cat"])
+
+    def test_unquoted_param_decodes_dollar_quote(self):
+        word = guard.lex("echo ${X:-$'a\\x62'}")[0].argv[1]
+        self.assertEqual(word.alt({}), "ab")
+        self.assertIn("ab", word.deep)
+
+    def test_process_substitution_is_a_redirect_target(self):
+        self.assertEqual(walked("cat < <(sort a.txt)")[-1], (["cat", "<", "<(sort a.txt)"], 0))
+        self.assertIn((["sort", "a.txt"], 1), walked("cat < <(sort a.txt)"))
+
+    def test_redirects_come_after_the_words(self):
+        self.assertEqual(walked("2>/dev/null git push --force")[0][0], ["git", "push", "--force", "2>/dev/null"])
+
+    def test_time_flags_and_append_assignment(self):
+        self.assertEqual(walked("time -p -- ls")[0][0], ["ls"])
+        self.assertEqual(guard.program_and_args(["A+=1", "B[0]=2", "ls"]), ("ls", []))
+
+    def test_default_value_and_loop_variants(self):
+        self.assertIn(["cat", ".env.local"], [c.tokens for c in guard.walk("cat ${X:-.env.local}", "/w")])
+        tokens = [c.tokens for c in guard.walk("for f in a b; do cat \"$f\"; done", "/w")]
+        self.assertIn(["cat", "a"], tokens)
+        self.assertIn(["cat", "b"], tokens)
+
+    def test_shell_c_option_clusters(self):
+        for args, script in ((["-oc", "errexit", "x"], "x"), (["-co", "errexit", "x"], "x"),
+                             (["-c", "--", "x"], "x"), (["-euo", "pipefail", "-c", "x"], "x"), (["x.sh"], None)):
+            with self.subTest(args=args):
+                got = guard.shell_c_script(args)
+                self.assertEqual(got and got[0], script)
+
+
+class Pr1407Cwd(unittest.TestCase):
+    def cwds(self, text):
+        return [(c.tokens[0], c.cwd) for c in guard.walk(text, "/w")]
+
+    def test_subshell_cd_stays_inside(self):
+        self.assertEqual(self.cwds("(cd /tmp; ls); pwd"), [("cd", "/w"), ("ls", "/tmp"), ("pwd", "/w")])
+
+    def test_cd_that_may_not_run_keeps_both(self):
+        for text in ("f() { cd /tmp; }; pwd", "true || cd /tmp; pwd", "if x; then cd /tmp; fi; pwd",
+                     "cd /tmp | cat; pwd", "cd /tmp & pwd"):
+            with self.subTest(text=text):
+                self.assertEqual([c for t, c in self.cwds(text) if t == "pwd"], ["/w", "/tmp"])
+
+
+class Pr1407Matrix(GuardTest):
+    """Each payload under each disguise from the #1407 Review is denied."""
+    PAYLOADS = ("cat .env.local", "git push --force origin main", "bunx playwright test")
+    DISGUISES = ("2>/dev/null {}", "time -p {}", "time -- {}", "A+=1 {}", "( {} )", "{{ {}; }}",
+                 "true && {}", "bash -oc errexit {q}", "bash -co errexit {q}", "bash -c -- {q}",
+                 "bash -c 2>/dev/null {q}", "for f in x; do {}; done")
+
+    def test_matrix(self):
+        for payload in self.PAYLOADS:
+            for disguise in self.DISGUISES:
+                command = disguise.format(payload, q=f'"{payload}"')
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+
+    def test_default_value_disguises(self):
+        for command in ("cat ${X:-.env.local}", "git push ${X:---force} origin main", "bunx ${X:-playwright} test",
+                        "cat \"${X:-.env.local}\""):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+
+class Pr1407LinkedWorktree(GuardTest):
+    """#1407 Review shapes that need a linked worktree, which the fixture checker does not have."""
+
+    def setUp(self):
+        super().setUp()
+        with open(os.path.join(self.home, ".git"), "w") as f:
+            f.write("gitdir: /nowhere/.git/worktrees/x\n")
+
+    def test_env_writes_the_old_scan_missed(self):
+        for command in ("echo x > $'.env.lo\\x63al'", "echo $'it\\'s' > .env.local", "echo \"$( # \"\n)\" > .env.local",
+                        "2>/dev/null cp /tmp/a .env.local", "echo x > ${X:-.env.local}"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_cd_that_does_not_move_the_cp(self):
+        for command in ("(cd /tmp); cp /tmp/a .env.local", "f() { cd /tmp; }; cp /tmp/a .env.local",
+                        "true || cd /tmp; cp /tmp/a .env.local", "if false; then cd /tmp; fi; cp /tmp/a .env.local",
+                        "cd /tmp & cp /tmp/a .env.local"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+
 if __name__ == "__main__":
     unittest.main()

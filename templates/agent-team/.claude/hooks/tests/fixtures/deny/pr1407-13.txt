@@ -1,0 +1,1 @@
+bun --env-file "$ENV" run test:regression

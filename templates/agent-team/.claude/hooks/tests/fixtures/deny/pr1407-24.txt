@@ -1,0 +1,1 @@
+2>/dev/null git push --force origin main

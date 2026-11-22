@@ -1,0 +1,1 @@
+time -p bash bin/deploy-raw.sh

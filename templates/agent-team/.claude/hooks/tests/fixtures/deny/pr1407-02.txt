@@ -1,0 +1,1 @@
+echo "${HOME:-'}"; git push --force origin main; echo "'}"

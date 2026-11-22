@@ -1,0 +1,1 @@
+case bin/deploy-raw.sh in x) ;; esac

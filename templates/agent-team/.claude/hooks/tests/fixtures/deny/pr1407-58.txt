@@ -1,0 +1,1 @@
+case $x in bin/deploy-raw.sh) echo;; esac

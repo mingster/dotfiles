@@ -1,0 +1,1 @@
+cp $'sec\x72ets/a' /tmp/b

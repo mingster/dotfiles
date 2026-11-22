@@ -1,0 +1,1 @@
+echo x > $'.claude/hooks/guard-b\x61sh.py'

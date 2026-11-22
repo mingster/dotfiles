@@ -1,0 +1,1 @@
+bash -oc errexit "cat .env.local"

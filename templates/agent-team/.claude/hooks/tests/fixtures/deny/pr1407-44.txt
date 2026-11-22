@@ -1,0 +1,1 @@
+time -p git push --force origin main

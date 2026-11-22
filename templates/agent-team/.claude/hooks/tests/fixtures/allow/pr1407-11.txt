@@ -1,0 +1,1 @@
+if [ -d a ]; then cd a; fi; if [ -d b ]; then cd b; fi; if [ -d c ]; then cd c; fi; if [ -d d ]; then cd d; fi; ls

@@ -1,0 +1,1 @@
+bash $'bin/owner-\x61pprove.sh' host
