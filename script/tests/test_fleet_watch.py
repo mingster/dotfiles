@@ -74,6 +74,11 @@ def dirty_repo(tmp):
 class SettledRowCapTests(unittest.TestCase):
     cfg = {'local_host': 'hostA', 'host_caps': {'local': 3}}
 
+    def setUp(self):
+        env = patch.dict('os.environ', {'FLEET_WATCH_TEST_LOAD_PER_CORE': '0.10', 'FLEET_WATCH_TEST_FREE_GB': '16.0'})
+        env.start()
+        self.addCleanup(env.stop)
+
     def test_worker_show_server_record_is_a_remote_row_and_freed(self):
         row = fw._shown_remote_worker('d_show', lambda *a: dict(SHOWN))
         self.assertTrue(fw._remote_server_row(row))

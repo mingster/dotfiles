@@ -620,6 +620,15 @@ def _resource_holds_seat(resource):
     return resource.get('releaseState') in ('pending', 'retained')
 
 
+def _unpushed_resource(worker):
+    """Orca itself says the retained resource holds unpushed commits."""
+    w = worker or {}
+    for resource in (w.get('resource'), (w.get('projection') or {}).get('resource')):
+        if isinstance(resource, dict) and resource.get('retainedReason') == 'unpushed':
+            return True
+    return False
+
+
 def worktree_has_unpushed_commits(path):
     """True when HEAD has commits on no remote. Unknown keeps the seat."""
     try:
@@ -805,6 +814,7 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
             return False, info, False
         elif (
             not release_unknown_row(worker)
+            and not _unpushed_resource(worker)
             and worker_on_local_machine(worker, config, env_names)
             and not worker_retained_resource_live(worker)
         ):
