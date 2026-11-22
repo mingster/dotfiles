@@ -1,0 +1,1 @@
+install_asdf: on Debian and generic Linux it downloads the asdf release binary into `~/.local/bin` (the release no longer ships `asdf.sh`), and a failed release lookup prints a message and exits 1 (#1496).

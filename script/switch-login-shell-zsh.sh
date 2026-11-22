@@ -8,7 +8,11 @@ DOTFILES_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "${1:-}" = "--dotfiles" ]; then
   DOTFILES_ROOT="$2"
 fi
+# shellcheck source=script/lib/dotfiles-source.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
 SHELLS_FILE="${SHELLS_FILE:-/etc/shells}"
+
+require_main_dotfiles switch-login-shell-zsh "$DOTFILES_ROOT"
 
 zsh_path="$(command -v zsh || true)"
 if [ -z "$zsh_path" ]; then
