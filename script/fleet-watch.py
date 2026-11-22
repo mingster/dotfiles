@@ -620,6 +620,15 @@ def _resource_holds_seat(resource):
     return resource.get('releaseState') in ('pending', 'retained')
 
 
+def _unpushed_resource(worker):
+    """Orca itself says the retained resource holds unpushed commits."""
+    w = worker or {}
+    for resource in (w.get('resource'), (w.get('projection') or {}).get('resource')):
+        if isinstance(resource, dict) and resource.get('retainedReason') == 'unpushed':
+            return True
+    return False
+
+
 def worktree_has_unpushed_commits(path):
     """True when HEAD has commits on no remote. Unknown keeps the seat."""
     try:
@@ -805,8 +814,7 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
             return False, info, False
         elif (
             not release_unknown_row(worker)
-            and worker_checkout_path(worker)
-            and worker_liveness_verdict(worker)
+            and not _unpushed_resource(worker)
             and worker_on_local_machine(worker, config, env_names)
             and not worker_retained_resource_live(worker)
         ):
@@ -1398,7 +1406,7 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
         'retained_count': retained_count,
         'resources': host_resources,
         'overflow_host': overflow_host,
-        'reason': 'admitted' if admitted else ('host cap exceeded: %s %d/%d' % (host, occupied_count, cap)),
+        'reason': 'admitted' if admitted else ('host cap exceeded: %s %d/%d (live=%d retained=%d)' % (host, occupied_count, cap, live_count, retained_count)),
         'receipt': {
             'host': host,
             'admitted': admitted,
@@ -1429,6 +1437,7 @@ def worker_failure_is_quiet(worker):
 def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None):
     notices = []
     counts = {}
+    held = {}
     # The first pass only records the failures that already exist.
     baseline = 'failed' not in state
     state.setdefault('failed', [])
@@ -1459,10 +1468,14 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
         if occupies:
             host = info['host']
             counts[host] = counts.get(host, 0) + 1
+            kind = 'live' if info.get('category') == 'live' else 'retained'
+            held.setdefault(host, {'live': 0, 'retained': 0})[kind] += 1
 
     for host, cap in config.get('host_caps', {}).items():
         if counts.get(host, 0) > cap:
-            notices.append(Urgent('host cap exceeded: %s %d/%d (includes child dispatches)' % (host, counts[host], cap)))
+            split = held.get(host, {})
+            notices.append(Urgent('host cap exceeded: %s %d/%d live=%d retained=%d (includes child dispatches)' % (
+                host, counts[host], cap, split.get('live', 0), split.get('retained', 0))))
     # A lead pane can vanish (terminal_not_found) while its merges silently stop.
     dead = state.setdefault('dead_leads', [])
     for lead in config.get('leads', []):
@@ -1632,7 +1645,10 @@ def stall_idle_limit_seconds(config):
 def _remote_server_row(w):
     """True for a remote --include-remote row that carries server metadata and no local terminal/resource."""
     w = w or {}
-    return (isinstance(w.get('server'), dict)
+    server = w.get('server')
+    named = isinstance(server, dict) or (isinstance(server, str) and bool(server.strip()))
+    # worker-show returns a flat record: server is a string and stage is server_record (#1394).
+    return ((named or w.get('stage') == 'server_record')
             and not w.get('projection')
             and not w.get('agentTerminalHandle')
             and not w.get('terminalState')
@@ -1655,6 +1671,10 @@ def projection_host_id(w):
         return top
     if _remote_server_row(w):
         srv = w.get('server') or {}
+        if isinstance(srv, str):
+            if srv.strip():
+                return srv.strip()
+            srv = {}
         for key in ('name', 'environmentId', 'id'):
             val = srv.get(key)
             if isinstance(val, str) and val.strip():
@@ -4886,7 +4906,11 @@ def babysit_repos(config):
             seen.append(repo)
     if seen:
         return seen
-    return [repo for repo in (scan.get('repos') or []) if isinstance(repo, str) and repo]
+    configured_scan = [repo for repo in (scan.get('repos') or []) if isinstance(repo, str) and repo]
+    if configured_scan:
+        return configured_scan
+    # --babysit-only runs before bind_pass_config, so read the repos from the checkouts (#1394).
+    return repos_from_roots(block.get('repo_roots') or scan.get('repo_roots') or config.get('repo_roots'))[0]
 
 
 def babysit_settings(config):
@@ -4898,8 +4922,8 @@ def babysit_settings(config):
     run_id = (block.get('run') or scan.get('run') or '').strip()
     from_terminal = (block.get('from_terminal') or scan.get('from_terminal') or '').strip()
     roots = block.get('repo_roots') or scan.get('repo_roots') or {}
-    if not isinstance(roots, dict):
-        roots = {}
+    if not isinstance(roots, dict) or not roots:
+        roots = repos_from_roots(config.get('repo_roots'))[1]
     return startup, run_id, from_terminal, roots
 
 
@@ -6353,8 +6377,12 @@ def review_to_verifier_s(pr_row, head, now):
     return max(0, int(now - max(stamps))) if stamps else None
 
 
-def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_worker, lines, head):
-    """True when the PR body fails pr-body-gate. No verifier starts, and the builder gets one rework note per reason (#1323)."""
+def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_worker, lines, head, log_bits=None):
+    """True when the PR body fails pr-body-gate and a live builder can take the rework note (#1323, #1394).
+
+    The note goes to the live, unreleased builder matched by PR number or head branch, once per reason.
+    With no such builder nobody can fix the body, so the verifier is not held back.
+    """
     number = pr_row.get('number')
     reason = _sibling('pr_body_gate', 'pr-body-gate.py').finish_block_reason(pr_row.get('body') or '')
     if reason and reason.startswith('PR body needs a'):
@@ -6364,15 +6392,31 @@ def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_work
     if not reason:
         notes.pop(key, None)
         return False
-    lines.append(_babysit_line(repo, number, head, 'skip', 'body-gate'))
-    if dry_run or notes.get(key) == reason:
-        return True
-    notes[key] = reason
+    branch = pr_row.get('headRefName')
+    builder = None
     for worker in workers or []:
-        if isinstance(worker, dict) and worker_pr_number(worker) == number and not _worker_is_verifier(worker):
-            mail_worker(notify_worker, worker, 'verifier not started: ' + reason, allow_settled=True)
-            break
-    return True
+        if not isinstance(worker, dict) or _worker_is_verifier(worker):
+            continue
+        if worker_pr_number(worker) != number and not (branch and worker_branch_name(worker) == branch):
+            continue
+        if worker_terminal_released(worker) or worker_settled_kind(worker):
+            continue
+        builder = worker
+        break
+    if builder is None:
+        return False
+
+    def blocked():
+        lines.append(_babysit_line(repo, number, head, 'skip', 'body-gate'))
+        if log_bits is not None:
+            log_bits.append('body_gate=%s' % number)
+        return True
+    if dry_run or notes.get(key) == reason:
+        return blocked()
+    if not mail_worker(notify_worker, builder, 'verifier not started: ' + reason, allow_settled=False):
+        return False
+    notes[key] = reason
+    return blocked()
 
 
 def babysit_pass(
@@ -6598,7 +6642,7 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'pending'))
             continue
         if kind == 'verifier' and body_gate_blocks_verifier(
-            pr_row, workers, state, repo, dry_run, notify_worker, lines, head,
+            pr_row, workers, state, repo, dry_run, notify_worker, lines, head, log_bits,
         ):
             if not dry_run and persist_state:
                 persist_state()
@@ -7726,6 +7770,8 @@ def _mark_worker_released(worker):
 def remote_environment(worker):
     """Environment id or name to pass as --environment for a remote worker row."""
     server = (worker or {}).get('server')
+    if isinstance(server, str) and server.strip():
+        return server.strip()
     if isinstance(server, dict):
         for key in ('environmentId', 'name', 'id'):
             value = server.get(key)
@@ -7817,7 +7863,7 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
         shown = _shown_remote_worker(dispatch, rpc_call)
         if shown is not None:
             candidates.append(shown)
-            if isinstance(workers, list):
+            if isinstance(workers, list) and worker_is_remote(shown, config):
                 workers.append(shown)
     auto_released = set(state.get('auto_released') or ())
     present = {m.get('id') for m in messages or [] if isinstance(m, dict)}

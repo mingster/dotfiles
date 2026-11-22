@@ -167,6 +167,7 @@ class ReleaseUnknownGone(unittest.TestCase):
         self.assertEqual(remote_receipt['occupied'], 1)
         self.assertEqual(remote_receipt['cap'], 1)
         kept = os.path.join(self.tmp, 'retained-worker')
+        make_dirty(kept)
         gone = os.path.join(self.tmp, 'gone-beside-retained')
         retained = worker('retained', kept, terminalState='retained')
         cleared = worker('cleared', gone)
