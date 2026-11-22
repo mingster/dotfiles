@@ -75,10 +75,11 @@ for cli in cursor agy brew; do
 done
 export OSTYPE=linux-gnu
 cursor_fixture="$TEST_ROOT/cursor-repo"
-mkdir -p "$cursor_fixture/script" "$cursor_fixture/ide/cursor/hooks" "$cursor_fixture/ide/cursor/rules"
+mkdir -p "$cursor_fixture/script/lib" "$cursor_fixture/ide/cursor/hooks" "$cursor_fixture/ide/cursor/rules"
 for name in link-cursor-user.sh link-cursor-hooks.sh; do
   cp "$ROOT/script/$name" "$cursor_fixture/script/"
 done
+cp "$ROOT/script/lib/link-user-file.sh" "$cursor_fixture/script/lib/"
 for name in cli-config.json settings.json keybindings.json environment.json hooks.json; do
   cp "$ROOT/ide/cursor/$name" "$cursor_fixture/ide/cursor/"
 done

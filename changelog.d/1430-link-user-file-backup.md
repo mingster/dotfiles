@@ -1,0 +1,1 @@
+setup-vscode, setup-antigravity and link-cursor-user move a real User `settings.json` or `keybindings.json` to `<name>.bak.<timestamp>` once before linking, so a re-run of install.sh no longer loses settings (#1430).

@@ -327,7 +327,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `worker-watch.sh` | Polls active Orca workers and detects stalled sessions so the coordinator can nudge, retry or respawn them. |
 | `worker-panes.sh`, `worker-pane.sh` | Opens and colors supervised worker panes in Orca by role (`role-colors.tsv`). |
 | `worker-pane-close.sh` | Closes ended worker panes/terminals (`--ended` or `--release <dispatch_id>`) and kills leftover process groups. |
-| `worker-pane-retry.sh` | Retries or respawns a failed or stalled worker pane cleanly. |
+| `worker-pane-retry.sh` | Shared close and verify loop (`close_rpc`, `close_verified`) that `worker-pane.sh` and `worker-pane-close.sh` source. A library, not run directly, and it never retries or respawns a pane. |
 
 ## Skills
 

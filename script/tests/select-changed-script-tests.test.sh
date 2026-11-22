@@ -468,3 +468,15 @@ case24_bin_wrappers_select_their_tests() {
 
 case24_bin_wrappers_select_their_tests
 echo 'PASS: 24 acceptance cases'
+
+case15_statusline() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only \
+    .agents/claude/statusline.sh 2>&1)
+  grep -Fq 'Selected: script/tests/statusline.test.sh' <<<"$out" \
+    || fail "case15 must select statusline.test.sh"
+  ok "case15 statusline maps its test"
+}
+
+case15_statusline
