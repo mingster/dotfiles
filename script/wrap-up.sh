@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Preview finished work cleanup; --apply performs the proposed changes.
 # Other modes: --scheduled (one round on this host; the coordinator also moves fleet board cards to Done),
+# --daily (once a day: the strict worktree cleanup, build caches, old logs, brew and bun caches, free space before and after),
 # --branch (after a merge), --finish-worker (a settled worker).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -51,7 +52,8 @@ jq_worker_row_path_finish_expr() { printf '%s' '((.workspace // .worktreeId // .
 # A manual run does not take this lock; the guards below recheck before every delete. Always exits 0: a skip is normal, and a
 # failure goes to the log and, on two failed rounds in a row, to one GitHub issue. A schedule gives a bare environment, so
 # nothing here depends on the login shell. ORCA_CLI_COMMAND stays unset: --apply refuses it as test mode.
-round_log() { printf '%s wrap-up-scheduled [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$$" "$*$round_note" >> "$log_file"; }
+round_name=wrap-up-scheduled; round_kind=scheduled
+round_log() { printf '%s %s [%s] %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$round_name" "$$" "$*$round_note" >> "$log_file"; }
 rotate_log() { if [ -f "$1" ] && [ "$(wc -c < "$1" | tr -d ' ')" -gt 5242880 ]; then mv -f "$1" "$1.1"; fi; } # one copy past 5 MB
 guarded_round_rm() { # <rf|f> <path>: only this round's own files, inside the state directory
   case "$2" in "$round_state"/*) ;; *) return 1 ;; esac
@@ -72,7 +74,7 @@ lock_is_stale() {
     ''|*[!0-9]*) [ -n "$(find "$lock" -maxdepth 0 -mmin +"$stale_minutes" 2>/dev/null)" ]; return ;;
   esac
   kill -0 "$pid" 2>/dev/null || return 0
-  ! ps -p "$pid" -o command= 2>/dev/null | grep -F wrap-up.sh | grep -Fq -- --scheduled
+  ! ps -p "$pid" -o command= 2>/dev/null | grep -F wrap-up.sh | grep -Fq -- "--$round_kind"
 }
 # Link a private file holding this pid to $1; fails when $1 exists (ln would drop the file inside a directory, so check first).
 link_pid() {
@@ -126,7 +128,7 @@ round_failed() {
   [ "$n" -ge 2 ] || return 0
   repo=${WRAP_UP_ISSUE_REPO:-} # set by the schedule, never defaulted: this repo is public and the title names the host
   if [ -z "$repo" ]; then round_log 'issue: WRAP_UP_ISSUE_REPO is not set; no issue opened'; return 0; fi
-  title="wrap-up: scheduled rounds failing on $(hostname -s 2>/dev/null)"
+  title="wrap-up: $round_kind rounds failing on $(hostname -s 2>/dev/null)"
   if ! open=$(run_limited "$call_timeout" gh issue list --repo "$repo" --state open --search "$title in:title" --limit 100 --json title 2>/dev/null) \
     || ! open=$(printf '%s' "$open" | jq -r --arg t "$title" '[.[] | select(.title == $t)] | length' 2>/dev/null); then
     round_log 'issue: cannot read open issues; retried next failed round'; return 0
@@ -138,6 +140,68 @@ round_failed() {
   run_limited "$call_timeout" gh issue create --repo "$repo" --title "$title" \
     --body "Scheduled wrap-up failed $n rounds in a row. Latest: ${1//"$HOME"/$tilde}" >/dev/null 2>&1 \
     || round_log 'issue: could not open the issue; retried next failed round'
+}
+# --daily helpers. One host, once a day: the strict cleanup child per repo, then old logs, package caches and free space.
+free_kb() { df -Pk "${WRAP_UP_DAILY_FREE_PATH:-$HOME}" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+kb_gb() { awk -v k="${1:-0}" 'BEGIN { printf "%.1fG", k / 1048576 }'; }
+# One repo child. With tee 1 (a dry run) the listing also reaches the terminal. Prefix assignments reach the child through env.
+daily_child() { # <kill limit> <wrap-up> <mode> <repo> <detail> <tee 0|1> [NAME=value...]
+  local limit=$1 wu=$2 mode=$3 repo_path=$4 detail=$5 tee_out=$6
+  shift 6
+  if [ "$tee_out" = 1 ]; then
+    run_limited "$limit" env "$@" bash "$wu" "$mode" --repo "$repo_path" 2>&1 | tee -a "$detail"
+    return "${PIPESTATUS[0]}"
+  fi
+  run_limited "$limit" env "$@" bash "$wu" "$mode" --repo "$repo_path" >> "$detail" 2>&1
+}
+daily_say() { printf '%s\n' "$*" >> "$daily_detail"; if [ "${scheduled_dry:-0}" = 1 ]; then printf '%s\n' "$*"; fi; return 0; }
+# Old logs only: macOS app logs and crash reports, rotated Orca logs, untracked agent-state logs (all older than
+# WRAP_UP_DAILY_LOG_DAYS, default 7), and any *.log over WRAP_UP_DAILY_BIG_LOG_KB (default 100 MB) under the Orca workspaces
+# that nothing wrote in the last WRAP_UP_DAILY_RECENT_MIN minutes. Never a symlink, never a live (unrotated) Orca log.
+daily_log_candidates() {
+  local days=${WRAP_UP_DAILY_LOG_DAYS:-7} big=${WRAP_UP_DAILY_BIG_LOG_KB:-102400} recent=${WRAP_UP_DAILY_RECENT_MIN:-180}
+  local state=${AGENT_STATE_DIR:-$HOME/agent-state} ws=${WRAP_UP_WORKSPACES_ROOT:-$HOME/orca/workspaces} f
+  [ ! -d "$HOME/Library/Logs" ] || find "$HOME/Library/Logs" -type f \( -name '*.log' -o -name '*.log.*' -o -name '*.ips' \) -mtime +"$days" -print 2>/dev/null
+  [ ! -d "$HOME/.orca/logs" ] || find "$HOME/.orca/logs" -type f -name '*.log.[0-9]*' -mtime +"$days" -print 2>/dev/null
+  if [ -d "$state" ]; then
+    while IFS= read -r f; do
+      git -C "$state" ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || printf '%s\n' "$f"
+    done < <(find "$state" -name .git -prune -o -type f -name '*.log' -mtime +"$days" -print 2>/dev/null)
+  fi
+  [ ! -d "$ws" ] || find "$ws" \( -name node_modules -o -name .git \) -prune -o -type f -name '*.log' -size +"${big}"k -mmin +"$recent" -print 2>/dev/null
+}
+guarded_daily_log_rm() { # <path>: a regular file under one of the four log roots, never a symlink or a directory
+  [ -f "$1" ] && [ ! -L "$1" ] || return 1
+  case "$1" in
+    "$HOME/Library/Logs/"*|"$HOME/.orca/logs/"*|"${AGENT_STATE_DIR:-$HOME/agent-state}/"*|"${WRAP_UP_WORKSPACES_ROOT:-$HOME/orca/workspaces}/"*) ;;
+    *) return 1 ;;
+  esac
+  rm -f -- "$1"
+}
+# Sets extras_note and extras_fail; returns 1 when a package cache cleaner failed. <budget seconds left> <detail file>
+daily_extras() {
+  local left=$1 f kb n=0 total=0 limit rc fail='' tool
+  daily_detail=$2; extras_note=''; extras_fail=''
+  while IFS= read -r f; do
+    { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+    kb=$(du -k -- "$f" 2>/dev/null | cut -f1); kb=${kb:-0}
+    daily_say "Remove log $f ($kb KB)"
+    if [ "${scheduled_dry:-0}" = 1 ] || guarded_daily_log_rm "$f"; then n=$((n+1)); total=$((total+kb)); fi
+  done < <(daily_log_candidates)
+  extras_note="logs=$n ($(kb_gb "$total"))"
+  for tool in 'brew cleanup -s' 'bun pm cache rm'; do
+    # shellcheck disable=SC2086
+    set -- $tool
+    command -v "$1" >/dev/null 2>&1 || { daily_say "Skip $tool: $1 is not installed"; continue; }
+    if [ "${scheduled_dry:-0}" = 1 ]; then daily_say "[dry-run] $tool"; continue; fi
+    limit=$((left - 10)); [ "$limit" -le "${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}" ] || limit=${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}
+    if [ "$limit" -lt 10 ]; then daily_say "Skip $tool: round budget spent"; continue; fi
+    run_limited "$limit" "$@" >> "$daily_detail" 2>&1; rc=$?
+    daily_say "$tool: exit $rc"
+    [ "$rc" -eq 0 ] || fail="${fail:+$fail, }$tool exit $rc"
+    left=$((left - limit))
+  done
+  [ -z "$fail" ] || { extras_fail=$fail; return 1; }
 }
 scheduled_round() {
   set +e
@@ -156,18 +220,27 @@ scheduled_round() {
   fi
   call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
   round_state=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
-  log_file=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
+  if [ "$round_kind" = daily ]; then log_file=${WRAP_UP_DAILY_LOG:-$HOME/.orca/logs/wrap-up-daily.log}
+  else log_file=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}; fi
   detail_file="${log_file%.log}-detail.log"
   extra_bin=${WRAP_UP_EXTRA_BIN-/opt/homebrew/bin:/usr/local/bin}
-  lock="$round_state/wrap-up-scheduled.lock"
-  streak="$round_state/wrap-up-scheduled.failures"
+  lock="$round_state/$round_name.lock"
+  streak="$round_state/$round_name.failures"
   stale_minutes=${WRAP_UP_SCHEDULED_LOCK_STALE_MINUTES:-10}
   round_note=""
   mkdir -p "$(dirname "$log_file")" "$round_state"
   rotate_log "$log_file"; rotate_log "$detail_file"
   take_round_lock || exit 0
   trap release_round_lock EXIT
-  guarded_round_rm f "$round_state/wrap-up-scheduled.terminals"
+  local free_before='' daily_env=() repo_pipe=0
+  if [ "$round_kind" = daily ]; then
+    free_before=$(free_kb)
+    printf '%s free space before: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$(kb_gb "$free_before")" >> "$detail_file"
+    # The strict child: no worktree with uncommitted work or an open PR goes, and nothing changed in the last 3 hours.
+    daily_env=("WRAP_UP_STRICT_KEEP=1" "WRAP_UP_RECENT_MIN=${WRAP_UP_DAILY_RECENT_MIN:-180}" "WRAP_UP_BUILD_CACHE_DIRS=${WRAP_UP_DAILY_BUILD_CACHE_DIRS:-.next node_modules/.cache}")
+    [ "${scheduled_dry:-0}" = 1 ] && repo_pipe=1
+  fi
+  guarded_round_rm f "$round_state/$round_name.terminals"
 
   orca_dir=$(find_orca_dir)
   export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin:/usr/sbin:/sbin"
@@ -215,13 +288,13 @@ scheduled_round() {
     # Each slow step has its own cap so one fetch, release, pane sweep or main update cannot spend the round.
     repo_mark=$SECONDS
     WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_SKIP_HOST_WIDE=$host_wide_done WRAP_UP_TOTAL_TIMEOUT=$child_limit \
-      WRAP_UP_TERMINALS_SNAPSHOT=$round_state/wrap-up-scheduled.terminals \
+      WRAP_UP_TERMINALS_SNAPSHOT=$round_state/$round_name.terminals \
       WRAP_UP_CALL_TIMEOUT=${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30} \
       WRAP_UP_PANE_TIMEOUT=${WRAP_UP_SCHEDULED_PANE_TIMEOUT:-20} \
       WRAP_UP_MAIN_TIMEOUT=${WRAP_UP_SCHEDULED_MAIN_TIMEOUT:-20} \
       WRAP_UP_RELEASE_BUDGET=${WRAP_UP_SCHEDULED_RELEASE_BUDGET:-25} \
       WRAP_UP_OPTIONAL_STEP=${WRAP_UP_SCHEDULED_OPTIONAL_STEP:-20} \
-      run_limited "$kill_limit" bash "$wrap_up" "$child_mode" --repo "$repo_path" >> "$detail_file" 2>&1
+      daily_child "$kill_limit" "$wrap_up" "$child_mode" "$repo_path" "$detail_file" "$repo_pipe" ${daily_env[@]+"${daily_env[@]}"}
     code=$?
     printf '%s repo %s seconds=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" "$((SECONDS-repo_mark))" >> "$detail_file"
     printf 'repo %s seconds=%s\n' "$repo_path" "$((SECONDS-repo_mark))"
@@ -241,7 +314,7 @@ scheduled_round() {
   # so this round does not delete a card that just became Done. The clean pass then removes a card
   # that has been Done for 30 minutes, on the host named by its dispatch record. Each paired host is
   # reached with --environment; an unreachable host is skipped and tried again next round.
-  if coordinator_runs_board_done; then
+  if [ "$round_kind" = scheduled ] && coordinator_runs_board_done; then
     local board_mode step step_bin step_limit step_code
     board_mode=--apply
     [ "${scheduled_dry:-0}" = 1 ] && board_mode=--dry-run
@@ -263,8 +336,13 @@ scheduled_round() {
       [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
     done
   fi
+  local free_note=''
+  if [ "$round_kind" = daily ]; then
+    daily_extras "$((round_limit-(SECONDS-started)))" "$detail_file" || fails="${fails:+$fails; }$extras_fail"
+    free_note=" $extras_note free $(kb_gb "$free_before")->$(kb_gb "$(free_kb)")"
+  fi
   if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
-  round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}"
+  round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note"
   exit 0
 }
 coordinator_runs_board_done() {
@@ -787,6 +865,21 @@ case "${1:-}" in
     done
     scheduled_round
     ;;
+  --daily)
+    shift
+    scheduled_dry=0
+    round_name=wrap-up-daily; round_kind=daily
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dry-run) scheduled_dry=1 ;;
+        --apply) scheduled_dry=0 ;;
+        -h|--help) echo 'Usage: wrap-up.sh --daily [--dry-run|--apply]'; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    scheduled_round
+    ;;
   --finish-worker) shift; finish_worker "$@"; exit 0 ;;
   --branch|--head-sha|--issue|--pr) after_merge "$@"; exit 0 ;;
 esac
@@ -805,7 +898,7 @@ while [ $# -gt 0 ]; do
     --main-update) main_update=1 ;; # With --worktrees-only: also update main and install the preset (used per fleet host).
     --repo) [ $# -ge 2 ] || { echo 'Missing --repo path' >&2; exit 2; }; repo=$2; shift ;;
     -h|--help)
-      echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled [--dry-run] | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'
+      echo 'Usage: wrap-up.sh [--dry-run|--apply] [--stale] [--fleet] [--repo <path>] | --scheduled [--dry-run] | --daily [--dry-run] | --branch <name> [--head-sha <sha>] ... | --finish-worker --worktree <path>'
       echo 'Worst case runtime: a dry run takes about 5 minutes for one repo. --apply is bounded by WRAP_UP_TOTAL_TIMEOUT (default 900 s), then'
       echo 'the pane close step may add up to WRAP_UP_PANE_TIMEOUT (default 1800 s), each of its calls limited to WRAP_UP_PANE_CALL_TIMEOUT (default 10 s).'
       echo 'The summary counts print before the pane step, so a caller that times out there has them. Only one --apply runs at a time (exit 75 names the holder).'
@@ -909,14 +1002,14 @@ refresh_refs() {
   jq -e 'type == "array"' "$tmp/prs" >/dev/null
   jq -r '.[] | select(.state == "OPEN") | .headRefName' "$tmp/prs" | sort -u > "$tmp/open"
   jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
-  jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty' "$tmp/prs" > "$tmp/closed-heads"
+  jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED") | .headRefOid // empty' "$tmp/prs" > "$tmp/merged-heads"
   jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
 }
 pr_ok=1
 echo '[]' > "$tmp/prs"
 : > "$tmp/open"
 : > "$tmp/closed"
-: > "$tmp/closed-heads"
+: > "$tmp/merged-heads"
 : > "$tmp/open-heads"
 : > "$tmp/active"
 inventory_read=0
@@ -1461,6 +1554,10 @@ head_on_origin() {
   git merge-base --is-ancestor "$1" origin/main 2>/dev/null && return 0
   git branch -r --contains "$1" 2>/dev/null | grep -q .
 }
+# A squash merge leaves no remote branch holding the head and the head is not in main, so the last copy guard kept the worktree
+# for ever. A MERGED PR (no open PR on that branch) that ended at exactly this commit means the work is in main. A closed PR
+# without a merge still counts as a last copy (#1533: 23 finished worktrees on one host stayed for this reason).
+head_in_merged_pr() { [ -n "$1" ] && grep -Fxq -- "$1" "$tmp/merged-heads"; }
 archive_worktree_changes() { # <worktree-path> <archive-dir>
   local wt=$1 dest=$2 untracked
   [ ! -e "$dest" ] || dest="$dest-$(date +%Y%m%d%H%M%S)"
@@ -1880,9 +1977,12 @@ process_worktree() {
   elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
   elif active_worktree "$path"; then why='active or unknown Orca terminal'
   elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
-  elif ! head_on_origin "$head"; then why='commits not on any remote (last copy)'
-  elif [ -n "$branch" ] && local_unpushed "$branch"; then why="$unpushed_why"
+  elif [ -n "${WRAP_UP_STRICT_KEEP:-}" ] && [ "$pr_ok" -eq 0 ]; then why='PR lookup unavailable'
+  elif [ -n "${WRAP_UP_STRICT_KEEP:-}" ] && { { [ -n "$branch" ] && grep -Fxq -- "$branch" "$tmp/open"; } || grep -Fxq -- "$head" "$tmp/open-heads"; }; then why='open PR'
+  elif ! head_on_origin "$head" && ! head_in_merged_pr "$head"; then why='commits not on any remote (last copy)'
+  elif [ -n "$branch" ] && ! head_in_merged_pr "$head" && local_unpushed "$branch"; then why="$unpushed_why"
   elif in_use "$path"; then why=$busy
+  elif [ -n "${WRAP_UP_STRICT_KEEP:-}" ] && [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='uncommitted changes'
   elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then
     dest=${WRAP_UP_WT_ARCHIVE_ROOT:-$HOME/.claude/state/wt-archive}/$(basename "$repo")_${path##*/}
     printf 'Archive worktree %s to %s\n' "$path" "$dest"
@@ -1892,6 +1992,7 @@ process_worktree() {
   elif git merge-base --is-ancestor "$head" origin/main 2>/dev/null; then
     if [ -z "$branch" ]; then reason='detached at merged commit'; else reason=ancestor; fi
   elif [ -z "$branch" ]; then reason='detached at published commit'
+  elif head_in_merged_pr "$head"; then reason='PR merged at this commit'
   fi
   [ ! -s "$tmp/status" ] || force=--force
   if [ -n "$why" ]; then
@@ -1954,10 +2055,11 @@ cache_removed=0; cache_kept=0; cache_bytes=0
 drop_build_caches() {
   local wt wt_real cache parent parent_real name kb found names=() valid=()
   read -r -a names <<< "$build_cache_dirs"
-  # Plain directory names only: a path, "." or ".." could point outside the worktree.
+  # Plain directory names, or a relative path of them (node_modules/.cache): a leading or trailing slash, "." or ".."
+  # could point outside the worktree.
   for name in ${names[@]+"${names[@]}"}; do
-    case "$name" in
-      */*|.|..) echo "Warning: ignoring build cache name '$name' (must be a plain directory name)." >&2 ;;
+    case "/$name/" in
+      //*|*//*|*/./*|*/../*) echo "Warning: ignoring build cache name '$name' (must be a plain directory name or relative path)." >&2 ;;
       *) valid+=("$name") ;;
     esac
   done
@@ -1972,7 +2074,8 @@ drop_build_caches() {
         # The real parent must be the worktree root or a real child of it, so no symlinked ancestor can leak out.
         parent=${cache%/*}
         parent_real=$(cd "$parent" && pwd -P) || continue
-        if [ "$parent_real" != "$wt_real" ] && [ "${parent_real%/*}" != "$wt_real" ]; then
+        if [ "$parent_real" != "$wt_real" ] && [ "${parent_real%/*}" != "$wt_real" ] \
+          && { [ "${name#*/}" = "$name" ] || [ "${parent_real#"$wt_real"/}" = "$parent_real" ]; }; then
           echo "Warning: build cache $cache resolves outside the worktree; skipped." >&2; continue
         fi
         found+=("$cache")
