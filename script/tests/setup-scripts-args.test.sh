@@ -2,6 +2,8 @@
 # The seven setup scripts take no arguments: -h/--help print usage and exit 0, anything else exits 2, and neither touches HOME (#1568).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 pass=0

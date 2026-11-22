@@ -38,8 +38,7 @@ skills_links() {
   [ -d "$root" ] || return 1
   for item in "$root"/*; do
     [ -e "$item" ] || [ -L "$item" ] || continue
-    [ -L "$item" ] && [ -d "$item" ] || return 1
-    found=1
+    [ -L "$item" ] && [ -d "$item" ] && found=1
   done
   [ "$found" = 1 ]
 }
