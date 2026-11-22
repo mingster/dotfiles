@@ -1,0 +1,1 @@
+install_aws_cli: checks for `unzip` before downloading on Linux and prints how to install it, and downloads into a `mktemp` folder that is removed on success and on failure instead of fixed `/tmp` names (#1497).

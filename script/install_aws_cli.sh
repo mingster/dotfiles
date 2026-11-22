@@ -8,11 +8,15 @@ if command -v aws >/dev/null 2>&1; then
   exit 0
 fi
 
+# Downloads go to a private folder, removed on success and on failure.
+aws_tmp=""
+trap '[ -z "$aws_tmp" ] || rm -rf "$aws_tmp"' EXIT
+
 if command -v brew >/dev/null 2>&1; then
   if [ "$(uname -m)" = "x86_64" ]; then
-    curl -fsSL "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o /tmp/AWSCLIV2.pkg
-    sudo installer -pkg /tmp/AWSCLIV2.pkg -target /
-    rm -f /tmp/AWSCLIV2.pkg
+    aws_tmp=$(mktemp -d "${TMPDIR:-/tmp}/install_aws_cli.XXXXXX")
+    curl -fsSL "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "$aws_tmp/AWSCLIV2.pkg"
+    sudo installer -pkg "$aws_tmp/AWSCLIV2.pkg" -target /
   else
     brew install awscli
   fi
@@ -29,10 +33,14 @@ else
       exit 1
       ;;
   esac
-  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o /tmp/awscliv2.zip
-  unzip -q /tmp/awscliv2.zip -d /tmp/awscliv2
-  sudo /tmp/awscliv2/aws/install
-  rm -rf /tmp/awscliv2.zip /tmp/awscliv2
+  if ! command -v unzip >/dev/null 2>&1; then
+    echo "install_aws_cli: unzip is required (sudo apt-get install unzip)" >&2
+    exit 1
+  fi
+  aws_tmp=$(mktemp -d "${TMPDIR:-/tmp}/install_aws_cli.XXXXXX")
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o "$aws_tmp/awscliv2.zip"
+  unzip -q "$aws_tmp/awscliv2.zip" -d "$aws_tmp/awscliv2"
+  sudo "$aws_tmp/awscliv2/aws/install"
 fi
 
 echo "install_aws_cli: ok ($(aws --version 2>&1 | head -1))"
