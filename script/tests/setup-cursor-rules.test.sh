@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # setup-cursor.sh: ~/.cursor/rules ends up a link to the dotfiles rules for a missing path, an existing link and a real folder (backed up, never nested).
 here=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
