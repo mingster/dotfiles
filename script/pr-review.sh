@@ -174,6 +174,12 @@ esac
 current=$(jq -r .headRefOid <<<"$pr_head_json")
 [ "$current" = "$head" ] || { echo "stale head, a newer run reviews this PR"; exit 0; }
 
+# #1480: a body that fails pr-body-gate stops here, so the builder fixes it before worker_done, not at ship.sh.
+if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py"); then
+  echo "PR body fails pr-body-gate: ${body_reason:-no reason given}. Fix the PR body, then rerun." >&2
+  exit 1
+fi
+
 review_me=$(
   gh api user --jq .login 2>/dev/null ||
     { [ -n "${GITHUB_ACTOR:-}" ] && printf '%s' "$GITHUB_ACTOR"; } ||

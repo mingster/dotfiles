@@ -24,6 +24,10 @@ class SelfCheckCommandTests(unittest.TestCase):
     def test_plain_command_heading_still_passes(self):
         self.assertTrue(check('Command: make it\n3 passed\n'))
 
+    def test_output_line_naming_a_sh_file_is_not_a_command(self):
+        # #1480: \bsh\b matched inside 'test.sh', so this output line counted as a command.
+        self.assertTrue(check('$ bash script/a.test.sh\nok script/b.test.sh\n'))
+
     def test_prose_only_fails(self):
         self.assertFalse(check('I looked at the page and it works.\nEverything is fine.\n'))
 
