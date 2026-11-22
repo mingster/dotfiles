@@ -91,7 +91,12 @@ AGY_HOOKS="$HOME/.gemini/config/hooks.json"
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$(dirname "$AGY_HOOKS")"
   [ -f "$AGY_HOOKS" ] || echo '{}' > "$AGY_HOOKS"
-  jq -s '.[0] * .[1]' "$AGY_HOOKS" "$AG_SRC/hooks.json" > "$AGY_HOOKS.tmp" && mv "$AGY_HOOKS.tmp" "$AGY_HOOKS"
+  if ! jq -s '.[0] * .[1]' "$AGY_HOOKS" "$AG_SRC/hooks.json" > "$AGY_HOOKS.tmp"; then
+    rm -f "$AGY_HOOKS.tmp"
+    echo "setup-antigravity: could not merge the usage-gate hook, $AGY_HOOKS is not valid JSON; fix or remove it and rerun." >&2
+    exit 1
+  fi
+  mv "$AGY_HOOKS.tmp" "$AGY_HOOKS"
   echo "setup-antigravity: merged usage-gate hook into $AGY_HOOKS"
 fi
 

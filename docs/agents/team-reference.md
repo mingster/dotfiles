@@ -250,6 +250,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the triage labels on GitHub), `sync`, read-only `check` for drift, and `all`. |
 | `script/sync-mattpocock-skills.sh` | Refreshes the 22 vendored Matt Pocock skills from upstream and reapplies `CONTEXT.md` naming and `.mattpocock-local.patch`. |
 | `script/check-skill-collisions.sh` | Checks for project skills that shadow shared or Orca-bundled skills, broken symlinks, or missing `SKILL.md` files. |
+| `script/check-skill-refs.sh` | Run by `agent-team.sh check`. Reports each `/<skill>` that a project's `AGENTS.md`, `docs/` or `.claude/` Markdown names when no skill of that name exists under the project, user or dotfiles trees. A retired skill (`staging-review`, `crew`, `team-grill-backlog`, `wrap-up`) names its replacement. Built in commands, URL paths and file paths are skipped. |
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
 | `script/bun-pin-check.sh` | Warns when a local or remote host's `bun` version is older than the repo's `package.json` pin (`packageManager` or `engines.bun`). |
 | `script/switch-login-shell-zsh.sh` | Links zsh dotfiles and switches the host's login shell to `zsh` so remote Orca probes and hooks share one PATH. |
@@ -270,7 +271,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/fleet-workers.py` | Counts live, in progress dispatched workers across local and remote fleet environments. |
 | `script/count-agents.sh` | Counts active coding agent CLI processes (`claude`, `agent`/`cursor-agent`, `agy`, `gemini`) from a process snapshot. |
 | `script/secrets-pack.sh` | Packs local secrets into an AES-256 encrypted `hdiutil` disk image for transfer between Macs. |
-| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. |
+| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. Refuses a target that exists and is not an empty folder. |
 | `script/secrets-sync.sh` | Syncs the shared secrets directory across reachable fleet hosts. |
 | `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-refs.sh` | The root owned gate to the credential folder, the owner's once per host setup, and the file:line search that never prints text. Read `docs/agents/credential-folder.md` before changing any of them. |
 

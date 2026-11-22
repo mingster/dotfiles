@@ -48,5 +48,24 @@ run /bin/zsh >/dev/null
 check "chsh skipped when shell is zsh" '! grep -q "^chsh " "$TMP/log"'
 check "tool check still runs when shell is zsh" 'grep -q "^zsh -lic" "$TMP/log"'
 
+# #1495: from a linked worktree with the real home, it refuses and links nothing.
+MAIN="$(cd "$TMP" && pwd -P)/main"
+WT="$(cd "$TMP" && pwd -P)/worker"
+git init -q "$MAIN"
+touch "$MAIN/.zshenv" "$MAIN/.zshrc" "$MAIN/.zlogin"
+git -C "$MAIN" add -A
+git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -qm seed
+git -C "$MAIN" worktree add -q "$WT" -b worker
+REAL="$(cd "$TMP" && pwd -P)/real-home"
+mkdir -p "$REAL"
+: >"$TMP/log"
+rc=0
+out="$(HOME="$REAL" DOTFILES_REAL_HOME="$REAL" SHELL=/usr/bin/fish PATH="$TMP/bin:$PATH" STUB_LOG="$TMP/log" SHELLS_FILE="$TMP/shells" \
+  bash "$SCRIPT" --dotfiles "$WT" 2>&1)" || rc=$?
+check "worktree with real home exits 1" '[ "$rc" -eq 1 ]'
+check "worktree refusal names the main checkout" 'echo "$out" | grep -q "switch-login-shell-zsh: refusing to wire $REAL from $WT; run it from the main checkout $MAIN"'
+check "worktree refusal creates no links" '[ -z "$(ls -A "$REAL")" ]'
+check "worktree refusal runs no chsh" '! grep -q "^chsh " "$TMP/log"'
+
 echo "pass=$PASS fail=$FAIL"
 [ "$FAIL" -eq 0 ]
