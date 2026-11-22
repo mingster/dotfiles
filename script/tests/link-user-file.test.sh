@@ -3,6 +3,8 @@
 # link-cursor-user all use it. A re-run changes nothing (refs #1430).
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL $1"; exit 1; }
 
