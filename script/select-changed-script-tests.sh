@@ -219,6 +219,9 @@ map_file() {
       add_if_exists "script/tests/release-guard-rules.test.sh"
       add_if_exists "script/tests/role-word-budget.test.sh"
       ;;
+    templates/agent-team/.claude/bin/state-of-play.sh)
+      add_if_exists "script/tests/state-of-play.test.sh"
+      ;;
     templates/agent-team/*)
       add_glob_under_root "script/tests/agent-team-cases-*.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
