@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # setup-vscode.sh links per OS and skips cleanly; install_vscode_extensions.sh installs each active entry once.
+# shellcheck source=script/tests/lib/asdf-pin.sh
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 here=$(cd "$(dirname "$0")/.." && pwd)
 repo=$(cd "$here/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
