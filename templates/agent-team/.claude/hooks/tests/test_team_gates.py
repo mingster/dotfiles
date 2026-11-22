@@ -498,15 +498,16 @@ class GrillGate(Gate):
         self.grill_comment(who="elon")
         self.assertAllowed(self.BUILD)
 
-    def test_hotfix_label_exempt(self):
+    def test_p0_label_exempt(self):
         self.reserve()
-        self.issue["labels"] = [{"name": "hotfix"}]
+        self.issue["labels"] = [{"name": "P0"}]
         self.assertAllowed(self.BUILD)
 
-    def test_mechanical_label_exempt(self):
-        self.reserve()
-        self.issue["labels"] = [{"name": "mechanical-lane"}]
-        self.assertAllowed(self.BUILD)
+    def test_retired_hotfix_and_mechanical_labels_do_not_exempt(self):
+        for name in ("hotfix", "mechanical", "mechanical-lane"):
+            self.reserve()
+            self.issue["labels"] = [{"name": name}]
+            self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_elon_take_over_exempt(self):
         self.reserve()
@@ -527,7 +528,7 @@ class GrillGate(Gate):
         self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_elon_take_over_in_the_body_is_not_an_exemption(self):
-        self.issue["body"] = 'Owner-reserved: money rule\nExempt: hotfix, mechanical text only and "Elon take over" (team.md).'
+        self.issue["body"] = 'Owner-reserved: money rule\nExempt: P0 and "Elon take over" (team.md).'
         self.assertDenied(self.BUILD, "coordinator's approval of the grill results")
 
     def test_worktree_issue_selector_names_the_issue(self):
@@ -660,9 +661,9 @@ class GrillGate(Gate):
         }
         self.assertDenied(self.two_issues("1000", "6936"), "#6936")
 
-    def test_hotfix_on_the_context_issue_does_not_exempt_the_money_issue(self):
+    def test_p0_on_the_context_issue_does_not_exempt_the_money_issue(self):
         self.by_number = {
-            "1000": {"labels": [{"name": "hotfix"}], "title": "Context", "body": "", "comments": []},
+            "1000": {"labels": [{"name": "P0"}], "title": "Context", "body": "", "comments": []},
             "6936": {"labels": [], "title": "Catalog", "body": "There is a refund fee.\n", "comments": []},
         }
         self.assertDenied(self.two_issues("1000", "6936"), "#6936")
