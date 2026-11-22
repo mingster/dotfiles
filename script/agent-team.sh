@@ -534,14 +534,7 @@ create_github_labels() {
       gh label create --repo "$slug" "$name" --color "$color" --description "$desc" --force >/dev/null
       echo "label $name on $slug"
     fi
-  done <<'EOF'
-needs-triage|d4c5f9|New issue awaiting triage
-needs-info|fef2c0|Waiting on reporter for reproduction or detail
-ready-for-agent|0e8a16|Scoped and ready for an autonomous agent
-ready-for-human|1d76db|Needs a human decision or change
-wontfix|ffffff|Out of scope or declined
-needs-redesign|b60205|Failed twice, no third patch, coordinator redesigns
-EOF
+  done < <(python3 "$(dirname "${BASH_SOURCE[0]}")/issue-labels-migrate.py" --print-labels)
 }
 
 # Python helper that performs:
