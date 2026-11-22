@@ -476,6 +476,7 @@ The PR owner runs `script/ship.sh --repo owner/name --pr N` on its own PR; a sta
 generated team copies that are not the current template render). No merge worker is dispatched.
 Some project files are merged by sync, not copied: `.claude/hooks/guard-config.json` (project keys kept, template
 defaults filled in) and `.claude/settings.json` (compiled from the template and `.claude/settings.project.json`).
+`.claude/settings.project.json` may also carry `enabledPlugins` and `skillOverrides` objects. Sync merges them over the template's values, so a project can turn off a plugin or a skill without editing the compiled file (#1403).
 They are not byte renders. `--verdict-from` runs `agent-team.sh sync` on the base tree against the dotfiles tree at
 the pin, and counts such a file as a generated team copy only when the head equals that result. A changed, removed
 or new project key is a real edit and is refused (#1366, #1374). A new merged file needs one entry in
