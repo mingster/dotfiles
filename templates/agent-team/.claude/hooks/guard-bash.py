@@ -135,7 +135,7 @@ GREPS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 QUIET_GREP_FLAGS = re.compile(r"^-(-count|-quiet|-silent|-files-with(out)?-match(es)?|[A-Za-z]*[qclL][A-Za-z]*)$")
 SHELLS = {"bash", "sh", "zsh", "fish", "dash", "ksh"}
 WRAPPERS = {"sudo", "nohup", "time", "command", "exec", "nice", "caffeinate", "stdbuf"}
-ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
 
 ENV_PEEK = 'python3 "$HOME/.claude/bin/env-peek.py" <file> [KEY ...]'
 
@@ -544,8 +544,59 @@ class Word:
     def quoted(self):
         return any(p.kind != "lit" or p.src.startswith("\\") for p in self.parts)
 
+    @property
+    def deep(self):
+        """`text` plus the decoded text inside each `${...}`, `$((...))` and array part, for name checks."""
+        return _deep_text(self.parts)
+
+    def alt(self, env):
+        """`text` with each `${name:-word}` (and `-`, `=`, `:=`, `+`, `:+`) as its word, and each `$name` in `env`
+        as its value: a value bash may use."""
+        return _alt_text(self.parts, env)
+
     def __repr__(self):
         return f"Word({self.text!r})"
+
+
+_PARAM_ALT = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])(:?[-=+])")
+
+
+def _deep_text(parts):
+    out = []
+    for p in parts:
+        if p.kind in STATIC_PARTS:
+            out.append(p.value)
+            continue
+        out.append(p.src)
+        if p.parts:
+            out.append(" " + _deep_text(p.parts) + " ")
+        for w in p.words:
+            out.append(" " + _deep_text(w.parts) + " ")
+    return "".join(out)
+
+
+_PARAM_REF = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+
+
+def _param_name(part):
+    m = _PARAM_REF.fullmatch(part.src) if part.kind == "param" else None
+    return m and (m[1] or m[2])
+
+
+def _alt_text(parts, env):
+    out = []
+    for p in parts:
+        if p.kind in STATIC_PARTS:
+            out.append(p.value)
+            continue
+        if _param_name(p) in env:
+            out.append(env[_param_name(p)])
+            continue
+        m = _PARAM_ALT.match(p.src) if p.kind == "param" else None
+        inner = _alt_text(p.parts, env) if m else ""
+        head = m.group(1) + m.group(2) if m else ""
+        out.append(inner[len(head):] if m and inner.startswith(head) else p.src)
+    return "".join(out)
 
 
 class Redirect:
@@ -561,9 +612,9 @@ class Redirect:
     def heredoc(self):
         return self.op in ("<<", "<<-")
 
-    def tokens(self):
+    def tokens(self, env=None):
         head = (self.fd or "") + self.op
-        target = self.delim if self.heredoc else self.target.text
+        target = self.delim if self.heredoc else (self.target.text if env is None else self.target.alt(env))
         return [head + target] if self.glued else [head, target]
 
 
@@ -575,6 +626,9 @@ class Simple:
         self.start = self.end = start
         self.src = src
         self.assigns, self.argv, self.redirects, self.items, self.data = [], [], [], [], []
+        # scope: the subshells and function bodies it sits in (a `cd` there does not move later commands);
+        # cond: it may not run, or runs apart from the shell (after && or ||, in a pipe, an if, a loop, a case).
+        self.scope, self.cond = (), False
 
     def empty(self):
         return not self.items and not self.data
@@ -587,17 +641,40 @@ class _Lexer:
         self.s, self.n, self.depth = s, len(s), depth
         self.cmds, self.pending, self.cur, self.nest = [], [], None, 0
         self.comsub = False  # inside `$(`: macOS bash 3.2 ends it at the first unmatched `)`, even in a heredoc
+        self.scope, self.cond, self.chain, self.braces, self.fn_next, self.ids = (), 0, False, [], False, 0
+        self.loop_vars = {}  # `for NAME in words`: NAME -> the words, so `"$NAME"` in the body reads as each
 
     # -- commands
 
     def _child(self):
         child = _Lexer(self.s, self.depth + 1)
         child.comsub = self.comsub
+        child.loop_vars = self.loop_vars
         return child
+
+    def _add(self, sc):
+        sc.scope = self.scope
+        sc.cond = sc.cond or self.cond > 0 or self.chain
+        self.cmds.append(sc)
+
+    def _new_scope(self):
+        self.ids += 1
+        return self.scope + (self.ids,)
+
+    def _subshell(self, i):
+        """`( ... )` from just after the `(`: its own scope, so a `cd` inside stays inside."""
+        outer, chain = self.scope, self.chain
+        self.scope, self.chain = self._new_scope(), False
+        self.cond += chain
+        try:
+            return self.script(i, ")")
+        finally:
+            self.scope, self.chain = outer, chain
+            self.cond -= chain
 
     def _finish(self):
         if self.cur is not None and not self.cur.empty():
-            self.cmds.append(self.cur)
+            self._add(self.cur)
         self.cur = None
 
     def _simple(self, i):
@@ -681,6 +758,8 @@ class _Lexer:
             if c == "\n":
                 self._finish()
                 i = self._heredoc_bodies(i + 1) if self.pending else i + 1
+                if not cmdpos or self.cur is not None:
+                    self.chain = False
                 cmdpos = True
                 continue
             if close == ")" and c == ")":
@@ -696,6 +775,9 @@ class _Lexer:
                 if op == ";" and self.s.startswith(";;", i):
                     raise LexError("`;;` outside a `case`")
                 self._finish()
+                if op in ("|", "|&", "&", "||") and self.cmds:
+                    self.cmds[-1].cond = True  # a pipe or `&` runs it apart; after `||` the cd may have failed
+                self.chain = op in ("&&", "||", "|", "|&")
                 i += len(op)
                 cmdpos = True
                 continue
@@ -704,13 +786,15 @@ class _Lexer:
                     if self.s.startswith("((", i):
                         i = self._arith_command(i)
                     else:
-                        i = self.script(i + 1, ")")
+                        self.fn_next = False
+                        i = self._subshell(i + 1)
                     continue
                 m = re.compile(r"\([ \t]*\)").match(self.s, i)
                 if m and self.cur is not None and len(self.cur.argv) == 1 and not self.cur.assigns:
                     self.cur = None  # `name () compound`: the name is a function, not a command
                     i = m.end()
                     cmdpos = True
+                    self.fn_next = True
                     continue
                 raise LexError("unexpected `(`")
             if c == ")":
@@ -725,6 +809,27 @@ class _Lexer:
                 return i
             if cmdpos and self.cur is None and word.src in LEAD_KEYWORDS:
                 i = j
+                if self.fn_next and word.src != "{":
+                    raise LexError("a function body that is not `{ }` or `( )`")
+                if word.src in ("if", "while", "until"):
+                    self.cond += 1
+                elif word.src in ("fi", "done"):
+                    self.cond = max(self.cond - 1, 0)
+                elif word.src == "{":
+                    self.braces.append(self.fn_next)
+                    self.cond += self.fn_next  # a function body runs later, when it is called, if ever
+                    self.fn_next = False
+                elif word.src == "}" and self.braces:
+                    self.cond -= self.braces.pop()
+                if word.src == "time":  # the `time` keyword takes `-p` and `--` before the command
+                    while True:
+                        k = self._skip_blank(i)
+                        if k < self.n and self.s[k] not in _WORD_END:
+                            flag, after = self._word(k)
+                            if flag.src in ("-p", "--"):
+                                i = after
+                                continue
+                        break
                 continue
             if cmdpos and self.cur is None and word.src == "case":
                 i = self._case(j)
@@ -741,6 +846,7 @@ class _Lexer:
                 _name, i = self._word(i)
                 m = re.compile(r"[ \t]*\([ \t]*\)").match(self.s, i)
                 i = m.end() if m else i
+                self.fn_next = True
                 continue
             sc = self._simple(i)
             if not sc.argv and _ASSIGN_PREFIX.match(word.src):
@@ -756,7 +862,7 @@ class _Lexer:
         sc = self._simple(m.start())
         fd, op = m[1] or "", m[2]
         j = self._skip_blank(m.end())
-        if j >= self.n or self.s[j] in "\n;&|()<>":
+        if j >= self.n or (self.s[j] in "\n;&|()<>" and not self.s.startswith(("<(", ">("), j)):
             raise LexError(f"redirect `{op}` has no target")
         target, end = self._word(j)
         r = Redirect(fd, op, target, m.start(), end, glued=j == m.end())
@@ -777,7 +883,7 @@ class _Lexer:
         sc.data.append(Word([self._arith_part(i, end)], i, end + 2, self.s[i:end + 2]))
         sc.end = end + 2
         self._finish()
-        self.cmds.append(sc)
+        self._add(sc)
         return end + 2
 
     def _arith_end(self, i):
@@ -788,13 +894,10 @@ class _Lexer:
             if c == "\\":
                 i += 2
                 continue
+            if c == "'":
+                # Bash 3.2 and 5 disagree on quotes in `$((`, and `$'` there hides where it ends (#1407).
+                raise LexError("a single quote inside `$((` or `((`")
             try:
-                if c == "'":
-                    end = self.s.find("'", i + 1)
-                    if end < 0:
-                        return None
-                    i = end + 1
-                    continue
                 if c == '"':
                     i = self._dq_parts(self.s, i + 1, '"')[1]
                     continue
@@ -847,11 +950,15 @@ class _Lexer:
                     raise LexError("`case` pattern without `)`")
                 i += 1
                 break
-            i = self.script(i, "case")
+            self.cond += 1
+            try:
+                i = self.script(i, "case")
+            finally:
+                self.cond -= 1
             if self.s.startswith(("esac",), i):
                 continue
             i += 3 if self.s.startswith(";;&", i) else 2
-        self.cmds.append(sc)
+        self._add(sc)
         return i
 
     def _skip_space(self, i):
@@ -872,9 +979,11 @@ class _Lexer:
                 raise LexError("`for ((` is never closed")
             sc = Simple(i, self.s)
             sc.data.append(Word([self._arith_part(i, end)], i, end + 2, self.s[i:end + 2]))
-            self.cmds.append(sc)
+            self._add(sc)
+            self.cond += 1
             return end + 2
-        _name, i = self._word(i)
+        name, i = self._word(i)
+        self.cond += 1
         j = self._skip_space(i)
         word, k = self._word(j) if j < self.n and self.s[j] not in _WORD_END else (None, j)
         if word is None or word.src != "in":
@@ -890,7 +999,8 @@ class _Lexer:
                 break
             word, i = self._word(i)
             sc.data.append(word)
-        self.cmds.append(sc)
+        self.loop_vars.setdefault(name.text, []).extend(sc.data)
+        self._add(sc)
         return i
 
     def _test(self, i):
@@ -902,6 +1012,8 @@ class _Lexer:
                 i = self._skip_blank(i + 1)
             if i >= self.n:
                 raise LexError("`[[` is never closed with `]]`")
+            if self.s[i] == "#":
+                raise LexError("a comment inside `[[ ]]`")
             op = next((o for o in ("&&", "||", "(", ")", "<", ">", "!") if self.s.startswith(o, i)), None)
             if op:
                 word, i = Word([Part("lit", op, op)], i, i + len(op), op), i + len(op)
@@ -933,6 +1045,10 @@ class _Lexer:
             if c in _WORD_END and not (c in "<>" and s.startswith("(", i + 1)):
                 if not test or c in " \t\n;" or not (lit or parts) or s.startswith(("&&", "||"), i):
                     break
+                if s[start:i] == "]]":
+                    break  # `]])`, `]]&`, `]]|`: the test ends here
+                if "]]" in s[start:i]:
+                    raise LexError("`]]` inside a word of `[[ ]]`")
             if c == "\\":
                 if s.startswith("\\\n", i):
                     flush(i)
@@ -1032,16 +1148,18 @@ class _Lexer:
             end = child.script(i + 2, ")")
             return [Part("cmd", "", s[i:end], quoted, cmds=child.cmds)], end
         if nxt == "{":
-            parts, end = self._dq_parts(s, i + 2, "}", param=True)
+            parts, end = self._dq_parts(s, i + 2, "}", param=True, quoted=quoted)
             return [Part("param", "", s[i:end], quoted, parts=parts)], end
         m = _PARAM_NAME.match(s, i + 1)
         if m:
             return [Part("param", "", s[i:m.end()], quoted)], m.end()
         return None, i + 1
 
-    def _dq_parts(self, s, i, term, param=False, arith=False):
+    def _dq_parts(self, s, i, term, param=False, arith=False, quoted=True):
         """Parts of double quoted text from `i` up to `term` (`"`, `}` for `${...}`, None for the whole text,
-        `)` for arithmetic). Returns (parts, index after term)."""
+        `)` for arithmetic). `quoted` is False for a `${...}` outside double quotes. Returns (parts, index after
+        term). A single quote inside arithmetic or inside a double quoted `${...}` raises LexError: bash
+        versions read it differently there (#1407)."""
         parts, lit, lit_start, depth, n = [], [], i, 0, len(s)
 
         def flush(at):
@@ -1075,6 +1193,15 @@ class _Lexer:
                 lit.append(c)
                 i += 1
                 continue
+            if c == "'" and (arith or (param and quoted)):
+                raise LexError("a single quote inside `$((` or a double quoted `${`")
+            if param and not quoted and s.startswith("$'", i):
+                flush(i)
+                value, end = self._ansi(i + 2)
+                parts.append(Part("ansi", value, s[i:end]))
+                i = end
+                lit_start = i
+                continue
             if (param or arith) and c in "'\"":
                 flush(i)
                 if c == "'":
@@ -1090,7 +1217,7 @@ class _Lexer:
                 continue
             if c in "$`":
                 flush(i)
-                more, i = self._expansion(i, quoted=True)
+                more, i = self._expansion(i, quoted=quoted or not param)
                 if more is None:
                     lit.append("$")
                     lit_start = i - 1
@@ -1162,21 +1289,35 @@ class Cmd(str):
     `assigns` and `redirects` are the lexed objects. `nested` is how many substitutions deep it sits. `splits`
     holds the token indexes of words with an unquoted expansion: their text is never one prose argument."""
 
-    def __new__(cls, simple, cwd, nested):
-        self = super().__new__(cls, simple.src[simple.start:simple.end])
+    def __new__(cls, simple, cwd, nested, env=None):
+        """env: None for the command as written; else a variant (#1407) that reads each `${x:-word}` as its word
+        and each `for` variable in env as that value. Its string value is then its tokens joined."""
+        words = [item for item in simple.items if not isinstance(item, Redirect)]
+        text = simple.src[simple.start:simple.end]
+        if env is not None:
+            text = " ".join([w.alt(env) for w in words] + [t for r in simple.redirects for t in r.tokens(env)])
+        self = super().__new__(cls, text)
         self.simple, self.cwd, self.nested = simple, cwd, nested
         self.argv, self.assigns, self.redirects = simple.argv, simple.assigns, simple.redirects
         tokens, raw, self.splits = [], [], set()
-        for item in simple.items:
-            if isinstance(item, Redirect):
-                tokens.extend(item.tokens())
-                raw.extend(item.tokens())
-            else:
-                if any(part.kind in SPLIT_PARTS and not part.quoted for part in item.parts):
-                    self.splits.add(len(tokens))
-                tokens.append(item.text)
-                raw.append(item.src[item.start:item.end])
+        # Words first and redirects after, wherever they stand: `2>/dev/null cat x` runs cat (#1407).
+        for item in words:
+            if any(part.kind in SPLIT_PARTS and not part.quoted for part in item.parts):
+                self.splits.add(len(tokens))
+            tokens.append(item.text if env is None else item.alt(env))
+            raw.append(item.src[item.start:item.end])
+        for item in simple.redirects:
+            tokens.extend(item.tokens(env))
+            raw.extend(item.tokens())
         self.tokens, self.raw = tokens, raw
+        targets = [r.target for r in simple.redirects if r.target is not None]
+        self.out_targets = [t for t in (r.target.text if env is None else r.target.alt(env)
+                                        for r in simple.redirects
+                                        if not r.heredoc and ">" in r.op and r.target is not None
+                                        and not (r.op.endswith("&") and re.fullmatch(r"[0-9]+|-", r.target.text)))]
+        # Decoded text of every word, `$'...'`, `${...}` insides and array words included, for name checks.
+        self.decoded = " ".join(w.deep for w in [*words, *simple.data, *targets])
+        self.variant = env is not None
         return self
 
 
@@ -1206,19 +1347,66 @@ def _cd_target(tokens, cwd):
     return cwd
 
 
+WALK_CWDS = 32  # most working directories one command may run in before the guard stops guessing
+WALK_VARIANTS = 64  # most variants of one command (`${x:-word}`, `for` values)
+
+
+def _variants(simple, loop_vars):
+    """Envs for the variants of `simple` beyond the one as written: one per combination of the `for` values its
+    words use, or one empty env when only a `${x:-word}` differs."""
+    words = [w for w in simple.items if not isinstance(w, Redirect)] + [r.target for r in simple.redirects if r.target]
+    names, stack = [], [p for w in words for p in w.parts]
+    has_alt = False
+    while stack:
+        p = stack.pop()
+        name = _param_name(p)
+        if name in loop_vars and name not in names:
+            names.append(name)
+        has_alt = has_alt or bool(p.kind == "param" and _PARAM_ALT.match(p.src))
+        stack.extend(p.parts)
+    if not names:
+        return [{}] if has_alt else []
+    envs = [{}]
+    for name in names:
+        envs = [{**e, name: w.alt({})} for e in envs for w in loop_vars[name]]
+        if len(envs) > WALK_VARIANTS:
+            raise LexError("a loop with more values than the guard reads")
+    return envs
+
+
 def walk(text, cwd=None):
     """Every simple command bash would run from `text`, at every depth: substitution and backtick bodies (before
-    the command that holds them), subshells, groups and case arms. A `cd` moves the cwd of later commands.
-    Raises LexError."""
-    def visit(cmds, cwd, nested):
-        for simple in cmds:
-            for body in _simple_bodies(simple):
-                yield from visit(body, cwd, nested + 1)
-            cmd = Cmd(simple, cwd, nested)
-            yield cmd
-            cwd = _cd_target(cmd.tokens, cwd)
+    the command that holds them), subshells, groups and case arms. A `cd` moves the cwd of later commands in its
+    own scope; a `cd` that may not run (#1407: after `||`, in a pipe, an if, a loop, a case or a function body)
+    adds its directory, so later commands are checked in every directory they may run in. A command whose
+    `${x:-word}` or `for` variable may read as something else is yielded again as that variant. Raises LexError."""
+    lexer = _Lexer(text, 0)
+    lexer.script(0)
+    loop_vars = lexer.loop_vars
 
-    yield from visit(lex(text), cwd or GATE_CWD, 0)
+    def visit(cmds, cwds, nested):
+        scopes = {(): list(cwds)}
+        for simple in cmds:
+            key = simple.scope
+            while key not in scopes:
+                key = key[:-1]
+            here = scopes[key]
+            for cwd in here:
+                for body in _simple_bodies(simple):
+                    yield from visit(body, [cwd], nested + 1)
+                cmd = Cmd(simple, cwd, nested)
+                yield cmd
+                for env in _variants(simple, loop_vars):
+                    yield Cmd(simple, cwd, nested, env)
+            moved = [_cd_target(Cmd(simple, c, nested).tokens, c) for c in here]
+            if moved != here:
+                new = moved if not simple.cond else here + [c for c in moved if c not in here]
+                new = list(dict.fromkeys(new))
+                if len(new) > WALK_CWDS:
+                    raise LexError("more possible working directories than the guard reads")
+                scopes[simple.scope] = new
+
+    yield from visit(lexer.cmds, [cwd or GATE_CWD], 0)
 
 
 def program_and_args(tokens):
@@ -1295,6 +1483,7 @@ def is_refs_invocation(prog, args, cwd=None):
 def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     """Deny a segment that reads the secrets dir: readers, interpreters, redirects, copies out, cd."""
     text = SECRETS_WRITE_REDIRECT.sub("", segment)
+    text += " " + " ".join(w.deep for w in getattr(segment, "argv", ()))  # `$'sec\x72ets/a'` too (#1407)
     if not SECRETS_DIR.search(text) or base in SECRETS_NONREAD:
         return
     if any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK):
@@ -1381,6 +1570,15 @@ def deny_worktree_env():
 
 
 def extract_redirect_targets(segment):
+    """Output redirect targets: the raw text scan, plus the lexed targets (decoded, `$'...'` included) (#1407)."""
+    targets = _scan_redirect_targets(segment)
+    for t in getattr(segment, "out_targets", ()):
+        if t and t != "/dev/null" and t not in targets:
+            targets.append(t)
+    return targets
+
+
+def _scan_redirect_targets(segment):
     targets = []
     quote, i = None, 0
     while i < len(segment):
@@ -2821,17 +3019,18 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
     tokens = segment.tokens
     viewer = read_only_viewer(base, args)
     text = text_program(base, args)
-    if SCRIPT_NAME.search(segment) and not (viewer or text):
+    decoded = getattr(segment, "decoded", "")  # `$'...'` and `${...}` insides read as bash reads them (#1407)
+    if (SCRIPT_NAME.search(segment) or SCRIPT_NAME.search(decoded)) and not (viewer or text):
         deny(f"{APPROVE} is the owner's own approval: an agent never runs it, however wrapped. "
              f"Ask Elon to have the owner run `{APPROVE} <scope>` in his own terminal. "
              "Reading, grepping or committing the script is fine.")
     approval_markers = ["approval.json"]
     if APPROVAL_NAMESPACE:
         approval_markers.append(f".config/{APPROVAL_NAMESPACE}")
-    if any(m in segment for m in approval_markers):
+    if any(m in segment or m in decoded for m in approval_markers):
         prose = prose_tokens(tokens, segment.splits)
         names_file = any(any(m in t for m in approval_markers) and i not in prose for i, t in enumerate(tokens))
-        if has_redirect(segment) or (not viewer and not (text and not names_file)):
+        if has_redirect(segment) or getattr(segment, "out_targets", None) or (not viewer and not (text and not names_file)):
             app_file = primary_approval_file()
             deny(f"{app_file} is the owner's approval: only {APPROVE}, run by the owner in his own terminal, "
                  f"writes it. Agents may only read it. Ask the owner to run `{APPROVE} <scope>`.")
@@ -3623,13 +3822,16 @@ def check_segment(segment, depth=0, cwd=None):
     # Heavy jobs must acquire the shared machine budget.
     # A word that is not plain text can expand to nothing (`bunx "$(true)" playwright`), so it is left out.
     unread = {w.text for w in segment.argv if not w.static}
-    heavy_prog, heavy_args = prog, [a for a in args if a not in unread]
+    heavy_prog, heavy_args = prog, list(args)
     heavy_base = os.path.basename(heavy_prog or "")
     if heavy_base == "bun":
+        # Options first, with their values as written (`--cwd "$DIR"`), then the unread words (#1407).
         while heavy_args and heavy_args[0].startswith("-"):
             option = heavy_args[0]
             takes_value = option in {"--cwd", "--config", "--env-file", "--preload", "--require", "--tsconfig-override"}
             heavy_args = heavy_args[2 if takes_value else 1:]
+    heavy_args = [a for a in heavy_args if a not in unread]
+    if heavy_base == "bun":
         if heavy_args[:1] == ["x"]:
             heavy_base, heavy_args = "bunx", heavy_args[1:]
     measure = heavy_base == "tsc"
@@ -3664,11 +3866,13 @@ def check_segment(segment, depth=0, cwd=None):
     if base == "eval":
         check_script_text(" ".join(args), depth, transfer_cwd)
     if base in SHELLS or base in {"source", "."}:
+        inline = shell_c_script(args)
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
-        if idx is not None:
-            if idx + 1 < len(args):
-                script = args[idx + 1]
-                positional = args[idx + 2:]
+        if inline is None and idx is not None:  # a `-c` after an operand: read it as before
+            inline = (args[idx + 1], args[idx + 2:]) if idx + 1 < len(args) else (None, [])
+        if inline is not None:
+            if inline[0] is not None:
+                script, positional = inline
                 if positional:
                     script = re.sub(
                         r"\$(?:\{([0-9])\}|([0-9]))",
@@ -4164,7 +4368,7 @@ def _walk_words(command, cwd):
     out = []
     for cmd in walk(command, cwd):
         targets = [r.target for r in cmd.redirects if not r.heredoc and r.target is not None]
-        for w in [*cmd.assigns, *cmd.argv, *targets]:
+        for w in [*cmd.assigns, *cmd.argv, *targets, *cmd.simple.data]:
             out.append((*_word_meta(w), cmd.cwd))
         out.append((";", ";", set(), cmd.cwd))
     return out
@@ -4295,23 +4499,54 @@ def check_blocked_mentions(cmd):
     """Deny a blocked script name the checks in check_segment cannot follow. check_segment handles the rest."""
     if not BLOCKED_SCRIPTS:
         return
-    values = [w.text for w in cmd.assigns]
+    values = [w.deep for w in cmd.assigns]  # deep: array words and `${...}` insides too (#1407)
     if cmd.argv and cmd.argv[0].text in DECLARERS:
-        values += [w.text for w in cmd.argv[1:] if "=" in w.text]
+        values += [w.deep for w in cmd.argv[1:] if "=" in w.text]
     if any(_blocked_mention(v) for v in values):
+        _deny_unplain_mention()
+    # A `for` list or `case` word is data the checks in check_segment never see as a command (#1407).
+    if any(_blocked_mention(w.deep) for w in cmd.simple.data):
         _deny_unplain_mention()
     if any(_blocked_mention(t) for t in cmd.tokens) and (cmd.nested or (cmd.argv and not cmd.argv[0].static)):
         _deny_unplain_mention()
     # An expansion beside the name in a plain word (`echo $HOME bin/x.sh`): the old line check denied it.
     if any(_blocked_mention(w.text) and not w.quoted for w in cmd.argv) and any(not w.static for w in cmd.argv):
         _deny_unplain_mention()
+    # The name in a word that also holds an unquoted expansion (`bin/x.sh$EMPTY`, `${X:-bin/x.sh}`) (#1407).
+    if any(_blocked_mention(w.deep) and any(p.kind not in STATIC_PARTS and not p.quoted for p in w.parts)
+           for w in cmd.argv):
+        _deny_unplain_mention()
     for r in cmd.redirects:
         if r.heredoc and _blocked_mention(r.body or ""):
             src = cmd.simple.src
             start = src.rfind("\n", 0, r.start) + 1
             end = src.find("\n", r.end)
-            if cmd.nested or not text_sink_heredoc(src[start:end if end >= 0 else len(src)].rstrip()):
+            own_line = cmd.simple.items[0].start >= start  # not a line continued from the one above (#1407)
+            if cmd.nested or not own_line or not text_sink_heredoc(src[start:end if end >= 0 else len(src)].rstrip()):
                 _deny_unplain_mention()
+
+
+def shell_c_script(args):
+    """For `bash ... -c SCRIPT ARGS`: (SCRIPT, ARGS), (None, []) when -c has no script, or None without -c.
+    Reads option clusters the way bash does (#1407): `-oc errexit` and `-co errexit` both take `errexit` as the
+    value of -o, `--` ends the options, and the script is the first operand after them."""
+    has_c, i = False, 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("--"):
+            i += 2 if a in {"--rcfile", "--init-file"} else 1
+            continue
+        if len(a) > 1 and a[0] in "-+":
+            has_c = has_c or "c" in a[1:]
+            i += 1 + sum(1 for ch in a[1:] if ch in "oO")
+            continue
+        break
+    if not has_c:
+        return None
+    return (args[i], args[i + 1:]) if i < len(args) else (None, [])
 
 
 def check_command(command):
