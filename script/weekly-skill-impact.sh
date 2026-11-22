@@ -29,21 +29,21 @@ cite_skill() {
   local name="$1" f
   for f in "${CITATION_ROOTS[@]}"; do
     [ -f "$DOTFILES/$f" ] || continue
-    if grep -q "$name" "$DOTFILES/$f" 2>/dev/null; then
+    if grep -qwF -- "$name" "$DOTFILES/$f" 2>/dev/null; then
       printf '  - `%s` cites `%s`\n' "$f" "$name"
     fi
   done
   local agent
   for agent in "$DOTFILES"/templates/agent-team/.claude/agents/*.md; do
     [ -f "$agent" ] || continue
-    if grep -q "$name" "$agent" 2>/dev/null; then
+    if grep -qwF -- "$name" "$agent" 2>/dev/null; then
       printf '  - `%s` cites `%s`\n' "${agent#$DOTFILES/}" "$name"
     fi
   done
   for team in elon team-audit; do
     local sk="$DOTFILES/templates/agent-team/.agents/skills/$team/SKILL.md"
     [ -f "$sk" ] || continue
-    if grep -q "$name" "$sk" 2>/dev/null; then
+    if grep -qwF -- "$name" "$sk" 2>/dev/null; then
       printf '  - `templates/agent-team/.agents/skills/%s/SKILL.md` cites `%s`\n' "$team" "$name"
     fi
   done
