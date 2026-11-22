@@ -1671,9 +1671,9 @@ worktree_board_open() {
 # Orphan Orca record rm. Returns 0 removed (or already gone), 1 kept with a warning, 2 unknown (cut by the repo deadline:
 # left alone, retried next run, never a keep or a failure). Not bounded: a failure here is a warning, never a failed round.
 guarded_orca_worktree_rm() { # <counter> <label> <path> [hostId]
-  local counter=$1 label=$2 path=$3 host=${4:-local} try left t rc out code
+  local counter=$1 label=$2 path=$3 host=${4:-local} left t rc out code
   local env_args=(); [ "$host" = local ] || env_args=(--environment "$host")
-  for try in 1 2; do
+  for _ in 1 2; do
     left=$((deadline-SECONDS))
     [ "$left" -ge 1 ] || return 2
     t=$call_timeout; [ "$left" -ge "$t" ] || t=$left
@@ -2110,7 +2110,7 @@ in_active_path() {
 }
 browser_keep() { printf 'Kept browser %s (%s)\n' "$1" "$2"; browser_kept=$((browser_kept+1)); }
 sweep_browsers() {
-  local pid ppid age started cmd kind profile cwdir child cppid cmdl now_line n_started n_cmd outside
+  local pid ppid age started cmd kind profile cwdir cppid cmdl now_line n_started n_cmd outside
   [ "$browser_sweep" -eq 1 ] || return 0
   begin_optional
   if ! ps_do list > "$tmp/procs" 2>/dev/null; then echo 'Warning: process list unavailable; closing no browsers.' >&2; return 0; fi
@@ -2143,7 +2143,7 @@ sweep_browsers() {
     if in_active_path "$cwdir" || in_active_path "$profile"; then browser_keep "$pid" 'inside an active dispatch path'; continue; fi
     if [ "$kind" = 'stale agent-browser daemon' ]; then
       outside=''
-      while IFS=$'\t' read -r child cppid _ _ cmdl; do
+      while IFS=$'\t' read -r _ cppid _ _ cmdl; do
         [ "$cppid" = "$pid" ] && is_any_browser "$cmdl" || continue
         profile=$(browser_profile "$cmdl") || continue
         is_temp_path "$profile" || outside=1
