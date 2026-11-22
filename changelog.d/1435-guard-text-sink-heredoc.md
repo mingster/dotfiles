@@ -1,0 +1,1 @@
+- guard-bash: a quoted heredoc written with `cat <<'EOF' > file` or to `cat > "$VAR"` is read as data again, so prose that names a blocked script is no longer refused (#1435).
