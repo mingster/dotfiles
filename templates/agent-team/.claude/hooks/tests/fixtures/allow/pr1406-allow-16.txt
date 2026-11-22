@@ -1,0 +1,1 @@
+bash -o errexit script/checks-local.sh

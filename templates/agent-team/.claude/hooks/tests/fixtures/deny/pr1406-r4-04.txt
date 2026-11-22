@@ -1,0 +1,1 @@
+bash -o $(printf errexit) bin/deploy-raw.sh

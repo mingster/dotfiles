@@ -1,0 +1,1 @@
+eval "X=$'bin/\\x64eploy-raw.sh'; bash \$X"

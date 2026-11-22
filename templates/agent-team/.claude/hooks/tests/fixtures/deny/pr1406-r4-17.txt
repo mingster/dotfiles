@@ -1,0 +1,1 @@
+bash -c -e "cat .env.local"

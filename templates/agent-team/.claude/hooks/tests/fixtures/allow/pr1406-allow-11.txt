@@ -1,0 +1,1 @@
+[[ -f a.txt && $x == y* ]] && echo yes

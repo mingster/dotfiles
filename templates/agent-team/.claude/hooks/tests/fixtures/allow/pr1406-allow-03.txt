@@ -1,0 +1,2 @@
+gh pr create --title t --body "Built on $(date)
+see deploy-raw.sh"

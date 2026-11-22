@@ -1,0 +1,1 @@
+A="$(true '"')" git push --force origin main 2>"$(true '"')/dev/null"

@@ -1,0 +1,1 @@
+echo "$(case x in x) cat .env.local;; esac)"

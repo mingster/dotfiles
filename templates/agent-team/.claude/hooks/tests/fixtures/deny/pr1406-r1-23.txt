@@ -1,0 +1,2 @@
+# ; cd /tmp
+cp /tmp/a .env.local

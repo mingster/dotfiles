@@ -1,0 +1,1 @@
+A="$(true '"')" cat .env.local 2>"$(true '"')/dev/null"

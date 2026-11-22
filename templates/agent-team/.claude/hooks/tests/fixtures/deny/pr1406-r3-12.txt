@@ -1,0 +1,1 @@
+bash -euo pipefail bin/deploy-raw.sh

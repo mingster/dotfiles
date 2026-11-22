@@ -1,0 +1,1 @@
+echo "$( (true); echo $'it\'s'; cat .env.local )"

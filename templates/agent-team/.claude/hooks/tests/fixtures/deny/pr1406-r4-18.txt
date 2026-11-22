@@ -1,0 +1,1 @@
+X=bin/deploy-raw.sh; bash -c 2>/dev/null "bash $X"

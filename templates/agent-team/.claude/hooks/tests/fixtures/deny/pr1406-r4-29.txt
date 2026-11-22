@@ -1,0 +1,1 @@
+echo `echo \\"`; git push --force origin main

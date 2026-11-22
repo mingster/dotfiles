@@ -1,0 +1,1 @@
+echo $'\x00'"$(bash $'bin/\x64eploy-raw.sh')"

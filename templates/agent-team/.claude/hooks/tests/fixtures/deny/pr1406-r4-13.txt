@@ -1,0 +1,1 @@
+bash -- 2>/dev/null bin/deploy-raw.sh

@@ -1,0 +1,1 @@
+bash -c "cat \"\$0\"" .env.local

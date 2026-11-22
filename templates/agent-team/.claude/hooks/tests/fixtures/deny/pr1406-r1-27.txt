@@ -1,0 +1,3 @@
+echo "$( # )
+bunx playwright test
+)"

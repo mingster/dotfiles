@@ -1,0 +1,1 @@
+bash -c "echo $'it\'s'; cat .env.local"

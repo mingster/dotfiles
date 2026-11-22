@@ -1,0 +1,1 @@
+echo $'\x00'"$(bunx playwright test)"

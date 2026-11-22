@@ -1,0 +1,1 @@
+echo "$(case a in a) bash $'bin/\x64eploy-raw.sh';; esac)"

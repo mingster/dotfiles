@@ -1,0 +1,6 @@
+git commit -m "$(cat <<'EOF'
+fix: thing
+
+body with `code` and $VAR
+EOF
+)"

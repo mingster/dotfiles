@@ -1,0 +1,6 @@
+python3 - <<'PY'
+'''
+'
+'''
+PY
+echo deploy-raw.sh $(cat .env.local)

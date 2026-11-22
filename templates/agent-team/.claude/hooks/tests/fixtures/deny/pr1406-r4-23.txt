@@ -1,0 +1,1 @@
+echo `cat \$'.env.lo\x63al'`

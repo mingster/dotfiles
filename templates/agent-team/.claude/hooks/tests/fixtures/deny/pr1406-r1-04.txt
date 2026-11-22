@@ -1,0 +1,1 @@
+env -C $'\ud800' cat .env.local

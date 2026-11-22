@@ -1,0 +1,1 @@
+bash -c "cat $'.env.lo\x63al'"

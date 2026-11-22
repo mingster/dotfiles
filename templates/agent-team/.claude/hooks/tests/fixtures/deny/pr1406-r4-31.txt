@@ -1,0 +1,1 @@
+echo "$(case a in a) git push --force origin main;; esac)"

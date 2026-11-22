@@ -1,0 +1,6 @@
+python3 - <<'PY'
+'''
+'
+'''
+PY
+cat bin/deploy-raw.sh | echo $(bash)

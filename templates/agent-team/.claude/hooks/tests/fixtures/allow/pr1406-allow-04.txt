@@ -1,0 +1,3 @@
+gh issue comment 1 --body "line one $USER
+runs deploy-raw.sh
+line three"

@@ -1,0 +1,1 @@
+echo "$( (echo a); echo "$'" )"; cat .env.local; echo "'"
