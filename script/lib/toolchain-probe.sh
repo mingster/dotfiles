@@ -36,7 +36,7 @@ ver_token() {
   }'
 }
 
-for t in git gh jq python3 shellcheck bun node orca claude agent agy; do
+for t in git gh jq python3 shellcheck bun node orca claude agent agy grok; do
   case $t in
     orca)
       if [ -z "$orca_bin" ]; then

@@ -198,6 +198,18 @@ miss_rc=$?
 check "missing tool exits non-zero" "$([ "$miss_rc" -ne 0 ] && echo 0 || echo 1)"
 check "missing tool prints missing line" "$(echo "$miss_out" | grep -q 'worker-a agy missing'; echo $?)"
 make_tool "$remote_bin" agy "1.5.2"
+rm -f "$remote_bin/grok"
+grok_out=$(
+  PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_ORCA_APP_BIN="$fake_bin" \
+  FLEET_PULL_CONFIG="$tmp/fleet-no-coord.json" \
+  FLEET_TOOLCHAIN_RUN="$tmp/fake-ssh" \
+  FLEET_TOOLCHAIN_VERSIONS='' \
+  "$here/fleet-toolchain-check.sh" 2>&1
+)
+check "missing grok prints missing line" "$(echo "$grok_out" | grep -q 'worker-a grok missing'; echo $?)"
+make_tool "$remote_bin" grok "0.1.0"
 
 # Unreadable version exits non-zero
 make_tool "$remote_bin" claude "error: unreadable"
