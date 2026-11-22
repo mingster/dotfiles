@@ -297,7 +297,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (uses `script/review-prompt.txt`). |
+| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (uses `script/review-prompt.txt`). It exits 1 before any agent runs when the PR body fails `pr-body-gate.py`, so a builder fixes `## Self-check` before `worker_done`, not at `ship.sh`. |
 | `script/live-check-server.sh` | Takes a lock on the live-check host (waiting up to 30 minutes), reuses one running dev server on latest `main` when healthy (starting it once if not), and releases the lock after without stopping the shared server. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, `## Verification` bullets, and zero `.env` secrets. |
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; in other repos, Playwright, build and regression steps wait on `heavy-gate.sh` at weight 2 and type check steps at weight 1. A step that needs Postgres runs on the database host, and a database step that ran no tests or a host that is busy reports INFRA (rerun, no rework). |
