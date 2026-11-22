@@ -48,5 +48,27 @@ ec=$?
 set -e
 [ "$ec" -eq 1 ] && grep -q 'FACT-760-ORPHAN' <<<"$out" && ok "removed orphan line flagged" || bad "orphan line ec=$ec out=$out"
 
+# Linked worktree: .git is a file, not a directory.
+wt="$tmp-wt"
+git -C "$tmp" worktree add -q "$wt" "$head_orphan"
+set +e
+out=$(bash "$check" --repo "$wt" --base "$head_orphan" --head "$head_orphan" 2>&1)
+ec=$?
+set -e
+[ "$ec" -eq 0 ] && [ -z "$out" ] && ok "worktree clean diff passes" || bad "worktree clean ec=$ec out=$out"
+set +e
+out=$(bash "$check" --repo "$wt" --base "$head_orphan" --head "$head2" -- README.md 2>&1)
+ec=$?
+set -e
+[ "$ec" -eq 1 ] && grep -q 'FACT-760-ORPHAN' <<<"$out" && ok "worktree lost line flagged" || bad "worktree lost line ec=$ec out=$out"
+git -C "$tmp" worktree remove --force "$wt"
+nogit=$(mktemp -d)
+set +e
+out=$(bash "$check" --repo "$nogit" --base HEAD --head HEAD 2>&1)
+ec=$?
+set -e
+rm -rf "$nogit"
+[ "$ec" -eq 1 ] && grep -q 'must be a git checkout' <<<"$out" && ok "dir without .git rejected" || bad "no .git ec=$ec out=$out"
+
 echo "doc-fact-check: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
