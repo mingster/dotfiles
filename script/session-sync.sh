@@ -10,6 +10,7 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 fetch_timeout=${SESSION_SYNC_FETCH_TIMEOUT:-5}
+[[ "$fetch_timeout" =~ ^[1-9][0-9]*$ ]] || fetch_timeout=5
 export GIT_TERMINAL_PROMPT=0
 
 common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }

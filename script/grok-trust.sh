@@ -15,7 +15,9 @@ chmod 600 "$store" 2>/dev/null || true
 for dir in "$@"; do
   [ -d "$dir" ] || { echo "grok-trust: not a directory: $dir" >&2; exit 1; }
   path=$(cd "$dir" && pwd -P)
-  header="[folders.\"$path\"]"
+  esc=${path//\\/\\\\}
+  esc=${esc//\"/\\\"}
+  header="[folders.\"$esc\"]"
   if grep -qxF "$header" "$store"; then
     echo "grok-trust: already trusted $path"
     continue

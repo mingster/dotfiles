@@ -80,6 +80,12 @@ class Env(unittest.TestCase):
             result = self.run_heavy(['true'], extra=['--memory-mb', value])
             self.assertEqual(result.returncode, 64, result.stderr)
             self.assertIn('memory', result.stderr)
+    def test_value_flag_without_value_is_usage_error(self):
+        for flag in ('--host', '--fetch', '--max-wait'):
+            result = subprocess.run(['bash', str(scripts/'remote-heavy.sh'), flag], env=self.env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 64, result.stderr)
+            self.assertIn('remote-heavy: %s needs a value' % flag, result.stderr)
+            self.assertNotIn('unbound variable', result.stderr)
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY
