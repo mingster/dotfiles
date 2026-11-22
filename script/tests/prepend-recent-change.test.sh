@@ -36,7 +36,7 @@ check "tail after trim kept" "$(grep -q '^tail$' "$note"; echo $?)"
 # 4. CRLF stays CRLF
 printf '## Recent Changes\r\n- 2025-12-31 old\r\n\r\n## Other\r\nkeep\r\n' > "$note"
 run "${args[@]}" >/dev/null
-check "CRLF file stays CRLF (no bare LF)" "$([ "$(wc -l < "$note")" = "$(grep -c $'\r$' "$note")" ]; echo $?)"
+check "CRLF file stays CRLF (no bare LF)" "$([ "$(wc -l < "$note")" -eq "$(grep -c $'\r$' "$note")" ]; echo $?)"
 
 # 5. missing heading exits 1 and leaves the file alone
 printf '# Home\nno heading here\n' > "$note"; before=$(cat "$note")
