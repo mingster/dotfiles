@@ -1,0 +1,1 @@
+* `mac/bin/emptyTrash.sh` no longer deletes `.AppleDouble` folders under the current directory. It runs `find` only on a path given as an argument, and empties `/Volumes/*/.Trashes` for the volumes that exist instead of two fixed names (#1454).
