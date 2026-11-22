@@ -58,5 +58,18 @@ mkdir "$tmp/wt/.githooks"; printf '#!/bin/sh\n' > "$tmp/wt/.githooks/commit-msg"
 (cd "$tmp/wt" && bash "$script") && ok || bad "hooks run exits 0"
 [ "$(git -C "$tmp/wt" config core.hooksPath)" = .githooks ] && ok || bad "core.hooksPath set"
 
+# 1464: an unknown argument exits 2 before any git or install step; --git-only still works
+git -C "$tmp/wt" config --unset core.hooksPath
+echo four > "$tmp/origin/f"; g "$tmp/origin" commit -qam four
+head_wt=$(git -C "$tmp/wt" rev-parse HEAD)
+rm -rf "$tmp/wt/web/node_modules"; : > "$BUN_LOG"
+(cd "$tmp/wt" && bash "$script" --help >"$tmp/rej.out" 2>&1); ec=$?
+[ "$ec" = 2 ] && ok || bad "unknown argument exits 2 (got $ec)"
+grep -q '^Usage:' "$tmp/rej.out" && ok || bad "unknown argument prints usage"
+[ ! -s "$BUN_LOG" ] && [ ! -d "$tmp/wt/web/node_modules" ] && ok || bad "unknown argument runs no install"
+[ -z "$(git -C "$tmp/wt" config core.hooksPath)" ] && ok || bad "unknown argument changes no git config"
+(cd "$tmp/wt" && bash "$script" --git-only) && ok || bad "--git-only exits 0"
+[ ! -s "$BUN_LOG" ] && ok || bad "--git-only skips the install"
+
 echo "worktree-setup: $pass passed, $fail failed"
 [ "$fail" = 0 ]

@@ -4,6 +4,19 @@
 # falling back to script/fleet-pull.config.json only if that is missing.
 # Exits non-zero and names the host and repo for a dirty, behind-after-pull, diverged or unreachable checkout.
 set -u
+usage() {
+  cat <<'USAGE'
+Usage: fleet-pull.sh [--help]
+Pulls the state dir and each configured repo on this host and every fleet host.
+An agent host checkout is reset hard to origin/main. There is no dry run mode.
+USAGE
+}
+case "${1:-}" in
+  '') ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "fleet-pull: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "fleet-pull: unexpected arguments: $*" >&2; usage >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 command -v jq >/dev/null || { echo 'fleet-pull requires jq' >&2; exit 1; }

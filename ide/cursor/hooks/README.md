@@ -6,7 +6,7 @@ Installed by `script/setup-cursor.sh` into `~/.cursor/hooks.json` and `~/.cursor
 
 Blocks `gh pr create` when the branch touches **shippable** paths but the repo **changelog** file was not updated.
 
-It also runs a Zero-Env scan. When a changed `.md`, `.mdx`, `.json`, `.yml` or `.yaml` file holds a raw secret (a `sk_live_` key, a `LINE_PAY_SECRET=` value, or a Postgres URL with an inline password), it denies the PR and names the file. It never prints the matched line, so the secret stays out of hook logs and agent transcripts.
+It also runs a Zero-Env scan. It reads only the lines the PR adds (not the whole file), in changed `.md`, `.mdx`, `.json`, `.yml` and `.yaml` files. A Postgres URL whose password is a placeholder (`password`, `changeme`, `<...>`, `${...}` or `[Omitted/Configured via Env]`) passes. When an added line holds a raw secret (a `sk_live_` key, a `LINE_PAY_SECRET=` value, or a Postgres URL with an inline password), it denies the PR and names the file. It never prints the matched line, so the secret stays out of hook logs and agent transcripts.
 
 ### Per-repo config (optional)
 

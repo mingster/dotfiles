@@ -99,7 +99,8 @@ function parseArgs(argv: string[]): Omit<Args, "recentHeading"> & {
 	const get = (flag: string): string | undefined => {
 		const i = argv.indexOf(flag);
 		if (i === -1 || i + 1 >= argv.length) return undefined;
-		return argv[i + 1];
+		const value = argv[i + 1];
+		return value.startsWith("--") ? undefined : value;
 	};
 
 	const link = get("--link");
@@ -204,17 +205,19 @@ async function main(): Promise<void> {
 		return;
 	}
 
+	const eol = content.includes("\r\n") ? "\r\n" : "\n";
 	const nextBullets = [line, ...bulletLines].slice(0, MAX_LINES);
 	const prefix = content.slice(0, bodyStart);
 	const rebuilt =
 		prefix +
-		nextBullets.join("\n") +
-		"\n\n" +
-		tailLines.join("\n").replace(/^\n+/, "");
+		nextBullets.join(eol) +
+		eol +
+		eol +
+		tailLines.join(eol).replace(/^(\r?\n)+/, "");
 
 	await writeFile(
 		changelogPath,
-		rebuilt.endsWith("\n") ? rebuilt : `${rebuilt}\n`,
+		rebuilt.endsWith("\n") ? rebuilt : `${rebuilt}${eol}`,
 		"utf8",
 	);
 	const rel = path.relative(repoRoot, changelogPath);

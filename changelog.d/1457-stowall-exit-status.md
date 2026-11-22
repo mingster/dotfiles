@@ -1,0 +1,1 @@
+* `mac/stowall` exits non zero and names the package when `stow` is missing or a package fails to stow, and its colors fall back to empty strings when `tput` has no TERM. `script/stowall.test.sh` covers both with a stub `stow` (#1457).

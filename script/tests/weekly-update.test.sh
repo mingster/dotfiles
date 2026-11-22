@@ -65,7 +65,7 @@ setup_fixture() {
   mkdir -p "$work/script" "$work/script/tests" "$work/.agents/skills/tdd" \
     "$work/templates/agent-team/.agents/skills/benchmark-checklist"
   for s in sync-mattpocock-skills.sh sync-pstack-template-skills.sh \
-    agent-team.sh check-skill-collisions.sh weekly-update.sh weekly-skill-impact.sh \
+    agent-team.sh check-skill-collisions.sh check-skill-refs.sh weekly-update.sh weekly-skill-impact.sh \
     install_node.sh; do
     cp "$root/script/$s" "$work/script/"
   done

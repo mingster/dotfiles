@@ -13,7 +13,7 @@ _ANY_HEAD = re.compile(r'^(?:## |\*\*[^*]+:\*\*)')
 _SELF_HEAD = re.compile(r'^## Self-check\b', re.I)
 _UNCHECKED = re.compile(r'^[ \t]*- \[ \]')
 _COMMAND = re.compile(
-    r'(?:^\$\s+\S)|(?:^Command\b[^:\n]*:)|(?:\b(?:bash|sh|python3?|pytest|bun|bunx|npm|npx|uv|node|gh|git)\b)',
+    r'(?:^\$\s+\S)|(?:^Command\b[^:\n]*:)|(?:(?<![\w./-])(?:bash|sh|python3?|pytest|bun|bunx|npm|npx|uv|node|gh|git)(?![\w./-]))',
     re.I,
 )
 _ACCEPT_ISSUE = re.compile(
