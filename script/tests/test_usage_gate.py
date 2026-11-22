@@ -2284,6 +2284,59 @@ class BuilderCursorRoute(unittest.TestCase):
         self.assertNotIn("cursor", everywhere)
 
 
+class StrongTierPick(unittest.TestCase):
+    """dotfiles #1396: --tier strong raises a builder or release unit to the Strong chain, never Grok."""
+
+    PRESETS = BuilderCursorRoute.PRESETS
+    OPUS = "--agent claude --model opus --effort high"
+    ARGON = "--agent antigravity --model gemini-4-argon-high"
+
+    def flags(self, role, weekly):
+        def fake_run(provider, *_args, **_kwargs):
+            used = weekly.get(provider, 10)
+            return {"provider": provider, "verdict": "blocked" if used >= 95 else "allowed",
+                    "ceiling": 95, "weekly_used": used, "reserve": 0}
+
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+                mock.patch.object(ug, "run", side_effect=fake_run), \
+                mock.patch.object(ug, "antigravity_models", return_value=None), \
+                contextlib.redirect_stdout(io.StringIO()) as out, \
+                contextlib.redirect_stderr(io.StringIO()):
+            status = ug.main(["pick", "--role", role, "--tier", "strong"])
+        return status, out.getvalue().strip()
+
+    def test_strong_tier_picks_opus_then_argon_and_never_grok(self):
+        for role in ("fullstack-dev", "release-manager", "fullstack-dev-strong"):
+            with self.subTest(role=role):
+                self.assertEqual(self.flags(role, {}), (0, self.OPUS))
+                self.assertEqual(self.flags(role, {"claude": 96}), (0, self.ARGON))
+                self.assertEqual(self.flags(role, {"claude": 96, "antigravity": 96}), (3, ""))
+
+    def test_strong_builder_role_without_the_flag_never_picks_grok(self):
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+                mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+                    "provider": p, "verdict": "blocked" if p != "grok" else "allowed",
+                    "ceiling": 95, "weekly_used": 96, "reserve": 0}), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            result = ug.pick("fullstack-dev-strong", None, None, None, None)
+        self.assertIsNone(result["selected"])
+        self.assertNotIn("grok", [c["provider"] for c in result["candidates"]])
+
+    def test_fullstack_dev_strong_is_a_builder_role(self):
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}):
+            self.assertTrue(ug.is_builder_role("fullstack-dev-strong"))
+
+    def test_without_the_flag_simple_tasks_keep_their_tier(self):
+        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+                mock.patch.object(ug, "run", side_effect=lambda p, *a, **k: {
+                    "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
+                mock.patch.object(ug, "antigravity_models", return_value=None):
+            picked = {role: ug.pick(role, None, None, None, None)["selected"]["model"]
+                      for role in ("fullstack-dev", "release-manager", "fullstack-dev-small")}
+        self.assertEqual(picked, {"fullstack-dev": "sonnet", "release-manager": "sonnet",
+                                  "fullstack-dev-small": "haiku"})
+
+
 class GrokGate(unittest.TestCase):
     """dotfiles #1097: Grok has no usage API, so its gate is one live worker per host."""
 

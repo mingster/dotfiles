@@ -65,7 +65,8 @@ CURSOR_BUILD_MODEL = "grok-4.7-high"
 CURSOR_URGENT_MODEL = "grok-4.7-high-fast"
 CURSOR_REVIEW_MODEL = "grok-4.7-high"
 CURSOR_MODELS = (CURSOR_BUILD_MODEL, CURSOR_URGENT_MODEL, CURSOR_REVIEW_MODEL)
-STRONG_NO_GROK = ("elon", "architect-pm", "secops-finops")  # these roles never take Cursor or Grok
+STRONG_NO_GROK = ("elon", "architect-pm", "secops-finops", "fullstack-dev-strong")  # these roles never take Cursor or Grok
+STRONG_TIER_ROLE = "fullstack-dev-strong"  # --tier strong walks this preset chain (#1396)
 GROK_MODEL = "grok-4.7"
 GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
 UNKNOWN_LEFT = 50  # weekly percent left counted for a provider with no fresh reading
@@ -1241,7 +1242,7 @@ def role_chain(role):
 
 def is_builder_role(role):
     """Implementation and light units: their chain is forced to the provider priority order."""
-    if role == "fullstack-dev":
+    if role in ("fullstack-dev", STRONG_TIER_ROLE):
         return True
     presets = load_presets()
     roles = presets.get("roles", {})
@@ -1350,7 +1351,10 @@ def _gated_model(entry):
     return None
 
 
-def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False):
+def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False, tier=None):
+    reported = role
+    if tier == "strong":
+        role = STRONG_TIER_ROLE
     chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
     verifiers, ranked = VERIFIERS.get(avoid, (None, False)) if role in ("qa-sdet", "reviewer") else (None, False)
@@ -1406,7 +1410,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False)
             chosen = fallback
     resets = [r["blocked_until"] for r in rows.values() if r.get("blocked_until")]
     until = min(resets) if resets else None
-    return {"role": role, "selected": chosen, "queue": chosen is None, "candidates": candidates,
+    return {"role": reported, "selected": chosen, "queue": chosen is None, "candidates": candidates,
             "blocked_until": until, "blocked_until_local": local(until)}
 
 
@@ -1427,6 +1431,8 @@ def main(argv=None):
     ap.add_argument("--provider")
     ap.add_argument("--model", help="Antigravity model id (pool), or Cursor model checked against included usage")
     ap.add_argument("--role")
+    ap.add_argument("--tier", choices=["strong"],
+                    help="a complex (size:L) unit: walk the Strong chain, opus high then gemini-4-argon-high, never Grok")
     ap.add_argument("--avoid-family", choices=["claude", "gpt", "gemini", "composer", "grok"])
     ap.add_argument("--avoid-provider", choices=["claude", "cursor", "antigravity", "grok"])
     ap.add_argument("--cap", type=float, default=None,
@@ -1458,7 +1464,7 @@ def main(argv=None):
         if not a.role:
             ap.error("pick requires --role")
         try:
-            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider, a.auto)
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider, a.auto, a.tier)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
             return 4

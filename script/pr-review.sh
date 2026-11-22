@@ -226,7 +226,14 @@ case "${nv_kind:-}" in
 esac
 
 has_review_strong=0
-if gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' | grep -qx 'review-strong'; then
+strong_labels=$(gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' 2>/dev/null || true)
+if ! grep -qxE 'review-strong|size:L' <<<"$strong_labels"; then
+  # #1396: a size:L closing issue counts like the label on the PR
+  for issue in $(gh pr view "$pr" --repo "$repo" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' 2>/dev/null); do
+    strong_labels+=$'\n'$(gh issue view "$issue" --repo "$repo" --json labels --jq '.labels[].name' 2>/dev/null || true)
+  done
+fi
+if grep -qxE 'review-strong|size:L' <<<"$strong_labels"; then
   has_review_strong=1
 fi
 

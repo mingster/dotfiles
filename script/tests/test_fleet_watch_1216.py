@@ -1,5 +1,6 @@
 """#1216: issue labels. Eligibility, sort order, start strip, failed start return and double start guards."""
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,7 +10,7 @@ fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
 from test_fleet_watch_1204 import fake_rpc  # noqa: E402
-from test_fleet_watch_park import REPO, issue_row, scan_config  # noqa: E402
+from test_fleet_watch_park import HEAD, REPO, failing_review_pr, issue_row, scan_config  # noqa: E402
 
 
 def row(number, labels=('ready-for-agent',), created='2026-01-01T00:00:00Z'):
@@ -135,23 +136,23 @@ class DoubleStartGuards(unittest.TestCase):
 
 class RoleRouting(unittest.TestCase):
     def picker(self, seen):
-        def pick(role):
-            seen.append(role)
+        def pick(role, tier=None):
+            seen.append(role if tier is None else (role, tier))
             return {'selected': {'provider': 'claude', 'model': 'm-' + role}, 'candidates': []}
         return pick
 
     def test_routes(self):
         cases = {
             ('ready-for-agent',): None,
-            ('ready-for-agent', 'size:S'): ('fullstack-dev-small', 'fullstack-dev-small'),
-            ('ready-for-agent', 'size:L'): ('fullstack-dev', 'fullstack-dev-strong'),
-            ('ready-for-agent', 'role:pm'): ('architect-pm', 'architect-pm'),
-            ('ready-for-agent', 'role:qa', 'size:L'): ('qa-sdet', 'qa-sdet'),
-            ('ready-for-agent', 'role:ops'): ('release-manager', 'release-manager'),
-            ('ready-for-agent', 'role:ops', 'size:L'): ('release-manager', 'architect-pm'),
-            ('ready-for-agent', 'role:secops'): ('secops-finops', 'secops-finops'),
-            ('ready-for-agent', 'role:growth'): ('sales-marketing', 'sales-marketing'),
-            ('ready-for-agent', 'role:support'): ('support-csm', 'support-csm'),
+            ('ready-for-agent', 'size:S'): ('fullstack-dev-small', 'fullstack-dev-small', None),
+            ('ready-for-agent', 'size:L'): ('fullstack-dev', 'fullstack-dev', 'strong'),
+            ('ready-for-agent', 'role:pm'): ('architect-pm', 'architect-pm', None),
+            ('ready-for-agent', 'role:qa', 'size:L'): ('qa-sdet', 'qa-sdet', None),
+            ('ready-for-agent', 'role:ops'): ('release-manager', 'release-manager', None),
+            ('ready-for-agent', 'role:ops', 'size:L'): ('release-manager', 'release-manager', 'strong'),
+            ('ready-for-agent', 'role:secops'): ('secops-finops', 'secops-finops', None),
+            ('ready-for-agent', 'role:growth'): ('sales-marketing', 'sales-marketing', None),
+            ('ready-for-agent', 'role:support'): ('support-csm', 'support-csm', None),
         }
         for labels, want in cases.items():
             self.assertEqual(fw.issue_scan_route(row(1, labels)), want, labels)
@@ -173,7 +174,7 @@ class RoleRouting(unittest.TestCase):
     def test_blocked_pick_skips_to_the_next_issue(self):
         calls = []
 
-        def pick(role):
+        def pick(role, tier=None):
             calls.append(role)
             return {'selected': None, 'candidates': []} if role == 'qa-sdet' else {
                 'selected': {'provider': 'claude', 'model': 'x'}, 'candidates': []}
@@ -181,6 +182,64 @@ class RoleRouting(unittest.TestCase):
             [row(1, ('ready-for-agent', 'P0', 'role:qa')), row(2, ('ready-for-agent', 'P2'))], pick=pick)
         self.assertIn('issue_route_blocked=1:qa-sdet', bits)
         self.assertEqual(issue_of(starts[0]), 2)
+
+    def test_size_l_picks_the_strong_tier(self):
+        seen = []
+        starts, *_ = run_pass([row(5, ('ready-for-agent', 'size:L')),
+                               row(6, ('ready-for-agent', 'role:ops', 'size:L'))], pick=self.picker(seen))
+        self.assertEqual(seen, [('fullstack-dev', 'strong'), ('release-manager', 'strong')])
+        self.assertEqual([c[c.index('--title') + 1] for c in starts], ['#5|fullstack-dev', '#6|release-manager'])
+        self.assertEqual(starts[0][starts[0].index('--model') + 1], 'm-fullstack-dev')
+
+
+class StrongRework(unittest.TestCase):
+    """#1396 owner Q3: the first rework of an M PR stays Workhorse; Strong from the second round, or round 1 on size:L."""
+
+    def rework(self, pr, rounds=0, issue_labels=(), selected=True):
+        seen = []
+
+        def pick(role, tier=None):
+            seen.append((role, tier))
+            return {'selected': {'provider': 'claude', 'model': 'opus', 'effort': 'high'} if selected else None,
+                    'candidates': []}
+        with tempfile.TemporaryDirectory() as root:
+            state = {'issue_scan_backlog_sweep_at': 1}
+            if rounds:
+                state['issue_scan_rework_rounds'] = {REPO: {str(pr['number']): rounds}}
+            starts = []
+            with patch.object(fw, 'rpc', side_effect=fake_rpc), \
+                    patch.object(fw, 'issue_label_names', side_effect=lambda _r, _n: list(issue_labels)):
+                fw.issue_scan_pass(
+                    scan_config(root), state, 1, [], pr_fetch=lambda _r: [pr], list_issues=lambda _r: [],
+                    gate_check=lambda _c: True, admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
+                    start_worker=lambda command: starts.append(command) or 0,
+                    start_detached=lambda *_a, **_k: 0, checks_lock_live=lambda _root: False,
+                    act=lambda _c: 0, pick_fn=pick,
+                )
+        self.assertEqual(len(starts), 1)
+        command = starts[0]
+        return seen, (command[command.index('--agent') + 1], command[command.index('--model') + 1])
+
+    def test_first_rework_of_an_m_pr_stays_workhorse(self):
+        seen, pair = self.rework(failing_review_pr(4, HEAD))
+        self.assertEqual((seen, pair), ([], ('cursor', 'm1')))
+
+    def test_second_rework_round_goes_strong(self):
+        seen, pair = self.rework(failing_review_pr(4, HEAD), rounds=1)
+        self.assertEqual((seen, pair), ([('fullstack-dev', 'strong')], ('claude', 'opus')))
+
+    def test_first_rework_of_a_size_l_pr_goes_strong(self):
+        pr = failing_review_pr(4, HEAD)
+        pr['labels'] = [{'name': 'size:L'}]
+        self.assertEqual(self.rework(pr)[1], ('claude', 'opus'))
+
+    def test_first_rework_when_the_closing_issue_is_size_l_goes_strong(self):
+        pr = {**failing_review_pr(4, HEAD), 'body': 'Part one.\nCloses #41'}
+        self.assertEqual(self.rework(pr, issue_labels=('P2', 'size:L'))[1], ('claude', 'opus'))
+        self.assertEqual(self.rework(pr, issue_labels=('P2',))[1], ('cursor', 'm1'))
+
+    def test_no_strong_model_keeps_the_workhorse_rework(self):
+        self.assertEqual(self.rework(failing_review_pr(4, HEAD), rounds=1, selected=False)[1], ('cursor', 'm1'))
 
 
 if __name__ == '__main__':

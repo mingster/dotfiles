@@ -35,6 +35,8 @@ A session is plain Claude Code until the user calls the agent team with `/elon`,
 
 Raise one assignment a tier, never the whole role, when it touches money, auth, tenancy or production, or after two failed attempts at a hard diagnosis (for example the qa-sdet review of a payment PR runs at Strong). Record the reason in the task; a higher tier grants no extra strike.
 
+Complex units go Strong (#1396). A unit is complex when its issue carries `size:L`, or when the start uses the `fullstack-dev-strong` preset or `--tier strong`. A complex `fullstack-dev` or `release-manager` start takes the Strong model of the chosen provider: `python3 ~/dotfiles/script/usage-gate.py pick --role <role> --tier strong` returns `--agent claude --model opus --effort high`, then `--agent antigravity --model gemini-4-argon-high`, never Grok, and queues when both are blocked. `worker-startup.sh` refuses a Workhorse or Light model on a complex builder start while a Strong model is allowed, unless `--route-override REASON` is passed. fleet-watch routes `size:L` (and `role:ops` with `size:L`) this way. Rework: the first rework round of an unsized PR stays Workhorse; Strong applies from the second round, or from round 1 when the PR or its closing issue is `size:L`. `pr-review.sh` gives Strong review to a PR when `size:L` is on it or on its closing issue. Simpler units keep their tier (Workhorse, or Light for `size:S`), and within a priority fleet-watch starts `size:S`, then unsized, then `size:L`.
+
 ## Default provider by role
 
 Fallback begins at the provider after the role's default.

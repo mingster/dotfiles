@@ -49,7 +49,7 @@ No routing label means `fullstack-dev` on the Workhorse tier. The role picks the
 | Label | Meaning | Set by and when | What happens next |
 | ----- | ------- | --------------- | ----------------- |
 | `size:S` | Light tier unit: docs only, one small script, or a mechanical edit of 3 files or fewer. | architect-pm at triage. | Starts as `fullstack-dev-small`. Sorts before an unsized issue of the same priority. |
-| `size:L` | Strong tier unit and Strong PR review. Replaces `design:architect`, `design:arena` and `review-strong`. | architect-pm at triage. | Starts as `fullstack-dev` with the `fullstack-dev-strong` preset. Sorts after an unsized issue. With `role:ops` it uses the `architect-pm` preset. |
+| `size:L` | Strong tier unit and Strong PR review. Replaces `design:architect`, `design:arena` and `review-strong`. | architect-pm at triage. | Starts as `fullstack-dev` on the Strong tier (`usage-gate.py pick --tier strong`). With `role:ops` it starts as `release-manager` on the Strong tier. Its first rework round is Strong too. `pr-review.sh` gives Strong review when the label is on the PR or its closing issue. Sorts after an unsized issue. |
 | `role:pm` | Runs as architect-pm. | architect-pm at triage. | The worker title role is `architect-pm`. |
 | `role:qa` | Runs as qa-sdet. | architect-pm at triage. | The worker title role is `qa-sdet`. |
 | `role:ops` | Runs as release-manager. | architect-pm at triage. | The worker title role is `release-manager`. |

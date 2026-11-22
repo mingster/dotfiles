@@ -1404,8 +1404,16 @@ cat >"$tmp/pick-stub.py" <<'EOS'
 import os, sys
 mode = os.environ.get("PICK_STUB_MODE", "cursor")
 role = sys.argv[sys.argv.index("--role") + 1] if "--role" in sys.argv else ""
+tier = sys.argv[sys.argv.index("--tier") + 1] if "--tier" in sys.argv else ""
 with open(os.environ["PICK_STUB_LOG"], "a") as handle:
-    handle.write(role + "\n")
+    handle.write(role + (" " + tier if tier else "") + "\n")
+if tier == "strong":
+    strong = os.environ.get("PICK_STUB_STRONG", "opus")
+    if strong == "opus":
+        print("--agent claude --model opus --effort high")
+    elif strong == "argon":
+        print("--agent antigravity --model gemini-4-argon-high")
+    raise SystemExit(0 if strong in ("opus", "argon") else 3)
 if mode == "cursor":
     print("--agent cursor --model grok-4.7-high")
     raise SystemExit(0)
@@ -1580,6 +1588,46 @@ grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_S
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
 grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && bad "a qa-sdet start must keep ready-for-agent on the issue (#1271)" || ok
+
+# A complex builder start (#1396): fullstack-dev-strong, or a Refs issue labelled size:L, takes the Strong pick.
+cat >"$ghbin/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+[ "${GH_STUB_FAIL:-}" != 1 ] || exit 1
+case "$1 $2" in
+  "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
+  "issue view") printf '{"labels":[{"name":"P2"},{"name":"%s"}]}\n' "${GH_STUB_SIZE:-size:S}" | jq -r "${@: -1}" ;;
+esac
+EOS
+PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev-strong" claude sonnet
+[ "$route_ec" -ne 0 ] && ok || bad "fullstack-dev-strong on sonnet should be refused while opus is allowed (ec=$route_ec)"
+grep -Fq -- '--agent claude --model opus --effort high' "$tmp/route.err" && ok || bad "strong refusal should print the Strong pick ($(cat "$tmp/route.err"))"
+grep -Fxq 'fullstack-dev-strong strong' "$tmp/pick-stub.log" && ok || bad "strong start should pick with --tier strong ($(cat "$tmp/pick-stub.log"))"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused strong start must not reach worker-start" || ok
+PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev-strong" claude opus
+[ "$route_ec" = 0 ] && ok || bad "fullstack-dev-strong on opus should start (ec=$route_ec) $(cat "$tmp/route.err")"
+PICK_STUB_MODE=sonnet PICK_STUB_STRONG=argon route_run "#7900|fullstack-dev-strong" antigravity gemini-4-argon-medium
+[ "$route_ec" -ne 0 ] && ok || bad "strong start on argon medium should be refused while argon high is allowed (ec=$route_ec)"
+PICK_STUB_MODE=sonnet PICK_STUB_STRONG=argon route_run "#7900|fullstack-dev-strong" antigravity gemini-4-argon-high
+[ "$route_ec" = 0 ] && ok || bad "strong start on argon high should start (ec=$route_ec) $(cat "$tmp/route.err")"
+PICK_STUB_MODE=sonnet PICK_STUB_STRONG=none route_run "#7900|fullstack-dev-strong" claude sonnet
+[ "$route_ec" = 0 ] && ok || bad "with no Strong model available a sonnet start is not refused (ec=$route_ec) $(cat "$tmp/route.err")"
+rm -f "$route_state/route-override.log"
+PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev-strong" claude sonnet --route-override "opus is slow today"
+[ "$route_ec" = 0 ] && ok || bad "route override lets a strong start run on sonnet (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq 'opus is slow today' "$route_state/route-override.log" && ok || bad "strong route override should log the reason"
+GH_STUB_SIZE=size:L PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude sonnet
+[ "$route_ec" -ne 0 ] && ok || bad "a size:L issue on sonnet should be refused while opus is allowed (ec=$route_ec)"
+grep -Fq 'issue view 7900 -R acme/app' "$GH_STUB_LOG" && ok || bad "size check should read the Refs issue ($(cat "$GH_STUB_LOG"))"
+GH_STUB_SIZE=size:L PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-opus-5-5-high
+[ "$route_ec" = 0 ] && ok || bad "a size:L issue on an opus model id should start (ec=$route_ec) $(cat "$tmp/route.err")"
+GH_STUB_SIZE=size:L PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev-small" claude haiku
+[ "$route_ec" -ne 0 ] && ok || bad "a size:L issue on a Light start should be refused (ec=$route_ec)"
+PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude sonnet
+[ "$route_ec" = 0 ] && ok || bad "a simple issue keeps sonnet (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q ' strong$' "$tmp/pick-stub.log" && bad "a simple issue must not ask for the Strong pick" || ok
+GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude sonnet
+[ "$route_ec" = 0 ] && ok || bad "a failed size lookup must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
 
 # A handoff line has no --from: the coordinator's own handle is the sender (#1192).
 : >"$tmp/orca-route.log"
