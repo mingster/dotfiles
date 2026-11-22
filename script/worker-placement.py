@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 NON_WORKER_ROLES = frozenset({'heavy', 'release'})
@@ -263,8 +264,8 @@ def load_fleet_watch():
     return module
 
 
-def live_worker_counts(config: dict, hosts: list[str]) -> dict[str, int] | None:
-    """Occupied workers per host, counted the way fleet-watch admit counts them.
+def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], set[str]] | None:
+    """Occupied workers per host, counted the way fleet-watch admit counts them, and every dispatch id the inventory knows.
 
     None when the inventory cannot be read; the caller then counts 0 live workers (recent starts still count).
     WORKER_PLACEMENT_COUNT_WORKERS=0 skips the inventory (tests without an orca fake), the same as a failed read.
@@ -281,7 +282,8 @@ def live_worker_counts(config: dict, hosts: list[str]) -> dict[str, int] | None:
         for host in hosts:
             receipt = fw.admit(host, config, workers=workers, env_names=env_names, released_ids=released)
             counts[host] = int(receipt.get('occupied') or 0)
-        return counts
+        known = {w['dispatchId'] for w in workers if isinstance(w, dict) and isinstance(w.get('dispatchId'), str)}
+        return counts, known | set(released)
     except Exception as exc:  # inventory is advisory; never block placement on it
         print('worker-placement: worker count unavailable (%s); placing on load only' % exc, file=sys.stderr)
         return None
@@ -345,16 +347,19 @@ def read_recent(path: Path, window: float, now: float) -> list[dict]:
             continue
         try:
             at = float(row.get('at'))
-            claimed = int(row.get('workers'))
         except (TypeError, ValueError):
             continue
         if now - at <= window:
-            keep.append({'host': row['host'], 'at': at, 'workers': claimed})
+            claim = {'host': row['host'], 'at': at}
+            for key in ('id', 'dispatch'):
+                if isinstance(row.get(key), str) and row[key]:
+                    claim[key] = row[key]
+            keep.append(claim)
     return keep
 
 
-def unrecord_start(config: dict, host: str) -> bool:
-    """Drop the newest recent-start claim for a host, so a start that failed before launching frees its seat (#1273)."""
+def edit_recent(config: dict, change) -> bool:
+    """Change the recent starts under their lock. change(rows) returns False to leave the file as it is."""
     path = recent_file_path(config)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -364,11 +369,7 @@ def unrecord_start(config: dict, host: str) -> bool:
     with lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read_recent(path, recent_start_seconds(config), time.time())
-        for index in range(len(rows) - 1, -1, -1):
-            if rows[index]['host'] == host:
-                del rows[index]
-                break
-        else:
+        if not change(rows):
             return False
         tmp = path.with_name(path.name + '.tmp')
         try:
@@ -379,10 +380,42 @@ def unrecord_start(config: dict, host: str) -> bool:
     return True
 
 
-def recent_claims(rows: list[dict]) -> dict[str, int]:
+def unrecord_start(config: dict, host: str, claim_id: str | None = None) -> bool:
+    """Drop the claim of a start that failed before launching, so it frees its seat (#1273).
+
+    With a claim id only that claim goes; without one, the newest claim for the host.
+    """
+    def drop(rows: list[dict]) -> bool:
+        for index in range(len(rows) - 1, -1, -1):
+            row = rows[index]
+            if (row.get('id') == claim_id) if claim_id else (row['host'] == host):
+                del rows[index]
+                return True
+        return False
+    return edit_recent(config, drop)
+
+
+def bind_start(config: dict, claim_id: str, dispatch_id: str) -> bool:
+    """Tie a recent-start claim to the dispatch it created, so the claim stops counting once the inventory lists it (#1411)."""
+    def bind(rows: list[dict]) -> bool:
+        for row in rows:
+            if row.get('id') == claim_id:
+                row['dispatch'] = dispatch_id
+                return True
+        return False
+    return edit_recent(config, bind)
+
+
+def pending_starts(rows: list[dict], known_dispatches: set[str] | None) -> dict[str, int]:
+    """Recent starts per host that the inventory does not show yet. Each is one seat and one worker's memory.
+
+    A claim stops counting once its dispatch is in the inventory: a live one is counted there, a settled one holds nothing.
+    """
     out: dict[str, int] = {}
     for row in rows:
-        out[row['host']] = max(out.get(row['host'], 0), row['workers'])
+        if known_dispatches is not None and row.get('dispatch') in known_dispatches:
+            continue
+        out[row['host']] = out.get(row['host'], 0) + 1
     return out
 
 
@@ -408,7 +441,8 @@ def pick_host(
         rows = read_recent(path, window, time.time())
         result = _pick_host(config, spec_path, repo_selector, rows)
         if result.get('ok'):
-            rows.append({'host': result['host'], 'at': time.time(), 'workers': result['workers'] + 1})
+            result['claim'] = uuid.uuid4().hex
+            rows.append({'host': result['host'], 'at': time.time(), 'id': result['claim']})
             tmp = path.with_name(path.name + '.tmp')
             try:
                 tmp.write_text(json.dumps({'starts': rows}), encoding='utf-8')
@@ -433,8 +467,8 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
         return {'ok': False, 'reason': str(exc), 'loads': {}}
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     caps = host_caps_of(config)
-    live = live_worker_counts(config, hosts)
-    claims = recent_claims(recent)
+    live, known_dispatches = live_worker_counts(config, hosts) or (None, None)
+    pending = pending_starts(recent, known_dispatches)
     cores_per_worker = placement_float(config, 'cores_per_worker', DEFAULT_CORES_PER_WORKER)
     mem_per_worker = placement_float(config, 'mem_gb_per_worker', DEFAULT_MEM_GB_PER_WORKER)
     considered: dict[str, float] = {}
@@ -461,11 +495,11 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
             continue
         considered[host] = load
         cap = scaled_cap(caps[host], cores, cores_per_worker)
-        workers = max(0 if live is None else live.get(host, 0), claims.get(host, 0))
+        workers = (0 if live is None else live.get(host, 0)) + pending.get(host, 0)
         if workers >= cap:
             full[host] = '%d/%d' % (workers, cap)
             continue
-        if memory_full(mem_free, sum(1 for row in recent if row['host'] == host), mem_per_worker):
+        if memory_full(mem_free, pending.get(host, 0), mem_per_worker):
             full[host] = 'memory'
             continue
         if host_over_load(host, load, cores, ceiling, local_host):
@@ -607,7 +641,16 @@ def cmd_unrecord(args: argparse.Namespace) -> int:
         cfg = load_config(config_path(args.config))
     except FleetConfigError:
         return 0
-    unrecord_start(cfg, args.host)
+    unrecord_start(cfg, args.host, args.claim)
+    return 0
+
+
+def cmd_bind(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_config(config_path(args.config))
+    except FleetConfigError:
+        return 0
+    bind_start(cfg, args.claim, args.dispatch)
     return 0
 
 
@@ -680,8 +723,14 @@ def main() -> int:
     pick.set_defaults(func=cmd_pick)
     unrecord = sub.add_parser('unrecord', help='Forget the newest recorded start on a host (a start that failed early)')
     unrecord.add_argument('--host', required=True)
+    unrecord.add_argument('--claim', default=None, help='Claim id from pick --record; drops that claim only')
     unrecord.add_argument('--config', default=None)
     unrecord.set_defaults(func=cmd_unrecord)
+    bind = sub.add_parser('bind', help='Tie a recorded start to the dispatch it created')
+    bind.add_argument('--claim', required=True)
+    bind.add_argument('--dispatch', required=True)
+    bind.add_argument('--config', default=None)
+    bind.set_defaults(func=cmd_bind)
     seats = sub.add_parser('seats', help='Live and retained seats per host, naming each retained worker')
     seats.add_argument('--config', default=None)
     seats.add_argument('--json', action='store_true')

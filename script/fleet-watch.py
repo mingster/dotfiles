@@ -340,6 +340,7 @@ def worker_freed_by_terminal_exit(worker):
 
 
 _SETTLED_KINDS = ('succeeded', 'stopped', 'failed')
+_SETTLED_DISPATCH_STATUSES = ('completed', 'succeeded', 'failed', 'cancelled', 'stopped')
 _ARG_BOUNDARY = set(' \t/:=\'",;')
 
 
@@ -750,6 +751,10 @@ def classify_worker(worker, proof=None, config=None, env_names=None):
 
     if worker_liveness_verdict(worker) == 'exited':
         holds_seat = worker_exit_still_holds_seat(worker)
+        if holds_seat and status in _SETTLED_DISPATCH_STATUSES and not _unpushed_resource(worker):
+            # A settled, exited worker holds a seat only for unpushed work, released or not (#1411).
+            path = safe_workspace_path(worker_checkout_path(worker))
+            holds_seat = bool(path and os.path.isdir(path) and worktree_has_unpushed_commits(path))
         if holds_seat and status in ('dispatched', 'running', 'pending', 'active'):
             info = {
                 'dispatchId': dispatch_id,
