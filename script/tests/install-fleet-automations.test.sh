@@ -83,6 +83,8 @@ over=$(echo "$dry" | grep -oE -- '--precheck-timeout [0-9]+' | awk '$2 > 600' | 
 [ -z "$over" ] && check 'every precheck timeout fits the Orca 600s cap' true || check "every precheck timeout fits the Orca 600s cap ($over)" false
 echo "$dry" | grep -q '\[dry-run\]' && echo "$dry" | grep -q 'fleet-watch' && check 'dry-run prints fleet-watch create' true || check 'dry-run prints fleet-watch create' false
 echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run prints wrap-up create' true || check 'dry-run prints wrap-up create' false
+echo "$dry" | grep -q 'wrap-up-daily' && echo "$dry" | grep -q '0 4 \* \* \*' && check 'dry-run prints wrap-up-daily create at 04:00' true || check 'dry-run prints wrap-up-daily create at 04:00' false
+echo "$dry" | grep -q 'wrap-up.sh --daily' && check 'dry-run wrap-up-daily runs wrap-up.sh --daily' true || check 'dry-run wrap-up-daily runs wrap-up.sh --daily' false
 echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync drift create' true || check 'dry-run prints sync drift create' false
 echo "$dry" | grep -q 'team-audit-weekly' && check 'dry-run prints team audit create' true || check 'dry-run prints team audit create' false
 echo "$dry" | grep -q 'weekly-update' && check 'dry-run prints weekly-update create' true || check 'dry-run prints weekly-update create' false
@@ -97,6 +99,7 @@ echo "$dry" | grep -q 'would create' && check 'dry-run labels would-create' true
 first=$(bash "$script" --install 2>&1)
 echo "$first" | grep -q 'fleet-watch created' && check 'first install creates fleet-watch' true || check 'first install creates fleet-watch' false
 echo "$first" | grep -q 'wrap-up-scheduled created' && check 'first install creates wrap-up-scheduled' true || check 'first install creates wrap-up-scheduled' false
+echo "$first" | grep -q 'wrap-up-daily created' && check 'first install creates wrap-up-daily' true || check 'first install creates wrap-up-daily' false
 echo "$first" | grep -q 'sync-team-skills-drift created' && check 'first install creates sync drift' true || check 'first install creates sync drift' false
 echo "$first" | grep -q 'team-audit-weekly created' && check 'first install creates team audit weekly' true || check 'first install creates team audit weekly' false
 echo "$first" | grep -q 'weekly-update created' && check 'first install creates weekly-update' true || check 'first install creates weekly-update' false
@@ -106,6 +109,7 @@ echo "$first" | grep -q 'daily-program-1900 created' && check 'first install cre
 status_off=$(bash "$script" --status)
 echo "$status_off" | grep -q 'fleet-watch: disabled' && check 'non-coordinator status disabled fleet-watch' true || check 'non-coordinator status disabled fleet-watch' false
 echo "$status_off" | grep -q 'wrap-up-scheduled: enabled' && check 'non-coordinator status enabled wrap-up' true || check 'non-coordinator status enabled wrap-up' false
+echo "$status_off" | grep -q 'wrap-up-daily: enabled' && check 'non-coordinator status enabled wrap-up-daily' true || check 'non-coordinator status enabled wrap-up-daily' false
 echo "$status_off" | grep -q 'daily-program-1900: disabled' && check 'non-coordinator status disabled daily-program-1900' true || check 'non-coordinator status disabled daily-program-1900' false
 
 # Re-running the installer on a non-coordinator host fixes a stale rrule (0 */2 * * *) and a disabled entry.
@@ -198,8 +202,8 @@ case "$wrap_cmd" in *' || exit $?; exit 1') check 'precheck passes the wrapper e
 case "$wrap_prompt" in *"$wrap_cmd"*) check 'manual run prompt carries the precheck command' true ;; *) check 'manual run prompt carries the precheck command' false ;; esac
 case "$wrap_prompt" in *'"ok wrap-up-scheduled" or "FAILED wrap-up-scheduled"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
-[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 7 ] \
-  && check 'coordinator install has seven automations' true || check 'coordinator install has seven automations' false
+[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 8 ] \
+  && check 'coordinator install has eight automations' true || check 'coordinator install has eight automations' false
 
 fw_id=$(python3 -c '
 import json, os
@@ -470,7 +474,7 @@ if [ -f "$FAKE_ORCA_STORE" ]; then
 import json, os, sys
 d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 autos = d.get("automations", [])
-if len(autos) != 7:
+if len(autos) != 8:
     sys.exit(1)
 want = os.environ["CANON_HOME_DOTFILES"]
 bad = os.environ["FAKE_WT"]

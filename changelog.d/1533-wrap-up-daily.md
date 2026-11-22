@@ -1,0 +1,1 @@
+* Added `wrap-up.sh --daily` and the `wrap-up-daily` automation (04:00, every Orca host): the strict worktree cleanup, build caches, old logs, brew and bun caches, and free space before and after. A squash merged worktree no longer stays for ever: a merged PR that ended at its head now counts as published (#1533).
