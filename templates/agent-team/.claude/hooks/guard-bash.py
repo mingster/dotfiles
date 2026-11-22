@@ -565,7 +565,7 @@ def ansi_c_decode(body):
     return "".join(out), False
 
 
-def _quote_end(text, i, quote):
+def ansi_c_end(text, i, quote="'"):
     """Index of the quote closing the one opened at i, or -1. A backslash skips a character."""
     j = i + 1
     while j < len(text):
@@ -578,7 +578,7 @@ def _quote_end(text, i, quote):
     return -1
 
 
-def ansi_c_normalize(text):
+def _decode_ansi_c(text):
     """Rewrite each unquoted, unescaped $'...' as a plain single quoted word holding the decoded text.
 
     One quote aware pass: '...', "...", a backslash escape, a # comment (to the end of its line, whatever
@@ -593,7 +593,7 @@ def ansi_c_normalize(text):
             out.append(text[i:i + 2])
             i += 2
         elif c in "'\"":
-            end = _quote_end(text, i, c) if c == '"' else text.find("'", i + 1)
+            end = ansi_c_end(text, i, c) if c == '"' else text.find("'", i + 1)
             if end < 0:
                 out.append(text[i:])
                 break
@@ -605,7 +605,7 @@ def ansi_c_normalize(text):
             out.append(text[i:end])
             i = end
         elif c == "$" and text[i + 1:i + 2] == "'":
-            end = _quote_end(text, i + 1, "'")
+            end = ansi_c_end(text, i + 1, "'")
             if end < 0:
                 out.append(text[i:])
                 break
@@ -613,10 +613,21 @@ def ansi_c_normalize(text):
             out.append("'" + decoded.replace("'", "'\\''") + "'")
             i = end + 1
             while cut and i < n and text[i] not in WORD_BREAK:
-                if text[i] in "'\"":
-                    close = text.find("'", i + 1) if text[i] == "'" else _quote_end(text, i, '"')
-                    i = n if close < 0 else close
-                i += 1
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "'":
+                    close = text.find("'", i + 1)
+                elif text[i] == '"':
+                    close = ansi_c_end(text, i, '"')
+                elif text.startswith("$'", i):
+                    close = ansi_c_end(text, i + 1)
+                else:
+                    i += 1
+                    continue
+                if close < 0:
+                    break
+                i = close + 1
         elif c == "$" and text[i + 1:i + 2] and text[i + 1] in DOLLAR_SPECIALS:
             out.append(text[i:i + 2])
             i += 2
@@ -3121,6 +3132,8 @@ def check_segment(segment, depth=0, cwd=None):
                     break
             break
 
+    if BLOCKED_SCRIPTS and _blocked_mention(CODE_COMMAND):
+        _dynamic_probes(prog, args)
     check_worktree_env(segment, base, args, transfer_cwd)
     check_template_managed_bash(segment, base, args, transfer_cwd)
     check_pattern_kill(segment, base, args)
@@ -3304,6 +3317,9 @@ def substitutions(command):
             quote = "'"
         elif c == '"':
             quote = None if quote == '"' else '"'
+        elif c == "#" and quote is None and (i == 0 or command[i - 1] in COMMENT_LEAD):
+            end = command.find("\n", i)
+            i = len(command) if end < 0 else end
         elif c == "`":
             end = i + 1
             while end < len(command):
@@ -4147,14 +4163,26 @@ def _has_expansion(token):
     return "$" in token or "`" in token
 
 
-def _dynamic_probes(seg):
+def _script_argument(args):
+    """The first shell argument that is neither an option nor an option's value, for a shell run without -c."""
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in SHELL_OPTS_WITH_ARG:
+            skip = True
+        elif not a.startswith(("-", "+")):
+            return a
+    return None
+
+
+def _dynamic_probes(prog, args):
     """Deny a `$` the guard cannot resolve where the program, or a shell's script, would be named."""
-    prog, args = program_and_args(without_keywords(words(seg)))
-    script = None
-    if prog and os.path.basename(prog) in SHELLS | {"source", "."} and not any(
-            re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) for a in args):
-        script = next((a for a in args if not a.startswith("-")), None)
-    if prog and (_has_expansion(prog) or (script and _has_expansion(script))):
+    base = os.path.basename(prog)
+    shell = base in SHELLS | {"source", "."} and not any(re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) for a in args)
+    script = _script_argument(args) if shell else None
+    runner = base == "find" and any(a in {"-exec", "-execdir", "-ok", "-okdir"} for a in args)
+    if _has_expansion(prog) or (script and _has_expansion(script)) or (runner and any(map(_has_expansion, args))):
         deny("A blocked script is named in this command, and a variable or positional parameter stands where "
              "the program or the shell's script goes, so the guard cannot tell what runs. Write the program and "
              "script out literally.")
@@ -4176,7 +4204,6 @@ def check_blocked_script_mentions(command):
                 _deny_unplain_mention()
             text, heredoc = plain
             for seg in segments(text[:heredoc.start()] if heredoc else text):
-                _dynamic_probes(seg)
                 check_segment(seg, cwd=cur_cwd)
                 prog, args = program_and_args(words(seg))
                 if prog in ("cd", "pushd") and args:
@@ -4197,7 +4224,7 @@ def check_blocked_script_mentions(command):
 
 
 def check_command(command):
-    command = ansi_c_normalize(report_command_text(command))
+    command = _decode_ansi_c(report_command_text(command))
     global CODE_COMMAND
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
@@ -4214,7 +4241,7 @@ def check_command(command):
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
-    for raw in dict.fromkeys((RAW_COMMAND, ansi_c_normalize(RAW_COMMAND))):
+    for raw in dict.fromkeys((RAW_COMMAND, _decode_ansi_c(RAW_COMMAND))):
         check_blocked_script_mentions(raw)
     if INDIRECT:
         deny(INDIRECT[0])

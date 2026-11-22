@@ -678,6 +678,10 @@ class BlockedScriptLexer(GuardTest):
             "A=\"$'\" \"git\" push --force origin main": "force push",
             "bunx playwright test -g \"$'\"": "heavy",
             "echo $'it\\'s'; bunx playwright test": "heavy",
+            "echo a$'\\x00'\\'; cat .env.local": "print",
+            "echo $'\\x00'$'\\''; cat .env.local": "print",
+            "# it's\necho $(cat .env.local)": "print",
+            "# it's\necho $(git push --force origin main)": "force push",
         }
         for command, needle in shapes.items():
             with self.subTest(command=command):
@@ -690,7 +694,7 @@ class BlockedScriptLexer(GuardTest):
                            ("echo '$'a", "echo '$'a"), ("echo \\$'a'", "echo \\$'a'"), ("echo $$'a'", "echo $$'a'"),
                            ("# $'a'\necho $'b'", "# $'a'\necho 'b'"), ("echo $'a", "echo $'a")):
             with self.subTest(text=text):
-                self.assertEqual(mod.ansi_c_normalize(text), want)
+                self.assertEqual(mod._decode_ansi_c(text), want)
 
     def test_plain_mentions_are_allowed(self):
         for command in ("gh issue comment 5 --body \"line one deploy-raw.sh\nby $USER\ndone\"",
@@ -703,7 +707,10 @@ class BlockedScriptLexer(GuardTest):
     def test_an_unresolved_variable_for_the_program_or_script_is_denied(self):
         for command in ("$SHELL bin/deploy-raw.sh", "set -- bash; $1 bin/deploy-raw.sh",
                         "set -- bin/deploy-raw.sh; bash $1", "env $X bin/deploy-raw.sh",
-                        "sudo $X bin/deploy-raw.sh", "exec $1 bin/deploy-raw.sh", "echo deploy-raw.sh; $X"):
+                        "sudo $X bin/deploy-raw.sh", "exec $1 bin/deploy-raw.sh", "echo deploy-raw.sh; $X",
+                        "X=bin/deploy-raw.sh; bash -c \"bash $X\"", "X=bin/deploy-raw.sh sh -c 'bash $X'",
+                        "X=bin/deploy-raw.sh; eval \"bash $X\"", "X=bin/deploy-raw.sh; bash -o errexit $X",
+                        "X=bin/deploy-raw.sh; find . -prune -exec bash $X {} +"):
             with self.subTest(command=command):
                 self.assertDenied(command, "variable")
         self.assertDenied("$(echo bash) bin/deploy-raw.sh")

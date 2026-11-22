@@ -1,0 +1,1 @@
+X=bin/deploy-raw.sh; find . -prune -exec bash $X {} +

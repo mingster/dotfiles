@@ -1,0 +1,2 @@
+# it's
+echo $(git push --force origin main)
