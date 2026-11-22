@@ -456,6 +456,19 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 
 
+### Blocked scripts in the Bash guard
+
+`.claude/hooks/guard-config.json` can name scripts that only the deploy wrapper may run. `blocked_scripts` is a list of script names (a path is cut to its file name). `blocked_script_reasons` maps a script name to the text the guard shows when it denies that script. A script with no entry gets a generic reason that names the script and does not say "deploy pipeline".
+
+The guard reads the command text and does not run it. Four shapes cannot be resolved from the text alone, so they are known limits (#1389, Elon decision, option C):
+
+1. A script name that comes from an external or positional variable, with no literal blocked name in the command.
+2. A name read from a file or from stdin.
+3. A `printf` with a format string that is not a literal, building the name by substitution.
+4. Copying or symlinking a blocked script to a new name, then running the new name.
+
+Closing these would need the guard to run or rewrite the command (a realpath check or an environment token). That is not planned. The wrapper's own runtime approval gates stop a blocked script that gets past the text check.
+
 ### Merging through ship.sh
 
 The PR owner runs `script/ship.sh --repo owner/name --pr N` on its own PR; a stack lands bottom up
