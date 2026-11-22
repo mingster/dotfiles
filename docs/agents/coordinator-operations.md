@@ -21,14 +21,13 @@ checks `usage-gate.py`, and delegates to `start-cursor-worker.sh` or `start-remo
 It refuses a `--title` that is not `#<issue>|<role>` (a verifier uses its PR number), sets that title on the board card and the terminal, and refuses a fullstack-dev brief whose issue a merged PR already closed unless `--allow-delivered REASON` is given. It adds `Refs #<issue>` from the title when the brief has none, skips the Node and Bun install for a brief with a `Setup: none` line (also with `--on <host>`), and still runs the `worktree-setup.sh --git-only` fetch and `origin/main` fast-forward on the new worktree, local or remote, before the worker starts (a failed git-only step fails the start; on a remote host the step prints a `GIT_ONLY_RC=<n>` line that the start reads from the terminal, because a remote `terminal wait --for exit` times out on the interactive shell and reports exit code 0), and takes `ready-for-agent` off the issue of a worker it starts. A worker that vanishes at startup is started once more. An antigravity worker stuck on the sign-in screen about 60 seconds after start is stopped and the same brief restarts on claude sonnet. `script/lib/dotfiles-fresh.sh` fast-forwards a clean, behind `~/dotfiles` first (one warning line when it is dirty, diverged or offline), the same way `ship.sh`, `head-checks.sh` and `fleet-watch-loop.sh` do at start.
 
 The standard bootstrap runs `script/install-agent-clis.sh` after platform setup
-supplies Node/npm. It skips installed tools, removes vendor additions to tracked
+supplies Node/npm. It skips installed tools, does not install Cursor, only reports a missing `grok` (no installer is named here), removes vendor additions to tracked
 shell rc files while preserving prior local changes, and lists outside rc files
 the installers touched. Vendor CLIs under `arch/bin` are ignored to protect
 existing Linux bin-directory symlinks. New setups already copy helper scripts.
 
 `script/setup-check.sh` reports each provider CLI and sign-in file presence
-without reading credentials. Cursor uses `.cursor/auth.json` on macOS and
-`$XDG_CONFIG_HOME/cursor/auth.json` (default `~/.config`) on Linux. Antigravity
+without reading credentials. It checks the `claude`, `grok` and `agy` CLIs; Cursor is no longer checked. Antigravity
 uses the system keyring, so its sign-in file status is unavailable; see its
 [official authentication description](https://github.com/google-antigravity/antigravity-cli#authentication).
 File presence does not establish valid sign-in, and absent files can coexist
