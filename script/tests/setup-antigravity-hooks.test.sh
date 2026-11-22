@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # setup-antigravity.sh hooks merge: a broken hooks.json fails the run, leaves no .tmp, and prints no success line.
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 root=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck disable=SC1091
+. "$root/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
