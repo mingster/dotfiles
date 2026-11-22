@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run ShellCheck on main install entrypoints (same set as CI).
+# Run ShellCheck on main install entrypoints, script/*.sh and script/lib/*.sh (same set as CI).
 # Uses --severity=error so info/style (e.g. SC2086 quoting) does not fail the run;
 # run `shellcheck -x <file>` without that flag for full diagnostics.
 set -euo pipefail
@@ -32,6 +32,6 @@ exec shellcheck -x --severity=error \
   mac/stowall \
   mac/system_setup.sh \
   arch/system_setup.sh \
-  debian/system_setup.sh
-
-echo "done."
+  debian/system_setup.sh \
+  script/*.sh \
+  script/lib/*.sh

@@ -98,6 +98,6 @@ vscjava.vscode-maven
     #zignd.html-css-class-completion
 )
 
-for i in ${pkglist[@]}; do
+for i in "${pkglist[@]}"; do
   code --install-extension $i
 done

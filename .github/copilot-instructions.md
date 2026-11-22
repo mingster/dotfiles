@@ -20,7 +20,7 @@ Key workflows (how to run & validate changes)
 - Install / bootstrap: run `sh install.sh` from repo root. It runs **`mac/system_setup.sh`** on macOS, **`arch/system_setup.sh`** or **`debian/system_setup.sh`** on Linux (from `/etc/os-release`), unless **`DOTFILES_SKIP_SYSTEM_SETUP=1`**.
 - Prepare macOS: `sh mac/osxprep.sh` then `sh mac/osx.sh` (carefully review `osx.sh` before running — it changes OS defaults).
 - Stow configs (linking into `$HOME`): from repo root run `mac/stowall` or `stow -n <package>` for a dry-run; use `stow -v` for verbose output.
-- ShellCheck: CI runs `script/shellcheck-dotfiles.sh` (error-severity only). Run locally before pushing; use plain `shellcheck` on a file for full info-level hints.
+- ShellCheck: CI runs `script/shellcheck-dotfiles.sh` (error-severity only; covers install.sh, mac/stowall, the system_setup.sh files, script/*.sh and script/lib/*.sh). Run locally before pushing; use plain `shellcheck` on a file for full info-level hints.
 - VS Code extensions: update `vscode/install-vscode-extensions.sh` and run it (`code --install-extension ...`) to install from the canonical list.
 
 Project-specific conventions & patterns
@@ -41,7 +41,7 @@ Files to read first (essential reading order)
 1. `README.md` and `AGENTS.md` (overview, install steps, AI path map)
 2. `install.sh` (symlinks, `.agents`, `script/setup-claude-code.sh`, Cursor; then OS-specific `system_setup` unless `DOTFILES_SKIP_SYSTEM_SETUP`)
 3. `mac/system_setup.sh`, `mac/osxprep.sh`, `mac/stowall` (mac-specific flows; `DOTFILES_BREW_UPGRADE=1` enables `brew upgrade` in `system_setup.sh`)
-4. `script/shellcheck-dotfiles.sh` (ShellCheck entrypoints used by CI)
+4. `script/shellcheck-dotfiles.sh` (ShellCheck entrypoints used by CI: install, stowall, system_setup, script/*.sh, script/lib/*.sh)
 5. `vscode/install-vscode-extensions.sh` and `vscode/vscode-settings.code-profile` (extension and settings notes)
 6. `.stow-local-ignore` and `.gitconfig` (linking and git configuration patterns)
 
