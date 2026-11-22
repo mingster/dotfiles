@@ -35,6 +35,13 @@ NEW_LABELS = {
     'deferred': ('Parked until a later milestone', 'cccccc'),
     'tracking': ('Umbrella issue; never dispatched to one builder', 'cccccc'),
 }
+# Board status labels (docs/agents/labels.md, Status). Created with the 20 set, never assigned here.
+STATUS_LABELS = {
+    'status:接下來': ('Ready and queued: the next batch to dispatch', '0e8a16'),
+    'status:進行中': ('A worker is building it now', '1d76db'),
+    'status:等你決定': ('Waits on the owner', 'e99695'),
+}
+ALL_LABELS = {**NEW_LABELS, **STATUS_LABELS}
 PRIORITY = ('P0', 'P1', 'P2', 'P3')
 STATE = ('needs-triage', 'ready-for-agent', 'needs-redesign', 'needs-elon')
 HOLD = ('blocked', 'owner', 'deferred', 'tracking')
@@ -93,10 +100,18 @@ def plan(issues):
 
 def main(argv=None, run=subprocess.run):
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('repo')
+    ap.add_argument('repo', nargs='?')
     ap.add_argument('--apply', action='store_true')
     ap.add_argument('--delete-old', action='store_true')
+    ap.add_argument('--print-labels', action='store_true',
+                    help='print name|color|description for every label this script creates, then exit')
     args = ap.parse_args(argv)
+    if args.print_labels:
+        for name, (description, color) in ALL_LABELS.items():
+            print('%s|%s|%s' % (name, color, description))
+        return 0
+    if not args.repo:
+        ap.error('repo is required')
     if args.delete_old and not args.apply:
         ap.error('--delete-old needs --apply')
     try:
@@ -108,7 +123,7 @@ def main(argv=None, run=subprocess.run):
     except (RuntimeError, ValueError) as exc:
         print('issue-labels-migrate: %s' % exc, file=sys.stderr)
         return 1
-    to_create = [name for name in NEW_LABELS if name not in existing]
+    to_create = [name for name in ALL_LABELS if name not in existing]
     rows = plan(issues)
     old_present = [name for name in RETIRED if name in existing]
     print('%s: %d open issues, %d labels to create, %d issues to relabel, %d retired labels present'
@@ -127,7 +142,7 @@ def main(argv=None, run=subprocess.run):
         return 0
     try:
         for name in to_create:
-            description, color = NEW_LABELS[name]
+            description, color = ALL_LABELS[name]
             gh(['label', 'create', name, '--repo', args.repo, '--description', description, '--color', color], run)
         for number, add, remove in rows:
             command = ['issue', 'edit', str(number), '--repo', args.repo]

@@ -65,16 +65,16 @@ class Main(unittest.TestCase):
         code, out, calls = run_main(['o/r'])
         self.assertEqual(code, 0)
         self.assertTrue(all(c[1] == 'list' for c in calls))
-        self.assertIn('dry run: 6 open issues, 19 labels to create, 5 issues to relabel', out)
+        self.assertIn('dry run: 6 open issues, 22 labels to create, 5 issues to relabel', out)
         self.assertNotIn('#', out)
 
     def test_apply_creates_labels_and_edits_issues(self):
         code, out, calls = run_main(['o/r', '--apply'])
         self.assertEqual(code, 0)
-        self.assertEqual(sum(1 for c in calls if c[:2] == ['label', 'create']), 19)
+        self.assertEqual(sum(1 for c in calls if c[:2] == ['label', 'create']), 22)
         self.assertEqual(sum(1 for c in calls if c[:2] == ['issue', 'edit']), 5)
         self.assertFalse(any(c[:2] == ['label', 'delete'] for c in calls))
-        self.assertIn('done: 19 created, 5 relabeled, 0 deleted', out)
+        self.assertIn('done: 22 created, 5 relabeled, 0 deleted', out)
 
     def test_delete_old_removes_retired_labels_that_exist(self):
         _c, out, calls = run_main(['o/r', '--apply', '--delete-old'])
