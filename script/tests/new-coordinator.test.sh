@@ -3,6 +3,9 @@
 # --dry-run changes nothing and lists every step, bad arguments fail, a failing step is counted.
 here=$(cd "$(dirname "$0")/.." && pwd)
 script="$here/new-coordinator.sh"
+# shellcheck source=script/tests/lib/asdf-pin.sh
+# shellcheck disable=SC1091
+. "$here/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
