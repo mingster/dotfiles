@@ -250,6 +250,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the triage labels on GitHub), `sync`, read-only `check` for drift, and `all`. |
 | `script/sync-mattpocock-skills.sh` | Refreshes the 22 vendored Matt Pocock skills from upstream and reapplies `CONTEXT.md` naming and `.mattpocock-local.patch`. |
 | `script/check-skill-collisions.sh` | Checks for project skills that shadow shared or Orca-bundled skills, broken symlinks, or missing `SKILL.md` files. |
+| `script/check-skill-refs.sh` | Run by `agent-team.sh check`. Reports each `/<skill>` that a project's `AGENTS.md`, `docs/` or `.claude/` Markdown names when no skill of that name exists under the project, user or dotfiles trees. A retired skill (`staging-review`, `crew`, `team-grill-backlog`, `wrap-up`) names its replacement. Built in commands, URL paths and file paths are skipped. |
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
 | `script/bun-pin-check.sh` | Warns when a local or remote host's `bun` version is older than the repo's `package.json` pin (`packageManager` or `engines.bun`). |
 | `script/switch-login-shell-zsh.sh` | Links zsh dotfiles and switches the host's login shell to `zsh` so remote Orca probes and hooks share one PATH. |
