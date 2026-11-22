@@ -87,3 +87,7 @@ references for restore instead. A manifest row is not a sanitizer.
 This repository does not modify the private manifest or execute private backup
 or restore jobs. Host inspection, credential rotation and a real private restore
 drill remain user tasks; temp-HOME tests prove local setup and audit behavior.
+
+## When dotfiles removes a hook script
+
+`setup-claude-code.sh --keep-settings` (what `fleet-pull.sh` runs) never rewrites a host's `~/.claude/settings.json`, so a hook entry for a removed script stays on every host. Each session then prints `No such file or directory`. After each pull, `fleet-pull.sh` runs `script/check-hook-paths.sh` and names the host and the stale hook as a `fail` line. To fix a host, remove that hook entry from its `~/.claude/settings.json` by hand (keep a backup copy first), then run `fleet-pull.sh` again. The same PR that removes a hook script should also remove the hook from the tracked settings template.
