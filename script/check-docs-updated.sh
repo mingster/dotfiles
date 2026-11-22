@@ -25,9 +25,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -n "$base" ]; then
-  while IFS= read -r f; do files+=("$f"); done < <(git diff --name-only "$(git merge-base "$base" "${head:-HEAD}")" "${head:-HEAD}")
+  mb=$(git merge-base "$base" "${head:-HEAD}") || usage "cannot resolve --base $base or --head ${head:-HEAD}"
+  diff_out=$(git diff --name-only "$mb" "${head:-HEAD}") || usage "git diff failed for --base $base"
+  while IFS= read -r f; do [ -z "$f" ] || files+=("$f"); done <<<"$diff_out"
 fi
 if [ -n "$files_from" ]; then
+  [ -r "$files_from" ] || usage "cannot read --files-from $files_from"
   while IFS= read -r f; do [ -z "$f" ] || files+=("$f"); done <"$files_from"
 fi
 

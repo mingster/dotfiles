@@ -5,10 +5,11 @@
 SUDO=${EMPTYTRASH_SUDO-sudo}
 VOLUMES=${EMPTYTRASH_VOLUMES:-/Volumes}
 [ -z "$SUDO" ] || sudo -v
-$SUDO rm -rf "$HOME"/.Trash/*
+# find, not a glob: a plain * skips hidden names such as .DS_Store.
+$SUDO find "$HOME/.Trash" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 for trash in "$VOLUMES"/*/.Trashes; do
   [ -d "$trash" ] || continue
-  $SUDO rm -rf "$trash"/*
+  $SUDO find "$trash" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 done
 
 if [ -n "$1" ]; then

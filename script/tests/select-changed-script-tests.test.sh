@@ -480,3 +480,26 @@ case15_statusline() {
 }
 
 case15_statusline
+
+# #1516: mac/ scripts and secrets-pack.sh select their own tests.
+case25_mac_scripts_select_their_tests() {
+  local out pair path test
+  for pair in mac/bin/emptyTrash.sh:script/tests/empty-trash.test.sh \
+    mac/install_mongodb.sh:script/tests/install-mongodb.test.sh \
+    mac/stowall:script/stowall.test.sh \
+    script/secrets-pack.sh:script/tests/secrets-pack-unpack.test.sh; do
+    path=${pair%%:*}; test=${pair#*:}
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "$path" 2>&1)
+    grep -Fxq "Selected: $test" <<<"$out" || fail "case25 $path must select $test: $out"
+  done
+  # Every skip list entry must name a test file that exists.
+  local entry
+  while read -r entry _; do
+    case "$entry" in ''|'#'*) continue ;; esac
+    [ -f "$root/$entry" ] || fail "case25 skip list names a missing test: $entry"
+  done <"$root/script/script-test-skip.list"
+  ok "case25 mac scripts and secrets-pack map their tests"
+}
+
+case25_mac_scripts_select_their_tests
