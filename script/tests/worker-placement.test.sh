@@ -373,4 +373,74 @@ out=$(FLEET_LOAD_SCRIPT="$tmp/load-nocap.sh" FLEET_WATCH_CONFIG="$tmp/nocap.json
 out=$(FLEET_LOAD_SCRIPT="$tmp/load-nocap.sh" FLEET_WATCH_CONFIG="$tmp/nocap.json" python3 "$py" check-host --host host-primary 2>/dev/null) || fail "check-host must accept a capped host: $out"
 [ "$(jq -r '.ok' <<<"$out")" = true ] || fail "check-host must accept a capped host: $out"
 
+# 1411: a recent start is one pending seat, and it stops counting once its dispatch is in the inventory.
+cat >"$tmp/claims.json" <<'EOS'
+{
+  "local_host": "host-primary",
+  "host_caps": {"host-primary": 5, "host-a": 5},
+  "host_load_ceilings": {"host-primary": 12, "host-a": 12},
+  "worker_placement": {"order": ["host-primary", "host-a"], "recent_start_seconds": 300}
+}
+EOS
+claims_load() { # <memfree GB>: only host-a has a load sample
+  printf '#!/usr/bin/env bash\nprintf "host-a cores=16 load=1.0 1.0 1.0 memfree=%s\\n"\n' "$1" >"$tmp/load-claims.sh"
+  chmod +x "$tmp/load-claims.sh"
+}
+# One live worker and one settled, exited, unreleased worker on host-a.
+cat >"$tmp/workers.json" <<'EOS'
+[{"dispatchId": "d_live", "dispatchStatus": "running", "terminalState": "active",
+  "projection": {"host": {"id": "host-a"}, "liveness": {"verdict": "live"}, "outcome": "in_progress"},
+  "resource": {"ownershipState": "owned", "releaseState": "not_requested"}},
+ {"dispatchId": "d_done", "dispatchStatus": "completed", "outcome": "succeeded", "terminalState": "retained",
+  "projection": {"host": {"id": "host-a"}, "liveness": {"verdict": "exited"}},
+  "resource": {"id": "wtr_done", "ownershipState": "owned", "releaseState": "retained",
+               "retainedReason": "user_requested", "worktreeId": "wt::/nonexistent/done"},
+  "workspace": "repo::/nonexistent/done"}]
+EOS
+claims_pick() { # <recent file JSON> [pick args...]: a recorded pick, the kind a real start makes
+  printf '%s\n' "$1" >"$tmp/recent-1411.json"; shift
+  WORKER_PLACEMENT_COUNT_WORKERS=1 ORCA_CLI_COMMAND="$tmp/fake-orca.sh" FAKE_WORKERS="$tmp/workers.json" \
+    WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1411.json" FLEET_LOAD_SCRIPT="$tmp/load-claims.sh" \
+    FLEET_WATCH_CONFIG="$tmp/claims.json" python3 "$py" pick --record "$@" 2>&1
+}
+now=$(date +%s)
+claims_load 64
+out=$(claims_pick '{"starts":[]}') || fail "1411 baseline pick failed: $out"
+grep -Fq 'host=host-a load_1m=1.0 workers=1/5' <<<"$out" || fail "a settled exited worker must hold no seat: $out"
+# The rows seen on 2026-11-22: two starts that recorded the host total (4, then 5) filled a 5 seat host with 1 live worker.
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"workers":4},{"host":"host-a","at":'"$now"',"workers":5}]}') \
+  || fail "a recent start must count as one pending start, not the host total: $out"
+grep -Fq 'workers=3/5' <<<"$out" || fail "two pending starts plus one live worker is 3/5: $out"
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"workers":5,"dispatch":"d_live"}]}') \
+  || fail "a start whose dispatch is live must not count twice: $out"
+grep -Fq 'workers=1/5' <<<"$out" || fail "a live dispatch is counted once, by the inventory: $out"
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"workers":5,"dispatch":"d_done"}]}') \
+  || fail "a start whose dispatch settled must not count: $out"
+grep -Fq 'workers=1/5' <<<"$out" || fail "a settled dispatch frees its recent start: $out"
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"id":"c1"}]}') || fail "pending start pick failed: $out"
+grep -Fq 'workers=2/5' <<<"$out" || fail "a start with no dispatch yet is one pending seat: $out"
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"id":"c1","dispatch":"d_not_listed"}]}') || fail "unlisted dispatch pick failed: $out"
+grep -Fq 'workers=2/5' <<<"$out" || fail "a start whose dispatch is not in the inventory yet stays pending: $out"
+# Memory: 5 GB free at 4 GB per worker has room for one more start. memfree already includes a started worker.
+claims_load 5
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"workers":2,"dispatch":"d_live"}]}') \
+  || fail "a started worker must not take its 4 GB off memfree again: $out"
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"workers":2,"dispatch":"d_done"}]}') \
+  || fail "an exited worker must not take 4 GB off memfree: $out"
+set +e
+out=$(claims_pick '{"starts":[{"host":"host-a","at":'"$now"',"id":"c1"}]}'); ec=$?
+set -e
+[ "$ec" = 1 ] && grep -Fq 'host-a=memory' <<<"$out" || fail "a pending start still reserves its memory (ec=$ec): $out"
+# pick --record returns the claim id; bind ties it to the dispatch the start created.
+claims_load 64
+out=$(claims_pick '{"starts":[]}' --json) || fail "1411 recorded pick failed: $out"
+claim=$(jq -r '.claim // empty' <<<"$out")
+[ -n "$claim" ] && [ "$(jq -r '.starts[0].id' "$tmp/recent-1411.json")" = "$claim" ] || fail "pick --record must return the claim id it stored: $out"
+[ "$(jq -r '.starts[0] | has("workers")' "$tmp/recent-1411.json")" = false ] || fail "a claim must not store the host total"
+WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1411.json" FLEET_WATCH_CONFIG="$tmp/claims.json" \
+  python3 "$py" bind --claim "$claim" --dispatch d_live || fail "bind failed"
+[ "$(jq -r '.starts[0].dispatch' "$tmp/recent-1411.json")" = d_live ] || fail "bind must store the dispatch on the claim"
+out=$(claims_pick "$(cat "$tmp/recent-1411.json")") || fail "pick after bind failed: $out"
+grep -Fq 'workers=1/5' <<<"$out" || fail "a bound claim whose dispatch is live stops counting: $out"
+
 echo "worker-placement.test.sh passed"

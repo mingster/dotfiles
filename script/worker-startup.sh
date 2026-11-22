@@ -268,6 +268,7 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   WORKER_STARTUP_PLACED_REPO=
   WORKER_STARTUP_PLACED_HOST=
   WORKER_STARTUP_PLACED_CFG=
+  WORKER_STARTUP_PLACED_CLAIM=
   cfg=$(resolve_placement_config)
   if [ ! -f "$cfg" ]; then
     echo 'worker-placement: skipped (no fleet config)' >&2
@@ -307,6 +308,7 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   if [ "$record" = --record ]; then
     WORKER_STARTUP_PLACED_HOST=$(printf '%s' "$json" | jq -r '.host // empty')
     WORKER_STARTUP_PLACED_CFG=$cfg
+    WORKER_STARTUP_PLACED_CLAIM=$(printf '%s' "$json" | jq -r '.claim // empty')
   fi
 }
 
@@ -1191,6 +1193,13 @@ run_mode() {
     start_agent_worker
   elif [ "$agy_ec" -ne 0 ]; then
     exit "$agy_ec"
+  fi
+  # The recorded start now has a dispatch: tie them, so placement stops counting the claim once the inventory lists it (#1411).
+  local placed_dispatch
+  placed_dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+  if [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] && [ -n "$placed_dispatch" ]; then
+    "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$placed_dispatch" \
+      ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
   release_ready_label "$spec" "$title"
