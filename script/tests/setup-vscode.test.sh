@@ -24,7 +24,7 @@ echo '{}' > "$dot/ide/vscode/settings.json"; echo '[]' > "$dot/ide/vscode/keybin
 run() {
   local ostype=$1 bin=$2 home=$3
   mkdir -p "$home"
-  OSTYPE=$ostype HOME="$home" DOTFILES="$dot" PATH="$bin" STUB_LOG="$tmp/log" \
+  env -u XDG_CONFIG_HOME OSTYPE=$ostype HOME="$home" DOTFILES="$dot" PATH="$bin" STUB_LOG="$tmp/log" \
     "$bashbin" "$here/setup-vscode.sh" 2>&1
 }
 linked() { [ "$(readlink "$1/settings.json")" = "$dot/ide/vscode/settings.json" ] && [ "$(readlink "$1/keybindings.json")" = "$dot/ide/vscode/keybindings.json" ]; }
