@@ -27,13 +27,13 @@ link_user_file "$tmp/src/settings.json" "$tmp/dest/settings.json" >/dev/null || 
 [ "$(find "$tmp/dest" -name 'settings.json.bak.*' | wc -l | tr -d ' ')" = 1 ] || fail "re-run made another backup"
 
 # Real script with a temp HOME and an existing real settings.json.
-export HOME="$tmp/home"; export DOTFILES="$root"
+export HOME="$tmp/home"; export DOTFILES="$root"; unset XDG_CONFIG_HOME
 case "$(uname -s)" in
   Darwin) user="$HOME/Library/Application Support/Cursor/User" ;;
   *) user="$HOME/.config/Cursor/User" ;;
 esac
 mkdir -p "$user"; echo '{"mine":true}' >"$user/settings.json"
-bash "$here/link-cursor-user.sh" >/dev/null 2>&1 || fail "link-cursor-user run 1"
+bash "$here/link-cursor-user.sh" >/dev/null || fail "link-cursor-user run 1"
 [ "$(find "$user" -name 'settings.json.bak.*' | wc -l | tr -d ' ')" = 1 ] || fail "cursor: expected one backup"
 grep -q mine "$user"/settings.json.bak.* || fail "cursor: backup lost content"
 [ -L "$user/settings.json" ] || fail "cursor: settings.json not a link"
