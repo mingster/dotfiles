@@ -175,7 +175,7 @@ done < <(collect_changed_files)
 while IFS= read -r file; do
 	[[ -z "$file" ]] && continue
 	if [[ "$file" =~ \.(md|mdx|json|ya?ml)$ ]] && [[ -f "$file" ]]; then
-		if grep -E -n '(sk_live_[0-9a-zA-Z]{24,}|LINE_PAY_SECRET=[0-9a-zA-Z]{16,}|postgres(ql)?://[^:]+:[^@]+@[^/]+)' "$file" 2>/dev/null; then
+		if grep -E -q '(sk_live_[0-9a-zA-Z]{24,}|LINE_PAY_SECRET=[0-9a-zA-Z]{16,}|postgres(ql)?://[^:]+:[^@]+@[^/]+)' "$file" 2>/dev/null; then
 			emit_deny \
 				"Zero-Env Disclosure violation in ${file}." \
 				"Found raw secret or credential in ${file}. Replace with [Omitted/Configured via Env] before opening PR (Lean Startup SDLC Guardrail)."
