@@ -8,7 +8,7 @@ spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).pare
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
-CONFIG = {'host_caps': {'local': 5, 'mini6': 3}}
+CONFIG = {'host_caps': {'local': 5, 'remote-1': 3}}
 
 
 def exited_unreleased_row(status, outcome):
@@ -16,8 +16,8 @@ def exited_unreleased_row(status, outcome):
     return {
         'dispatchId': 'ctx_%s' % status, 'taskId': 'task_%s' % status,
         'dispatchStatus': status, 'outcome': outcome,
-        'projection': {'liveness': {'verdict': 'exited'}, 'host': 'mini6'},
-        'terminalState': 'retained', 'host': 'mini6',
+        'projection': {'liveness': {'verdict': 'exited'}, 'host': 'remote-1'},
+        'terminalState': 'retained', 'host': 'remote-1',
         'resource': {'id': 'wtr_%s' % status, 'ownershipState': 'owned', 'releaseState': 'retained',
                      'retainedReason': 'user_requested', 'worktreeId': 'wt::/nonexistent/%s' % status},
         'workspace': 'repo::/nonexistent/%s' % status,
@@ -36,12 +36,12 @@ class SettledExitedWorkerHoldsNoSeat(unittest.TestCase):
     def test_exited_unreleased_settled_worker_is_not_occupied(self):
         for status, outcome in (('completed', 'succeeded'), ('failed', 'failed'), ('cancelled', 'cancelled')):
             with self.subTest(status=status):
-                receipt = fw.admit('mini6', CONFIG, workers=[exited_unreleased_row(status, outcome)])
+                receipt = fw.admit('remote-1', CONFIG, workers=[exited_unreleased_row(status, outcome)])
                 self.assertEqual(receipt['occupied'], 0, receipt)
                 self.assertTrue(receipt['admitted'])
 
     def test_exited_dispatched_worker_still_holds_seat(self):
-        receipt = fw.admit('mini6', CONFIG, workers=[exited_unreleased_row('running', 'in_progress')])
+        receipt = fw.admit('remote-1', CONFIG, workers=[exited_unreleased_row('running', 'in_progress')])
         self.assertEqual(receipt['occupied'], 1)
 
 
