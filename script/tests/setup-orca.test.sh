@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # setup-orca.sh links presets.json once, backs up a different file once, and is idempotent on re-run.
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL $1"; exit 1; }
 export HOME="$tmp/home"; DOTFILES="$tmp/dotfiles"; export DOTFILES
