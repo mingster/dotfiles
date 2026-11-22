@@ -3,6 +3,8 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/link-user-file.sh
+. "$DOTFILES/script/lib/link-user-file.sh"
 # shellcheck source=check-agent-startup.sh
 . "$DOTFILES/script/check-agent-startup.sh"
 
@@ -40,9 +42,9 @@ if [ -f "$AG_SRC/settings.local.json" ]; then
   rm -f "$AG_USER/settings.json"
   python3 "$DOTFILES/script/apply-ide-overlay.py" "$AG_SRC/settings.json" "$AG_SRC/settings.local.json" > "$AG_USER/settings.json"
 else
-  ln -sfn "$AG_SRC/settings.json" "$AG_USER/settings.json"
+  link_user_file "$AG_SRC/settings.json" "$AG_USER/settings.json"
 fi
-ln -sfn "$AG_SRC/keybindings.json" "$AG_USER/keybindings.json"
+link_user_file "$AG_SRC/keybindings.json" "$AG_USER/keybindings.json"
 echo "setup-antigravity: linked $AG_USER/{settings,keybindings}.json -> $AG_SRC/"
 
 # Set up Antigravity agent settings and skills

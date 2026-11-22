@@ -3,6 +3,8 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/link-user-file.sh
+. "$DOTFILES/script/lib/link-user-file.sh"
 
 case "${OSTYPE:-}" in
   darwin*)
@@ -48,6 +50,6 @@ if [ ! -f "$VSCODE_SRC/settings.json" ] || [ ! -f "$VSCODE_SRC/keybindings.json"
 fi
 
 mkdir -p "$VSCODE_USER"
-ln -sfn "$VSCODE_SRC/settings.json" "$VSCODE_USER/settings.json"
-ln -sfn "$VSCODE_SRC/keybindings.json" "$VSCODE_USER/keybindings.json"
+link_user_file "$VSCODE_SRC/settings.json" "$VSCODE_USER/settings.json"
+link_user_file "$VSCODE_SRC/keybindings.json" "$VSCODE_USER/keybindings.json"
 echo "setup-vscode: linked $VSCODE_USER/{settings,keybindings}.json -> $VSCODE_SRC/"

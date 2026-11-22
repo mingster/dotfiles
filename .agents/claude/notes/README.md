@@ -29,3 +29,5 @@ One file per topic. All files here are linked into `~/.claude/notes/` by
 | [nextjs.md](nextjs.md) | App Router patterns: data fetching rule, state-after-mutation, route-group layout gotcha, CRUD page pattern |
 | [prisma.md](prisma.md) | BigInt epoch datetimes, serialize before client, no @prisma/client in client modules |
 | [next-safe-action.md](next-safe-action.md) | Two-file convention, action clients, storeId bound-arg rule, SafeError, checklist |
+| [git.md](git.md) | Git rule: never commit or push without explicit approval |
+| [orca-gaps.md](orca-gaps.md) | Open Orca runtime gaps: settled dispatch cannot take a second worker_done, remote worker_done rejected by the coordinator (#1159) |
