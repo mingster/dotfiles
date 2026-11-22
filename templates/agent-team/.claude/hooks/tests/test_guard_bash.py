@@ -589,11 +589,19 @@ class BlockedScriptMentions(GuardTest):
                      "cat > a.md <<'EOF'", "git commit -F - <<-\"EOF\"  # note", "ls; echo '<<x'", "# a \" in a comment"):
             with self.subTest(line=line):
                 self.assertIsNotNone(plain(line))
-        for line in ("echo \"", "echo a#\"", "echo $x", "echo `x`", "bash \\", "cat <(x)", "echo >(x)",
+        for line in ("echo $'x'", "echo $((1))", "echo $(echo \")", "echo ${x:-y}", "echo `x`", "bash \\", "cat <(x)",
+                     "echo >(x)",
                      "cat <<EOF", "cat <<'A' <<'B'", "cat <<'EOF-1'", "cat <<E'O'F", "cat <<'1'", "cat <<\\",
                      "cat <<'EOF' > f", "bash <<< x", "x\r"):
             with self.subTest(line=line):
                 self.assertIsNone(plain(line))
+        mod = self._module()
+        for line in ("echo \"", "echo a#\"", "echo 'a $(b"):
+            with self.subTest(line=line):
+                self.assertIs(mod._plain_shell_line(line), mod.OPEN_QUOTE)
+        for line in ("echo $x ${y} $1 $? $(date)", "echo '$' '$('", "echo \"a $USER\""):
+            with self.subTest(line=line):
+                self.assertIsNotNone(plain(line))
 
     def test_plain_mentions_allowed(self):
         for command in ("cat bin/deploy-raw.sh", "grep -n set bin/deploy-raw.sh | head",
@@ -605,7 +613,7 @@ class BlockedScriptMentions(GuardTest):
                 self.assertAllowed(command)
 
     def test_unplain_mentions_denied(self):
-        for command in ("cat bin/deploy-raw.sh\necho \"\nx\"", "echo $HOME bin/deploy-raw.sh",
+        for command in ("cat bin/deploy-raw.sh\necho \"\nx",
                         "python3 - <<'PY'\nprint(open('bin/deploy-raw.sh').read())\nPY",
                         "cat <<'EOF'\nbin/deploy-raw.sh\n", "echo \"$(echo \")\"; bash bin/deploy-ra\"w\".sh)\"",
                         "ls\nbash bin/deploy-raw.sh"):
@@ -627,6 +635,92 @@ class BlockedScriptMentions(GuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command, "starts a process")
         self.assertAllowed("perl -lne print file.txt")
+
+
+class BlockedScriptLexer(GuardTest):
+    """One quote aware pass for $'...', comments, $$, keywords and groups, and plain mentions (#1385)."""
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh", "other-raw.sh"],
+                       "blocked_script_reasons": {"deploy-raw.sh": "Ship it with the deploy wrapper."}}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg}
+
+    def _module(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_lexer", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_each_hidden_shape_is_denied(self):
+        shapes = {
+            "if true; then cat .env.local; fi": "print",
+            "if true; then (cat .env.local); fi": "print",
+            "if true; then { bash bin/deploy-raw.sh; }; fi": "Ship it",
+            "! (bash bin/deploy-raw.sh)": "Ship it",
+            "cat $'.env.lo\\x63al'": "print",
+            "cat $'.env.local\\x00foo'": "print",
+            "cat $'.env.local\\0foo'": "print",
+            "cat $'.env.local\\U00000000foo'": "print",
+            "cat $'.env.local\\x00foo'\"bar baz\" x": "print",
+            "git push $'--force\\x00foo' origin main": "force push",
+            "bash $'bin/\\x64eploy-raw.sh\\x00foo'": "Ship it",
+            "# it's\ncat .env.local": "print",
+            "# it\\\ncat .env.local": "print",
+            "echo # \"\ncat .env.local": "print",
+            "echo $'it\\'s'\ncat .env.local": "print",
+            "A=\"$'\" cat \".env.local\"": "print",
+            "A='$' cat \".env.local\"": "print",
+            "A=\\$'\\\\' cat .env.local": "print",
+            "echo $$'\\\\'\ncat .env.local": "print",
+            "A=\"$'\" \"git\" push --force origin main": "force push",
+            "bunx playwright test -g \"$'\"": "heavy",
+            "echo $'it\\'s'; bunx playwright test": "heavy",
+        }
+        for command, needle in shapes.items():
+            with self.subTest(command=command):
+                self.assertDenied(command, needle)
+
+    def test_a_literal_dollar_quote_is_not_decoded(self):
+        mod = self._module()
+        for text, want in (("cat $'a\\x62c' d", "cat 'abc' d"), ("echo $'it\\'s'", "echo 'it'\\''s'"),
+                           ("cat $'x\\x00y'z w", "cat 'x' w"), ("echo \"$'a'\"", "echo \"$'a'\""),
+                           ("echo '$'a", "echo '$'a"), ("echo \\$'a'", "echo \\$'a'"), ("echo $$'a'", "echo $$'a'"),
+                           ("# $'a'\necho $'b'", "# $'a'\necho 'b'"), ("echo $'a", "echo $'a")):
+            with self.subTest(text=text):
+                self.assertEqual(mod.ansi_c_normalize(text), want)
+
+    def test_plain_mentions_are_allowed(self):
+        for command in ("gh issue comment 5 --body \"line one deploy-raw.sh\nby $USER\ndone\"",
+                        "gh pr create --body \"Built on $(date)... deploy-raw.sh\"",
+                        "echo deploy-raw.sh; echo \"$HOME\"", "echo $HOME bin/deploy-raw.sh",
+                        "cat bin/deploy-raw.sh\necho \"\nx\""):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_an_unresolved_variable_for_the_program_or_script_is_denied(self):
+        for command in ("$SHELL bin/deploy-raw.sh", "set -- bash; $1 bin/deploy-raw.sh",
+                        "set -- bin/deploy-raw.sh; bash $1", "env $X bin/deploy-raw.sh",
+                        "sudo $X bin/deploy-raw.sh", "exec $1 bin/deploy-raw.sh", "echo deploy-raw.sh; $X"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "variable")
+        self.assertDenied("$(echo bash) bin/deploy-raw.sh")
+
+    def test_a_substitution_that_is_not_flat_still_denies(self):
+        for command in ("echo \"$(echo \")\"; bash bin/deploy-raw.sh)\"", "echo \"$( # )\nbash bin/deploy-raw.sh\n)\"",
+                        "echo $(echo deploy-raw.sh) done", "echo `date` deploy-raw.sh",
+                        "echo ${x:-1} deploy-raw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_a_script_has_its_own_deny_sentence_or_a_generic_one(self):
+        self.assertDenied("bash bin/deploy-raw.sh", "Ship it with the deploy wrapper.")
+        generic = self.assertDenied("bash bin/other-raw.sh", "other-raw.sh is a blocked script")
+        self.assertNotIn("deploy pipeline", generic)
+        self.assertNotIn("Ship it", generic)
+        self.assertNotIn("deploy pipeline", self.assertDenied("sh bin/other-raw.sh"))
 
 
 class ProjectConfigRules(GuardTest):

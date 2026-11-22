@@ -58,6 +58,7 @@ import time
 
 # Project configuration loaded at startup from <project>/.claude/hooks/guard-config.json.
 BLOCKED_SCRIPTS: set[str] = set()
+BLOCKED_REASONS: dict[str, str] = {}
 PRODUCTION_HOSTS: set[str] = set()
 BACKSTOP_HOSTS: set[str] = set()
 PRODUCTION_HOSTS_ERROR: str | None = None
@@ -206,6 +207,13 @@ CODE_COMMAND = ""  # RAW_COMMAND without the quoted text sink heredocs: what an 
 HOOK_INPUT: dict = {}
 
 
+def blocked_reason(name):
+    """The deny sentence for a blocked script: its own from guard-config.json, else a generic one."""
+    return BLOCKED_REASONS.get(name) or (
+        f"{name} is a blocked script: this project runs it only through the wrapper it names for it. "
+        "Reading, grepping, editing or committing the file is fine; running it is not.")
+
+
 def deny(reason):
     print(json.dumps({
         "hookSpecificOutput": {
@@ -234,7 +242,7 @@ def find_guard_config(start_dir):
 
 
 def load_guard_config(start_dir):
-    global BLOCKED_SCRIPTS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR, BACKSTOP_HOSTS
+    global BLOCKED_SCRIPTS, BLOCKED_REASONS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR, BACKSTOP_HOSTS
     global STAGE_BRANCHES, PRODUCTION_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
     global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
@@ -242,6 +250,7 @@ def load_guard_config(start_dir):
     global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS, PROMOTE_STEPS, PRE_GO_LIVE_UNTIL, PRE_GO_LIVE_HOST_UNTIL
 
     BLOCKED_SCRIPTS = set()
+    BLOCKED_REASONS = {}
     GRILL_APPROVERS = set()
     PRODUCTION_HOSTS = set()
     BACKSTOP_HOSTS = set()
@@ -389,6 +398,9 @@ def load_guard_config(start_dir):
     for item in cfg_expect("blocked_scripts", list, "list") or []:
         if isinstance(item, str) and item.strip():
             BLOCKED_SCRIPTS.add(os.path.basename(item.strip()))
+    for name, reason in (cfg_expect("blocked_script_reasons", dict, "object") or {}).items():
+        if isinstance(reason, str) and reason.strip():
+            BLOCKED_REASONS[os.path.basename(name.strip())] = reason.strip()
 
     raw_secrets_dir = cfg_expect("secrets_dir", (str, list), "string or list")
     extra_dirs = []
@@ -486,9 +498,137 @@ def load_guard_config(start_dir):
             GRILL_APPROVERS.add(login.strip().lower())
 
 
+SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!"})
+WORD_BREAK = " \t\r\n;|&()<>"
+COMMENT_LEAD = " \t\n;&|()<>"
+ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                 "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+ANSI_C_NUMERIC = {"x": (2, 16), "u": (4, 16), "U": (8, 16)}
+DOLLAR_SPECIALS = "$?!#-@*0123456789"
+
+
+def without_keywords(tokens):
+    i = 0
+    while i < len(tokens) and tokens[i] in SHELL_KEYWORDS:
+        i += 1
+    return tokens[i:]
+
+
+def ansi_c_decode(body):
+    """Decode the inside of $'...'. Returns (text, truncated): bash cuts a word at the first NUL."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c)
+            i += 1
+            continue
+        e = body[i + 1]
+        if e in ANSI_C_SIMPLE:
+            out.append(ANSI_C_SIMPLE[e])
+            i += 2
+        elif e in "01234567":
+            j = i + 1
+            while j < n and j < i + 4 and body[j] in "01234567":
+                j += 1
+            value, i = int(body[i + 1:j], 8) & 0xFF, j
+            if not value:
+                return "".join(out), True
+            out.append(chr(value))
+        elif e in ANSI_C_NUMERIC:
+            width, base = ANSI_C_NUMERIC[e]
+            j = i + 2
+            while j < n and j < i + 2 + width and body[j] in "0123456789abcdefABCDEF":
+                j += 1
+            if j == i + 2:
+                out.append(c + e)
+                i += 2
+                continue
+            start, value, i = i, int(body[i + 2:j], base), j
+            if e == "x":
+                value &= 0xFF
+            if not value:
+                return "".join(out), True
+            try:
+                out.append(chr(value))
+            except (ValueError, OverflowError):
+                out.append(body[start:i])
+        elif (e == "c" or e == "^") and i + 2 < n:
+            value = ord(body[i + 2]) & 0x1F
+            i += 3
+            if not value:
+                return "".join(out), True
+            out.append(chr(value))
+        else:
+            out.append(c + e)
+            i += 2
+    return "".join(out), False
+
+
+def _quote_end(text, i, quote):
+    """Index of the quote closing the one opened at i, or -1. A backslash skips a character."""
+    j = i + 1
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+            continue
+        if text[j] == quote:
+            return j
+        j += 1
+    return -1
+
+
+def ansi_c_normalize(text):
+    """Rewrite each unquoted, unescaped $'...' as a plain single quoted word holding the decoded text.
+
+    One quote aware pass: '...', "...", a backslash escape, a # comment (to the end of its line, whatever
+    it ends with), and the two character specials ($$, $?, $!, $#, $-) are skipped, so "$'", '$', an escaped
+    dollar sign and $$' stay literal. A NUL escape cuts the word there, the way bash does."""
+    if "$'" not in text:
+        return text
+    out, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+        elif c in "'\"":
+            end = _quote_end(text, i, c) if c == '"' else text.find("'", i + 1)
+            if end < 0:
+                out.append(text[i:])
+                break
+            out.append(text[i:end + 1])
+            i = end + 1
+        elif c == "#" and (i == 0 or text[i - 1] in COMMENT_LEAD):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            out.append(text[i:end])
+            i = end
+        elif c == "$" and text[i + 1:i + 2] == "'":
+            end = _quote_end(text, i + 1, "'")
+            if end < 0:
+                out.append(text[i:])
+                break
+            decoded, cut = ansi_c_decode(text[i + 2:end])
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
+            i = end + 1
+            while cut and i < n and text[i] not in WORD_BREAK:
+                if text[i] in "'\"":
+                    close = text.find("'", i + 1) if text[i] == "'" else _quote_end(text, i, '"')
+                    i = n if close < 0 else close
+                i += 1
+        elif c == "$" and text[i + 1:i + 2] and text[i + 1] in DOLLAR_SPECIALS:
+            out.append(text[i:i + 2])
+            i += 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def segments(command):
     """Split a command line on control operators, keeping quoted text intact."""
-    out, buf, quote, i = [], [], None, 0
+    out, buf, quote, comment, i = [], [], None, False, 0
     while i < len(command):
         c = command[i]
         if quote:
@@ -498,15 +638,20 @@ def segments(command):
                 i += 1
             elif c == quote:
                 quote = None
+        elif comment and c in "'\"\\":
+            buf.append(c)  # a comment runs to the end of its line: no quote or escape in it counts
         elif c in "'\"":
             quote = c
             buf.append(c)
         elif c == "\\" and i + 1 < len(command):
             buf.append(c + command[i + 1])
             i += 1
-        elif c in ";|&\n" or (c in "({" and not "".join(buf).strip()):
+        elif c == "#" and not comment and (not buf or buf[-1][-1:] in COMMENT_LEAD):
+            comment = True
+            buf.append(c)
+        elif c in ";|&\n" or (c in "({" and set("".join(buf).split()) <= SHELL_KEYWORDS):
             out.append("".join(buf))
-            buf = []
+            buf, comment = [], comment and c != "\n"
         elif c in ")}" and not quote:
             out.append("".join(buf))
             buf = []
@@ -537,10 +682,13 @@ def strip_comment(segment):
 
 
 def words(segment):
-    try:
-        return shlex.split(strip_comment(segment))
-    except ValueError:
-        return segment.split()
+    text = strip_comment(segment)
+    for closer in ("", "'", '"'):
+        try:
+            return shlex.split(text + closer)
+        except ValueError:
+            pass
+    return [t.replace("'", "").replace('"', "") for t in text.split()]
 
 
 def program_and_args(tokens):
@@ -2954,7 +3102,7 @@ def check_indirection(base, args):
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
-    tokens = words(segment)
+    tokens = without_keywords(words(segment))
     prog, args = program_and_args(tokens)
     if not prog:
         return
@@ -2982,19 +3130,12 @@ def check_segment(segment, depth=0, cwd=None):
         pass  # a bug in a team gate must not skip the production guards below
     check_approval_secret(segment, base, args)
     check_risky(segment, base, args, depth, transfer_cwd)
-    lead = 0
-    while lead < len(tokens) and tokens[lead] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
-        lead += 1
-    ind_prog, ind_args = program_and_args(tokens[lead:])
-    if ind_prog:
-        check_indirection(os.path.basename(ind_prog), ind_args)
+    check_indirection(base, args)
 
     # Heavy jobs must acquire the shared machine budget.
     try:
         heavy_tokens = shlex.split(segment, comments=True)
-        while heavy_tokens and heavy_tokens[0] in {"if", "then", "else", "elif", "do", "while", "until", "!"}:
-            heavy_tokens = heavy_tokens[1:]
-        heavy_prog, heavy_args = program_and_args(heavy_tokens)
+        heavy_prog, heavy_args = program_and_args(without_keywords(heavy_tokens))
     except ValueError:
         heavy_prog, heavy_args = None, []
     heavy_base = os.path.basename(heavy_prog or "")
@@ -3032,8 +3173,7 @@ def check_segment(segment, depth=0, cwd=None):
 
     # 1. Raw deploy scripts.
     if base in BLOCKED_SCRIPTS:
-        deny(f"{base} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
-             "Reading, grepping, editing or committing the file is fine; running it is not.")
+        deny(blocked_reason(base))
     if base == "eval":
         for text in [" ".join(args), *substitutions(" ".join(args))]:
             check_hidden_script_paths(text, transfer_cwd)
@@ -3065,7 +3205,7 @@ def check_segment(segment, depth=0, cwd=None):
         else:
             script = next((a for a in args if not a.startswith("-")), None)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
-                deny(f"{os.path.basename(script)} runs only inside the deploy pipeline (the deploy wrapper).")
+                deny(blocked_reason(os.path.basename(script)))
 
     # 3. PayPal with the read only credentials: GET requests and the token request only.
     if base in {"curl", "wget", "http", "https", "xh"} and any("paypal.com/" in a for a in args):
@@ -3942,32 +4082,49 @@ def check_hidden_script_paths(command, cwd):
 
 
 # A blocked script name in a command the parsers above can misread (#1383): an allowlist, not a parser.
-# Each shell line must be plain: quotes open and close on the line, no backslash, `$`, backtick or process
-# substitution, and at most one closing `<<'TAG'` heredoc with a plain tag. Anything else denies.
+# Each logical shell line (a quote may run across lines) must be plain: quotes open and close, no backslash,
+# backtick or process substitution, `$` only as `$name`, `${name}` or a flat `$(...)`, and at most one closing
+# `<<'TAG'` heredoc with a plain tag. Anything else denies. A `$` that stands for the program, or for the
+# script handed to a shell, denies too, because the guard cannot see what it names (#1385).
 PLAIN_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*")
+PLAIN_DOLLAR = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9?#$!@*-])")
+FLAT_SUBSTITUTION = re.compile(r"\$\(([^'\"\\$`()#\n]*)\)")
+OPEN_QUOTE = object()
 
 
 def _plain_shell_line(line):
-    """(text before any comment, heredoc match or None) for a plain shell line, else None."""
-    quote, heredoc = "", None
-    for i, c in enumerate(line):
-        if c in "\\$`\r":
+    """(text before any comment, heredoc match or None) for a plain shell line, OPEN_QUOTE while a quote is
+    still open at its end, else None."""
+    quote, heredoc, i = "", None, 0
+    while i < len(line):
+        c = line[i]
+        if not quote and c == "#" and (i == 0 or line[i - 1] in COMMENT_LEAD):
+            line = line[:i]
+            break
+        if c in "\\`\r":
             return None
+        if c == "$" and quote != "'":
+            hit = PLAIN_DOLLAR.match(line, i)
+            flat = None if hit else FLAT_SUBSTITUTION.match(line, i)
+            if flat and _blocked_mention(flat.group(1)):
+                flat = None
+            if not (hit or flat):
+                return None
+            i = (hit or flat).end()
+            continue
         if quote:
             quote = "" if c == quote else quote
         elif c in "'\"":
             quote = c
-        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|()<>"):
-            line = line[:i]
-            break
         elif c in "<>" and line[i + 1:i + 2] == "(":
             return None
         elif c == "<" and line[i + 1:i + 2] == "<" and heredoc is None:
             heredoc = i
         elif c == "<" and heredoc is not None and i > heredoc + 1:
             return None
+        i += 1
     if quote:
-        return None
+        return OPEN_QUOTE
     if heredoc is None:
         return line, None
     match = PLAIN_HEREDOC.fullmatch(line, heredoc)
@@ -3980,9 +4137,27 @@ def _blocked_mention(text):
 
 
 def _deny_unplain_mention():
-    deny("This command names a blocked script in a shape the guard cannot read with certainty (a quote across "
-         "lines, a backslash, `$`, a backtick, a process substitution, or an unusual heredoc). Put each command on "
-         "its own plain line, or write prose about the script into a file with `cat > file <<'EOF'`.")
+    deny("This command names a blocked script in a shape the guard cannot read with certainty (a quote that never "
+         "closes, a backslash, a backtick, a `$` form other than $name, ${name} or a flat $(...), a process "
+         "substitution, or an unusual heredoc). Put each command on its own plain line, or write prose about the "
+         "script into a file with `cat > file <<'EOF'`.")
+
+
+def _has_expansion(token):
+    return "$" in token or "`" in token
+
+
+def _dynamic_probes(seg):
+    """Deny a `$` the guard cannot resolve where the program, or a shell's script, would be named."""
+    prog, args = program_and_args(without_keywords(words(seg)))
+    script = None
+    if prog and os.path.basename(prog) in SHELLS | {"source", "."} and not any(
+            re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) for a in args):
+        script = next((a for a in args if not a.startswith("-")), None)
+    if prog and (_has_expansion(prog) or (script and _has_expansion(script))):
+        deny("A blocked script is named in this command, and a variable or positional parameter stands where "
+             "the program or the shell's script goes, so the guard cannot tell what runs. Write the program and "
+             "script out literally.")
 
 
 def check_blocked_script_mentions(command):
@@ -3992,12 +4167,16 @@ def check_blocked_script_mentions(command):
             return
         lines, i, cur_cwd = command.split("\n"), 0, GATE_CWD
         while i < len(lines):
-            plain = _plain_shell_line(lines[i])
-            if plain is None:
+            line, i = lines[i], i + 1
+            plain = _plain_shell_line(line)
+            while plain is OPEN_QUOTE and i < len(lines):
+                line, i = f"{line}\n{lines[i]}", i + 1
+                plain = _plain_shell_line(line)
+            if plain is None or plain is OPEN_QUOTE:
                 _deny_unplain_mention()
             text, heredoc = plain
-            i += 1
             for seg in segments(text[:heredoc.start()] if heredoc else text):
+                _dynamic_probes(seg)
                 check_segment(seg, cwd=cur_cwd)
                 prog, args = program_and_args(words(seg))
                 if prog in ("cd", "pushd") and args:
@@ -4018,7 +4197,7 @@ def check_blocked_script_mentions(command):
 
 
 def check_command(command):
-    command = report_command_text(command)
+    command = ansi_c_normalize(report_command_text(command))
     global CODE_COMMAND
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
@@ -4035,7 +4214,8 @@ def check_command(command):
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
-    check_blocked_script_mentions(RAW_COMMAND)
+    for raw in dict.fromkeys((RAW_COMMAND, ansi_c_normalize(RAW_COMMAND))):
+        check_blocked_script_mentions(raw)
     if INDIRECT:
         deny(INDIRECT[0])
 
