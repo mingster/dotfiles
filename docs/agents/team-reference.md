@@ -465,7 +465,10 @@ or new project key is a real edit and is refused (#1366, #1374). A new merged fi
 `MERGED_FILES` in `script/ship.sh`.
 A kept `.claude/hooks/guard-bash.py` and `.claude/hooks/tests/test_guard_bash.py` belong to the project, with one
 exception: a copy that equals an older template release is a stale stock copy, so sync rewrites it to the current
-template and `check` reports it (#1392). A copy no template release had is a customization and stays (#1179).
+template and `check` (also `check --pinned`, which reads releases from the dotfiles history up to the pin) reports
+it (#1392). A copy no template release had is a customization and stays (#1179). Both files are merged files in
+`ship.sh`: `--verdict-from` accepts a head that equals the sync result for the base file, and a project PR that
+edits them is an ordinary protected hook edit, not a generated copy.
 The script refuses unless the PR is open, mergeable, every required check is SUCCESS and the
 newest Verdict is PASS (carried across a rebase by `git patch-id`). It also refuses user
 only files (`.claude/hooks/`, `.claude/settings.json`, `bin/owner-approve.sh`, `*.rules`,

@@ -1071,6 +1071,50 @@ PY
   else
     bad "verdict lane refuses deletion of a generated copy check does not demand" "rc=$SHIP_RC out=$SHIP_OUT"
   fi
+
+  # A kept guard-bash.py and its test that equal an older template release follow the template (#1392).
+  # Release 2 of the fixture template adds a line to both; the project base still holds release 1.
+  "$MF_REAL_GIT" -C "$fx" checkout -q origin/main -- templates/agent-team
+  hk_guard=.claude/hooks/guard-bash.py hk_test=.claude/hooks/tests/test_guard_bash.py
+  for f in "$hk_guard" "$hk_test"; do printf '\n# release 2\n' >> "$fx/templates/agent-team/$f"; done
+  "$MF_REAL_GIT" -C "$fx" add templates/agent-team && "$MF_REAL_GIT" -C "$fx" commit -qm 'template release 2'
+  "$MF_REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
+  g checkout -q -B main "$seed_base"
+  mkdir -p "$MF_REPO/.claude/hooks/tests"
+  printf 'import runpy\nfrom pathlib import Path\n\nrunpy.run_path(str(Path(__file__).with_name("guard-bash.py")))\n' > "$MF_REPO/.claude/hooks/project-guard.py"
+  for f in "$hk_guard" "$hk_test"; do "$MF_REAL_GIT" -C "$fx" show "HEAD~1:templates/agent-team/$f" > "$MF_REPO/$f"; done
+  g add -A && g commit -qm stale-hooks-base && g push -q -f origin main
+  stale_base=$(g rev-parse HEAD)
+  g checkout -q -B feat-gen
+  DOTFILES="$fx" bash "$fx/script/agent-team.sh" sync "$MF_REPO" --project-name acme >/dev/null 2>&1
+  g add -A && g commit -qm stale-hooks-sync && g push -q -f origin feat-gen
+  stale_head=$(g rev-parse HEAD)
+  stale_files=$(g diff --name-only "$stale_base" "$stale_head" | jq -Rsc 'split("\n")[:-1]')
+  base_sha=$stale_base
+  mkpr 200 "$stale_head" "$stale_files" "Body"; set_checks 200 "$green_checks"
+  if jq -e --arg a "$hk_guard" --arg b "$hk_test" 'index($a) != null and index($b) != null' <<<"$stale_files" >/dev/null; then
+    vf "verdict-from accepts a stale guard-bash.py and test refreshed to the template" 0 "generated team copies"
+  else
+    bad "verdict-from accepts a stale guard-bash.py and test refreshed to the template" "fixture sync did not refresh them: $stale_files"
+  fi
+  g checkout -q -B feat-gen "$stale_head"
+  printf '\n# project rule\n' >> "$MF_REPO/$hk_guard"
+  g add -A && g commit -qm stale-hooks-edit && g push -q -f origin feat-gen
+  stale_edit=$(g rev-parse HEAD)
+  stale_edit_files=$(g diff --name-only "$stale_base" "$stale_edit" | jq -Rsc 'split("\n")[:-1]')
+  mkpr 200 "$stale_edit" "$stale_edit_files" "Body"; set_checks 200 "$green_checks"
+  vf "verdict-from refuses a guard-bash.py edited beyond the template" 1 "guard-bash.py is not"
+  # A project PR that customizes a kept guard-bash.py is not a hand edit of a generated copy (#1179).
+  g checkout -q -B feat-custom "$stale_base"
+  printf '\n# project rule\n' >> "$MF_REPO/$hk_guard"
+  g add -A && g commit -q -m "customize guard" -m "Owner-approved: owner 2026-11-11 (chat)"
+  custom_head=$(g rev-parse HEAD)
+  open_lane 214 "$stale_base" "$custom_head"
+  if grep -Fq "edits generated team copy" <<<"$SHIP_OUT"; then
+    bad "verdict lane does not treat a customized guard-bash.py as a generated copy" "rc=$SHIP_RC out=$SHIP_OUT"
+  else
+    ok "verdict lane does not treat a customized guard-bash.py as a generated copy"
+  fi
 } </dev/null
 
 # GitHub reports mergeable UNKNOWN until it has calculated the merge. ship.sh rereads, then refuses.

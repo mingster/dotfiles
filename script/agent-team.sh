@@ -1826,10 +1826,14 @@ _history_blobs = {}
 
 
 def template_history_blobs(rel):
+    # A dotfiles tree extracted from an archive (check --pinned, ship.sh) has no history, so those callers
+    # name the real repo and the commit the tree was cut at.
     if rel not in _history_blobs:
         blobs = set()
+        repo = os.environ.get("AGENT_TEAM_HISTORY_REPO") or dotfiles
+        rev = os.environ.get("AGENT_TEAM_HISTORY_REV") or "HEAD"
         res = subprocess.run(
-            ["git", "-C", dotfiles, "log", "--no-abbrev", "--raw", "--format=", "--", f"templates/agent-team/{rel}"],
+            ["git", "-C", repo, "log", "--no-abbrev", "--raw", "--format=", rev, "--", f"templates/agent-team/{rel}"],
             capture_output=True,
             text=True,
         )
@@ -1843,6 +1847,9 @@ def template_history_blobs(rel):
 
 def stale_template_copies():
     stale = []
+    # An unkept guard-bash.py is a shared copy that sync removes; its test goes with it.
+    if "guard-bash.py" not in kept_hooks():
+        return stale
     for rel in STALE_COPY_FILES:
         full = os.path.join(target, rel)
         src = os.path.join(template_dir, rel)
@@ -2530,7 +2537,10 @@ check_pinned() {
     echo "agent-team: cannot extract dotfiles at $pin" >&2
     return 2
   fi
-  DOTFILES="$tmp" bash "$tmp/script/agent-team.sh" check --project-only "$target" || rc=$?
+  # The archive has no history; the stale-copy check reads releases from this repo up to the pin.
+  # The repo is named before DOTFILES changes: assignments on one command line apply left to right.
+  AGENT_TEAM_HISTORY_REPO="$DOTFILES" AGENT_TEAM_HISTORY_REV="$pin" DOTFILES="$tmp" \
+    bash "$tmp/script/agent-team.sh" check --project-only "$target" || rc=$?
   rm -rf "$tmp"
   return "$rc"
 }

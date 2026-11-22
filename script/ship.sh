@@ -431,7 +431,7 @@ review_fail_blocks_merge() {
 is_generated_copy() { # <path>
   local skill_names=$2
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md|.claude/hooks/guard-bash.py|.claude/hooks/tests/test_guard_bash.py)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       return 0 ;;
   esac
   [[ "$1" =~ ^\.(agents|claude|cursor)/skills/([^/]+)(/|$) ]] && grep -Fxq -- "${BASH_REMATCH[2]}" <<<"$skill_names"
@@ -439,7 +439,7 @@ is_generated_copy() { # <path>
 # Template path relative to templates/agent-team for a generated copy. Same files agent-team.sh syncs.
 template_rel_for() { # <path>
   case "$1" in
-    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md|.claude/hooks/guard-bash.py|.claude/hooks/tests/test_guard_bash.py)
+    .claude/model-routing.md|docs/agents/team.md|docs/agents/elon-dispatch.md|docs/agents/release-manager-work.md|bin/changelog-compile.sh|bin/changelog-compile.test.sh|bin/check-commit-trailers.sh|.githooks/commit-msg|changelog.d/README.md)
       printf '%s\n' "$1" ;;
     .agents/skills/*)
       printf '%s\n' "$1" ;;
@@ -540,7 +540,8 @@ PY
 # recompiled): not a byte render. They count as generated only when the head equals what `agent-team.sh sync`
 # produces from the BASE file at the render ref (#1374). A changed, removed or new project key is a real edit
 # and is refused. Adding a file here is the only change a new merged file needs.
-MERGED_FILES=(.claude/hooks/guard-config.json .claude/settings.json)
+# A kept guard-bash.py and its test follow the template only while they equal an older release (#1392).
+MERGED_FILES=(.claude/hooks/guard-config.json .claude/settings.json .claude/hooks/guard-bash.py .claude/hooks/tests/test_guard_bash.py)
 is_merged_file() { # <path>
   local m
   for m in "${MERGED_FILES[@]}"; do [ "$m" = "$1" ] && return 0; done
@@ -564,7 +565,8 @@ merge_expected_prepare() {
     rm -rf "$dot" "$merge_expected_dir"; merge_expected_dir="" merge_expected_failed=1; return 0
   fi
   git -C "$merge_expected_dir" init -q 2>/dev/null || true
-  if ! (export DOTFILES="$dot"; bash "$dot/script/agent-team.sh" sync "$merge_expected_dir" --project-name "$name" >/dev/null 2>&1); then
+  # The archive has no history; the stale-copy check reads releases from the real repo up to the render ref.
+  if ! (export DOTFILES="$dot" AGENT_TEAM_HISTORY_REPO="$dotfiles_root" AGENT_TEAM_HISTORY_REV="$render_ref"; bash "$dot/script/agent-team.sh" sync "$merge_expected_dir" --project-name "$name" >/dev/null 2>&1); then
     merge_expected_failed=1
   fi
   rm -rf "$dot"

@@ -71,5 +71,30 @@ cmp -s "$TMP/custom-guard" "$P2/$GUARD" && ok "a customized guard-bash.py stays"
 run check "$P2"
 grep -q "stale template copy" "$TMP/out" && bad "check does not flag a customized copy" || ok "check does not flag a customized copy"
 
+# 3. check --pinned reads an archive of dotfiles with no history, and still reports the stale copies.
+P3="$TMP/pinned"
+mkproj "$P3"
+cp "$TMP/old/$GUARD" "$P3/$GUARD"
+cp "$TMP/old/$TEST" "$P3/$TEST"
+mkdir -p "$P3/.claude"
+git -C "$DF" rev-parse HEAD >"$P3/.claude/agent-team-pin"
+run check --pinned "$P3"
+grep -qF "kept hook file is a stale template copy: $GUARD" "$TMP/out" \
+  && ok "check --pinned reports a stale copy" || { bad "check --pinned reports a stale copy"; cat "$TMP/out"; }
+
+# 4. An unkept guard-bash.py is a shared copy sync removes: one drift line, one planned action.
+P4="$TMP/unkept"
+mkdir -p "$P4/.claude/hooks/tests"
+printf '# Proj\n' >"$P4/AGENTS.md"
+git -C "$P4" init -q -b main
+git -C "$P4" remote add origin https://github.com/example-org/proj.git
+cp "$TMP/old/$GUARD" "$P4/$GUARD"
+run check "$P4"
+grep -qF "shared hook copy or link in project: $GUARD" "$TMP/out" && ! grep -q "stale template copy" "$TMP/out" \
+  && ok "check reports an unkept guard-bash.py once" || { bad "check reports an unkept guard-bash.py once"; cat "$TMP/out"; }
+run sync "$P4" --dry-run
+grep -qF "would remove $GUARD" "$TMP/out" && ! grep -qF "would update $GUARD" "$TMP/out" \
+  && ok "dry run plans only the removal of an unkept guard-bash.py" || { bad "dry run plans only the removal of an unkept guard-bash.py"; cat "$TMP/out"; }
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
