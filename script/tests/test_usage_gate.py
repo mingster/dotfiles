@@ -352,17 +352,17 @@ class Readers(unittest.TestCase):
             self.assertIsNone(ug.claude_reading(t + "/missing.json"))
 
 
-def orca_accounts(active_pct, others=(), managed=True, active_id="aaaaaaaa-1"):
+def orca_accounts(active_pct, others=(), managed=True, active_id="aaaaaaaa-1", active_status="ok", other_status="ok"):
     """An `orca account list --json` receipt with a Claude weekly reading per account."""
-    week = lambda pct: {"weekly": {"usedPercent": pct, "resetsAt": int(FUT * 1000)}}
+    week = lambda pct, status="ok": {"weekly": {"usedPercent": pct, "resetsAt": int(FUT * 1000)}, "status": status}
     return json.dumps({"ok": True, "result": {
         "claude": {"accounts": [{"id": active_id}] if managed else [], "activeAccountId": active_id},
-        "rateLimits": {"claude": {**week(active_pct), "updatedAt": int(NOW * 1000)},
-                       "inactiveClaudeAccounts": [{"accountId": i, "rateLimits": week(p)} for i, p in others]}}})
+        "rateLimits": {"claude": {**week(active_pct, active_status), "updatedAt": int(NOW * 1000)},
+                       "inactiveClaudeAccounts": [{"accountId": i, "rateLimits": week(p, other_status)} for i, p in others]}}})
 
 
 class OrcaAccounts(unittest.TestCase):
-    """Issue 1103: the Claude reading follows the Orca active account, and a full one switches."""
+    """Issue 1103: the Claude reading follows the Orca active account. Issue 1529: it switches only when that account has run out."""
     def gate(self, listing, select_code=0):
         calls = []
 
@@ -385,23 +385,74 @@ class OrcaAccounts(unittest.TestCase):
     def test_no_managed_accounts_keeps_the_old_reading(self):
         self.gate(orca_accounts(99, managed=False))
         self.assertIsNone(ug.claude_reading())
-        self.assertIsNone(ug.claude_switch(95))
+        self.assertIsNone(ug.claude_switch())
 
     def test_reading_is_the_active_account(self):
         self.gate(orca_accounts(42, [("bbbbbbbb-2", 5)]))
         self.assertEqual(ug.claude_reading()["pct"], 42)
 
-    def test_active_full_and_other_free_switches(self):
+    def test_active_at_97_percent_does_not_switch(self):
         calls = self.gate(orca_accounts(97, [("bbbbbbbb-2", 10)]))
+        result = ug.run("claude", 100, 95, now=NOW)
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+        self.assertEqual((result["verdict"], result["weekly_used"]), ("blocked", 97))
+
+    def test_active_at_100_percent_switches_to_an_account_not_run_out(self):
+        calls = self.gate(orca_accounts(100, [("bbbbbbbb-2", 100), ("cccccccc-3", 30), ("dddddddd-4", 10)]))
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             result = ug.run("claude", 100, 95, now=NOW)
-        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "bbbbbbbb-2"], calls)
+        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "dddddddd-4"], calls)
         self.assertEqual((result["verdict"], result["weekly_used"]), ("allowed", 10))
-        self.assertIn("aaaaaaaa at 97%", err.getvalue())
-        self.assertIn("bbbbbbbb at 10%", err.getvalue())
+        self.assertIn("aaaaaaaa ran out", err.getvalue())
 
-    def test_both_full_is_blocked_without_switching(self):
+    def test_active_rate_limited_below_100_switches(self):
+        calls = self.gate(orca_accounts(60, [("bbbbbbbb-2", 10)], active_status="rate_limited"))
+        with contextlib.redirect_stderr(io.StringIO()):
+            ug.run("claude", 100, 95, now=NOW)
+        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "bbbbbbbb-2"], calls)
+
+    def test_rate_limited_other_account_is_not_picked(self):
+        calls = self.gate(orca_accounts(100, [("bbbbbbbb-2", 10)], other_status="rate_limited"))
+        ug.run("claude", 100, 95, now=NOW)
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+
+    def blocked_without_select(self, calls):
+        result = ug.run("claude", 100, 95, now=NOW)
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+
+    def test_active_rate_limited_below_ceiling_blocks_when_others_ran_out(self):
+        self.blocked_without_select(self.gate(orca_accounts(60, [("bbbbbbbb-2", 100)], active_status="rate_limited")))
+
+    def test_active_and_other_rate_limited_below_ceiling_block(self):
+        self.blocked_without_select(self.gate(orca_accounts(
+            60, [("bbbbbbbb-2", 10)], active_status="rate_limited", other_status="rate_limited")))
+
+    def test_active_rate_limited_without_percent_blocks_despite_cached_reading(self):
+        self.gate(orca_accounts(50, [("bbbbbbbb-2", 100)]))
+        ug.claude_reading()  # caches the 50% reading
+        limited = json.loads(orca_accounts(50, [("bbbbbbbb-2", 100)], active_status="rate_limited"))
+        del limited["result"]["rateLimits"]["claude"]["weekly"]["usedPercent"]
+        calls = self.gate(json.dumps(limited))
+        self.blocked_without_select(calls)
+
+    def test_active_rate_limited_without_percent_or_cache_blocks(self):
+        limited = json.loads(orca_accounts(50, [("bbbbbbbb-2", 100)], active_status="rate_limited"))
+        del limited["result"]["rateLimits"]["claude"]["weekly"]["usedPercent"]
+        self.blocked_without_select(self.gate(json.dumps(limited)))
+
+    def test_combined_headroom_skips_rate_limited_accounts(self):
+        self.gate(orca_accounts(60, [("bbbbbbbb-2", 10)], active_status="rate_limited", other_status="rate_limited"))
+        self.assertEqual(ug.claude_combined(95, 0.0, NOW)["headroom"], 0.0)
+
+    def test_every_account_run_out_does_not_switch(self):
+        calls = self.gate(orca_accounts(100, [("bbbbbbbb-2", 100)]))
+        result = ug.run("claude", 100, 95, now=NOW)
+        self.assertEqual(result["verdict"], "blocked")
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+
+    def test_both_over_the_ceiling_but_not_run_out_is_blocked_without_switching(self):
         calls = self.gate(orca_accounts(97, [("bbbbbbbb-2", 96)]))
         result = ug.run("claude", 100, 95, now=NOW)
         self.assertEqual(result["verdict"], "blocked")
@@ -410,7 +461,7 @@ class OrcaAccounts(unittest.TestCase):
     def test_orca_call_fails_keeps_the_old_reading(self):
         calls = self.gate(OSError("no orca"))
         self.assertIsNone(ug.claude_reading())
-        self.assertIsNone(ug.claude_switch(95))
+        self.assertIsNone(ug.claude_switch())
         self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
 
 
@@ -586,12 +637,12 @@ class ClaudeWeekly1275(OrcaAccounts):
         result = ug.run("claude", None, 95, now=NOW)
         self.assertEqual(result["headroom"], 88.0)  # 90 minus two workers at 1 point
 
-    def test_active_account_near_the_ceiling_switches_before_blocking(self):
+    def test_active_account_near_the_ceiling_blocks_without_switching(self):
         calls = self.gate(orca_accounts(94, [("bbbbbbbb-2", 10)]))
-        with mock.patch.object(ug, "live_workers", return_value=rows(2)), contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(ug, "live_workers", return_value=rows(2)):
             result = ug.run("claude", None, 95, now=NOW)
-        self.assertIn(["orca", "account", "select", "--agent", "claude", "--account", "bbbbbbbb-2"], calls)
-        self.assertEqual(result["verdict"], "allowed")
+        self.assertFalse([c for c in calls if c[1:3] == ["account", "select"]])
+        self.assertEqual(result["verdict"], "blocked")
 
     def test_every_account_full_blocks_with_no_headroom(self):
         self.gate(orca_accounts(96, [("bbbbbbbb-2", 97)]))

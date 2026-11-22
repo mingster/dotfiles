@@ -1,0 +1,1 @@
+- usage-gate switches the Claude account only when the active one has run out (weekly 100% or rate limited), never at the ceiling (#1529).
