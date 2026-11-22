@@ -3,6 +3,9 @@
 # The passphrase is typed at a hidden prompt (or read from stdin when it is not a terminal).
 # It is never an argument, never in the environment and never logged.
 #
+# The target must be new or an empty folder: a folder that already holds files is refused, so nothing is
+# merged or overwritten. Only a folder this script creates is set to 700.
+#
 # Usage: secrets-unpack.sh <image.dmg> <target-dir>
 set -euo pipefail
 
@@ -13,6 +16,10 @@ if [ -z "$img" ] || [ -z "$dest" ]; then
   exit 2
 fi
 [ -f "$img" ] || { echo "no such image: $img" >&2; exit 1; }
+if [ -e "$dest" ] && { [ ! -d "$dest" ] || [ -n "$(ls -A "$dest")" ]; }; then
+  echo "refusing to unpack into $dest: it exists and is not an empty folder" >&2
+  exit 1
+fi
 
 if [ -t 0 ]; then
   read -rsp "Passphrase: " pass; echo >&2
@@ -36,7 +43,8 @@ unset pass
 attached=1
 
 umask 077
-mkdir -p "$dest"
+created=0
+if [ ! -e "$dest" ]; then mkdir -p "$dest"; created=1; fi
 rsync -a --exclude '.fseventsd' --exclude '.Spotlight-V100' --exclude '.Trashes' "$mp/" "$dest/"
-chmod 700 "$dest"
+if [ "$created" = 1 ]; then chmod 700 "$dest"; fi
 echo "unpacked to $dest"

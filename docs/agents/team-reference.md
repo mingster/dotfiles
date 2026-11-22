@@ -270,7 +270,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/fleet-workers.py` | Counts live, in progress dispatched workers across local and remote fleet environments. |
 | `script/count-agents.sh` | Counts active coding agent CLI processes (`claude`, `agent`/`cursor-agent`, `agy`, `gemini`) from a process snapshot. |
 | `script/secrets-pack.sh` | Packs local secrets into an AES-256 encrypted `hdiutil` disk image for transfer between Macs. |
-| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. |
+| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. Refuses a target that exists and is not an empty folder. |
 | `script/secrets-sync.sh` | Syncs the shared secrets directory across reachable fleet hosts. |
 | `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-refs.sh` | The root owned gate to the credential folder, the owner's once per host setup, and the file:line search that never prints text. Read `docs/agents/credential-folder.md` before changing any of them. |
 
