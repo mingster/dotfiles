@@ -36,7 +36,7 @@ Tier 2 skills are kept out of `~/dotfiles/.agents/skills/` so they do not load i
 ## Orca owns `orchestration`; dotfiles owns `orca-team`
 
 * Orca ADE installs and updates its official `orchestration` skill into `~/.agents/skills/orchestration` and `~/.claude/skills/orchestration` via `orca skills install --all`. Dotfiles ignores `.agents/skills/orchestration/` in `.gitignore` so git never shadows Orca's copy.
-* Our coordinator and pane extensions live in `.agents/skills/orca-team/`: the coordinator rules, colored worker panes (`worker-panes.sh`, `worker-pane.sh`, `role-colors.tsv`), pane cleanup and retry (`worker-pane-close.sh`, `worker-pane-retry.sh`), stall detection (`worker-watch.sh`), and the usage-gated launcher (`worker-start-check.sh`).
+* Our coordinator and pane extensions live in `.agents/skills/orca-team/`: the coordinator rules, colored worker panes (`worker-panes.sh`, `worker-pane.sh`, `role-colors.tsv`), pane cleanup (`worker-pane-close.sh`, plus `worker-pane-retry.sh`, the sourced close and verify loop that `worker-pane.sh` and `worker-pane-close.sh` share), stall detection (`worker-watch.sh`), and the usage-gated launcher (`worker-start-check.sh`).
 * Keep `orca-team` out of `.agents/.skill-lock.json`; `script/team-audit.sh` verifies both the lock exclusion and the presence of all `orca-team` helpers.
 * Run `bash script/setup-agent-skills.sh` to create real `~/.agents/skills` and `~/.claude/skills` directories, preserve non-dotfiles skills, link tracked Tier 1 skills, and run `orca skills install --all`. Run `script/check-skill-collisions.sh` to detect shadowed skills or broken links.
 
