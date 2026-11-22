@@ -1,6 +1,6 @@
 # Orca fleet automations
 
-Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each scheduled job runs only a precheck shell command, which never exits 0, so no agent session starts. The automation prompt tells an agent to run that same command once, so a manual "Run now" (which skips the precheck) still does the job and replies with its result line. `wrap-up-scheduled` installs **enabled** (`*/10 * * * *`) on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` schedule (such as `0 */2 * * *`) or a disabled entry. `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` keep whatever enabled state the owner set (a new entry starts disabled), so a reinstall never turns them off or on. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and worktree cleanup there stays manual.
+Dotfiles ships `script/install-fleet-automations.sh` to register recurring jobs as Orca automations. Each scheduled job runs only a precheck shell command, which never exits 0, so no agent session starts. The automation prompt tells an agent to run that same command once, so a manual "Run now" (which skips the precheck) still does the job and replies with its result line. `wrap-up-scheduled` (`*/10 * * * *`) and `wrap-up-daily` (`0 4 * * *`) install **enabled** on every host that runs Orca, while `fleet-watch` and the other coordinator jobs install **enabled** only on the host named in private `agent-state/coordinator.conf` and **disabled** (paused) on other Orca hosts. Re-running `--install` fixes a stale `wrap-up-scheduled` or `wrap-up-daily` schedule (such as `0 */2 * * *`) or a disabled entry. `sync-team-skills-drift`, `team-audit-weekly` and `weekly-update` keep whatever enabled state the owner set (a new entry starts disabled), so a reinstall never turns them off or on. Hosts without the Orca app (such as the headless database host) are skipped with a clear message and exit 0, and worktree cleanup there stays manual.
 
 Private paths, timezone, and optional `WRAP_UP_ISSUE_REPO` live in `~/.config/fleet-watch/automations.env` (see `script/fleet-watch.automations.env.example`). The installer passes `WRAP_UP_ISSUE_REPO` to `wrap-up-scheduled`. It defaults to the private `mingster/agent-state`, and `automations.env` can override it. The `fleet-watch` precheck passes `--config` for `~/.claude/state/fleet-watch-elon.json` unless `FLEET_WATCH_CONFIG` is set. That file holds the hand-kept keys (`repo_roots`, `host_caps`, and the per-host monitor paths). The host-caps file `~/.config/fleet-watch/config.json` is not the scheduled config. wrap-up opens no issue on a public repo. Project roots for drift and audit checks come from the untracked `script/team-audit.local.conf` on the coordinator, one absolute path per line. The installer resolves the dotfiles checkout to a canonical path for Orca `--repo` (symlinked `~/dotfiles` included).
 
@@ -32,6 +32,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 |------|-----------------|---------------|------------------------|----------------------|-------|
 | `fleet-watch` | `*/5 * * * *` | Coordinator only | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
 | `wrap-up-scheduled` | `*/10 * * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --scheduled` (per repo and round budget inside `WRAP_UP_PRECHECK_TIMEOUT`, round lock, `WRAP_UP_ISSUE_REPO` when set) | `~/.orca/logs/wrap-up-scheduled.log`; detail in `wrap-up-scheduled-detail.log` | Same |
+| `wrap-up-daily` | `0 4 * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --daily`: the strict worktree cleanup per repo, build caches, old logs, `brew cleanup -s`, `bun pm cache rm`, free space before and after (see "Daily disk cleanup") | `~/.orca/logs/wrap-up-daily.log` (override `WRAP_UP_DAILY_LOG`); detail in `wrap-up-daily-detail.log` | Same |
 | `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh`, which runs `script/agent-team.sh check <project>` for each project root | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
 | `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh`: `script/team-audit.sh` (which calls `agent-team.sh check` per project) with `TEAM_AUDIT_RUN_METRICS=1`, so `script/team-audit-metrics.ts --repo <owner/name>` runs for each project's origin repo | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the user asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
@@ -64,6 +65,21 @@ open, and so do the coordinator, a lead worktree, and any shell in a live dispat
 manual run keeps those shells too. Fetch, PR lookup, worker release, remote
 branch checks, temp cleanup, the pane sweep, and the main update each have their own short time limit,
 and terminal close runs before those steps.
+
+## Daily disk cleanup
+
+`script/wrap-up.sh --daily [--dry-run|--apply]` is one round of the same machinery, once a day at 04:00 on every Orca host (issue #1533). It takes its own lock, log, detail log and failure streak (`wrap-up-daily.*`), so it never blocks or counts against the 10 minute round. A dry run prints everything it would delete and removes nothing: run `~/dotfiles/script/wrap-up.sh --daily --dry-run` on any host. The default with no flag is `--apply`, like `--scheduled`.
+
+What a round does, in order:
+
+1. Logs the free space of the home volume before.
+2. For each Orca git repo, runs `wrap-up.sh --apply` in a stricter mode. It reuses the existing guards, so a worktree stays when it has uncommitted work (other than screenshot dirt), commits no remote holds, an open PR, a live or unknown Orca terminal, a running process, a pin, an open board card, or any change in the last 3 hours (`WRAP_UP_DAILY_RECENT_MIN`, default 180; the 10 minute round uses 30 and archives a dirty worktree instead of keeping it). It removes finished worktrees (a merged branch, a PR merged at the worktree head, or a closed PR whose commits a remote still holds) and deletes merged or closed local branches.
+3. Deletes `.next` and `node_modules/.cache` (top level and one level down) in every worktree it kept, unless a process uses it.
+4. Deletes logs: files older than 7 days (`WRAP_UP_DAILY_LOG_DAYS`) among `~/Library/Logs` (`*.log`, `*.log.*`, `*.ips`), rotated `~/.orca/logs/*.log.N`, and untracked `*.log` under agent-state; and any `*.log` over 100 MB (`WRAP_UP_DAILY_BIG_LOG_KB`) under `~/orca/workspaces` that nothing wrote in the last 3 hours. A live Orca log, a tracked file and a symlink are never touched.
+5. Runs `brew cleanup -s` and `bun pm cache rm` when the tool is installed (each at most 120 s).
+6. Logs the free space after. The round line reads `round ok: repos=2 seconds=40 logs=3 (1.2G) free 152.0G->162.0G`.
+
+A worktree whose PR was squash merged used to stay for ever: its head is on no remote branch and not an ancestor of main, so the last copy guard kept it. A merged PR that ended at exactly the worktree's head (and has no open PR on that branch) now counts as published. This applies to the 10 minute round too. Commits made after the merge still keep the worktree, and so does a closed PR that was never merged.
 
 Install on a host:
 
@@ -110,6 +126,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 |--------|----------|--------|
 | `script/fleet-watch.py` | Yes (as `fleet-watch`) | Five minute watchdog; append-only private state and logs; coordinator already enabled elsewhere |
 | `script/wrap-up.sh --scheduled` | Yes (as `wrap-up-scheduled`) | Enabled on every Orca host (headless host stays manual); bounded cleanup round inside `WRAP_UP_PRECHECK_TIMEOUT`, logs skipped repos and optional issue body |
+| `script/wrap-up.sh --daily` | Yes (as `wrap-up-daily`) | Enabled on every Orca host; once a day it frees disk the 10 minute round leaves alone (#1533) |
 | `script/agent-team.sh check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |
 | `script/team-audit.sh`, `script/team-audit-metrics.ts` | Yes (as `team-audit-weekly`) | Report-only weekly line; metrics skipped when `bun` is missing |
 | `script/weekly-update.sh` | Yes (as `weekly-update`) | Monday precheck opens tested upstream PRs and a summary; they merge on green checks and a Verdict |

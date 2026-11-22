@@ -26,19 +26,35 @@ checked=0 problems=0
 looks_like_trailer='^(owner-approved|co-authored-by|refs|closes):'
 
 check_message() { # <source>; message on stdin
-  local source=$1 raw parsed n=0 line low
-  raw=$(cat)
+  local source=$1 raw parsed n=0 line low para=0 last=-1 i p gap=0
+  local -a nums=() paras=() texts=() mixed=()
+  raw=$(tr -d '\r')
   parsed=$(grep -v '^#' <<<"$raw" | git interpret-trailers --parse)
   checked=$((checked + 1))
+  # Split into paragraphs; a comment line is not part of the message.
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     [ "${line:0:1}" = "#" ] && continue
+    if [ -z "${line//[[:space:]]/}" ]; then gap=1; continue; fi
+    [ "$gap" -eq 1 ] && para=$((para + 1)); gap=0
+    nums+=("$n"); paras+=("$para"); texts+=("$line"); last=$para
+    low=$(tr '[:upper:]' '[:lower:]' <<<"$line")
+    [[ "$low" =~ $looks_like_trailer ]] || mixed[para]=1
+  done <<<"$raw"
+  [ "$last" -ge 0 ] || return 0
+  # Only the last paragraph, and the paragraphs right before it that hold nothing but trailer lines, are
+  # trailer territory. A prose paragraph that happens to start with 'Closes:' earlier in the body is not.
+  p=$last
+  while [ "$p" -gt 0 ] && [ -z "${mixed[$((p - 1))]:-}" ] ; do p=$((p - 1)); done
+  for i in "${!texts[@]}"; do
+    [ "${paras[$i]}" -ge "$p" ] || continue
+    line=${texts[$i]}
     low=$(tr '[:upper:]' '[:lower:]' <<<"$line")
     [[ "$low" =~ $looks_like_trailer ]] || continue
     grep -qxF -- "$line" <<<"$parsed" && continue
-    echo "$source:$n: not a git trailer (it must sit in the last paragraph, with no blank line before the next trailer); git does not parse it" >&2
+    echo "$source:${nums[$i]}: not a git trailer (it must sit in the last paragraph, with no blank line before the next trailer); git does not parse it" >&2
     problems=$((problems + 1))
-  done <<<"$raw"
+  done
 }
 
 if [ -n "$commits" ]; then

@@ -11,8 +11,8 @@ ab=$(git rev-list --left-right --count "origin/$b...HEAD" 2>/dev/null | awk '{pr
 echo "branch: $b | uncommitted files: $dirty | ${ab:-no upstream}"
 echo "worktrees: $(git worktree list 2>/dev/null | wc -l | tr -d ' ')"
 if command -v gh >/dev/null 2>&1; then
-  echo "open hotfix issues:"
-  gh issue list --label hotfix --state open --limit 10 --json number,title --jq '.[] | "  #\(.number) \(.title)"' 2>/dev/null || echo "  (gh unavailable)"
+  echo "open P0 issues:"
+  gh issue list --label P0 --state open --limit 10 --json number,title --jq '.[] | "  #\(.number) \(.title)"' 2>/dev/null || echo "  (gh unavailable)"
   echo "open PRs:"
   gh pr list --state open --limit 15 --json number,title,headRefName,isDraft,reviewDecision --jq '.[] | "  #\(.number) \(.title) [\(.headRefName)]\(if .isDraft then " draft" else "" end) \(if (.reviewDecision // "") == "" then "no review" else .reviewDecision end)"' 2>/dev/null || echo "  (gh unavailable)"
 fi
