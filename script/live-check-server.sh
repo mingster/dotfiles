@@ -193,6 +193,7 @@ is_remote_host() {
 }
 
 if is_remote_host; then
+  # shellcheck disable=SC2088 # literal ~ on purpose: the remote shell expands it
   remote_cmd=("~/dotfiles/script/live-check-server.sh" "--host" "local")
   [ -z "$repo_key" ] || remote_cmd+=("--repo" "$repo_key")
   [ -z "$dir" ] || remote_cmd+=("--dir" "$dir")
@@ -213,6 +214,7 @@ if is_remote_host; then
   fi
   quoted=""
   for arg in "${remote_cmd[@]}"; do
+    # shellcheck disable=SC2088 # literal ~ on purpose: matches the unexpanded remote command
     if [ "$arg" = "~/dotfiles/script/live-check-server.sh" ]; then
       quoted="\$HOME/dotfiles/script/live-check-server.sh"
     else
@@ -312,7 +314,7 @@ stop_recorded_server() {
 }
 
 resolve_target_sha() {
-  [ -n "$dir" ] && [ -d "$dir/.git" -o -f "$dir/.git" ] || die "--dir must point to a git checkout (got: ${dir:-<empty>})"
+  [ -n "$dir" ] && { [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; } || die "--dir must point to a git checkout (got: ${dir:-<empty>})"
   if git -C "$dir" remote get-url origin >/dev/null 2>&1; then
     git -C "$dir" fetch -q origin main 2>/dev/null || true
   fi

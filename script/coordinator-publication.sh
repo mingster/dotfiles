@@ -125,7 +125,7 @@ receipt_scalar_ok() {
 
 read_receipt_file() {
   rec_repo="" rec_branch="" rec_head_sha="" rec_push_ok="" rec_pr_url="" rec_pr_number=""
-  local line key val seen_repo=0 seen_branch=0 seen_head=0 seen_push=0 seen_purl=0 seen_pnum=0
+  local line val seen_repo=0 seen_branch=0 seen_head=0 seen_push=0 seen_purl=0 seen_pnum=0
   [ -f "$receipt" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     [ -n "$line" ] || continue
@@ -464,7 +464,7 @@ open_pr() {
       return 0
     fi
   fi
-  local pr_attempt=0 t
+  local pr_attempt=0
   [ -n "$title" ] || title="$branch"
   pr_attempt=0
   while [ "$pr_attempt" -lt "$max_attempts" ]; do

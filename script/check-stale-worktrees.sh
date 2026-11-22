@@ -84,7 +84,9 @@ reachable_or_merged() {
   [ "${s:-0}" -gt 0 ]
 }
 
+# shellcheck disable=SC1007 # empty assignments on purpose (reset to empty)
 wt= whead= wbranch= wdetached= wprunable=
+# shellcheck disable=SC1007 # empty assignments on purpose (reset to empty)
 while IFS= read -r line; do
   case "$line" in
     "worktree "*) flush; wt=${line#worktree }; whead= wbranch= wdetached= wprunable= ;;

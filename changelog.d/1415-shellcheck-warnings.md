@@ -1,0 +1,1 @@
+shellcheck: the warning level findings in `live-check-server.sh`, `weekly-update.sh`, `wrap-up.sh`, `worker-startup.sh`, `coordinator-publication.sh`, `check-stale-worktrees.sh` and `secrets-gate.sh` are cleared, with no behaviour change (#1415).

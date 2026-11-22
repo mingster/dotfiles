@@ -29,11 +29,9 @@ case "${1:-}" in
   *) echo "weekly-update: unknown flag $1" >&2; exit 2 ;;
 esac
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MP_REPO="${MP_REPO:-https://github.com/mattpocock/skills}"
 PLUGINS_REPO="${PLUGINS_REPO:-https://github.com/cursor/plugins}"
 PSTACK_STATE="$DOTFILES/script/.pstack-template-upstream"
-TEMPLATE_SKILLS="$DOTFILES/templates/agent-team/.agents/skills"
 BASE_BRANCH="${WEEKLY_UPDATE_BASE:-main}"
 DATE_TAG="$(date '+%Y%m%d')"
 PROJECTS_CONF="$DOTFILES/script/weekly-update.projects.conf"
@@ -180,6 +178,7 @@ apply_mattpocock() {
     return 0
   fi
   local log
+  # shellcheck disable=SC2097,SC2098 # intentional: pass the values to the child env
   log=$(MP_REPO="$MP_REPO" DOTFILES="$DOTFILES" "$DOTFILES/script/sync-mattpocock-skills.sh") || return 1
   printf '%s\n' "$log"
 }
@@ -188,6 +187,7 @@ apply_pstack() {
   [ "${WEEKLY_UPDATE_SKIP_APPLY:-0}" = 1 ] && return 0
   [ "$DRY" -eq 1 ] && return 0
   local log
+  # shellcheck disable=SC2097,SC2098 # intentional: pass the values to the child env
   log=$(DOTFILES="$DOTFILES" PLUGINS_REPO="$PLUGINS_REPO" \
     "$DOTFILES/script/sync-pstack-template-skills.sh") || return 1
   printf '%s\n' "$log"
@@ -202,6 +202,7 @@ write_skill_impact() {
   esac
   [ "$DRY" -eq 1 ] && return 0
   [ "${WEEKLY_UPDATE_SKIP_APPLY:-0}" = 1 ] && return 0
+  # shellcheck disable=SC2097,SC2098 # intentional: pass the values to the child env
   DATE_TAG="$DATE_TAG" DOTFILES="$DOTFILES" WEEKLY_SKILL_IMPACT_SLICE="$id" \
     bash "$DOTFILES/script/weekly-skill-impact.sh"
 }
@@ -364,7 +365,8 @@ stage_slice_changes() {
 }
 
 run_slice() {
-  local id="$1" title="$2" branch status url= body slice_ok=0
+  # shellcheck disable=SC1007 # empty assignment on purpose
+  local id="$1" title="$2" branch url= body slice_ok=0
   branch=$(branch_for "$id")
   body=$(mktemp)
   if [ "$DRY" -eq 1 ]; then

@@ -407,7 +407,7 @@ host_check() {
 # The fixed Finish steps are not the author's to write (#968). A brief with no "## Finish" heading gets the
 # standard block appended in a copy; the original is untouched. Prints the spec path to use.
 with_finish_block() { # <spec_file> <run_id> <agent> <model>
-  local spec_file=$1 run_id=$2 agent=${3:-} model=${4:-} out
+  local spec_file=$1 agent=${3:-} model=${4:-} out
   local builder_line=""
   if [ -n "$agent" ] && [ -n "$model" ]; then
     builder_line="Builder: agent=$agent model=$model"

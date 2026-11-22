@@ -42,6 +42,7 @@ stat_of() { stat -c '%u %a' -- "$1" 2>/dev/null || stat -f '%u %Lp' -- "$1" 2>/d
 # group or other write bit, except a sticky parent whose child is owned by the trusted uid. A parent the owner
 # account can write would let a worker swap the folder for a link after the check.
 path_trusted() {
+  # shellcheck disable=SC1007 # empty assignment on purpose
   local p=$1 cur= c ids uid mode
   case $p in /?*) ;; *) echo "not an absolute path"; return 1 ;; esac
   case "$p/" in */../*|*/./*|*//*) echo "has a dot, dot dot or double slash"; return 1 ;; esac
@@ -85,6 +86,7 @@ if [ "${1:-}" = check-path ]; then
 fi
 
 [ -f "$conf" ] || fail "no config at $conf"
+# shellcheck disable=SC1007 # empty assignments on purpose (reset to empty)
 DIR= HOSTS= DEPLOY=
 while IFS='=' read -r k v; do
   case $k in DIR|HOSTS|DEPLOY) printf -v "$k" '%s' "$v" ;; esac
