@@ -1,0 +1,1 @@
+- check-skill-refs.sh no longer flags a web route or path as an unknown skill. A name counts only right after run/use/invoke/type or right before "skill" (#1546).

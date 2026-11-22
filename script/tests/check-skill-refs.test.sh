@@ -72,6 +72,10 @@ check && ok "built in commands, URL paths, file paths and real skills pass" || b
 
 printf '%s\n' "sed -i 's/A = \"1\"/A = \"0\"/g' x" 'Context: /subtask and /fork.' 'Routes: /account, /api, /root and /snap.' 'Open /qr-generator in the browser.' >"$P/docs/notes.md"
 check && ok "/subtask, sed /g and web routes pass" || bad "false positive: $(cat "$TMP/check.log")"
+printf '%s\n' 'Keep it in `/shop`, and use the page at `/contact` or /liff on the site.' 'Skills live in `/srv/app` and the route /shop/[storeId] and https://x/unv.' 'Use the /order page when you run the app, then /about.' >"$P/docs/notes.md"
+check && ok "a route in a skill or run sentence, not named as the command, passes (#1546)" || bad "route flagged: $(cat "$TMP/check.log")"
+printf 'Run /nonesuch now, or run `/other`, or use /third, or the /fourth skill.\n' >"$P/docs/notes.md"
+check; n=$(grep -c 'names no skill' "$TMP/check.log"); [ "$n" -eq 4 ] && ok "an unknown name right after run/use, or before skill, is still reported" || bad "expected 4 unknown names, got $n"
 printf 'Run /staging-review now.\n' >"$P/docs/notes.md"
 check || ok "a run-context unknown name still fails"
 
