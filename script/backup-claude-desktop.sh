@@ -24,8 +24,11 @@ if [ ! -f "$SRC" ]; then
   exit 1
 fi
 
-python3 - <<EOF
-import json, os
+SRC="$SRC" DST="$DST" python3 - <<'PYEOF'
+import json, os, re
+
+SRC = os.environ["SRC"]
+DST = os.environ["DST"]
 
 # Keys under "preferences" that are machine-local and should not be committed
 LOCAL_PREF_KEYS = {
@@ -35,7 +38,7 @@ LOCAL_PREF_KEYS = {
   "epitaxyPrefs",
 }
 
-with open("$SRC") as f:
+with open(SRC) as f:
     config = json.load(f)
 
 if "preferences" in config:
@@ -45,12 +48,23 @@ if "preferences" in config:
 else:
     stripped = []
 
-# Keep the home folder out of the tracked file.
-config = json.loads(json.dumps(config).replace(os.path.expanduser("~"), "__HOME__"))
+# Keep the home folder out of the tracked file. Match only at a path boundary.
+home_re = re.compile(re.escape(os.path.expanduser("~")) + r"(?=/|$)")
 
-with open("$DST", "w") as f:
+def scrub(v):
+    if isinstance(v, str):
+        return home_re.sub("__HOME__", v)
+    if isinstance(v, list):
+        return [scrub(x) for x in v]
+    if isinstance(v, dict):
+        return {scrub(k): scrub(x) for k, x in v.items()}
+    return v
+
+config = scrub(config)
+
+with open(DST, "w") as f:
     json.dump(config, f, indent=2)
     f.write("\n")
 
-print(f"backup-claude-desktop: saved to $DST (stripped: {stripped})")
-EOF
+print(f"backup-claude-desktop: saved to {DST} (stripped: {stripped})")
+PYEOF
