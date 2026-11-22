@@ -321,6 +321,7 @@ make_repo "$df_seed" "$df_bare"
 mkdir -p "$df_seed/script" "$df_seed/.agents/claude" "$df_seed/.agents/skills/tdd" \
   "$df_seed/templates/agent-team/.claude/hooks" "$df_seed/templates/agent-team/.claude/bin"
 cp "$root/script/setup-claude-code.sh" "$df_seed/script/setup-claude-code.sh"
+cp "$root/script/check-hook-paths.sh" "$df_seed/script/check-hook-paths.sh"
 cp "$root/script/setup-agent-skills.sh" "$df_seed/script/setup-agent-skills.sh"
 mkdir -p "$df_seed/script/lib"
 cp "$root/script/lib/dotfiles-source.sh" "$df_seed/script/lib/dotfiles-source.sh"
@@ -450,6 +451,18 @@ if [ "$ec10" -ne 0 ] && grep -Eq "^fail host-a [^ ]*/dotfiles \(agent-team.sh ma
   ok "fleet-pull reports a failed agent-team.sh machine with its last error line"
 else
   bad "fleet-pull did not report the failed render with its reason (ec=$ec10): $out10"
+fi
+
+# 1416: a settings hook pointing at a removed dotfiles script is named after the pull, and only its path is printed
+printf '{"env":{"TOKEN":"s3cret"},"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/dotfiles/script/gone.sh"}]}]}}\n' >"$rem_home/.claude/settings.json"
+set +e
+out11=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec11=$?
+set -e
+if [ "$ec11" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(stale hook SessionStart: \$HOME/dotfiles/script/gone.sh\)$' <<<"$out11" && ! grep -q s3cret <<<"$out11"; then
+  ok "fleet-pull names a stale settings hook without printing other settings values"
+else
+  bad "fleet-pull did not name the stale hook (ec=$ec11): $out11"
 fi
 
 echo "fleet-pull: $pass passed, $fail failed"

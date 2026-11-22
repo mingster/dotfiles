@@ -22,6 +22,14 @@ render_team() {
   echo "fail $host_label $2 (agent-team.sh machine failed: $(printf "%s\n" "$out" | tail -n 1))"
   rc=1
 }
+# A hook left in ~/.claude/settings.json that points at a removed dotfiles script prints an error every session (#1416)
+check_hooks() {
+  local out
+  [ -f "$1/script/check-hook-paths.sh" ] && [ -f "$HOME/.claude/settings.json" ] || return 0
+  out=$(bash "$1/script/check-hook-paths.sh" "$HOME/.claude/settings.json" 2>&1) && return 0
+  printf "%s\n" "$out" | while IFS= read -r line; do echo "fail $host_label $2 ($line)"; done
+  rc=1
+}
 for raw in "$@"; do
   d=${raw/#\~/$HOME}
   if [ ! -e "$d/.git" ]; then
@@ -51,6 +59,7 @@ for raw in "$@"; do
     fi
     echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)$reset_note"
     render_team "$d" "$raw"
+    check_hooks "$d" "$raw"
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
@@ -91,6 +100,7 @@ for raw in "$@"; do
       continue
     fi
     render_team "$d" "$raw"
+    check_hooks "$d" "$raw"
   fi
 done
 exit "$rc"
