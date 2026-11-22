@@ -108,6 +108,14 @@ check "hanging fetch is reported" "$(grep -q 'session-sync: hang fetch failed, s
 check "floor warning prints when offline" "$(grep -q 'session-sync: claude 2.1.311 is below' <<<"$out"; echo $?)"
 check "exits 0 after a hanging fetch" "$ec"
 
+# A non-numeric timeout falls back to 5: normal sync, no bash error
+bad=$(make_behind bad)
+err=$(SESSION_SYNC_FETCH_TIMEOUT=abc bash "$here/session-sync.sh" "$bad" 2>&1 >/dev/null); ec=$?
+out=$(SESSION_SYNC_FETCH_TIMEOUT=abc run "$bad")
+check "non-numeric timeout prints no bash error" "$([ -z "$err" ] && echo 0 || echo 1)"
+check "non-numeric timeout still syncs" "$([ "$(head_of "$bad")" = "$(tip bad)" ] && echo 0 || echo 1)"
+check "exits 0 with non-numeric timeout" "$ec"
+
 # Not a git checkout at all: quiet and 0
 mkdir -p "$tmp/plain"
 out=$(run "$tmp/plain"); ec=$?
