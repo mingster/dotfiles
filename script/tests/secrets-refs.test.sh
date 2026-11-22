@@ -36,6 +36,8 @@ if ! grep -q "TOPSECRETWORD" <<<"$out"; then ok "never prints the matched text";
 if ! grep -qE "/secrets/|\.git/|elsewhere" <<<"$out"; then ok "skips secrets, .git and symlinks"; else bad "searched too far: $out"; fi
 out=$(bash "$REFS" "$P" nomatch-anywhere 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$out" ]; then ok "no match prints nothing, exit 0"; else bad "no match: rc $rc $out"; fi
+out=$(bash "$REFS" "$P" 'secrets(' 2>"$TMP/err"); rc=$?
+if [ "$rc" -eq 2 ] && [ -z "$out" ] && grep -q "secrets-refs: invalid pattern" "$TMP/err"; then ok "invalid pattern exits 2, no file names"; else bad "invalid pattern: rc $rc out $out err $(cat "$TMP/err")"; fi
 out=$(bash "$REFS" "$P/secrets" key 2>&1); rc=$?
 if [ "$rc" -eq 2 ] && ! grep -q "inside the folder" <<<"$out"; then ok "refuses a secrets folder as the dir"; else bad "inside folder: rc $rc $out"; fi
 ln -s "$P/secrets" "$TMP/viaLink"
