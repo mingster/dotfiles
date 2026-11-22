@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # setup-antigravity.sh hooks merge: a broken hooks.json fails the run, leaves no .tmp, and prints no success line.
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 root=$(cd "$(dirname "$0")/../.." && pwd)
 # shellcheck source=lib/asdf-pin.sh
 . "$root/script/tests/lib/asdf-pin.sh"
