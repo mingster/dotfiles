@@ -76,5 +76,26 @@ cp "$settings" "$tmp/first.json"
 run_setup || bad 'second setup failed'
 cmp -s "$settings" "$tmp/first.json" && ok 'second run changes nothing' || bad 'second run changed settings'
 
+# A linked worktree must not write its own hook paths into the real home (#1536).
+MAIN="$tmp/main" WT="$tmp/wt" REAL="$tmp/real-home"
+mkdir -p "$MAIN/script/lib" "$REAL/.claude"
+cp "$root/script/setup-agent-hooks.sh" "$MAIN/script/"
+cp "$root/script/lib/dotfiles-source.sh" "$MAIN/script/lib/"
+git -C "$MAIN" init -q
+git -C "$MAIN" add -A
+git -C "$MAIN" -c user.email=t@example.com -c user.name=t commit -qm seed
+git -C "$MAIN" worktree add -q "$WT" -b worker
+echo '{"model": "sonnet"}' >"$REAL/.claude/settings.json"
+cp "$REAL/.claude/settings.json" "$tmp/real-before.json"
+mainreal=$(cd "$MAIN" && pwd -P) wtreal=$(cd "$WT" && pwd -P) realhome=$(cd "$REAL" && pwd -P)
+rc=0
+out=$(env -u DOTFILES HOME="$realhome" DOTFILES_REAL_HOME="$realhome" bash "$WT/script/setup-agent-hooks.sh" 2>&1) || rc=$?
+[ "$rc" -eq 1 ] && ok 'worktree with real home exits 1' || bad "worktree exit was $rc"
+case "$out" in
+  *"setup-agent-hooks: refusing to wire $realhome from $wtreal; run it from the main checkout $mainreal"*) ok 'worktree refusal names the main checkout' ;;
+  *) bad "worktree refusal message: $out" ;;
+esac
+cmp -s "$REAL/.claude/settings.json" "$tmp/real-before.json" && ok 'worktree refusal leaves settings unchanged' || bad 'worktree refusal changed settings'
+
 echo "setup-agent-hooks: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
