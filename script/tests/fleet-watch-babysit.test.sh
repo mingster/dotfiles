@@ -741,5 +741,16 @@ assert "Self-check" in st["body_gate_notes"]["owner/app#21"]
 PY
 then ok "one rework note is recorded per reason"; else bad "one rework note is recorded per reason"; fi
 
+# --- #1394: with no live builder to mail, a bad body does not hold the verifier back ---
+: > "$BABYSIT_STARTS"
+echo '[]' > "$tmp/workers-nobuilder.json"
+echo '{}' > "$tmp/state-nobuilder.json"
+run_pass "$tmp/state-nobuilder.json" only "$tmp/workers-nobuilder.json" "$tmp/nobuilder.out" || true
+if ! grep -q 'action=skip body-gate' "$tmp/nobuilder.out"; then
+  ok "body gate does not block when no live builder can take the note"
+else
+  bad "body gate does not block when no live builder can take the note (out=$(cat "$tmp/nobuilder.out"))"
+fi
+
 echo "babysit-dispatch: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
