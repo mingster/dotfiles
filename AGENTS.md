@@ -62,6 +62,11 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 | `script/setup-antigravity.sh` | Links Antigravity IDE settings and keybindings |
 | `script/setup-grok.sh` | Merges `ide/grok/config.defaults.toml` into `~/.grok/config.toml`: adds missing keys, never changes a key the user set. One time owner step on the local computer (not scripted, agent scripts keep plain ssh): `grok doctor fix ssh-wrap`, which fixes the clipboard and ssh wrap findings. Over ssh `grok doctor` still reports clipboard verification as unconfirmed, which is expected |
 | `script/setup-obsidian.sh` | Installs Obsidian + MEGAcmd; creates vault; configures sync; writes obsidian MCP to `~/.claude/settings.local.json` |
+| `script/setup-agent-skills.sh` | Links only the tracked dotfiles skills into the home skill folders, leaving tool owned folders alone |
+| `script/setup-check.sh`, `script/check-agent-startup.sh` | Read only checks. Setup readiness never installs tools or downloads browser binaries; the startup check confirms the agent instruction links from dotfiles are in place |
+| `script/install-agent-clis.sh` | Installs any missing provider CLIs. Signing in stays an owner step |
+| `script/setup-orca.sh` | Links Orca `presets.json` and sets up the Orca agent hooks |
+| `script/setup-zed.sh` | Links Zed settings from `ide/zed/` into `~/.config/zed/`. Skips when Zed is not installed |
 | `script/agent-team.sh` | Not called from `install.sh`. `machine` sets up a host, `project <dir> --labels` scaffolds `docs/agents/` and adopts the team in a repo, `sync <dir>` refreshes project files, `check <dir>` fails on drift. See `docs/agents/team-reference.md` |
 | `script/team-audit-metrics.ts` | Not called from `install.sh`. `bun script/team-audit-metrics.ts --repo <owner/name>` prints the weekly team audit metrics; `script/team-audit.sh` runs it with `TEAM_AUDIT_RUN_METRICS=1` |
 | `script/new-coordinator.sh` | Not called from `install.sh`. Sets up a Mac as the coordinator: brew bundle, clones, state restore, LaunchAgents, Orca data restore, health checks, then prints the owner only steps. Repo and host list come from the private `agent-state` repo. `--dry-run` first |
