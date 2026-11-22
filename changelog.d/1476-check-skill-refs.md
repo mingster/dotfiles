@@ -1,0 +1,1 @@
+agent-team: `check` now reports each `/<skill>` a project's `AGENTS.md`, `docs/` or `.claude/` Markdown names when no skill of that name exists, and names the replacement of a retired one such as `/staging-review` (#1476).
