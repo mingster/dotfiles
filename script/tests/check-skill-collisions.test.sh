@@ -2,6 +2,8 @@
 # check-skill-collisions.sh: empty or missing project roots, flags, and each failure class.
 # Runs the script under /bin/bash (3.2 on macOS) with no orca on PATH and a temp HOME.
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$(dirname "$0")/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/home"
