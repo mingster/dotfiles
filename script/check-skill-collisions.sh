@@ -15,6 +15,12 @@
 # Exit:    0 clean or warnings only, 1 problems found.
 set -uo pipefail
 
+usage() { echo "Usage: check-skill-collisions.sh [project-root ...]   (default: ~/projects)"; }
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+  -*) usage >&2; exit 2 ;;
+esac
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 GLOBAL_SKILLS="$DOTFILES/.agents/skills"
 
@@ -47,7 +53,7 @@ done < <(find "$GLOBAL_SKILLS" -mindepth 1 -maxdepth 1 -type d | sort)
 
 has_global() {
   local n="$1" g
-  for g in "${global_names[@]}"; do
+  for g in ${global_names[@]+"${global_names[@]}"}; do
     [ "$g" = "$n" ] && return 0
   done
   return 1
@@ -66,7 +72,7 @@ fi
 
 is_orca_bundled() { [ "$orca_ok" -eq 1 ] && printf '%s\n' "$orca_names" | grep -qx -- "$1"; }
 
-for n in "${global_names[@]}"; do
+for n in ${global_names[@]+"${global_names[@]}"}; do
   is_orca_bundled "$n" && fail "$GLOBAL_SKILLS/$n is bundled by orca, remove it and use orca skills install"
 done
 
@@ -93,7 +99,7 @@ seen_names=()
 seen_locs=()
 seen_reals=()
 
-for dir in "${skill_dirs[@]}"; do
+for dir in ${skill_dirs[@]+"${skill_dirs[@]}"}; do
   echo "$dir"
   entries=()
   while IFS= read -r e; do

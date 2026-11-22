@@ -57,6 +57,7 @@ while read -r up dest; do
   printf '%s %s\n' "$up" "$dest" >>"$tmp/rest"
   if [ -d "$tmp/up/$up/skills" ]; then
     for d in "$tmp/up/$up/skills"/*/; do
+      [ -d "$d" ] || continue
       printf '%s %s\n' "$(basename "$d")" "${d%/}" >>"$tmp/skills"
     done
   fi
@@ -69,6 +70,8 @@ done
 dup=$(cut -d' ' -f1 "$tmp/skills" | sort | uniq -d | head -1)
 [ -z "$dup" ] || die "two upstream entries ship skill $dup"
 new_names=$(cut -d' ' -f1 "$tmp/skills" | sort | tr '\n' ' ' | sed 's/ $//')
+# A tree that listed skills last time and yields none now is a broken upstream, not a prune: stop before any write.
+[ -n "$new_names" ] || [ -z "$old_names" ] || die "no upstream skill found, but skills= lists: $old_names; nothing changed"
 
 for n in $new_names; do
   case " $old_names " in *" $n "*) continue ;; esac

@@ -8,6 +8,8 @@ tests=0
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
+# shellcheck source=lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 export HOME="$tmp/home"
 # Stub dotfiles: setup-agent-skills.sh would itself migrate a linked ~/.claude/skills, so
 # replace it and test only the cursor/claude block.

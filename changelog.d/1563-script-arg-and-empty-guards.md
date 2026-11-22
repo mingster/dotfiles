@@ -1,0 +1,1 @@
+Fix `check-skill-collisions.sh` with no project skill folder, `sync-pstack-template-skills.sh` with a skill-less upstream folder, and make `link-cursor-hooks.sh`, `link-cursor-user.sh` and `backup-claude-desktop.sh` reject arguments (#1563, #1564, #1565).
