@@ -25,7 +25,7 @@ _BUILDER_LINE = re.compile(r'^Builder: agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9
 _SCRIPT_BUILDER = ('script', 'template-sync-pr.sh')
 _PROVIDERS = ('claude', 'antigravity', 'agy', 'grok', 'cursor', 'codex')
 # Model prefixes of the families in usage-gate.py family(). A role name or a host fails here.
-_MODEL_PREFIXES = ('claude-', 'sonnet', 'opus', 'haiku', 'gpt-', 'composer', 'grok', 'gemini-')
+_MODEL_PREFIXES = ('claude-', 'sonnet', 'opus', 'haiku', 'fable', 'gpt-', 'composer', 'grok', 'gemini-')
 _ISSUE_LINK_FMT = (
     r'\b(?:Closes|Closed|Close|Fixes|Fixed|Fix|Resolves|Resolved|Resolve|Refs)\s+(?:[A-Za-z0-9_./-]+)?#%s\b'
 )
