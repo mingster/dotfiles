@@ -136,12 +136,22 @@ map_file() {
     script/tests/*.test.sh|script/tests/*.test.py|script/tests/test_*.py|script/*.test.sh)
       add_test "$path"
       ;;
+    script/prepend-recent-change.ts)
+      add_if_exists "script/tests/prepend-recent-change.test.sh"
+      ;;
     script/team-audit-metrics.ts|script/tests/team-audit-metrics.test.ts)
       add_if_exists "script/tests/team-audit.test.sh"
       ;;
     script/agent-team.sh)
       map_script_sh_base "agent-team"
       add_if_exists "script/tests/release-guard-rules.test.sh"
+      ;;
+    bin/*.test.sh)
+      add_test "$path"
+      ;;
+    bin/*)
+      base=${path#bin/}
+      add_test "bin/${base%.sh}.test.sh"
       ;;
     ide/cursor/hooks/*.test.sh)
       add_test "$path"

@@ -465,5 +465,25 @@ else
   bad "fleet-pull did not name the stale hook (ec=$ec11): $out11"
 fi
 
+# 1464: --help prints usage and exits 0, an unknown flag exits 2 with usage, and neither touches a checkout or host
+advance_origin "$state1_bare" arg-check
+head_before=$(git -C "$state1" rev-parse HEAD)
+set +e
+out_h=$(AGENT_STATE_DIR="$state1" FLEET_PULL_CONFIG="$tmp/no-such-config.json" bash "$pull_script" --help 2>&1); ec_h=$?
+if [ "$ec_h" -eq 0 ] && grep -q '^Usage:' <<<"$out_h" && ! grep -Eq '^(ok|fail|local)' <<<"$out_h" \
+  && [ "$(git -C "$state1" rev-parse HEAD)" = "$head_before" ]; then
+  ok "fleet-pull --help prints usage and pulls nothing"
+else
+  bad "fleet-pull --help ran or misreported (ec=$ec_h): $out_h"
+fi
+out_u=$(AGENT_STATE_DIR="$state1" FLEET_PULL_CONFIG="$tmp/no-such-config.json" bash "$pull_script" --dry-run 2>&1); ec_u=$?
+set -e
+if [ "$ec_u" -eq 2 ] && grep -q '^Usage:' <<<"$out_u" && ! grep -Eq '^(ok|fail|local)' <<<"$out_u" \
+  && [ "$(git -C "$state1" rev-parse HEAD)" = "$head_before" ]; then
+  ok "fleet-pull rejects an unknown flag with exit 2 and pulls nothing"
+else
+  bad "fleet-pull unknown flag ran or misreported (ec=$ec_u): $out_u"
+fi
+
 echo "fleet-pull: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

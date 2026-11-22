@@ -6,7 +6,12 @@
 set -euo pipefail
 # --git-only: fetch and fast-forward only, skip the install loop (briefs with `Setup: none`).
 git_only=0
-[ "${1:-}" = --git-only ] && git_only=1
+case "${1:-}" in
+  '') ;;
+  --git-only) git_only=1 ;;
+  *) echo "Usage: worktree-setup.sh [--git-only]" >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "Usage: worktree-setup.sh [--git-only]" >&2; exit 2; }
 
 git fetch --quiet origin
 # Fast-forward only: a worktree that already has its own commits is left as it is.
