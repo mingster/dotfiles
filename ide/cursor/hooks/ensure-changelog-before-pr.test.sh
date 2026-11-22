@@ -116,6 +116,33 @@ else
 	echo "ok   secret in md denies with one JSON object and no secret"
 fi
 
+# Zero-Env scan reads only added lines and skips placeholder passwords.
+r="$(new_repo placeholder-old-line "$FRAG_CFG")"
+echo 'DATABASE_URL=postgresql://user:hunter2@localhost:5432/db' >"$r/README.md"
+git -C "$r" add -A && git -C "$r" commit -q -m readme && git -C "$r" branch -f main HEAD
+echo 'a typo fix' >>"$r/README.md"
+commit_all "$r"
+check "old secret line in a touched doc passes" 0 "$r"
+
+for ph in password changeme '<password>' '${DB_PASS}' '[Omitted/Configured via Env]'; do
+	r="$(new_repo "placeholder-$RANDOM" "$FRAG_CFG")"
+	echo "DATABASE_URL=postgresql://user:${ph}@localhost:5432/db" >"$r/README.md"
+	commit_all "$r"
+	check "placeholder $ph passes" 0 "$r"
+done
+
+r="$(new_repo secret-added-later "$FRAG_CFG")"
+echo 'intro' >"$r/README.md"
+git -C "$r" add -A && git -C "$r" commit -q -m readme && git -C "$r" branch -f main HEAD
+echo 'DATABASE_URL=postgres://u:hunter2@host/db' >>"$r/README.md"
+commit_all "$r"
+check "real secret added to a touched doc denies" 2 "$r" "Zero-Env"
+
+r="$(new_repo secret-uncommitted "$FRAG_CFG")"
+echo 'DATABASE_URL=postgres://u:hunter2@host/db' >"$r/notes.md"
+git -C "$r" add notes.md
+check "staged real secret denies" 2 "$r" "Zero-Env"
+
 # Separator coverage: the command string decides whether the gate runs.
 cmd_check() { # <label> <expected exit> <repo> <command>
 	local out code input
