@@ -540,10 +540,22 @@ PY
   echo "worker-startup: route override for $1: $3" >&2
 }
 
+# A placed start that now has a dispatch: tie its recent-start claim to it. Placement then stops counting the
+# claim once the inventory lists the dispatch, so a started worker is not counted twice (#1411).
+bind_placed_claim() { # <worker-start json>
+  local dispatch
+  [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] || return 0
+  dispatch=$(jq -r '.result.dispatchId // empty' <<<"$1" 2>/dev/null || true)
+  [ -n "$dispatch" ] || return 0
+  "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$dispatch" \
+    ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
+}
+
 run_captured() { # command... ; print its stdout, return its status. start_out is the caller's variable.
   local ec=0
   start_out=$("$@") || ec=$?
   printf '%s\n' "$start_out"
+  bind_placed_claim "$start_out"
   return "$ec"
 }
 
@@ -1179,14 +1191,6 @@ run_mode() {
       start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
         --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
-    fi
-    # The recorded start now has a dispatch: tie them right away, so placement stops counting the claim
-    # once the inventory lists the dispatch and never counts a started worker twice (#1411).
-    local placed_dispatch
-    placed_dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
-    if [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] && [ -n "$placed_dispatch" ]; then
-      "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$placed_dispatch" \
-        ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
     fi
   }
   start_agent_worker

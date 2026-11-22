@@ -687,11 +687,20 @@ sed 's#^Refs \#1#Refs mingster/dotfiles\#816#' "$spec_file" >"$tmp/spec-repo.txt
 dispatch_run "$tmp/spec-repo.txt"
 grep -qE '^816'$'\t''[0-9T:Z-]+'$'\t''mingster/dotfiles$' "$TEAM_AUDIT_DISPATCHES" \
   && ok || bad "Refs owner/repo#N records owner/repo in the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
-# 1411: a placed start binds its recent-start claim to the dispatch it created
-rm -f "$tmp/bind-recent.json"
-WORKER_PLACEMENT_RECENT_FILE="$tmp/bind-recent.json" dispatch_run "$tmp/spec-repo.txt"
+# 1411: a placed start binds its recent-start claim to the dispatch it created, before the readiness wait:
+# the first worker-show read already finds the claim tied to the dispatch, so the live worker is not counted twice.
+cat >"$tmp/orca-bind-order" <<EOS
+#!/usr/bin/env bash
+case " \$* " in *" orchestration worker-show "*) cp "$tmp/bind-recent.json" "$tmp/bind-at-show.json" 2>/dev/null ;; esac
+exec "$orca_stub" "\$@"
+EOS
+chmod +x "$tmp/orca-bind-order"
+rm -f "$tmp/bind-recent.json" "$tmp/bind-at-show.json"
+WORKER_PLACEMENT_RECENT_FILE="$tmp/bind-recent.json" orca_stub="$tmp/orca-bind-order" dispatch_run "$tmp/spec-repo.txt"
 [ "$(jq -r '.starts[-1].dispatch // empty' "$tmp/bind-recent.json" 2>/dev/null)" = ctx_9495d9c62de4 ] \
   && ok || bad "placed start binds its claim to the new dispatch ($(cat "$tmp/bind-recent.json" 2>&1))"
+[ "$(jq -r '.starts[-1].dispatch // empty' "$tmp/bind-at-show.json" 2>/dev/null)" = ctx_9495d9c62de4 ] \
+  && ok || bad "the claim is bound before the readiness wait ($(cat "$tmp/bind-at-show.json" 2>&1))"
 # Short Refs #N: owner/repo comes from the origin of --repo id:<id> or a bare directory path
 mkdir -p "$tmp/gh-repo"
 git -C "$tmp/gh-repo" init -q
