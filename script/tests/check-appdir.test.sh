@@ -41,5 +41,10 @@ check "an untracked file is ignored" "$?"
 bash "$here/check-appdir.sh" >/dev/null 2>&1
 check "this repo passes" "$?"
 
+mkdir -p "$tmp/notgit"
+out=$(bash "$here/check-appdir.sh" "$tmp/notgit" 2>&1); rc=$?
+check "a dir that is not a git checkout exits 2" "$([ "$rc" -eq 2 ] && echo 0 || echo 1)"
+check "the non-git failure is one line" "$([ "$(echo "$out" | wc -l | tr -d ' ')" = 1 ] && echo 0 || echo 1)"
+
 echo "check-appdir: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
