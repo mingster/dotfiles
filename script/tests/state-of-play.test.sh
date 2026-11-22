@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Tests for templates/agent-team/.claude/bin/state-of-play.sh with gh and git stubbed or absent (#1502).
 set -uo pipefail
+# shellcheck source=script/tests/lib/asdf-pin.sh
+# shellcheck disable=SC1091
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 root=$(cd "$(dirname "$0")/../.." && pwd)
 sop="$root/templates/agent-team/.claude/bin/state-of-play.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

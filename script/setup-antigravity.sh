@@ -16,7 +16,7 @@ case "${OSTYPE:-}" in
     AG_USER="${XDG_CONFIG_HOME:-$HOME/.config}/Antigravity IDE/User"
     ;;
   msys* | cygwin*)
-    echo "setup-antigravity: Windows not automated; copy ${DOTFILES}/Antigravity/settings.json manually." >&2
+    echo "setup-antigravity: Windows not automated; copy ${DOTFILES}/ide/antigravity/settings.json manually." >&2
     exit 0
     ;;
   *)
