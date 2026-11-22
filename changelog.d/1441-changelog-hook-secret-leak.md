@@ -1,0 +1,1 @@
+- fix(cursor-hooks): the changelog hook's Zero-Env scan no longer prints the matched secret line before its deny JSON (#1441)

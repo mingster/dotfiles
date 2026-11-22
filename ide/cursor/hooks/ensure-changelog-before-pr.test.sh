@@ -98,4 +98,22 @@ out="$(cd "$r" && env -u PR_BASE_BRANCH CURSOR_PROJECT_DIR="$r" bash "$HOOK" <<<
 code=$?
 if [[ "$code" -eq 2 ]]; then echo "ok   base from config blocks without PR_BASE_BRANCH"; else echo "FAIL base from config: exit $code ($out)"; FAILS=$((FAILS + 1)); fi
 
+r="$(new_repo secret-md "$FRAG_CFG")"
+SECRET='postgres://u:hunter2@host/db'
+echo "DATABASE=$SECRET" >"$r/notes.md"
+commit_all "$r"
+input="$(jq -nc --arg cwd "$r" '{command:"gh pr create", cwd:$cwd}')"
+out="$(cd "$r" && PR_BASE_BRANCH=main CURSOR_PROJECT_DIR="$r" bash "$HOOK" <<<"$input" 2>"$TMP/secret.err")"
+code=$?
+err="$(cat "$TMP/secret.err")"
+if [[ "$code" -ne 2 ]]; then
+	echo "FAIL secret in md: exit $code, expected 2 ($out)"; FAILS=$((FAILS + 1))
+elif [[ "$out" == *hunter2* || "$err" == *hunter2* ]]; then
+	echo "FAIL secret in md: secret leaked (stdout: $out) (stderr: $err)"; FAILS=$((FAILS + 1))
+elif ! jq -se 'length == 1 and .[0].permission == "deny"' <<<"$out" >/dev/null 2>&1; then
+	echo "FAIL secret in md: stdout is not exactly one deny JSON object ($out)"; FAILS=$((FAILS + 1))
+else
+	echo "ok   secret in md denies with one JSON object and no secret"
+fi
+
 [[ "$FAILS" -eq 0 ]] && echo "all passed" || { echo "$FAILS failed"; exit 1; }
