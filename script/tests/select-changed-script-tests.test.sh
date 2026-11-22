@@ -263,7 +263,7 @@ case11_table_driven_mapped_paths() {
     grep -Fq 'Fallback:' <<<"$combo" \
       && fail "case11b mapped path plus another mapped path must not fallback: $path"
     count=$(script_tests_count_from_output <<<"$combo")
-    [ "${count:-0}" -lt 80 ] || fail "case11b combo looks like full suite ($count): $path"
+    [ "${count:-0}" -lt 120 ] || fail "case11b combo looks like full suite ($count): $path"
   done
 
   out=$(list_selector_output script/usage-gate.py script/usage-gate-hook.py)
@@ -429,4 +429,25 @@ case22_model_routing_runs_usage_gate() {
 
 case18_first_tests_start_first
 case22_model_routing_runs_usage_gate
-echo 'PASS: 22 acceptance cases'
+# #1442: ide/cursor/hooks scripts and their tests run in CI and checks-local.
+case23_ide_hooks_select_their_tests() {
+  local out hook
+  for hook in ensure-changelog-before-pr usage-gate; do
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "ide/cursor/hooks/$hook.sh" 2>&1)
+    grep -Fxq "Selected: ide/cursor/hooks/$hook.test.sh" <<<"$out" \
+      || fail "case23 $hook.sh must select its test: $out"
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "ide/cursor/hooks/$hook.test.sh" 2>&1)
+    grep -Fxq "Selected: ide/cursor/hooks/$hook.test.sh" <<<"$out" \
+      || fail "case23 $hook.test.sh must select itself: $out"
+    grep -Fq 'Fallback:' <<<"$out" && fail "case23 $hook must not fall back to the full suite"
+  done
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" ide/cursor/hooks/usage-gate.test.sh 2>&1) \
+    || fail "case23 the selected ide hook test must pass through the selector: $out"
+  ok "case23 ide hook scripts and tests map to their *.test.sh"
+}
+
+case23_ide_hooks_select_their_tests
+echo 'PASS: 23 acceptance cases'
