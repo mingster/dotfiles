@@ -645,4 +645,22 @@ FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USA
   FLEET_WATCH_CONFIG=/c.json FLEET_WATCH_STATE=/s.json bash "$root/script/pr-review.sh" 7 "$sha" >/dev/null 2>&1 || true
 [ ! -e "$tmp/fake-fleet-watch.py.args" ] || fail "FAIL review must not start a verifier pass"
 
+# Relative path call (#1429): the antigravity branch finds bin/agy after a cd, so a relative
+# script path must still resolve it. Run a copy of the tree from its own root by relative path.
+rel="$tmp/rel"
+mkdir -p "$rel/script" "$rel/bin"
+cp "$root/script/pr-review.sh" "$root/script/review-prompt.txt" "$rel/script/"
+printf '#!/usr/bin/env bash\necho "agy $*" > "$FAKE/agy-args"\ncat "$FAKE/answer"\n' > "$rel/bin/agy"
+chmod +x "$rel/bin/agy"
+printf '#!/usr/bin/env bash\necho "--agent antigravity --model fake"\n' > "$tmp/agy-usage-gate"
+chmod +x "$tmp/agy-usage-gate"
+printf 'Review: PASS\nok\n' > "$tmp/answer"
+for call in script/pr-review.sh "$rel/script/pr-review.sh"; do
+  rm -f "$tmp/agy-args" "$tmp/posted"
+  (cd "$rel" && FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o \
+    REVIEW_USAGE_GATE="$tmp/agy-usage-gate" AUTHOR_FAMILY=claude \
+    bash "$call" 7 "$sha" >"$tmp/rel.out" 2>&1) || { cat "$tmp/rel.out"; fail "antigravity review via $call exits 0"; }
+  [ -s "$tmp/agy-args" ] || fail "antigravity review via $call runs bin/agy"
+done
+
 echo "pr-review tests passed"
