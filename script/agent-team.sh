@@ -1947,7 +1947,7 @@ def validate_and_compile_settings(proj_override=None):
     if not isinstance(proj, dict):
         return None, [".claude/settings.project.json root must be a JSON object"]
 
-    allowed_top = {"permissions", "hooks"}
+    allowed_top = {"permissions", "hooks", "enabledPlugins", "skillOverrides"}
     extra_top = set(proj.keys()) - allowed_top
     if extra_top:
         errors.append(
@@ -2060,10 +2060,19 @@ def validate_and_compile_settings(proj_override=None):
                             f".claude/settings.project.json hooks.{event} cannot override or redefine shared template hook: {cmd}"
                         )
 
+    p_plugins = proj.get("enabledPlugins", {})
+    p_skills = proj.get("skillOverrides", {})
+    for key, val in (("enabledPlugins", p_plugins), ("skillOverrides", p_skills)):
+        if not isinstance(val, dict):
+            errors.append(f".claude/settings.project.json {key} must be a JSON object")
+
     if errors:
         return None, errors
 
     compiled = json.loads(json.dumps(tpl))
+    for key, val in (("enabledPlugins", p_plugins), ("skillOverrides", p_skills)):
+        if val:
+            compiled[key] = {**compiled.get(key, {}), **val}
     c_allow = list(compiled.get("permissions", {}).get("allow", []))
     for item in p_allow:
         if item not in c_allow:
