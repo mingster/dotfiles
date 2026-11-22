@@ -702,22 +702,50 @@ refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   die "refused: $ref already delivered by merged PR $prs; close the issue, or pass --allow-delivered REASON"
 }
 
-enforce_builder_provider() { # <title> <agent> <override>
-  local title=$1 agent=$2 override=$3 role kind pick_py pick_out pick_err flags
-  [ "$agent" != claude ] || return 0
+# A complex builder start (#1396): a fullstack-dev-strong title, or a Refs issue labelled size:L.
+# Best effort: a missing gh or a failed lookup counts as not complex.
+builder_is_complex() { # <role> <spec_file>
+  local ref repo num
+  [ "$1" != fullstack-dev-strong ] || return 0
+  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$2" | sed 's/^Refs //' || true)
+  [ -n "$ref" ] || return 1
+  num=${ref##*#}
+  repo=${ref%%#*}
+  command -v gh >/dev/null 2>&1 || return 1
+  gh issue view "$num" ${repo:+-R "$repo"} --json labels --jq '.labels[].name' 2>/dev/null | grep -qx 'size:L'
+}
+
+enforce_builder_provider() { # <title> <agent> <model> <override> <spec_file>
+  local title=$1 agent=$2 model=$3 override=$4 spec_file=$5 role kind pick_py pick_out pick_err flags strong='' want_agent want_model
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
   [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || die "cannot classify role $role"
   [ "$kind" = builder ] || return 0
+  if builder_is_complex "$role" "$spec_file"; then
+    strong=1
+  elif [ "$agent" = claude ]; then
+    return 0
+  fi
   if [ -n "$override" ]; then
     log_route_override "$role" "$agent" "$override"
     return 0
   fi
   pick_py=${USAGE_GATE_PICK:-${USAGE_GATE_CLI:-$here/usage-gate.py}}
   pick_err="$state_dir/pick-route.err"
-  pick_out=$("$python3" "$pick_py" pick --role "$role" 2>"$pick_err" || true)
+  pick_out=$("$python3" "$pick_py" pick --role "$role" ${strong:+--tier strong} 2>"$pick_err" || true)
   flags=$(printf '%s\n' "$pick_out" | awk '/^--agent /{line=$0} END{print line}')
+  if [ -n "$strong" ]; then
+    want_agent=$(printf '%s\n' "$flags" | awk '{for (i = 1; i < NF; i++) if ($i == "--agent") print $(i + 1)}')
+    want_model=$(printf '%s\n' "$flags" | awk '{for (i = 1; i < NF; i++) if ($i == "--model") print $(i + 1)}')
+    [ -n "$want_model" ] || return 0 # no Strong model is available, so the start keeps its tier
+    if [ "$agent" = "$want_agent" ]; then
+      case "$model" in *"$want_model"*) return 0 ;; esac
+    fi
+    echo "worker-startup: refused complex (size:L) $role on $agent $model while the Strong pick is allowed: $flags; pass --route-override REASON to keep it" >&2
+    [ ! -s "$pick_err" ] || cat "$pick_err" >&2
+    exit 1
+  fi
   case "$flags" in
     "--agent claude"*)
       echo "worker-startup: refused $role on $agent while claude is allowed: $flags" >&2
@@ -941,7 +969,7 @@ run_mode() {
   lint_out=$(bash "$here/brief-lint.sh" "$spec" "$lint_dir" 2>&1) || die "$lint_out"
   [ -z "$lint_out" ] || printf '%s\n' "$lint_out" >&2
   [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
-  enforce_builder_provider "$title" "$agent" "$route_override"
+  enforce_builder_provider "$title" "$agent" "$model" "$route_override" "$spec"
 
   # A merge worker reads the local Orca run list, so it runs on the coordinator host, never on an overflow host.
   local merge_worker=''

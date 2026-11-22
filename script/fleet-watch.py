@@ -3255,20 +3255,42 @@ ISSUE_ROLE_ROUTES = (
 )
 
 
+STRONG_TIER_ROLES = ('fullstack-dev', 'release-manager')  # size:L raises these to --tier strong (#1396)
+
+
 def issue_scan_route(issue):
-    """(title_role, pick_role) for an issue, or None for the default fullstack-dev route."""
+    """(title_role, pick_role, tier) for an issue, or None for the default fullstack-dev route."""
     labels = _issue_label_names(issue)
     large = 'size:L' in labels
     for label, title_role, pick in ISSUE_ROLE_ROUTES:
         if label in labels:
-            if label == 'role:ops' and large:
-                pick = 'architect-pm'
-            return title_role, pick
+            return title_role, pick, 'strong' if large and pick in STRONG_TIER_ROLES else None
     if large:
-        return 'fullstack-dev', 'fullstack-dev-strong'
+        return 'fullstack-dev', 'fullstack-dev', 'strong'
     if 'size:S' in labels:
-        return 'fullstack-dev-small', 'fullstack-dev-small'
+        return 'fullstack-dev-small', 'fullstack-dev-small', None
     return None
+
+
+def issue_label_names(repo, number, run=subprocess.run):
+    """An issue's label names, or [] when gh fails."""
+    try:
+        proc = run(['gh', 'issue', 'view', str(number), '--repo', repo, '--json', 'labels',
+                    '--jq', '.labels[].name'], capture_output=True, text=True, timeout=30, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return []
+    return proc.stdout.split() if proc.returncode == 0 else []
+
+
+_CLOSING_REF = re.compile(r'(?i)\b(?:closes|fixes|resolves)\s+#(\d+)\b')
+
+
+def rework_needs_strong(repo, pr, rounds_done):
+    """Owner #1396 Q3: Strong from the second rework round, or from round 1 when the PR or its closing issue is size:L."""
+    if rounds_done >= 1 or pr_has_label(pr, 'size:L'):
+        return True
+    return any('size:L' in issue_label_names(repo, number)
+               for number in _CLOSING_REF.findall(pr.get('body') or ''))
 
 
 def issue_scan_sorted_eligible(issues):
@@ -3851,7 +3873,8 @@ def build_issue_start_command(config, repo, issue_row, placement=None, route=Non
     return [part for part in command if part]
 
 
-def build_rework_start_command(config, repo, pr_row):
+def build_rework_start_command(config, repo, pr_row, route=None):
+    """route is a Strong (agent, model, tag) pick from rework_needs_strong, or None for the Workhorse rework."""
     scan = config['issue_scan']
     root = _issue_scan_repo_root(config, repo)
     if not root:
@@ -3877,8 +3900,8 @@ def build_rework_start_command(config, repo, pr_row):
         % (repo, pr_row['number'], repo, pr_row['number'], head, excerpt, verify),
         'fullstack-dev'))
     title = '#%d|fullstack-dev' % pr_row['number']
-    agent = scan.get('rework_agent') or scan.get('agent') or 'claude'
-    model = scan.get('rework_model') or scan.get('model') or ''
+    agent = route[0] if route else scan.get('rework_agent') or scan.get('agent') or 'claude'
+    model = route[1] if route else scan.get('rework_model') or scan.get('model') or ''
     command = [
         'bash', _issue_scan_startup_script(config),
         '--run', scan['run'],
@@ -3892,6 +3915,8 @@ def build_rework_start_command(config, repo, pr_row):
     branch = pr_row.get('headRefName')
     if branch:
         command += ['--base-branch', pr_base_ref(root, branch)]
+    if route:
+        command += ['--route-override', 'Strong rework (#1396)']
     return [part for part in command if part]
 
 
@@ -5342,10 +5367,12 @@ def _usage_gate_argv():
     return [cli]
 
 
-def pick_role(role, run=subprocess.run, avoid_family=None):
+def pick_role(role, run=subprocess.run, avoid_family=None, tier=None):
     command = _usage_gate_argv() + ['pick', '--role', role, '--json', '--auto']
     if avoid_family:
         command += ['--avoid-family', avoid_family]
+    if tier:
+        command += ['--tier', tier]
     USAGE_GATE_CALLS[0] += 1
     try:
         proc = run(command, capture_output=True, text=True, timeout=60, check=False)
@@ -6929,7 +6956,11 @@ def issue_scan_pass(
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 count_refused('host_cap')
                 continue
-            command = build_rework_start_command(config, repo, pr_row)
+            route = None
+            if rework_needs_strong(repo, pr_row, int(rounds.get(pr_key, 0))):
+                route = choose_pick((pick_fn or pick_role)('fullstack-dev', tier='strong'))
+                log_bits.append('rework_strong=%d:%s' % (pr_num, route[1] if route else 'none'))
+            command = build_rework_start_command(config, repo, pr_row, route)
             if command is None:
                 log_bits.append('rework_skip=%d' % pr_num)
                 continue
@@ -7091,7 +7122,7 @@ def issue_scan_pass(
         route = None
         labelled = issue_scan_route(row)
         if labelled:
-            chosen = choose_pick((pick_fn or pick_role)(labelled[1]))
+            chosen = choose_pick((pick_fn or pick_role)(labelled[1], tier=labelled[2]))
             if not chosen:
                 log_bits.append('issue_route_blocked=%d:%s' % (row['number'], labelled[1]))
                 continue

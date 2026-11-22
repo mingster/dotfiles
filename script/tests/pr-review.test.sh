@@ -30,6 +30,7 @@ case "$1" in
             ;;
           *labels*)
             if [ "${FAKE_LABEL_STRONG:-}" = 1 ]; then echo review-strong; fi
+            if [ "${FAKE_LABEL_STRONG:-}" = L ]; then echo size:L; fi
             ;;
           *) echo "{}" ;;
         esac
@@ -45,7 +46,10 @@ case "$1" in
     esac
     ;;
   issue)
-    echo "issue $3 asks for a refund button"
+    case "$*" in
+      *--jq*labels*|*labels*--jq*) if [ -n "${FAKE_ISSUE_LARGE:-}" ]; then echo size:L; else echo P2; fi ;;
+      *) echo "issue $3 asks for a refund button" ;;
+    esac
     ;;
   api)
     if [[ "$*" == *"/statuses/"* ]]; then
@@ -315,6 +319,22 @@ printf 'Review: PASS\n' > "$tmp/answer"
 echo web/src/a.ts > "$tmp/files"
 FAKE_LABEL_STRONG=1 run
 grep -q 'model=opus' "$tmp/posted" || fail "review-strong uses the stronger model"
+
+# #1396: size:L on the PR or on its closing issue raises the Review like review-strong
+issue_comments_set
+printf 'Review: PASS\n' > "$tmp/answer"
+echo web/src/a.ts > "$tmp/files"
+FAKE_LABEL_STRONG=L run
+grep -q 'model=opus' "$tmp/posted" || fail "size:L on the PR uses the stronger model"
+issue_comments_set
+printf 'Review: PASS\n' > "$tmp/answer"
+FAKE_ISSUE_LARGE=1 run
+grep -q 'model=opus' "$tmp/posted" || fail "size:L on the closing issue uses the stronger model"
+grep -q 'issue view 41 .*labels' "$tmp/calls" || fail "size:L check reads the closing issue labels"
+issue_comments_set
+printf 'Review: PASS\n' > "$tmp/answer"
+run
+grep -q 'model=opus' "$tmp/posted" && fail "a plain PR without size:L stays on the default model"
 
 echo web/src/a.ts > "$tmp/files"
 printf 'Review: FAIL\nBroken.\n' > "$tmp/answer"
