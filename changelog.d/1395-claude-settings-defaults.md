@@ -1,0 +1,1 @@
+claude settings: `.agents/claude/settings.json` now matches the coordinator's live Claude settings (permissions, Orca hooks, advisor model and display keys), and `setup-agent-hooks.sh` carries those defaults into each host's kept settings while keeping the host's own private keys and local keys (#1395).
