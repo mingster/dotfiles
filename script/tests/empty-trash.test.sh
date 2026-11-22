@@ -10,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 mkdir -p "$tmp/home/.Trash" "$tmp/vols/disk1/.Trashes" "$tmp/vols/disk2/.Trashes" "$tmp/vols/nodisk" "$tmp/work/proj/.AppleDouble" "$tmp/target/.AppleDouble"
-touch "$tmp/home/.Trash/a" "$tmp/vols/disk1/.Trashes/b" "$tmp/vols/disk2/.Trashes/c" "$tmp/vols/nodisk/keep" "$tmp/work/proj/.AppleDouble/x" "$tmp/target/.AppleDouble/y"
+touch "$tmp/home/.Trash/.hidden" "$tmp/vols/disk1/.Trashes/.DS_Store" "$tmp/home/.Trash/a" "$tmp/vols/disk1/.Trashes/b" "$tmp/vols/disk2/.Trashes/c" "$tmp/vols/nodisk/keep" "$tmp/work/proj/.AppleDouble/x" "$tmp/target/.AppleDouble/y"
 # Run without sudo so the test needs no password and cannot touch the real Trash.
 run() { (cd "$tmp/work" && HOME="$tmp/home" EMPTYTRASH_VOLUMES="$tmp/vols" EMPTYTRASH_SUDO= sh "$SCRIPT" "$@") >/dev/null; }
 
@@ -25,4 +25,5 @@ run
 run "$tmp/target"
 [ ! -e "$tmp/target/.AppleDouble" ] || fail "path argument did not remove .AppleDouble"
 [ -d "$tmp/work/proj/.AppleDouble" ] || fail "path argument removed .AppleDouble outside the argument"
+[ -d "$tmp/home/.Trash" ] && [ -d "$tmp/vols/disk1/.Trashes" ] || fail "Trash folders must be kept"
 echo "PASS empty-trash"

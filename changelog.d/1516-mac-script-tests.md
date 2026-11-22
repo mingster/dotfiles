@@ -1,0 +1,1 @@
+Fixed: CI selects the tests for mac/bin/emptyTrash.sh, mac/install_mongodb.sh and mac/stowall (#1516). emptyTrash.sh also removes hidden Trash entries (#1517). install_mongodb.sh ignores a commented replSetName (#1518).
