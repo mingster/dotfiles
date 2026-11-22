@@ -3,6 +3,8 @@
 # shellcheck source=script/tests/lib/asdf-pin.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 here=$(cd "$(dirname "$0")/../.." && pwd)
+# shellcheck disable=SC1091
+. "$here/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
