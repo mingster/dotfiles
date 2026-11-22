@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # setup-cursor.sh: ~/.cursor/rules ends up a link to the dotfiles rules for a missing path, an existing link and a real folder (backed up, never nested).
+# shellcheck source=script/tests/lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 here=$(cd "$(dirname "$0")/../.." && pwd)
 # shellcheck source=lib/asdf-pin.sh
 . "$here/script/tests/lib/asdf-pin.sh"
