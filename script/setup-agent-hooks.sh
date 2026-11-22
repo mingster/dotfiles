@@ -2,6 +2,11 @@
 # Merge the existing usage gate and worker budget hooks into global Claude settings.
 set -euo pipefail
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
+# --render only prints; every other run writes ~/.claude/settings.json (#1536).
+if [ "${1:-}" != "--render" ]; then
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/dotfiles-source.sh"
+  require_main_dotfiles setup-agent-hooks "$DOTFILES"
+fi
 python3 - "$DOTFILES" "$@" <<'PY'
 import copy
 import datetime
