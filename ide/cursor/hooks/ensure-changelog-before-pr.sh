@@ -46,7 +46,9 @@ if ! command="$(jq -er '.command // ""' <<<"$input" 2>/dev/null)"; then
 fi
 
 # Only gate actual gh pr create invocations (not unrelated commands that mention the phrase).
-if [[ ! "$command" =~ (^|[[:space:];]|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$) ]]; then
+# Must stay identical to the matcher in ide/cursor/hooks.json (the test enforces it).
+GH_PR_CREATE_RE='(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+create([[:space:]);&|]|$)'
+if [[ ! "$command" =~ $GH_PR_CREATE_RE ]]; then
 	exit 0
 fi
 

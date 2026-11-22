@@ -8,7 +8,7 @@
       },
       {
         "command": "hooks/ensure-changelog-before-pr.sh",
-        "matcher": "(^|[;&|]|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)"
+        "matcher": "(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+create([[:space:]);&|]|$)"
       },
       {
         "command": "/bin/sh -c 'if [ -f \"$HOME/.orca/agent-hooks/cursor-hook.sh\" ] && [ -r \"$HOME/.orca/agent-hooks/cursor-hook.sh\" ] && [ -x \"$HOME/.orca/agent-hooks/cursor-hook.sh\" ]; then ORCA_CURSOR_HOOK_RESPONSE='\"'\"'{\"permission\":\"allow\"}'\"'\"' /bin/sh \"$HOME/.orca/agent-hooks/cursor-hook.sh\"; else printf '\"'\"'%s'\"\\\\\"'n'\"'\"' '\"'\"'{\"permission\":\"allow\"}'\"'\"'; { command -p cat 2>/dev/null || cat; } >/dev/null 2>&1 || :; fi'",
