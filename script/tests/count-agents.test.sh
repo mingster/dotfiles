@@ -33,6 +33,9 @@ assert_count 'Cursor CLI is not counted' 0 '/Users/u/.local/bin/cursor-agent --u
 assert_count 'other executables and embedded command text' 0 $'grep -c claude\n/bin/sh -c claude --no-daemon\n/usr/bin/cursor-agent\nclaude-helper --dangerously-skip-permissions'
 assert_count 'leading whitespace' 2 $'  claude --model example\n\t/usr/bin/other --no-daemon\n   /Users/u/.grok/bin/grok chat'
 assert_count 'app-server in session configuration' 1 'claude --no-daemon -c app-server'
+# Deliberate skips (#1557): a path qualified claude is a helper process, and a bare one needs arguments.
+assert_count 'path qualified Claude helper is not counted' 0 '/Users/u/.local/bin/claude --chrome-native-host'
+assert_count 'bare Claude without arguments is not counted' 0 'claude'
 # Deliberate refuse (#1074): Codex is not an agent session.
 assert_count 'Codex CLI is not counted' 0 'codex --full-auto'
 
