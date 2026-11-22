@@ -3,7 +3,7 @@
 # Usage: check-skill-refs.sh <project-dir>
 # Scans AGENTS.md, docs/ and .claude/ (Markdown). A name counts when a skill of that name sits under the
 # project, the user or the dotfiles trees. Built in commands, URL paths and file paths are not names.
-# A name needs two letters (so sed's /g is skipped). An unknown name counts only when written as the command (right after run/use/invoke/type, or right before "skill"), because a web route such as /account looks the same.
+# A name needs two letters (so sed's /g is skipped). An unknown name counts only when written as the command (right after run/invoke/type, bare right after use, or right before "skill"), because a web route such as /account looks the same.
 # Exit: 0 clean, 1 a name has no skill, 2 usage.
 set -uo pipefail
 
@@ -66,7 +66,11 @@ for f in ${files[@]+"${files[@]}"}; do
     else
       # An unknown name could be a web route (/account, /api). Report it only where the line talks about a skill or a command to run.
       # Only when the name is written as the command: right after run/use/invoke/type, or right before "skill" (#1546).
-      sed -n "${line}p" "$f" | grep -qiE "\\b(run|use|invoke|type)[[:space:]]+[\`\"'(]*/$name\\b|/$name[\`\"')]*[[:space:]]+skill\\b" || continue
+      # The name must stand alone: not part of a longer path (/shop/x), URL (https://h/x) or hyphenated name (/code-review).
+      # Run, invoke and type accept the name bare or in a code span. Use accepts it bare only, since docs write routes in code spans ("Use `/unv`").
+      b='(^|[^[:alnum:]_/.:-])'
+      e='([^[:alnum:]_/.:-]|$)'
+      sed -n "${line}p" "$f" | grep -qiE "${b}(run|invoke|type)[[:space:]]+[\`\"'(]*/${name}${e}|${b}use[[:space:]]+/${name}${e}|${b}/${name}[\`\"')]*[[:space:]]+skill\\b" || continue
       echo "agent-team: ${f#"$dir"/}:$line: /$name names no skill under the project, user or dotfiles trees" >&2
     fi
     status=1

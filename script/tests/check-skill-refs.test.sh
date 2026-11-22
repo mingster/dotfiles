@@ -76,6 +76,10 @@ printf '%s\n' 'Keep it in `/shop`, and use the page at `/contact` or /liff on th
 check && ok "a route in a skill or run sentence, not named as the command, passes (#1546)" || bad "route flagged: $(cat "$TMP/check.log")"
 printf 'Run /nonesuch now, or run `/other`, or use /third, or the /fourth skill.\n' >"$P/docs/notes.md"
 check; n=$(grep -c 'names no skill' "$TMP/check.log"); [ "$n" -eq 4 ] && ok "an unknown name right after run/use, or before skill, is still reported" || bad "expected 4 unknown names, got $n"
+printf '%s\n' 'Use `/unv` and the existing Playground demo.' 'Use `/shop/[storeId]` on the `/shop` page.' 'Run `/code-review` on the `/code` page.' 'See `https://x/unv` skill docs and `/unv`.' >"$P/docs/notes.md"
+check && ok "a route in a code span after Use, or next to a longer path, URL or hyphenated name, passes" || bad "false positive: $(cat "$TMP/check.log")"
+printf 'Use /nonesuch now.\n' >"$P/docs/notes.md"
+check || ok "a bare unknown name after Use still fails"
 printf 'Run /staging-review now.\n' >"$P/docs/notes.md"
 check || ok "a run-context unknown name still fails"
 
