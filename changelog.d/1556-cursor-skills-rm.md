@@ -1,0 +1,1 @@
+- setup-claude-code.sh now removes ~/.cursor/skills only when it is a symlink; a real directory is kept with a warning (#1556).

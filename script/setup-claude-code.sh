@@ -96,8 +96,12 @@ if [ -e "${HOME}/.cursor/skills" ] && [ -e "${HOME}/.claude/skills" ]; then
   if _c=$(cd "${HOME}/.claude/skills" 2>/dev/null && pwd -P) && \
      _u=$(cd "${HOME}/.cursor/skills" 2>/dev/null && pwd -P); then
     if [ "${_c}" = "${_u}" ]; then
-      echo "setup-claude-code: removing ${HOME}/.cursor/skills (same tree as ~/.claude/skills)"
-      rm -rf "${HOME}/.cursor/skills"
+      if [ -L "${HOME}/.cursor/skills" ]; then
+        echo "setup-claude-code: removing ${HOME}/.cursor/skills (same tree as ~/.claude/skills)"
+        rm -f "${HOME}/.cursor/skills"
+      else
+        echo "setup-claude-code: warning: not removing ${HOME}/.cursor/skills (a real directory, not a link)" >&2
+      fi
     fi
   fi
 fi
