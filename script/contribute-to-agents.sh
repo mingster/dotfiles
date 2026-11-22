@@ -24,9 +24,9 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 NOTES_DIR="$DOTFILES/.agents/claude/notes"
 
-if [ $# -lt 1 ]; then
+if [ $# -lt 1 ] || [ -z "$1" ] || [[ "$1" == */* ]] || [[ "$1" == .* ]]; then
     printf 'Usage: %s <topic> ["note text"]\n' "$(basename "$0")" >&2
-    printf '  topic: e.g. laravel, nextjs, docker\n' >&2
+    printf '  topic: e.g. laravel, nextjs, docker (not empty, no /, not starting with .)\n' >&2
     exit 1
 fi
 
