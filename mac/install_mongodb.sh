@@ -32,7 +32,7 @@ if [ -z "${MONGOD_CONF:-}" ]; then
 fi
 
 # Append once: a second replication: key makes mongod refuse to start.
-if [ -n "${MONGOD_CONF:-}" ] && ! grep -q 'replSetName' "$MONGOD_CONF" 2>/dev/null; then
+if [ -n "${MONGOD_CONF:-}" ] && ! grep -Eq '^[[:space:]]*replSetName:' "$MONGOD_CONF" 2>/dev/null; then
   echo "replication:" >> "$MONGOD_CONF"
   echo "  replSetName: rs0" >> "$MONGOD_CONF"
 fi
