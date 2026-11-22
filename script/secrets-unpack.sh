@@ -45,6 +45,6 @@ attached=1
 umask 077
 created=0
 if [ ! -e "$dest" ]; then mkdir -p "$dest"; created=1; fi
-rsync -a --exclude '.fseventsd' --exclude '.Spotlight-V100' --exclude '.Trashes' "$mp/" "$dest/"
+rsync -a --no-perms --exclude '.fseventsd' --exclude '.Spotlight-V100' --exclude '.Trashes' "$mp/" "$dest/"
 if [ "$created" = 1 ]; then chmod 700 "$dest"; fi
 echo "unpacked to $dest"

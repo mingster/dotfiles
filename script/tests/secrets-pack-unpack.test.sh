@@ -51,6 +51,16 @@ printf 'pw-ok\n' | bash "$here/secrets-unpack.sh" "$img" "$empty" >/dev/null 2>&
 check "empty existing target is filled" "$([ -f "$empty/a.txt" ] && echo 0 || echo 1)"
 check "empty existing target mode is not changed" "$([ "$(stat -f %Lp "$empty")" = 755 ] && echo 0 || echo 1)"
 
+# The image root's own mode must not leak onto an existing empty folder, either way.
+tight="$tmp/tight"; mkdir -p "$tight"; chmod 700 "$tight"
+printf 'pw-ok\n' | bash "$here/secrets-unpack.sh" "$img" "$tight" >/dev/null 2>&1
+check "existing 700 target stays 700 (image root is 755)" "$([ "$(stat -f %Lp "$tight")" = 700 ] && echo 0 || echo 1)"
+src7="$tmp/src7"; mkdir -p "$src7"; chmod 700 "$src7"; echo t > "$src7/c.txt"
+printf 'pw-ok\n' | bash "$here/secrets-pack.sh" "$src7" "$tmp/s7.dmg" >/dev/null 2>&1
+open="$tmp/open"; mkdir -p "$open"; chmod 755 "$open"
+printf 'pw-ok\n' | bash "$here/secrets-unpack.sh" "$tmp/s7.dmg" "$open" >/dev/null 2>&1
+check "existing 755 target stays 755 (image root is 700)" "$([ "$(stat -f %Lp "$open")" = 755 ] && echo 0 || echo 1)"
+
 check "missing image exits 1" "$([ "$(printf 'x\n' | bash "$here/secrets-unpack.sh" "$tmp/none.dmg" "$tmp/o3" >/dev/null 2>&1; echo $?)" = 1 ] && echo 0 || echo 1)"
 
 echo "secrets-pack-unpack: $pass passed, $fail failed"
