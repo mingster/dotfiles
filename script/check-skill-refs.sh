@@ -3,6 +3,7 @@
 # Usage: check-skill-refs.sh <project-dir>
 # Scans AGENTS.md, docs/ and .claude/ (Markdown). A name counts when a skill of that name sits under the
 # project, the user or the dotfiles trees. Built in commands, URL paths and file paths are not names.
+# A name needs two letters (so sed's /g is skipped). An unknown name counts only on a line that mentions a skill or says run/use/invoke/type, because a web route such as /account looks the same.
 # Exit: 0 clean, 1 a name has no skill, 2 usage.
 set -uo pipefail
 
@@ -28,7 +29,7 @@ builtin_command() {
     help|clear|compact|config|cost|doctor|exit|init|login|logout|mcp|memory|model|permissions|pr-comments|review|status|\
     terminal-setup|vim|agents|bug|add-dir|resume|rewind|hooks|ide|install-github-app|loop|plan|fast|usage|context|\
     copy|rename|theme|todos|feedback|release-notes|security-review|statusline|upgrade|fork|batch|effort|skills|plugin|\
-    schedule|btw|skill-name) return 0 ;;
+    schedule|btw|subtask|skill-name) return 0 ;;
   esac
   return 1
 }
@@ -51,7 +52,7 @@ done
 
 # Doubled blanks keep a leading blank for the next name after a match eats its trailing one.
 # A name follows a space, quote, backtick or bracket (not a word, so a path like <owner>/repo is skipped).
-ref_re="(^|[[:space:]\`\"'(\\[])/[a-z][a-z0-9-]*([^[:alnum:]_/.:-]|[.,;!?]+([^[:alnum:]_/.:-]|\$)|\$)"
+ref_re="(^|[[:space:]\`\"'(\\[])/[a-z][a-z0-9-]+([^[:alnum:]_/.:-]|[.,;!?]+([^[:alnum:]_/.:-]|\$)|\$)"
 status=0
 for f in ${files[@]+"${files[@]}"}; do
   while IFS=: read -r line match; do
@@ -63,6 +64,8 @@ for f in ${files[@]+"${files[@]}"}; do
     if repl=$(retired_replacement "$name"); then
       echo "agent-team: ${f#"$dir"/}:$line: /$name is a retired skill, use $repl" >&2
     else
+      # An unknown name could be a web route (/account, /api). Report it only where the line talks about a skill or a command to run.
+      sed -n "${line}p" "$f" | grep -qE '[Ss]kill|\b([Rr]un|[Uu]se|[Ii]nvoke|[Tt]ype)\b' || continue
       echo "agent-team: ${f#"$dir"/}:$line: /$name names no skill under the project, user or dotfiles trees" >&2
     fi
     status=1

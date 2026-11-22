@@ -70,5 +70,10 @@ mkdir -p "$P/.claude/skills/mine"
 printf -- '---\nname: mine\n---\n' >"$P/.claude/skills/mine/SKILL.md"
 check && ok "built in commands, URL paths, file paths and real skills pass" || bad "false positive: $(cat "$TMP/check.log")"
 
+printf '%s\n' "sed -i 's/A = \"1\"/A = \"0\"/g' x" 'Context: /subtask and /fork.' 'Routes: /account, /api, /root and /snap.' 'Open /qr-generator in the browser.' >"$P/docs/notes.md"
+check && ok "/subtask, sed /g and web routes pass" || bad "false positive: $(cat "$TMP/check.log")"
+printf 'Run /staging-review now.\n' >"$P/docs/notes.md"
+check || ok "a run-context unknown name still fails"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
