@@ -2,6 +2,8 @@
 # install_java_dev.sh compares whole versions: openjdk-21.0.1 does not count as openjdk-21 (#1571).
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$(dirname "$0")/lib/asdf-pin.sh"
 fake=$(mktemp -d)
 trap 'rm -rf "$fake"' EXIT
 cat >"$fake/asdf" <<'STUB'

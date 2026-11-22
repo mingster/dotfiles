@@ -3,6 +3,8 @@
 # -h/--help print usage and exit 0, any other argument exits 2, and neither runs the job (#1581 #1582).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$(dirname "$0")/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 pass=0
