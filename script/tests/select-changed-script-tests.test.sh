@@ -450,4 +450,21 @@ case23_ide_hooks_select_their_tests() {
 }
 
 case23_ide_hooks_select_their_tests
-echo 'PASS: 23 acceptance cases'
+# #1456: bin/ wrappers and their tests run in CI and checks-local.
+case24_bin_wrappers_select_their_tests() {
+  local out name
+  for name in with-keychain agy changelog-compile; do
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "bin/$name" "bin/$name.sh" 2>&1)
+    grep -Fxq "Selected: bin/$name.test.sh" <<<"$out" \
+      || fail "case24 bin/$name must select its test: $out"
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "bin/$name.test.sh" 2>&1)
+    grep -Fxq "Selected: bin/$name.test.sh" <<<"$out" \
+      || fail "case24 bin/$name.test.sh must select itself: $out"
+  done
+  ok "case24 bin wrappers and tests map to their *.test.sh"
+}
+
+case24_bin_wrappers_select_their_tests
+echo 'PASS: 24 acceptance cases'

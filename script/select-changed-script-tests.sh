@@ -143,6 +143,13 @@ map_file() {
       map_script_sh_base "agent-team"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       ;;
+    bin/*.test.sh)
+      add_test "$path"
+      ;;
+    bin/*)
+      base=${path#bin/}
+      add_test "bin/${base%.sh}.test.sh"
+      ;;
     ide/cursor/hooks/*.test.sh)
       add_test "$path"
       ;;
