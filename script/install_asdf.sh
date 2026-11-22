@@ -3,6 +3,12 @@
 # Docs: https://asdf-vm.com/guide/getting-started.html
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: install_asdf.sh (takes no arguments)" >&2
+  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+fi
+
 # Source asdf init in case it was installed via git-clone earlier this session
 _try_source_asdf() {
   if [ -f "$HOME/.asdf/asdf.sh" ] && ! command -v asdf >/dev/null 2>&1; then

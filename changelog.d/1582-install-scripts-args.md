@@ -1,0 +1,1 @@
+install_asdf, install_aws_cli, install_claude, install_gcloud, install_java_dev, install_vscode_extensions, install_zed and shellcheck-dotfiles print usage for `-h` and `--help` and exit 2 for any other argument, installing nothing (#1582).

@@ -3,6 +3,12 @@
 # Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: install_aws_cli.sh (takes no arguments)" >&2
+  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+fi
+
 if command -v aws >/dev/null 2>&1; then
   echo "install_aws_cli: already installed ($(aws --version 2>&1 | head -1))"
   exit 0
