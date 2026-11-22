@@ -632,6 +632,13 @@ def _ansi_c_scan(text, i, end):
                 i += 1
         elif c == ")" and end == ")":
             return out, i
+        elif c == "(":
+            out.append(c)
+            inner, i = _ansi_c_scan(text, i + 1, ")")
+            out.extend(inner)
+            if i < n:
+                out.append(")")
+                i += 1
         elif c == "#" and (i == 0 or text[i - 1] in COMMENT_LEAD):
             stop = n
             for mark in ("\n", "`") if end == "`" else ("\n",):
@@ -683,8 +690,9 @@ def segments(command):
     while i < len(command):
         c = command[i]
         if quote:
-            if quote == '"' and command.startswith("$(", i):
-                end = _paren_end(command, i + 2)[0]  # a "$( )" body keeps its own quotes and operators
+            if quote == '"' and (command.startswith("$(", i) or c == "`"):
+                # a "$( )" or backtick body keeps its own quotes and operators
+                end = _paren_end(command, i + 2)[0] if c == "$" else _backtick_end(command, i + 1)
                 buf.append(command[i:end])
                 i = end
                 continue
@@ -725,9 +733,9 @@ def segments(command):
 
 
 def strip_comment(segment):
-    quote, i = None, 0
+    quote, i, scan = None, 0, _blank_bodies(segment)
     while i < len(segment):
-        c = segment[i]
+        c = scan[i]
         if quote:
             if c == "\\" and quote == '"':
                 i += 1
@@ -737,7 +745,7 @@ def strip_comment(segment):
             quote = c
         elif c == "\\":
             i += 1
-        elif c == "#" and (i == 0 or segment[i - 1] in " \t\n;&|()<>"):
+        elif c == "#" and (i == 0 or scan[i - 1] in " \t\n;&|()<>"):
             return segment[:i]
         i += 1
     return segment
@@ -745,6 +753,10 @@ def strip_comment(segment):
 
 def words(segment):
     text = strip_comment(segment)
+    try:
+        return shlex.split(text)  # the plain reading keeps a $( ) body whole
+    except ValueError:
+        text = _blank_bodies(text)  # a quote in a body is not ours: read the line without the bodies
     for closer in ("", "'", '"'):
         try:
             return shlex.split(text + closer)
@@ -3198,7 +3210,8 @@ def check_segment(segment, depth=0, cwd=None):
 
     # Heavy jobs must acquire the shared machine budget.
     try:
-        heavy_tokens = shlex.split(segment, comments=True)
+        heavy_tokens = [t for t in shlex.split(_blank_bodies(strip_comment(segment)))
+                        if not re.fullmatch(r"\$\(_*\)?|`_*`?", t)]
         heavy_prog, heavy_args = program_and_args(without_keywords(heavy_tokens))
     except ValueError:
         heavy_prog, heavy_args = None, []
@@ -3240,7 +3253,7 @@ def check_segment(segment, depth=0, cwd=None):
         deny(blocked_reason(base))
     if base == "eval":
         body = _decode_ansi_c(" ".join(args))
-        for text in [body, *substitutions(body)]:
+        for text in _inner_texts(body):
             check_hidden_script_paths(text, transfer_cwd)
             for seg in segments(text):
                 check_segment(seg, depth + 1, cwd=transfer_cwd)
@@ -3257,7 +3270,7 @@ def check_segment(segment, depth=0, cwd=None):
                         if int(m.group(1) or m.group(2)) < len(positional) else m.group(0),
                         script,
                     )
-                for text in [script, *substitutions(script)]:
+                for text in _inner_texts(script):
                     check_hidden_script_paths(text, transfer_cwd)
                     cur_cwd = transfer_cwd
                     for seg in segments(text):
@@ -3414,6 +3427,42 @@ def _paren_end(command, i):
         else:
             i += 1
     return n, False
+
+
+def _blank_bodies(text):
+    """Same length as text, with every $( ) and backtick body (outside single quotes) turned into underscores.
+
+    The bodies are inspected on their own by substitutions(); a quote or # inside one must not steer the
+    word splitter or the comment stripper of the line that holds it."""
+    out, i, n, dq = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+        elif c == '"':
+            dq = not dq
+            out.append(c)
+            i += 1
+        elif c == "'" and not dq:
+            close = text.find("'", i + 1)
+            close = n - 1 if close < 0 else close
+            out.append(text[i:close + 1])
+            i = close + 1
+        elif text.startswith("$(", i):
+            end = _paren_end(text, i + 2)[0]
+            closed = text[end - 1:end] == ")" and end - 1 >= i + 2
+            out.append("$(" + "_" * (end - i - 3 if closed else end - i - 2) + (")" if closed else ""))
+            i = end
+        elif c == "`":
+            end = _backtick_end(text, i + 1)
+            closed = text[end - 1:end] == "`" and end - 1 > i
+            out.append("`" + "_" * (end - i - 2 if closed else end - i - 1) + ("`" if closed else ""))
+            i = end
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)[:n].ljust(n, "_")
 
 
 def substitutions(command):
@@ -3945,10 +3994,11 @@ def _without_comments(command):
     out = []
     quote = None
     i = 0
+    scan = _blank_bodies(command)
     while i < len(command):
-        ch = command[i]
+        ch = scan[i]
         if quote:
-            out.append(ch)
+            out.append(command[i])
             if ch == "\\" and quote == '"' and i + 1 < len(command):
                 out.append(command[i + 1])
                 i += 2
@@ -3959,9 +4009,9 @@ def _without_comments(command):
             continue
         if ch in "'\"":
             quote = ch
-            out.append(ch)
+            out.append(command[i])
         elif ch == "\\" and i + 1 < len(command):
-            out.append(ch)
+            out.append(command[i])
             out.append(command[i + 1])
             i += 2
             continue
@@ -3970,7 +4020,7 @@ def _without_comments(command):
                 i += 1
             continue
         else:
-            out.append(ch)
+            out.append(command[i])
         i += 1
     return "".join(out)
 
@@ -4269,6 +4319,24 @@ def _has_expansion(token):
     return "$" in token or "`" in token
 
 
+def _inner_texts(script):
+    """The script an `eval` or `bash -c` runs, and its substitutions. A `\\$` or `\\`` left by a double quoted
+    argument is also read as the expansion it may have been, and each text is added to CODE_COMMAND."""
+    out = []
+    for text in dict.fromkeys((script, _decode_ansi_c(script.replace("\\$", "$").replace("\\`", "`")))):
+        _note_code(text)
+        out.extend((text, *substitutions(text)))
+    return out
+
+
+def _note_code(text):
+    """Add a decoded inner script to CODE_COMMAND, so the blocked script name it spells is seen there."""
+    global CODE_COMMAND
+    if text not in CODE_COMMAND:
+        CODE_COMMAND += "\n" + text
+    return text
+
+
 def _shell_options(args):
     """Yield (index, arg, is_option) for a shell's arguments up to and including its script, skipping option values."""
     skip = False
@@ -4282,6 +4350,14 @@ def _shell_options(args):
             if i + 1 < len(args):
                 yield i + 1, args[i + 1], False
             return
+        elif REDIRECT.match(a) and a.startswith("<") and not a.startswith("<<"):
+            target = a[1:] or (args[i + 1] if i + 1 < len(args) else "")
+            if target:
+                yield i, target, False  # `sh < file` runs the file
+            return
+        elif REDIRECT.match(a):
+            skip = REDIRECT.sub("", a, count=1) == "" and not a.startswith("<<")  # `2> file`: the target is next
+            yield i, a, True
         elif a.startswith(("-", "+")):
             yield i, a, True
         else:
@@ -4326,7 +4402,11 @@ def check_blocked_script_mentions(command):
             if plain is None or plain is OPEN_QUOTE:
                 _deny_unplain_mention()
             text, heredoc = plain
-            for seg in segments(text[:heredoc.start()] if heredoc else text):
+            plain_text = text[:heredoc.start()] if heredoc else text
+            for inner in substitutions(plain_text):
+                for seg in segments(inner):
+                    check_segment(seg, cwd=cur_cwd)
+            for seg in segments(plain_text):
                 check_segment(seg, cwd=cur_cwd)
                 prog, args = program_and_args(words(seg))
                 if prog in ("cd", "pushd") and args:
