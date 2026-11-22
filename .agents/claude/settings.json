@@ -268,6 +268,8 @@
   },
   "askUserQuestionTimeout": "5m",
   "tui": "fullscreen",
+  "spinnerTipsEnabled": false,
+  "prefersReducedMotion": true,
   "skipDangerousModePermissionPrompt": true,
   "theme": "dark-daltonized",
   "preferredNotifChannel": "notifications_disabled",
@@ -332,5 +334,5 @@
   },
   "teammateMode": "auto",
   "timeFormat": "24-hour",
-  "verbose": false
+  "verbose": true
 }
