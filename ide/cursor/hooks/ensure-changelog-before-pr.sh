@@ -46,7 +46,9 @@ if ! command="$(jq -er '.command // ""' <<<"$input" 2>/dev/null)"; then
 fi
 
 # Only gate actual gh pr create invocations (not unrelated commands that mention the phrase).
-if [[ ! "$command" =~ (^|[[:space:];]|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$) ]]; then
+# Must stay identical to the matcher in ide/cursor/hooks.json (the test enforces it).
+GH_PR_CREATE_RE='(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+create([[:space:]);&|]|$)'
+if [[ ! "$command" =~ $GH_PR_CREATE_RE ]]; then
 	exit 0
 fi
 
@@ -171,11 +173,43 @@ while IFS= read -r file; do
 	fi
 done < <(collect_changed_files)
 
-# Zero-Env Disclosure Gate: inspect committed and staged markdown files for raw secrets
+# Zero-Env Disclosure Gate: inspect only the lines this PR adds to markdown, json and yaml files.
+added_lines() {
+	local file="$1"
+	{
+		git diff -U0 "${MERGE_BASE}...HEAD" -- "$file" 2>/dev/null || true
+		git diff -U0 -- "$file" 2>/dev/null || true
+		git diff -U0 --cached -- "$file" 2>/dev/null || true
+	} | awk '/^\+\+\+ /{next} /^\+/{print substr($0,2)}'
+}
+
+# A documented placeholder password is not a secret.
+is_placeholder_password() {
+	case "$1" in
+		password | changeme | "<"*">" | '${'*'}' | "[Omitted/Configured via Env]") return 0 ;;
+	esac
+	return 1
+}
+
+has_raw_secret() {
+	local text="$1" url
+	if grep -E -q '(sk_live_[0-9a-zA-Z]{24,}|LINE_PAY_SECRET=[0-9a-zA-Z]{16,})' <<<"$text"; then
+		return 0
+	fi
+	local url_re='^postgres(ql)?://([^:]+):([^@]+)@[^/]+'
+	while IFS= read -r url; do
+		[[ -z "$url" ]] && continue
+		if [[ "$url" =~ $url_re ]] && ! is_placeholder_password "${BASH_REMATCH[3]}"; then
+			return 0
+		fi
+	done < <(grep -E -o 'postgres(ql)?://[^:[:space:]]+:[^@[:space:]]+@[^/[:space:]]+' <<<"$text")
+	return 1
+}
+
 while IFS= read -r file; do
 	[[ -z "$file" ]] && continue
 	if [[ "$file" =~ \.(md|mdx|json|ya?ml)$ ]] && [[ -f "$file" ]]; then
-		if grep -E -n '(sk_live_[0-9a-zA-Z]{24,}|LINE_PAY_SECRET=[0-9a-zA-Z]{16,}|postgres(ql)?://[^:]+:[^@]+@[^/]+)' "$file" 2>/dev/null; then
+		if has_raw_secret "$(added_lines "$file")"; then
 			emit_deny \
 				"Zero-Env Disclosure violation in ${file}." \
 				"Found raw secret or credential in ${file}. Replace with [Omitted/Configured via Env] before opening PR (Lean Startup SDLC Guardrail)."

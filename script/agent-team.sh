@@ -2556,6 +2556,7 @@ check_project() { # <target>
   if [ -d "$target/.agents/skills" ] || [ -d "$target/.claude/skills" ] || [ -d "$target/.cursor/skills" ]; then
     bash "$DOTFILES/script/check-skill-collisions.sh" "$target" || status=1
   fi
+  bash "$DOTFILES/script/check-skill-refs.sh" "$target" || status=1
   return "$status"
 }
 

@@ -131,6 +131,8 @@ done
 for src in "bash <<'EOF'" "sh <<'EOF'" "ssh host <<'EOF'" "python3 - <<'EOF'" "git commit -F - <<EOF" "cat > notes.md <<EOF"; do
   check_bash "heredoc fed to $src is still scanned" "$PROJ" "$src"$'\n'"$HD_BODY" deny
 done
+check_bash "text sink heredoc followed by a guarded step is still refused" "$PROJ" "cat <<'EOF' > notes.md && bash bin/deploy-raw.sh"$'\n'"$HD_BODY" deny
+check_bash "text sink heredoc to a substituted path is still refused" "$PROJ" 'cat > "$(bash bin/deploy-raw.sh)" <<'"'EOF'"$'\n'"$HD_BODY" deny
 check_bash "text sink heredoc after a guarded step is still refused" "$PROJ" "bash bin/deploy-raw.sh && cat > notes.md <<'EOF'"$'\n'"$HD_BODY" deny
 
 # production_hosts

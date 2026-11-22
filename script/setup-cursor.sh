@@ -17,6 +17,12 @@ esac
 # Global rules: ~/.cursor/rules → dotfiles/ide/cursor/rules
 mkdir -p "$DOTFILES/ide/cursor/rules"
 mkdir -p "$HOME/.cursor"
+# A real folder is moved aside first: ln -sfn would nest the link inside it and the rules would never load.
+if [ -d "$HOME/.cursor/rules" ] && [ ! -L "$HOME/.cursor/rules" ]; then
+  rules_bak="$HOME/.cursor/rules.bak-$(date +%Y%m%d%H%M%S)"
+  mv "$HOME/.cursor/rules" "$rules_bak"
+  echo "setup-cursor: backed up existing ~/.cursor/rules to $rules_bak"
+fi
 ln -sfn "$DOTFILES/ide/cursor/rules" "$HOME/.cursor/rules"
 
 # User settings + keybindings

@@ -4,6 +4,19 @@
 # falling back to script/fleet-pull.config.json only if that is missing.
 # Exits non-zero and names the host and repo for a dirty, behind-after-pull, diverged or unreachable checkout.
 set -u
+usage() {
+  cat <<'USAGE'
+Usage: fleet-pull.sh [--help]
+Pulls the state dir and each configured repo on this host and every fleet host.
+An agent host checkout is reset hard to origin/main. There is no dry run mode.
+USAGE
+}
+case "${1:-}" in
+  '') ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "fleet-pull: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "fleet-pull: unexpected arguments: $*" >&2; usage >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 command -v jq >/dev/null || { echo 'fleet-pull requires jq' >&2; exit 1; }
@@ -20,6 +33,14 @@ render_team() {
   [ -f "$1/script/agent-team.sh" ] || return 0
   out=$(DOTFILES="$1" bash "$1/script/agent-team.sh" machine 2>&1) && return 0
   echo "fail $host_label $2 (agent-team.sh machine failed: $(printf "%s\n" "$out" | tail -n 1))"
+  rc=1
+}
+# A hook left in ~/.claude/settings.json that points at a removed dotfiles script prints an error every session (#1416)
+check_hooks() {
+  local out
+  [ -f "$1/script/check-hook-paths.sh" ] && [ -f "$HOME/.claude/settings.json" ] || return 0
+  out=$(bash "$1/script/check-hook-paths.sh" "$HOME/.claude/settings.json" 2>&1) && return 0
+  printf "%s\n" "$out" | while IFS= read -r line; do echo "fail $host_label $2 ($line)"; done
   rc=1
 }
 for raw in "$@"; do
@@ -51,6 +72,7 @@ for raw in "$@"; do
     fi
     echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)$reset_note"
     render_team "$d" "$raw"
+    check_hooks "$d" "$raw"
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
@@ -91,6 +113,7 @@ for raw in "$@"; do
       continue
     fi
     render_team "$d" "$raw"
+    check_hooks "$d" "$raw"
   fi
 done
 exit "$rc"

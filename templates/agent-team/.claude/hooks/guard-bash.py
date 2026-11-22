@@ -3211,9 +3211,13 @@ TEXT_SINK = re.compile(
 def text_sink_heredoc(line):
     """The heredoc operator match when `line` only feeds a quoted heredoc to a text sink, else None."""
     ops = list(QUOTED_HEREDOC.finditer(line))
-    if len(ops) != 1 or line[ops[0].end():].strip():
+    if len(ops) != 1:
         return None
-    rest = line[:ops[0].start()]
+    rest, tail = line[:ops[0].start()], line[ops[0].end():].strip()
+    if tail:  # `cat <<'EOF' > f`: only one output redirect may follow the operator
+        if not re.fullmatch(rf">>?[ \t]*{_PATH}", tail):
+            return None
+        rest += " " + tail
     if "<<" in rest or not TEXT_SINK.fullmatch(" ".join(rest.split())):
         return None
     return ops[0]
@@ -3992,7 +3996,9 @@ def check_blocked_script_mentions(command):
             return
         lines, i, cur_cwd = command.split("\n"), 0, GATE_CWD
         while i < len(lines):
-            plain = _plain_shell_line(lines[i])
+            # A text sink heredoc line has its own strict grammar; it may name `$VAR` as the file (#1435).
+            sink = text_sink_heredoc(lines[i])
+            plain = (lines[i], sink) if sink else _plain_shell_line(lines[i])
             if plain is None:
                 _deny_unplain_mention()
             text, heredoc = plain

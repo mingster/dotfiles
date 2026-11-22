@@ -250,6 +250,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/agent-team.sh` | Single entry point: `machine` setup, `project` adoption (seeds `docs/agents/{issue-tracker,triage-labels,domain}.md`, appends `## Agent skills` to `AGENTS.md`, and with `--labels` creates the triage labels on GitHub), `sync`, read-only `check` for drift, and `all`. |
 | `script/sync-mattpocock-skills.sh` | Refreshes the 22 vendored Matt Pocock skills from upstream and reapplies `CONTEXT.md` naming and `.mattpocock-local.patch`. |
 | `script/check-skill-collisions.sh` | Checks for project skills that shadow shared or Orca-bundled skills, broken symlinks, or missing `SKILL.md` files. |
+| `script/check-skill-refs.sh` | Run by `agent-team.sh check`. Reports each `/<skill>` that a project's `AGENTS.md`, `docs/` or `.claude/` Markdown names when no skill of that name exists under the project, user or dotfiles trees. A retired skill (`staging-review`, `crew`, `team-grill-backlog`, `wrap-up`) names its replacement. Built in commands, URL paths and file paths are skipped. |
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
 | `script/bun-pin-check.sh` | Warns when a local or remote host's `bun` version is older than the repo's `package.json` pin (`packageManager` or `engines.bun`). |
 | `script/switch-login-shell-zsh.sh` | Links zsh dotfiles and switches the host's login shell to `zsh` so remote Orca probes and hooks share one PATH. |
@@ -270,7 +271,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/fleet-workers.py` | Counts live, in progress dispatched workers across local and remote fleet environments. |
 | `script/count-agents.sh` | Counts active coding agent CLI processes (`claude`, `agent`/`cursor-agent`, `agy`, `gemini`) from a process snapshot. |
 | `script/secrets-pack.sh` | Packs local secrets into an AES-256 encrypted `hdiutil` disk image for transfer between Macs. |
-| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. |
+| `script/secrets-unpack.sh` | Unpacks an AES-256 secrets disk image onto a host. Refuses a target that exists and is not an empty folder. |
 | `script/secrets-sync.sh` | Syncs the shared secrets directory across reachable fleet hosts. |
 | `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-refs.sh` | The root owned gate to the credential folder, the owner's once per host setup, and the file:line search that never prints text. Read `docs/agents/credential-folder.md` before changing any of them. |
 
@@ -297,7 +298,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 
 | Tool | Purpose |
 | --- | --- |
-| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (uses `script/review-prompt.txt`). |
+| `script/pr-review.sh` | Runs the read only cold PR review on the self hosted `Review` runner after GitHub Actions `Checks` pass (uses `script/review-prompt.txt`). It exits 1 before any agent runs when the PR body fails `pr-body-gate.py`, so a builder fixes `## Self-check` before `worker_done`, not at `ship.sh`. |
 | `script/live-check-server.sh` | Takes a lock on the live-check host (waiting up to 30 minutes), reuses one running dev server on latest `main` when healthy (starting it once if not), and releases the lock after without stopping the shared server. |
 | `script/coordinator-publication.sh` | Pushes an explicit engineering branch (`--branch <branch> --worktree <path>`) and opens or updates its PR after validating `Closes #<n>`, `## Verification` bullets, and zero `.env` secrets. |
 | `script/head-checks.sh` | Runs a repo's `.agents/head-checks.conf` checklist once on a trial merge of the PR head with `main` in a throwaway worktree; in other repos, Playwright, build and regression steps wait on `heavy-gate.sh` at weight 2 and type check steps at weight 1. A step that needs Postgres runs on the database host, and a database step that ran no tests or a host that is busy reports INFRA (rerun, no rework). |
@@ -426,7 +427,8 @@ Roles live in `~/agent-state/coordinator.conf` with one `coordinator <name>` lin
 
 | Command | Effect |
 | --- | --- |
-| `script/fleet-pull.sh` | Fast-forward `main` in `~/agent-state` and each configured repository on every host, then run `agent-team.sh machine` from `~/dotfiles` so role files and `session-start.md` follow the template. Prints `ok` with the short commit, or exits non-zero with `fail <host> <repo>` when a checkout is `dirty`, `not on main: detached` (or on another branch), `diverged: not fast-forward`, `behind after pull`, or unreachable |
+| `script/fleet-pull.sh` | Fast-forward `main` in `~/agent-state` and each configured repository on every host, then run `agent-team.sh machine` from `~/dotfiles` so role files and `session-start.md` follow the template. Prints `ok` with the short commit, or exits non-zero with `fail <host> <repo>` when a checkout is `dirty`, `not on main: detached` (or on another branch), `diverged: not fast-forward`, `behind after pull`, or unreachable  After the pull it runs `script/check-hook-paths.sh` on `~/.claude/settings.json` and prints `fail <host> <repo> (stale hook <event>: <path>)` for each hook that points at a removed `~/dotfiles/script` file |
+| `script/check-hook-paths.sh [settings.json]` | Prints `stale hook <event>: <path>` for each hook command in a Claude settings file that points at a `$HOME/dotfiles/script` path that does not exist, and exits 1 when it finds any. Prints no other settings value |
 | `script/fleet-toolchain-check.sh` | Compare each fleet host's CLI versions against the coordinator in `coordinator.conf`, and the coordinator against the latest release (add `--apply` to align `.tool-versions` pins and upgrade supported tools; peers move to the coordinator's claude, bun and Orca, never past it, and each failed step prints `<host> apply: <step> failed: <error>`. Orca is upgraded only on a host with no live claude, agent or agy process, since the upgrade restarts Orca; a busy host prints `<host> apply: orca upgrade skipped, live agents: <names>`. macOS replaces `Orca.app` (found in /Applications, else the old folder) from the release zip, Arch installs `stably-orca-bin` only when the AUR has the target version) |
 | `script/install-fleet-automations.sh --dry-run --install` | Print the planned `orca automations` commands without changing Orca |
 | `script/install-fleet-automations.sh --install` | Create or update the six fleet automations on this host (safe to run again) |

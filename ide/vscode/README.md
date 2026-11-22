@@ -18,12 +18,15 @@ Execute following command:
 brew install --cask visual-studio-code
 ```
 
-#### Install extensions
-Execute following command:
+#### Install extensions and link settings
+Run `install.sh` from the repo root (it links settings and keybindings). Or run each step on its own:
 
 ```sh
-curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/vscode/install-vscode-extensions.sh | /bin/bash
+bash ~/dotfiles/script/install_vscode_extensions.sh
+bash ~/dotfiles/script/setup-vscode.sh
 ```
+
+`script/install_vscode_extensions.sh` installs the extensions. `script/setup-vscode.sh` links `settings.json` and `keybindings.json` from `ide/vscode/` into the VS Code User folder.
 
 #### Memo
 json file path: `~/Library/Application\ Support/Code/User/settings.json`

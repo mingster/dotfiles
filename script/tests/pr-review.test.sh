@@ -21,6 +21,11 @@ case "$1" in
         case "$*" in
           *comments*) [ -f "$FAKE/issue-comments.json" ] && cat "$FAKE/issue-comments.json" || echo "[]" ;;
           *closingIssuesReferences*) echo 41 ;;
+          *"--json body"*)
+            if [ -f "$FAKE/pr-body" ]; then cat "$FAKE/pr-body"; else
+              printf '## Self-check\n```\nbash script/checks-local.sh\n```\n3 passed\n\nCloses #41\nBuilder: agent=claude model=sonnet\n'
+            fi
+            ;;
           *headRefOid*)
             if [[ "$*" == *state* ]]; then
               printf '{"headRefOid":"%s","state":"%s"}' "$FAKE_HEAD" "${FAKE_PR_STATE:-OPEN}"
@@ -178,7 +183,7 @@ done < <(sed 's/{{PR}}/7/g' "$root/script/review-prompt.txt")
 # Missing or empty review-prompt.txt fails closed with a one-line reason
 rm -f "$tmp/posted" "$tmp/claude-args"
 mkdir -p "$tmp/no-prompt-script"
-cp "$root/script/pr-review.sh" "$tmp/no-prompt-script/pr-review.sh"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$tmp/no-prompt-script/"
 if FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY="fake/o" \
   REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY="claude" \
   bash "$tmp/no-prompt-script/pr-review.sh" 7 "$sha" >"$tmp/missing-prompt.out" 2>&1; then
@@ -222,6 +227,13 @@ HEAD_NOW=bbbb run
 sed -i.bak '2i\
 [ -z "${FAKE_GH_DOWN:-}" ] || exit 1
 ' "$tmp/gh"
+# #1480: a PR body that fails pr-body-gate stops the review before any agent runs
+printf '## Summary\nNo self-check here.\n' > "$tmp/pr-body"
+if run; then fail "a body without ## Self-check must fail the review run"; fi
+[ ! -e "$tmp/posted" ] || fail "a failing body posts no review"
+[ ! -e "$tmp/claude-args" ] || fail "a failing body runs no review agent"
+rm -f "$tmp/pr-body"
+
 if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
 
 # gh api user fails (workflow_run token): no GITHUB_ACTOR is fatal; with GITHUB_ACTOR the run proceeds
@@ -644,5 +656,23 @@ printf 'Review: FAIL\nbad\n' > "$tmp/answer"
 FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY=claude FLEET_WATCH_PY="$tmp/fake-fleet-watch.py" \
   FLEET_WATCH_CONFIG=/c.json FLEET_WATCH_STATE=/s.json bash "$root/script/pr-review.sh" 7 "$sha" >/dev/null 2>&1 || true
 [ ! -e "$tmp/fake-fleet-watch.py.args" ] || fail "FAIL review must not start a verifier pass"
+
+# Relative path call (#1429): the antigravity branch finds bin/agy after a cd, so a relative
+# script path must still resolve it. Run a copy of the tree from its own root by relative path.
+rel="$tmp/rel"
+mkdir -p "$rel/script" "$rel/bin"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/review-prompt.txt" "$rel/script/"
+printf '#!/usr/bin/env bash\necho "agy $*" > "$FAKE/agy-args"\ncat "$FAKE/answer"\n' > "$rel/bin/agy"
+chmod +x "$rel/bin/agy"
+printf '#!/usr/bin/env bash\necho "--agent antigravity --model fake"\n' > "$tmp/agy-usage-gate"
+chmod +x "$tmp/agy-usage-gate"
+printf 'Review: PASS\nok\n' > "$tmp/answer"
+for call in script/pr-review.sh "$rel/script/pr-review.sh"; do
+  rm -f "$tmp/agy-args" "$tmp/posted"
+  (cd "$rel" && FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o \
+    REVIEW_USAGE_GATE="$tmp/agy-usage-gate" AUTHOR_FAMILY=claude \
+    bash "$call" 7 "$sha" >"$tmp/rel.out" 2>&1) || { cat "$tmp/rel.out"; fail "antigravity review via $call exits 0"; }
+  [ -s "$tmp/agy-args" ] || fail "antigravity review via $call runs bin/agy"
+done
 
 echo "pr-review tests passed"

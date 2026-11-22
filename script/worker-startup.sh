@@ -268,6 +268,7 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   WORKER_STARTUP_PLACED_REPO=
   WORKER_STARTUP_PLACED_HOST=
   WORKER_STARTUP_PLACED_CFG=
+  WORKER_STARTUP_PLACED_CLAIM=
   cfg=$(resolve_placement_config)
   if [ ! -f "$cfg" ]; then
     echo 'worker-placement: skipped (no fleet config)' >&2
@@ -307,6 +308,7 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   if [ "$record" = --record ]; then
     WORKER_STARTUP_PLACED_HOST=$(printf '%s' "$json" | jq -r '.host // empty')
     WORKER_STARTUP_PLACED_CFG=$cfg
+    WORKER_STARTUP_PLACED_CLAIM=$(printf '%s' "$json" | jq -r '.claim // empty')
   fi
 }
 
@@ -538,10 +540,22 @@ PY
   echo "worker-startup: route override for $1: $3" >&2
 }
 
+# A placed start that now has a dispatch: tie its recent-start claim to it. Placement then stops counting the
+# claim once the inventory lists the dispatch, so a started worker is not counted twice (#1411).
+bind_placed_claim() { # <worker-start json>
+  local dispatch
+  [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] || return 0
+  dispatch=$(jq -r '.result.dispatchId // empty' <<<"$1" 2>/dev/null || true)
+  [ -n "$dispatch" ] || return 0
+  "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$dispatch" \
+    ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
+}
+
 run_captured() { # command... ; print its stdout, return its status. start_out is the caller's variable.
   local ec=0
   start_out=$("$@") || ec=$?
   printf '%s\n' "$start_out"
+  bind_placed_claim "$start_out"
   return "$ec"
 }
 
@@ -1142,6 +1156,7 @@ run_mode() {
     local ec=$1 rm_args
     if [ -n "${WORKER_STARTUP_PLACED_HOST:-}" ]; then
       "$python3" "$here/worker-placement.py" unrecord --host "$WORKER_STARTUP_PLACED_HOST" \
+        ${WORKER_STARTUP_PLACED_CLAIM:+--claim "$WORKER_STARTUP_PLACED_CLAIM"} \
         ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
     fi
     if [ "$created_wt" = 1 ]; then

@@ -3,6 +3,9 @@
 # The agent only reads; this script alone posts, and only a well formed answer.
 set -euo pipefail
 
+# Resolve once: a later cd breaks a relative BASH_SOURCE.
+PR_REVIEW_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 REVIEW_MODEL_STRONG='^\.github/|^\.claude/hooks/|^\.orca/|^script/usage-gate\.py|^script/heavy-gate|^script/head-checks|^script/(coordinator-publication|fleet-watch|post-verdict|ship|pr-review)\.sh'
 REVIEW_MODEL_MONEY='(^|/)(payment|payments|stripe|wallet|ledger|billing|subscription|secrets)'
 
@@ -58,7 +61,7 @@ PY
 
 review_prompt_build() {
   : "${REVIEW_PROMPT_PR:?REVIEW_PROMPT_PR must be set before review_prompt_build}"
-  local prompt_file=${REVIEW_PROMPT_FILE:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/review-prompt.txt}
+  local prompt_file=${REVIEW_PROMPT_FILE:-$PR_REVIEW_DIR/review-prompt.txt}
   if [ ! -s "$prompt_file" ]; then
     echo "review prompt file missing or empty: $prompt_file" >&2
     exit 1
@@ -85,7 +88,7 @@ review_run_invoke() {
         --allowedTools "Read,Grep,Glob" --disallowedTools "Bash,Edit,Write,WebFetch,WebSearch")
       ;;
     antigravity)
-      (cd "$REVIEW_RUN_WORKDIR" && "$(cd "$(dirname "${BASH_SOURCE[0]}")/../bin" && pwd)/agy" --model "$REVIEW_RUN_MODEL" --dangerously-skip-permissions \
+      (cd "$REVIEW_RUN_WORKDIR" && "$PR_REVIEW_DIR/../bin/agy" --model "$REVIEW_RUN_MODEL" --dangerously-skip-permissions \
         -p "$REVIEW_RUN_PROMPT")
       ;;
     cursor)
@@ -149,7 +152,7 @@ fi
 # every fleet-watch gate still applies, and a failed pass leaves the PR for the next scan.
 kick_verifier_pass() {
   [ -n "${FLEET_WATCH_CONFIG:-}" ] && [ -n "${FLEET_WATCH_STATE:-}" ] || return 0
-  python3 "${FLEET_WATCH_PY:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fleet-watch.py}" \
+  python3 "${FLEET_WATCH_PY:-$PR_REVIEW_DIR/fleet-watch.py}" \
     --config "$FLEET_WATCH_CONFIG" --state "$FLEET_WATCH_STATE" --babysit-only >&2 ||
     echo "pr-review: verifier pass failed; the next fleet-watch scan starts it" >&2
 }
@@ -170,6 +173,12 @@ case "$pr_state" in
 esac
 current=$(jq -r .headRefOid <<<"$pr_head_json")
 [ "$current" = "$head" ] || { echo "stale head, a newer run reviews this PR"; exit 0; }
+
+# #1480: a body that fails pr-body-gate stops here, so the builder fixes it before worker_done, not at ship.sh.
+if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py"); then
+  echo "PR body fails pr-body-gate: ${body_reason:-no reason given}. Fix the PR body, then rerun." >&2
+  exit 1
+fi
 
 review_me=$(
   gh api user --jq .login 2>/dev/null ||

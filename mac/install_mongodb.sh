@@ -20,15 +20,21 @@ brew install mongodb-community@8.0
 #replication:
 #    replSetName: rs0
 
-architecture=$(uname -m)
-if [ "$architecture" == "arm64" ]; then
-  echo "replication:" >> /opt/homebrew/etc/mongod.conf
-  echo "  replSetName: rs0" >> /opt/homebrew/etc/mongod.conf
-elif [ "$architecture" == "x86_64" ]; then
-  echo "replication:" >> /usr/local/etc/mongod.conf
-  echo "  replSetName: rs0" >> /usr/local/etc/mongod.conf
-else
+if [ -z "${MONGOD_CONF:-}" ]; then
+  architecture=$(uname -m)
+  if [ "$architecture" == "arm64" ]; then
+    MONGOD_CONF=/opt/homebrew/etc/mongod.conf
+  elif [ "$architecture" == "x86_64" ]; then
+    MONGOD_CONF=/usr/local/etc/mongod.conf
+  else
     echo "Unknown architecture: $architecture"
+  fi
+fi
+
+# Append once: a second replication: key makes mongod refuse to start.
+if [ -n "${MONGOD_CONF:-}" ] && ! grep -q 'replSetName' "$MONGOD_CONF" 2>/dev/null; then
+  echo "replication:" >> "$MONGOD_CONF"
+  echo "  replSetName: rs0" >> "$MONGOD_CONF"
 fi
 
 brew services start mongodb/brew/mongodb-community
