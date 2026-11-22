@@ -76,6 +76,8 @@ Skills marked `disable-model-invocation` (grill-me, grill-with-docs, handoff, im
 
 ## 1. Think Before Coding
 
+A repo AGENTS.md that sets its own autonomy timeout or active_run.md rule overrides this section and section 5.
+
 State assumptions explicitly. If uncertain, ask.
 
 If multiple interpretations exist, present them, don't pick silently. If a simpler approach exists, say so. Push back when warranted.
