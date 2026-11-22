@@ -47,5 +47,16 @@ if (cd "$tmp" && bash "$check" --base main --head topic --body "" >/dev/null 2>&
   passed=$((passed + 1)); echo "ok   --base/--head with a doc passes"
 else failed=$((failed + 1)); echo "FAIL --base/--head with a doc"; fi
 
+# A bad --base ref or a missing --files-from file exits 2 with no ok line.
+run_bad() {
+  local name=$1 out rc; shift
+  out=$(cd "$tmp" && bash "$check" "$@" 2>&1); rc=$?
+  if [ "$rc" -eq 2 ] && ! printf '%s\n' "$out" | grep -q '^ok'; then passed=$((passed + 1)); echo "ok   $name exits 2"
+  else failed=$((failed + 1)); echo "FAIL $name (rc $rc)"; echo "$out"; fi
+}
+run_bad "bad --base ref" --base nosuchref --body ""
+run_bad "bad --head ref" --base main --head nosuchref --body ""
+run_bad "missing --files-from file" --files-from "$tmp/nope" --body ""
+
 echo "passed $passed, failed $failed"
 [ "$failed" -eq 0 ]

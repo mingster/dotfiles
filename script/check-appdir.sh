@@ -5,6 +5,7 @@
 # Usage: check-appdir.sh [<repo dir>]   (default: the repo this script is in)
 set -euo pipefail
 root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
+git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || { echo "check-appdir: $root is not a git checkout" >&2; exit 2; }
 old="/Applications/""_dev"   # split so this file does not match itself
 hits=$(git -C "$root" grep -n -F -e "$old" -- . \
   ':(exclude)script/lib/app-path.sh' ':(exclude)_outdated' ':(exclude)CHANGELOG.md' || true)

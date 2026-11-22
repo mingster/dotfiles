@@ -2329,7 +2329,7 @@ OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
 GRILL_LINE = re.compile(
     r"(?i)\Agrill approved:[ \t]+(coordinator|owner|elon)[ \t]+(\d{4}-\d{2}-\d{2})\Z"
 )
-GRILL_EXEMPT_LABELS = ("hotfix", "mechanical")
+GRILL_EXEMPT_LABELS = ("p0",)
 # Fail closed. Any of these in the title, body, or a label keeps the grill gate.
 # "pay" and "plan" are whole words so "payload" and "planning" stay ordinary.
 MONEY_WORD = re.compile(
@@ -2719,8 +2719,7 @@ def issue_is_exempt(issue):
             names.append(str(label.get("name") or ""))
         elif isinstance(label, str):
             names.append(label)
-    label_text = " ".join(names).lower()
-    if any(marker in label_text for marker in GRILL_EXEMPT_LABELS):
+    if any(name.strip().lower() in GRILL_EXEMPT_LABELS for name in names):
         return True
     return any(elon_take_over_ok(comment) for comment in issue.get("comments") or [] if isinstance(comment, dict))
 
@@ -2756,7 +2755,7 @@ def check_grill_gate(args, spec):
                  "written by the coordinator or the owner. "
                  "Money rules and prices need that record before the build starts. "
                  "The owner checks the same issue at merge. "
-                 "Hotfix, mechanical text only and \"Elon take over\" work are exempt.")
+                 "P0 and \"Elon take over\" work are exempt.")
 
 
 def check_worker_start(args, script=False):

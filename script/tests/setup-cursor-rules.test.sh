@@ -3,7 +3,7 @@
 # shellcheck source=script/tests/lib/asdf-pin.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 here=$(cd "$(dirname "$0")/../.." && pwd)
-# shellcheck source=lib/asdf-pin.sh
+# shellcheck disable=SC1091
 . "$here/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 pass=0; fail=0

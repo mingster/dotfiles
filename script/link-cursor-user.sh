@@ -4,6 +4,8 @@
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/link-user-file.sh
+. "$DOTFILES/script/lib/link-user-file.sh"
 
 case "${OSTYPE:-}" in
   darwin*)
@@ -39,7 +41,7 @@ for file in settings.json keybindings.json environment.json; do
     rm -f "$CURSOR_USER/$file"
     python3 "$DOTFILES/script/apply-ide-overlay.py" "$BASE_CURSOR_DIR/$file" "$BASE_CURSOR_DIR/settings.local.json" > "$CURSOR_USER/$file"
   else
-    ln -sfn "$BASE_CURSOR_DIR/$file" "$CURSOR_USER/$file"
+    link_user_file "$BASE_CURSOR_DIR/$file" "$CURSOR_USER/$file"
   fi
 done
 

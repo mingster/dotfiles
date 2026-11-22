@@ -207,6 +207,15 @@ map_file() {
     script/*example|script/*.example.json)
       map_script_example "$path"
       ;;
+    mac/bin/emptyTrash.sh)
+      add_if_exists "script/tests/empty-trash.test.sh"
+      ;;
+    mac/install_mongodb.sh)
+      add_if_exists "script/tests/install-mongodb.test.sh"
+      ;;
+    mac/stowall)
+      add_if_exists "script/stowall.test.sh"
+      ;;
     .agents/claude/statusline.sh)
       add_if_exists "script/tests/statusline.test.sh"
       ;;
