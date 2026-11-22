@@ -76,13 +76,27 @@ for event in hooks:
                       if not (re.fullmatch(r'python3 (/\S+/(usage-gate-hook|worker-budget)\.py)', h.get('command', ''))
                               and not pathlib.Path(h['command'][8:]).exists())]
     hooks[event] = [g for g in hooks[event] if g.get('hooks')]
-# Skills the guide never names are turned off in the tracked Claude settings; carry them to a kept
-# settings.json too. A key already set on this machine wins (#1313).
+# The tracked Claude settings are the fleet defaults: their keys win over this machine's (#1395).
+# Keys only this machine holds (env, mcpServers, feedbackDrafts, its own extras) are never touched.
+# Hooks belong to Orca and agent-team.sh machine, and permissions.defaultMode to the team template.
+# A skillOverrides key already set on this machine wins (#1313).
 tracked = root / '.agents/claude/settings.json'
 if tracked.is_file():
-    overrides = json.loads(tracked.read_text()).get('skillOverrides', {})
-    if overrides:
-        data['skillOverrides'] = {**overrides, **data.get('skillOverrides', {})}
+    for key, value in json.loads(tracked.read_text()).items():
+        if key in ('hooks', 'env', 'mcpServers', 'feedbackDrafts'):
+            continue
+        if key == 'skillOverrides':
+            data[key] = {**value, **data.get(key, {})}
+        elif key == 'permissions':
+            perms = data.setdefault('permissions', {})
+            for rule in ('allow', 'deny', 'ask'):
+                if rule in value:
+                    have = perms.get(rule, [])
+                    perms[rule] = have + [item for item in value[rule] if item not in have]
+        elif isinstance(value, dict) and isinstance(data.get(key), dict):
+            data[key] = {**data[key], **value}
+        else:
+            data[key] = value
 if render:
     print(json.dumps(data, indent=2))
     sys.exit(0)
