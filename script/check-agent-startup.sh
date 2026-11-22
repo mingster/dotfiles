@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Verify agent startup instruction links installed from dotfiles.
+# Verify the Antigravity (agy) startup instruction links installed from dotfiles.
+# It checks only the two agy links. Claude, Grok and Orca links are not checked.
+# When Antigravity is absent it checks nothing and says so on its last line.
 set -euo pipefail
 # shellcheck source=lib/app-path.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/app-path.sh"
@@ -81,6 +83,7 @@ run_check_agent_startup() {
   warn_empty_grok_hosts
   if antigravity_should_skip; then
     echo 'check-agent-startup: Antigravity IDE not installed; skipping agy links.'
+    echo 'check-agent-startup: nothing checked (only agy links are verified, and Antigravity is not installed).'
     return 0
   fi
 
@@ -96,6 +99,7 @@ run_check_agent_startup() {
   check_link 'agy global AGENTS.md' \
     "$HOME/.gemini/config/AGENTS.md" \
     "$dotfiles_root/.agents/claude/CLAUDE.md"
+  echo 'check-agent-startup: OK (2 agy links checked).'
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

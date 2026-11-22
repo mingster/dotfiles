@@ -1,0 +1,1 @@
+* `check-agent-startup.sh` now says what it checked: its header and the `AGENTS.md` line name the two agy links, and a host without Antigravity ends with "nothing checked" instead of a bare success. `contribute-to-agents.sh` prints usage for `-h` and `--help`, rejects a topic starting with `-`, and rejects more than two arguments.

@@ -76,6 +76,7 @@ mkdir -p "$home3"
   bash "$root/script/check-agent-startup.sh" >"$tmp/skip-out"
 )
 grep -q 'check-agent-startup: Antigravity IDE not installed; skipping agy links.' "$tmp/skip-out"
+test "$(tail -n1 "$tmp/skip-out")" = 'check-agent-startup: nothing checked (only agy links are verified, and Antigravity is not installed).'
 echo 'PASS: no Antigravity skips agy link checks'
 
 # Missing links with agy present still fails.
@@ -107,4 +108,9 @@ FLEET_PULL_CONFIG="$tmp/fleet-ok.json" HOME="$home4" bash "$root/script/check-ag
 ! grep -q 'WARN grok_hosts' "$tmp/warn-out"
 echo 'PASS: set grok_hosts is not warned about'
 
-echo 'PASS: 11 tests'
+# 1583: a checked run ends by saying what was checked.
+bash "$root/script/check-agent-startup.sh" >"$tmp/ok-out"
+test "$(tail -n1 "$tmp/ok-out")" = 'check-agent-startup: OK (2 agy links checked).'
+echo 'PASS: skip and success runs state what was checked'
+
+echo 'PASS: 12 tests'

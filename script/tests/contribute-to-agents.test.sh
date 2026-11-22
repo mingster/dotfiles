@@ -43,5 +43,28 @@ check test "$before" = "$(find "$TMP" -type f -not -name err | sort)"
 CASE="no escape file"
 check test ! -e "$DOTFILES/escape.md"
 
+CASE="--help exits 0"
+"$SCRIPT" --help >"$TMP/out" 2>&1 </dev/null
+check test "$?" -eq 0
+CASE="-h exits 0"
+"$SCRIPT" -h >/dev/null 2>&1 </dev/null
+check test "$?" -eq 0
+CASE="--help prints usage"
+check grep -q '^Usage:' "$TMP/out"
+CASE="-x exits 1"
+"$SCRIPT" -x "text" >/dev/null 2>"$TMP/err" </dev/null
+check test "$?" -eq 1
+CASE="-x prints usage"
+check grep -q '^Usage:' "$TMP/err"
+CASE="three arguments exit 1"
+"$SCRIPT" demo a b >/dev/null 2>"$TMP/err" </dev/null
+check test "$?" -eq 1
+CASE="three arguments print usage"
+check grep -q '^Usage:' "$TMP/err"
+CASE="three arguments add nothing"
+check test "$(grep -c '^a$' "$NOTES/demo.md")" = 0
+CASE="no flag-named note files"
+check test -z "$(find "$NOTES" -name '-*')"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
