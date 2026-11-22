@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Print the number of coding agent CLI sessions in a process snapshot.
-# Counts `claude`, `agy` and `grok` (bare or by path, with arguments). Cursor is not counted
+# Counts `claude` only when invoked bare (`claude ...`), so path qualified helpers such as
+# `/Users/u/.local/bin/claude --chrome-native-host` stay out of the count. `agy` and `grok`
+# count bare or by path. A match needs at least one argument. Cursor is not counted
 # since the owner replaced it with Grok (#1264, #1527).
 set -euo pipefail
 
