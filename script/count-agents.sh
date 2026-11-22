@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Print the number of coding agent CLI sessions in a process snapshot.
+# Counts `claude`, `agy` and `grok` (bare or by path, with arguments). Cursor is not counted
+# since the owner replaced it with Grok (#1264, #1527).
 set -euo pipefail
 
 process_args() {
@@ -11,15 +13,11 @@ process_args() {
 }
 
 process_args "$@" | awk '
-  ($1 == "claude" || $1 == "agy") && NF > 1 { count++; next }
   {
     executable = $1
     sub(/^.*\//, "", executable)
-    if (executable == "agy" && NF > 1) {
-      count++
-    } else if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
-      # The IDE helper path contains spaces and is not the executable token.
-      count++
+    if ((executable == "claude" && $1 == "claude") || executable == "agy" || executable == "grok") {
+      if (NF > 1) count++
     }
   }
   END { print count + 0 }

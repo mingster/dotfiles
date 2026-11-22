@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install missing provider CLIs. Authentication remains an owner action.
 # Official installers: code.claude.com/docs/en/setup,
-# cursor.com/docs/cli/installation, antigravity.google/docs/cli/install/.
+# antigravity.google/docs/cli/install/.
 set -euo pipefail
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 export PATH="$HOME/.local/bin:$PATH:${ASDF_DATA_DIR:-$HOME/.asdf}/shims"
@@ -54,9 +54,10 @@ sys.exit(status)
 PY
 fi
 bash "$DOTFILES/script/install_claude.sh"
-if ! command -v agent >/dev/null 2>&1 && ! command -v cursor-agent >/dev/null 2>&1; then
-  curl -fsSL https://cursor.com/install | bash
-fi
 if ! command -v agy >/dev/null 2>&1; then
   curl -fsSL https://antigravity.google/cli/install.sh | bash
+fi
+# Grok has no installer named in docs/agents, so this only checks (#1526). Install it by hand.
+if ! command -v grok >/dev/null 2>&1; then
+  echo "install-agent-clis: grok is missing; no official installer is named in docs/agents, install it by hand"
 fi

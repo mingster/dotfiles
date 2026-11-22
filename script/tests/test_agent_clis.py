@@ -39,7 +39,7 @@ class AgentCliTests(unittest.TestCase):
         (self.bin / 'python3').symlink_to(sys.executable)
         (self.bin / 'curl').write_text('''#!/bin/bash
 case "$*" in
-  *claude.ai*) tool=claude ;; *cursor.com*) tool=agent ;; *antigravity.google*) tool=agy ;; *) exit 99 ;;
+  *claude.ai*) tool=claude ;; *antigravity.google*) tool=agy ;; *) exit 99 ;;
 esac
 echo "$tool" >> "$HOME/vendor-log"
 printf 'printf "#!/bin/sh\\\\nexit 0\\\\n" > "$HOME/.local/bin/%s"\nchmod +x "$HOME/.local/bin/%s"\nprintf "\\\\n# vendor PATH\\\\n" >> "$HOME/.zshrc"\nprintf "# vendor PATH\\\\n" >> "$HOME/.profile"\nexit "${VENDOR_EXIT:-0}"\n' "$tool" "$tool"
@@ -74,7 +74,7 @@ printf 'printf "#!/bin/sh\\\\nexit 0\\\\n" > "$HOME/.local/bin/%s"\nchmod +x "$H
             result = self.install()
             self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.home / 'vendor-log').read_text().splitlines(),
-                         ['claude', 'agent', 'agy'])
+                         ['claude', 'agy'])
         for cli in ('claude', 'agent', 'cursor-agent', 'agy'):
             result = subprocess.run(['git', '-C', str(self.repo), 'check-ignore', 'arch/bin/' + cli],
                                     capture_output=True)
@@ -82,6 +82,20 @@ printf 'printf "#!/bin/sh\\\\nexit 0\\\\n" > "$HOME/.local/bin/%s"\nchmod +x "$H
         result = subprocess.run(['git', '-C', str(self.repo), 'check-ignore', 'arch/bin/custom-helper'],
                                 capture_output=True)
         self.assertEqual(result.returncode, 1)
+
+    def test_cursor_is_not_installed_and_missing_grok_is_reported_only(self):
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("agent", (self.home / "vendor-log").read_text().splitlines())
+        self.assertIn("grok is missing", result.stdout)
+        self.assertFalse((self.home / ".local/bin/grok").exists())
+
+    def test_present_grok_is_not_reported_missing(self):
+        (self.bin / "grok").write_text("#!/bin/sh\nexit 0\n")
+        (self.bin / "grok").chmod(0o700)
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("grok is missing", result.stdout)
 
 
 if __name__ == '__main__':

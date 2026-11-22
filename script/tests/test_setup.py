@@ -25,8 +25,8 @@ class SetupTests(unittest.TestCase):
         self.env['PATH'] = str(self.bin) + os.pathsep + os.environ['PATH']
         self.env['PLAYWRIGHT_BROWSERS_PATH'] = str(self.home / 'browsers')
         self.env['GH_CONFIG_DIR'] = str(self.home / '.config/gh')
-        for command in ('gh', 'orca', 'bun', 'claude', 'agent', 'agy'):
-            executable = self.bin / command
+        for command in ('gh', 'orca', 'bun', 'claude', 'grok', 'agy'):
+            executable =self.bin / command
             executable.write_text('#!/bin/sh\nexit 0\n')
             executable.chmod(0o700)
 
@@ -46,7 +46,7 @@ class SetupTests(unittest.TestCase):
         manifest.write_text(''.join('settings/item-' + str(i) + ' $HOME/' + name + '\n'
                                     for i, name in enumerate(names)))
         self.env['AGENT_PRIVATE_BACKUP_MANIFEST'] = str(manifest)
-        for name in ('.claude/.credentials.json', '.config/cursor/auth.json', '.cursor/auth.json'):
+        for name in ('.claude/.credentials.json',):
             path = self.home / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
@@ -75,7 +75,7 @@ class SetupTests(unittest.TestCase):
                   for p in self.home.rglob('*')}
         result = self.run_script('setup-check.sh')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(len(result.stdout.splitlines()), 18)
+        self.assertEqual(len(result.stdout.splitlines()), 17)
         self.assertTrue(all(line.startswith(('OK ', 'INFO ')) for line in result.stdout.splitlines()))
         self.assertEqual(before, {p: (p.lstat().st_mtime_ns, p.read_bytes() if p.is_file() else None)
                                   for p in self.home.rglob('*')})
@@ -116,7 +116,7 @@ class SetupTests(unittest.TestCase):
 
     def test_agent_cli_and_sign_in_file_presence_never_reads_credentials(self):
         self.ready_home()
-        for cli in ('claude', 'agent', 'agy'):
+        for cli in ('claude', 'grok', 'agy'):
             with self.subTest(cli=cli):
                 result = self.run_script('setup-check.sh')
                 self.assertIn('OK ' + cli + ' CLI\n', result.stdout)
@@ -132,14 +132,15 @@ class SetupTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                 finally:
                     held.rename(executable)
-        for name in ('.claude/.credentials.json', '.config/cursor/auth.json', '.cursor/auth.json'):
+        for name in ('.claude/.credentials.json',):
             path = self.home / name
             path.write_text('SECRET_SENTINEL invalid JSON')
             path.chmod(0)
         result = self.run_script('setup-check.sh')
         self.assertNotIn('SECRET_SENTINEL', result.stdout + result.stderr)
-        for cli in ('claude', 'agent'):
-            self.assertIn('OK ' + cli + ' sign-in file\n', result.stdout)
+        self.assertIn('OK claude sign-in file\n', result.stdout)
+        self.assertNotIn('agent CLI', result.stdout)
+        self.assertNotIn('agent sign-in file', result.stdout)
         self.assertIn('INFO agy sign-in file: system keyring', result.stdout)
         (self.home / '.claude/.credentials.json').unlink()
         result = self.run_script('setup-check.sh')
