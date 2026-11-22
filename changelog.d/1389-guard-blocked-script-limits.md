@@ -1,0 +1,1 @@
+* Docs: `docs/agents/team-reference.md` now has a "Blocked scripts in the Bash guard" section. It explains `blocked_scripts` and `blocked_script_reasons`, and lists four run time shapes the text guard cannot resolve (variables, files or stdin, non literal `printf`, copy or symlink) as known limits that rely on the wrapper's runtime approval gates (#1389).
