@@ -3,6 +3,12 @@
 # Run this after changing Claude Desktop settings, then commit the result.
 set -euo pipefail
 
+case "${1:-}" in
+  "") ;;
+  -h|--help) echo "Usage: backup-claude-desktop.sh   (takes no arguments)"; exit 0 ;;
+  *) echo "Usage: backup-claude-desktop.sh   (takes no arguments)" >&2; exit 2 ;;
+esac
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DST="$DOTFILES/init/claude_desktop_config.json"
 

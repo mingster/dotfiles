@@ -3,6 +3,12 @@
 # Standard content is maintained in dotfiles (see ide/cursor/rules/README.md).
 set -euo pipefail
 
+case "${1:-}" in
+  "") ;;
+  -h|--help) echo "Usage: link-cursor-user.sh   (takes no arguments)"; exit 0 ;;
+  *) echo "Usage: link-cursor-user.sh   (takes no arguments)" >&2; exit 2 ;;
+esac
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 # shellcheck source=lib/link-user-file.sh
 . "$DOTFILES/script/lib/link-user-file.sh"
