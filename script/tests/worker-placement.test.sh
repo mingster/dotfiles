@@ -442,5 +442,11 @@ WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1411.json" FLEET_WATCH_CONFIG="$tmp/cl
 [ "$(jq -r '.starts[0].dispatch' "$tmp/recent-1411.json")" = d_live ] || fail "bind must store the dispatch on the claim"
 out=$(claims_pick "$(cat "$tmp/recent-1411.json")") || fail "pick after bind failed: $out"
 grep -Fq 'workers=1/5' <<<"$out" || fail "a bound claim whose dispatch is live stops counting: $out"
+# A failed start drops its own claim, not a newer start's on the same host.
+printf '{"starts":[{"host":"host-a","at":%s,"id":"c_failed"},{"host":"host-a","at":%s,"id":"c_other"}]}\n' "$now" "$now" >"$tmp/recent-1411.json"
+WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1411.json" FLEET_WATCH_CONFIG="$tmp/claims.json" \
+  python3 "$py" unrecord --host host-a --claim c_failed 2>/dev/null || fail "unrecord --claim failed"
+[ "$(jq -r '[.starts[].id] | join(",")' "$tmp/recent-1411.json")" = c_other ] \
+  || fail "unrecord --claim must drop that claim only: $(cat "$tmp/recent-1411.json")"
 
 echo "worker-placement.test.sh passed"

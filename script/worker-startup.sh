@@ -1144,6 +1144,7 @@ run_mode() {
     local ec=$1 rm_args
     if [ -n "${WORKER_STARTUP_PLACED_HOST:-}" ]; then
       "$python3" "$here/worker-placement.py" unrecord --host "$WORKER_STARTUP_PLACED_HOST" \
+        ${WORKER_STARTUP_PLACED_CLAIM:+--claim "$WORKER_STARTUP_PLACED_CLAIM"} \
         ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
     fi
     if [ "$created_wt" = 1 ]; then
@@ -1179,6 +1180,14 @@ run_mode() {
         --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
     fi
+    # The recorded start now has a dispatch: tie them right away, so placement stops counting the claim
+    # once the inventory lists the dispatch and never counts a started worker twice (#1411).
+    local placed_dispatch
+    placed_dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+    if [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] && [ -n "$placed_dispatch" ]; then
+      "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$placed_dispatch" \
+        ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
+    fi
   }
   start_agent_worker
   local agy_ec=0
@@ -1193,13 +1202,6 @@ run_mode() {
     start_agent_worker
   elif [ "$agy_ec" -ne 0 ]; then
     exit "$agy_ec"
-  fi
-  # The recorded start now has a dispatch: tie them, so placement stops counting the claim once the inventory lists it (#1411).
-  local placed_dispatch
-  placed_dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
-  if [ -n "${WORKER_STARTUP_PLACED_CLAIM:-}" ] && [ -n "$placed_dispatch" ]; then
-    "$python3" "$here/worker-placement.py" bind --claim "$WORKER_STARTUP_PLACED_CLAIM" --dispatch "$placed_dispatch" \
-      ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
   release_ready_label "$spec" "$title"

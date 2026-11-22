@@ -358,8 +358,8 @@ def read_recent(path: Path, window: float, now: float) -> list[dict]:
     return keep
 
 
-def unrecord_start(config: dict, host: str) -> bool:
-    """Drop the newest recent-start claim for a host, so a start that failed before launching frees its seat (#1273)."""
+def edit_recent(config: dict, change) -> bool:
+    """Change the recent starts under their lock. change(rows) returns False to leave the file as it is."""
     path = recent_file_path(config)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -369,11 +369,7 @@ def unrecord_start(config: dict, host: str) -> bool:
     with lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read_recent(path, recent_start_seconds(config), time.time())
-        for index in range(len(rows) - 1, -1, -1):
-            if rows[index]['host'] == host:
-                del rows[index]
-                break
-        else:
+        if not change(rows):
             return False
         tmp = path.with_name(path.name + '.tmp')
         try:
@@ -382,31 +378,32 @@ def unrecord_start(config: dict, host: str) -> bool:
         except OSError:
             return False
     return True
+
+
+def unrecord_start(config: dict, host: str, claim_id: str | None = None) -> bool:
+    """Drop the claim of a start that failed before launching, so it frees its seat (#1273).
+
+    With a claim id only that claim goes; without one, the newest claim for the host.
+    """
+    def drop(rows: list[dict]) -> bool:
+        for index in range(len(rows) - 1, -1, -1):
+            row = rows[index]
+            if (row.get('id') == claim_id) if claim_id else (row['host'] == host):
+                del rows[index]
+                return True
+        return False
+    return edit_recent(config, drop)
 
 
 def bind_start(config: dict, claim_id: str, dispatch_id: str) -> bool:
     """Tie a recent-start claim to the dispatch it created, so the claim stops counting once the inventory lists it (#1411)."""
-    path = recent_file_path(config)
-    try:
-        lock = open(str(path) + '.lock', 'a', encoding='utf-8')
-    except OSError:
-        return False
-    with lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        rows = read_recent(path, recent_start_seconds(config), time.time())
+    def bind(rows: list[dict]) -> bool:
         for row in rows:
             if row.get('id') == claim_id:
                 row['dispatch'] = dispatch_id
-                break
-        else:
-            return False
-        tmp = path.with_name(path.name + '.tmp')
-        try:
-            tmp.write_text(json.dumps({'starts': rows}), encoding='utf-8')
-            os.replace(tmp, path)
-        except OSError:
-            return False
-    return True
+                return True
+        return False
+    return edit_recent(config, bind)
 
 
 def pending_starts(rows: list[dict], known_dispatches: set[str] | None) -> dict[str, int]:
@@ -644,7 +641,7 @@ def cmd_unrecord(args: argparse.Namespace) -> int:
         cfg = load_config(config_path(args.config))
     except FleetConfigError:
         return 0
-    unrecord_start(cfg, args.host)
+    unrecord_start(cfg, args.host, args.claim)
     return 0
 
 
@@ -726,6 +723,7 @@ def main() -> int:
     pick.set_defaults(func=cmd_pick)
     unrecord = sub.add_parser('unrecord', help='Forget the newest recorded start on a host (a start that failed early)')
     unrecord.add_argument('--host', required=True)
+    unrecord.add_argument('--claim', default=None, help='Claim id from pick --record; drops that claim only')
     unrecord.add_argument('--config', default=None)
     unrecord.set_defaults(func=cmd_unrecord)
     bind = sub.add_parser('bind', help='Tie a recorded start to the dispatch it created')
