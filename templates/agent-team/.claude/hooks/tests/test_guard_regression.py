@@ -3,7 +3,7 @@
 Every shape from guard-regression-shapes.json (the PR #1382 Reviews and Verdicts, #1383 and probes) and every
 fixture runs alone, after a python heredoc, before one, and after a `find -exec stat` line, through the base
 guard (`git show $GUARD_BASE_REF`, default origin/main) and through this tree's guard. A shape the base denies
-and this tree allows fails the test. Only the allow fixtures (alone, or after one more `find -exec stat` line)
+and this tree allows fails the test. Only the allow fixtures (in any of the four variants)
 may move from deny to allow.
 
 Run `python3 test_guard_regression.py` for the summary line.
@@ -39,8 +39,8 @@ def shapes():
         for name in sorted(os.listdir(folder)):
             command = read(os.path.join(folder, name))
             raw.append((f"{kind}/{name}", command))
-            if kind == "allow":  # the #1360 forms, also after one more read only `find -exec stat` line
-                intended |= {command, f"{FIND_STAT}\n{command}"}
+            if kind == "allow":  # an allow fixture may move to allow in every variant below
+                intended |= {command, f"{FIND_STAT}\n{command}", f"{PY_HEREDOC}\n{command}", f"{command}\n{PY_HEREDOC}"}
     out = []
     for name, command in raw:
         out += [(name, command), (f"{name}+py-after", f"{PY_HEREDOC}\n{command}"),

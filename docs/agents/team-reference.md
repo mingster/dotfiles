@@ -460,7 +460,9 @@ See [Orca automations](orca-automations.md), [Fleet watch](fleet-watch.md) and [
 
 `.claude/hooks/guard-config.json` can name scripts that only the deploy wrapper may run. `blocked_scripts` is a list of script names (a path is cut to its file name). `blocked_script_reasons` maps a script name to the text the guard shows when it denies that script. A script with no entry gets a generic reason that names the script and does not say "deploy pipeline".
 
-The guard reads the command text and does not run it. Four shapes cannot be resolved from the text alone, so they are known limits (#1389, Elon decision, option C):
+The guard reads the command text with one shell lexer and one command walker, and every check uses them (#1385). They read words, quotes, substitutions, heredocs, comments and `cd` the way bash does, so a quoted heredoc or a comment is data and a `$( )` body is checked as a command. A command the lexer cannot read (an unclosed quote, a heredoc with no end line, nesting past the limit, or a heredoc inside `$( )` that macOS bash 3.2 would end early) is refused with "cannot read this command". The guard fails closed. So that this change loosens nothing, a few shapes bash treats as data are still read as commands, as the old guard read them: a heredoc body that is not a top level text sink, a comment whose `#` touches the next word, and a double quoted word that holds an expansion and a `;`.
+
+The guard does not run the command. Four shapes cannot be resolved from the text alone, so they are known limits (#1389, Elon decision, option C):
 
 1. A script name that comes from an external or positional variable, with no literal blocked name in the command.
 2. A name read from a file or from stdin.

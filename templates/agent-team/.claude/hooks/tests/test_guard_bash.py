@@ -288,7 +288,7 @@ class LiteralDataHeavyGuard(GuardTest):
             "cat > /tmp/r.md <<'EOF'\n"
             "line\n"
             "bunx playwright test",
-            self.HEAVY,
+            "cannot read this command",
         )
 
     def test_piped_cat_to_bash_conservative_denied(self):
@@ -308,7 +308,9 @@ class LiteralDataHeavyGuard(GuardTest):
         )
 
     def test_bash_c_with_quoted_heredoc_literal_allowed(self):
-        self.assertAllowed("bash -c \"cat <<'EOF'\\nbun test x\\nEOF\"")
+        self.assertAllowed("bash -c \"cat <<'EOF'\nbun test x\nEOF\"")
+        # A backslash n inside double quotes stays two characters, so this heredoc never closes: fail closed.
+        self.assertDenied("bash -c \"cat <<'EOF'\\nbun test x\\nEOF\"", "cannot read this command")
 
 
 class ShellScriptBoundary(GuardTest):
@@ -336,7 +338,7 @@ class ShellScriptBoundary(GuardTest):
         self.assertAllowed("echo ready\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
 
     def test_unclosed_text_sink_heredoc_after_another_command_is_checked(self):
-        self.assertDenied("mkdir -p /tmp/out\ncat > /tmp/out/r.md <<'EOF'\n$(bunx playwright test)", "heavy-gate")
+        self.assertDenied("mkdir -p /tmp/out\ncat > /tmp/out/r.md <<'EOF'\n$(bunx playwright test)", "cannot read this command")
 
     def test_apostrophe_in_earlier_comment_or_heredoc_body_keeps_brief_literal(self):
         self.assertAllowed("# owner's note\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
@@ -357,14 +359,13 @@ class ShellScriptBoundary(GuardTest):
         self.assertDenied("echo 測試 && bunx playwright test", "heavy-gate")
         self.assertAllowed("echo 測試\ncat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF")
 
-    def test_exception_in_the_strip_path_returns_the_unstripped_command(self):
+    def test_exception_in_the_strip_path_denies(self):
         spec = importlib.util.spec_from_file_location("guard_bash_strip_inject", HOOK)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         command = "cat > /tmp/r.md <<'EOF'\n$(bunx playwright test)\nEOF"
-        for name in ("_strip_report_heredocs", "text_sink_heredoc"):
-            with self.subTest(patched=name), mock.patch.object(mod, name, side_effect=RuntimeError("boom")):
-                self.assertEqual(mod.report_command_text(command), command)
+        with mock.patch.object(mod, "lex", side_effect=mod.LexError("boom")):
+            self.assertEqual(mod.report_command_text(command), command)
         with mock.patch.object(mod, "text_sink_heredoc", side_effect=RuntimeError("boom")):
             payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": os.getcwd()})
             buf = io.StringIO()
@@ -583,18 +584,6 @@ class BlockedScriptMentions(GuardTest):
         spec.loader.exec_module(mod)
         return mod
 
-    def test_plain_shell_line_grammar(self):
-        plain = self._module()._plain_shell_line
-        for line in ("cat bin/deploy-raw.sh", "git commit -m 'fix deploy-raw.sh'", "echo \"a # b\" # it's",
-                     "cat > a.md <<'EOF'", "git commit -F - <<-\"EOF\"  # note", "ls; echo '<<x'", "# a \" in a comment"):
-            with self.subTest(line=line):
-                self.assertIsNotNone(plain(line))
-        for line in ("echo \"", "echo a#\"", "echo $x", "echo `x`", "bash \\", "cat <(x)", "echo >(x)",
-                     "cat <<EOF", "cat <<'A' <<'B'", "cat <<'EOF-1'", "cat <<E'O'F", "cat <<'1'", "cat <<\\",
-                     "cat <<'EOF' > f", "bash <<< x", "x\r"):
-            with self.subTest(line=line):
-                self.assertIsNone(plain(line))
-
     def test_plain_mentions_allowed(self):
         for command in ("cat bin/deploy-raw.sh", "grep -n set bin/deploy-raw.sh | head",
                         "git add bin/deploy-raw.sh && git commit -m 'fix: deploy-raw.sh exit code'",
@@ -605,21 +594,26 @@ class BlockedScriptMentions(GuardTest):
                 self.assertAllowed(command)
 
     def test_unplain_mentions_denied(self):
-        for command in ("cat bin/deploy-raw.sh\necho \"\nx\"", "echo $HOME bin/deploy-raw.sh",
-                        "python3 - <<'PY'\nprint(open('bin/deploy-raw.sh').read())\nPY",
+        for command in ("X=bin/deploy-raw.sh; bash $X", "export X=bin/deploy-raw.sh", "echo \"$(echo deploy-raw.sh)\"",
+                        "$CMD bin/deploy-raw.sh", "python3 - <<'PY'\nprint(open('bin/deploy-raw.sh').read())\nPY",
                         "cat <<'EOF'\nbin/deploy-raw.sh\n", "echo \"$(echo \")\"; bash bin/deploy-ra\"w\".sh)\"",
-                        "ls\nbash bin/deploy-raw.sh"):
+                        "ls\nbash bin/deploy-raw.sh", "echo $HOME bin/deploy-raw.sh", "cat bin/deploy-raw.sh\necho \"\nx\""):
             with self.subTest(command=command):
                 self.assertDenied(command)
 
     def test_an_error_in_the_mention_check_denies(self):
         mod = self._module()
         mod.BLOCKED_SCRIPTS = {"deploy-raw.sh"}
-        with mock.patch.object(mod, "_plain_shell_line", side_effect=RuntimeError("boom")), \
-                mock.patch.object(mod, "deny", side_effect=SystemExit(0)) as deny:
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "cat bin/deploy-raw.sh"},
+                              "cwd": self.home})
+        buf = io.StringIO()
+        with mock.patch.object(mod, "_blocked_mention", side_effect=RuntimeError("boom")), \
+                mock.patch.object(mod, "load_guard_config"), \
+                mock.patch("sys.stdin", io.StringIO(payload)), mock.patch("sys.stdout", buf):
             with self.assertRaises(SystemExit):
-                mod.check_blocked_script_mentions("cat bin/deploy-raw.sh")
-        deny.assert_called_once()
+                mod.main()
+        reason = json.loads(buf.getvalue())["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("cannot read this command (RuntimeError)", reason)
 
     def test_perl_glued_code_flag_is_scanned(self):
         for flag in ("-e", "-le", "-ne", "-E"):

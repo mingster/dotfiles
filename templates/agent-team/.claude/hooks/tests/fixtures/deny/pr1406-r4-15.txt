@@ -1,1 +1,0 @@
-bash -c 2>/dev/null "cat .env.local"

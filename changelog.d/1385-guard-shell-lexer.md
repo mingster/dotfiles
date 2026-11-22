@@ -1,0 +1,1 @@
+* The Bash guard reads commands with one shell lexer and one command walker, shared by every check. It reads quotes, substitutions, heredocs, comments and `cd` the way bash does, and refuses a command it cannot read instead of letting it through (#1385).
