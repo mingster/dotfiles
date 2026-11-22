@@ -180,7 +180,7 @@ guarded_daily_log_rm() { # <path>: a regular file under one of the four log root
 }
 # Sets extras_note and extras_fail; returns 1 when a package cache cleaner failed. <budget seconds left> <detail file>
 daily_extras() {
-  local left=$1 f kb n=0 total=0 limit rc fail='' tool
+  local left=$1 f kb n=0 total=0 limit rc fail='' tool t0=$SECONDS
   daily_detail=$2; extras_note=''; extras_fail=''
   while IFS= read -r f; do
     { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
@@ -194,12 +194,11 @@ daily_extras() {
     set -- $tool
     command -v "$1" >/dev/null 2>&1 || { daily_say "Skip $tool: $1 is not installed"; continue; }
     if [ "${scheduled_dry:-0}" = 1 ]; then daily_say "[dry-run] $tool"; continue; fi
-    limit=$((left - 10)); [ "$limit" -le "${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}" ] || limit=${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}
+    limit=$((left - (SECONDS - t0) - 10)); [ "$limit" -le "${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}" ] || limit=${WRAP_UP_DAILY_TOOL_TIMEOUT:-120}
     if [ "$limit" -lt 10 ]; then daily_say "Skip $tool: round budget spent"; continue; fi
     run_limited "$limit" "$@" >> "$daily_detail" 2>&1; rc=$?
     daily_say "$tool: exit $rc"
     [ "$rc" -eq 0 ] || fail="${fail:+$fail, }$tool exit $rc"
-    left=$((left - limit))
   done
   [ -z "$fail" ] || { extras_fail=$fail; return 1; }
 }
@@ -308,6 +307,12 @@ scheduled_round() {
     [ "$code" -eq 0 ] || fails="${fails:+$fails; }repo $repo_path exit $code"
   done < <(printf '%s' "$list_json" | jq -r '.result.repos[] | select(.kind == "git") | .path')
 
+  # The daily extras come first, so a failing cleaner still counts toward the failure streak below.
+  local free_note=''
+  if [ "$round_kind" = daily ]; then
+    daily_extras "$((round_limit-(SECONDS-started)))" "$detail_file" || fails="${fails:+$fails; }$extras_fail"
+    free_note=" $extras_note free $(kb_gb "$free_before")->$(kb_gb "$(free_kb)")"
+  fi
   [ -n "$fails" ] || guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
   # round is already the one that reads workspaceStatus. Only the coordinator runs it, after cleanup,
@@ -335,11 +340,6 @@ scheduled_round() {
       step_code=$?
       [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
     done
-  fi
-  local free_note=''
-  if [ "$round_kind" = daily ]; then
-    daily_extras "$((round_limit-(SECONDS-started)))" "$detail_file" || fails="${fails:+$fails; }$extras_fail"
-    free_note=" $extras_note free $(kb_gb "$free_before")->$(kb_gb "$(free_kb)")"
   fi
   if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
   round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note"

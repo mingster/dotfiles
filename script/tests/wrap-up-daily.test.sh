@@ -30,7 +30,7 @@ case "$*" in
 esac
 FAKE
 for tool in brew bun; do
-  printf '#!/usr/bin/env bash\necho "%s $*" >> "$FAKE_DIR/tools.log"\n' "$tool" > "$tmp/bin/$tool"
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "$FAKE_DIR/tools.log"\nexit "${FAKE_%s_RC:-0}"\n' "$tool" "$(echo "$tool" | tr a-z A-Z)" > "$tmp/bin/$tool"
 done
 printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/ps"
@@ -148,6 +148,16 @@ check 'runs bun pm cache rm' tool_called 'bun pm cache rm'
 
 # A second lock-free run is harmless and the daily lock is its own file.
 check 'the daily round does not use the scheduled lock or log' bash -c '! test -e "$1/wrap-up-scheduled.lock" && ! test -e "$1/wrap-up-scheduled.failures"' _ "$tmp/state"
+
+# A failing cleaner fails the round and counts toward the failure streak (it must not be reset first). With only 130 s of round
+# budget left, a quick brew must not eat bun's share: the budget is elapsed time, not the cap.
+rm -f "$tmp/tools.log"
+FAKE_BREW_RC=3 WRAP_UP_SCHEDULED_ROUND_LIMIT=130 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'a failing cleaner fails the round' grep -Fq 'round failed: brew cleanup -s exit 3' "$tmp/round.log"
+check 'the failure streak survives it' test "$(cat "$tmp/state/wrap-up-daily.failures" 2>/dev/null)" = 1
+check 'bun still runs after a quick brew with little budget left' tool_called 'bun pm cache rm'
+FAKE_BREW_RC=3 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'a second failing round makes the streak two' test "$(cat "$tmp/state/wrap-up-daily.failures" 2>/dev/null)" = 2
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
