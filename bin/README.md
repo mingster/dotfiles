@@ -1,3 +1,14 @@
+# bin/
+
+| File | What it does and when to use it |
+|------|---------------------------------|
+| `agy` | Runs the real `agy` with the SSH variables removed, so it uses the macOS keychain sign-in. Put `bin/` first on `PATH` on a Mac you reach over SSH. |
+| `changelog-compile.sh` | Folds the `changelog.d/*.md` fragments into `CHANGELOG.md` under `## [Unreleased]`, then deletes them. Run it from the repo root at release time. |
+| `changelog-compile.test.sh` | Tests for `changelog-compile.sh`. Run `bash bin/changelog-compile.test.sh` after changing that script. |
+| `git_clear.sh` | Runs `git gc --prune=now --aggressive` and prunes stale `origin` branches. Use it to shrink a bloated clone. |
+| `vps_secure.sh` | Menu driven hardening and maintenance for a Linux VPS. See the VPS guide below. |
+| `with-keychain` | Runs one command with API keys read from the macOS keychain, for that command only. Usage: `with-keychain NAME [NAME...] -- command [args...]`. |
+
 # VPS Security & Management Toolkit
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -36,10 +47,11 @@
 当前验证通过的主流系统发行版：Ubuntu (20.04/22.04+), Debian (10+)。建议在未经二次打包的纯净系统镜像中运行。
 
 ### 初始化安装
-以 root 权限登录服务器后执行：
+以 root 权限登录服务器后，使用本仓库中的 `bin/vps_secure.sh`（不再从第三方仓库下载）：
 ```bash
-wget -O vps_secure.sh https://raw.githubusercontent.com/playfulsoul/vps-secure-script/main/vps_secure.sh && chmod +x vps_secure.sh && ./vps_secure.sh
+chmod +x vps_secure.sh && ./vps_secure.sh
 ```
+先把本仓库的 `bin/vps_secure.sh` 复制到服务器（例如 `scp bin/vps_secure.sh root@<server>:~/`）。
 
 ### 全局别名注入
 脚本在完成首次初始化后，将自动向系统环境变量注册 `vps` 指令。日后进行运维时，只需在终端任意层级输入 `vps` 即可唤起管理面板，无需重新查找并执行脚本源文件。
