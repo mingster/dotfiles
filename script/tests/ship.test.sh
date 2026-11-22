@@ -738,6 +738,8 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   cp "$here/ship.sh" "$here/check-project-names.sh" "$here/check-commit-trailers.sh" "$here/usage-gate.py" "$here/pr-body-gate.py" "$here/agent-team.sh" "$here/check-skill-collisions.sh" "$here/check-skill-refs.sh" "$here/apply-local-overlay.py" "$here/ship.config.example.json" "$fx/script/"
   cp -R "$here/lib" "$fx/script/lib"; cp -R "$repo_root/templates" "$fx/templates"
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
+  # check-skill-refs.sh looks each /skill the generated AGENTS.md names up under $fx; stub SKILL.md files stand in (git drops empty dirs, and the pinned check reads the commit) for the vendored skills.
+  for d in "$repo_root"/.agents/skills/*/; do mkdir -p "$fx/.agents/skills/$(basename "$d")"; : > "$fx/.agents/skills/$(basename "$d")/SKILL.md"; done
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
   "$MF_REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
   g() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
