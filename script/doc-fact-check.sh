@@ -18,7 +18,7 @@ done
 files=("$@")
 
 die() { echo "doc-fact-check: $*" >&2; exit 1; }
-[ -n "$repo" ] && [ -d "$repo/.git" ] || die "--repo must be a git checkout"
+[ -n "$repo" ] && { [ -d "$repo/.git" ] || [ -f "$repo/.git" ]; } || die "--repo must be a git checkout"
 [ -n "$base" ] && [ -n "$head" ] || die "--base and --head are required"
 
 repo=$(cd "$repo" && pwd)

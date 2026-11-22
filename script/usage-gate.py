@@ -30,7 +30,8 @@ blocked, pick returns a different Claude model with same_family_fallback. Any ot
 family with every verifier blocked queues (exit 3).
 Claude has no daily cap (owner 2026-11-21): its headroom is the weekly percent left against the
 time to the weekly reset, summed over every managed Orca account (show prints the combined figure).
-The active account switches to a free one before a start is blocked, and an account whose reading
+The active account switches to another one that has not run out only when it has run out itself
+(weekly 100% or Orca reports it rate limited, owner 2026-11-23), never at the ceiling, and an account whose reading
 fails keeps its last good reading (under last_good_max_age_min old).
 Claude reads statusline seven_day and refreshes via the authenticated OAuth usage
 endpoint; Cursor reads included usage from GetCurrentPeriodUsage, which names
@@ -150,26 +151,35 @@ def _orca_list():
     return json.loads(response.stdout)["result"]
 
 
+def _rate_limited(limits):
+    """True when Orca reports the account's usage as rate limited (status such as "rate_limited")."""
+    status = str((limits or {}).get("status") or "").lower().replace("_", "").replace("-", "").replace(" ", "")
+    return "ratelimit" in status
+
+
 def _account_readings(result):
-    """({account id: reading or None}, {account id: retryAtMs in seconds}, active key, active id)."""
+    """({account id: reading or None}, {account id: retryAtMs in seconds}, active key, active id, {ids Orca reports rate limited})."""
     limits = result["rateLimits"]["claude"]
     observed = limits.get("updatedAt")
     observed = observed / 1000 if isinstance(observed, (int, float)) else None
     active_id = result["claude"].get("activeAccountId")
     key = active_id or "system"
     readings, retry = {key: _orca_weekly(limits, observed)}, {}
+    limited = {key} if _rate_limited(limits) else set()
     for other in result["rateLimits"].get("inactiveClaudeAccounts") or []:
         if other.get("accountId"):
             readings[other["accountId"]] = _orca_weekly(other.get("rateLimits"), observed)
+            if _rate_limited(other.get("rateLimits")):
+                limited.add(other["accountId"])
             at = ((other.get("rateLimits") or {}).get("usageMetadata") or {}).get("retryAtMs")
             if isinstance(at, (int, float)):
                 retry[other["accountId"]] = at / 1000
-    return readings, retry, key, active_id
+    return readings, retry, key, active_id, limited
 
 
 def orca_claude_accounts():
     """Managed Claude accounts from Orca: {"active": reading, "active_id", "others": [{"id", **reading}],
-    "unread": [ids with no reading yet]}.
+    "unread": [ids with no reading yet], "out": {ids that ran out: weekly 100% or rate limited}}.
 
     An inactive account whose reading failed with a retryAtMs is listed again once that time has passed.
     None when Orca lists no managed Claude accounts or the call fails, so callers keep the old reading.
@@ -178,30 +188,34 @@ def orca_claude_accounts():
         result = _orca_list()
         if not result["claude"]["accounts"]:
             return None
-        readings, retry, key, active_id = _account_readings(result)
+        readings, retry, key, active_id, limited = _account_readings(result)
         if any(readings[k] is None and at <= time.time() for k, at in retry.items()):
             again = _account_readings(_orca_list())[0]
             readings.update({k: v for k, v in again.items() if readings.get(k) is None and v})
         good = carry_account_readings(readings)
+        for k in limited:
+            good[k] = {"pct": 100.0, "resets_at": (good.get(k) or {}).get("resets_at"), "observed_at": time.time()}
         if key not in good:
             return None
         others = [{"id": k, **v} for k, v in good.items() if k != key]
+        out = {k for k, v in good.items() if v["pct"] >= 100} | limited
         return {"active": good[key], "active_id": active_id, "others": others,
-                "unread": [k for k in readings if k not in good]}
+                "unread": [k for k in readings if k not in good], "out": out}
     except Exception:
         return None
 
 
-def claude_switch(ceiling, reserve=0.0):
-    """Select a managed Claude account under the ceiling when the active one, with the reserve for
-    running workers, reaches it. This runs before any block.
+def claude_switch():
+    """Select another managed Claude account only when the active one has run out: weekly percent at 100,
+    or Orca reports it rate limited (owner 2026-11-23). The ceiling and the reserve never switch.
+    The new account is the least used one that has not run out. This runs before any block.
 
     Returns the new account's reading, or None when nothing changed. Running workers keep their account.
     """
     accounts = orca_claude_accounts()
-    if not accounts or accounts["active"]["pct"] + reserve < ceiling:
+    if not accounts or (accounts["active_id"] or "system") not in accounts["out"]:
         return None
-    free = [o for o in accounts["others"] if o["pct"] < ceiling]
+    free = [o for o in accounts["others"] if o["id"] not in accounts["out"]]
     if not free:
         return None
     best = min(free, key=lambda o: o["pct"])
@@ -212,8 +226,8 @@ def claude_switch(ceiling, reserve=0.0):
         return None
     if done.returncode:
         return None
-    print(f"usage-gate: claude account {str(accounts['active_id'] or 'system')[:8]} at "
-          f"{accounts['active']['pct']:g}% (ceiling {ceiling:g}%), switched to {best['id'][:8]} at {best['pct']:g}%",
+    print(f"usage-gate: claude account {str(accounts['active_id'] or 'system')[:8]} ran out "
+          f"({accounts['active']['pct']:g}%), switched to {best['id'][:8]} at {best['pct']:g}%",
           file=sys.stderr)
     return {k: v for k, v in best.items() if k != "id"}
 
@@ -224,11 +238,13 @@ def claude_combined(ceiling, reserve, now):
     accounts = orca_claude_accounts()
     if not accounts:
         return None
-    readings = [accounts["active"], *accounts["others"]]
+    active_key = accounts["active_id"] or "system"
+    readings = [r for k, r in [(active_key, accounts["active"]), *((o["id"], o) for o in accounts["others"])]
+                if k not in accounts["out"]]
     rooms = [max(ceiling - r["pct"], 0.0) for r in readings]
     per_day = sum(room / (max((float(r["resets_at"]) - now) / 86400, MIN_DAYS) if r.get("resets_at") else 7.0)
                   for room, r in zip(rooms, readings))
-    return {"accounts": len(readings), "headroom": round(max(sum(rooms) - reserve, 0.0), 1),
+    return {"accounts": 1 + len(accounts["others"]), "headroom": round(max(sum(rooms) - reserve, 0.0), 1),
             "pace": round(per_day, 1), "unread": accounts["unread"]}
 
 
@@ -981,7 +997,7 @@ def run(provider, cap, ceiling, now=None, per_worker=None, model=None, auto=Fals
     except (OSError, ValueError):
         state = None
     reader = READERS.get(provider)
-    switched = claude_switch(ceiling, round(running_reserve(provider, per_worker)[1], 1)) if provider == "claude" else None
+    switched = claude_switch() if provider == "claude" else None
     try:
         raw = switched or (reader() if reader else None)
     except Exception:

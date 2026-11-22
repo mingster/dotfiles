@@ -48,19 +48,21 @@ if [ ! -f "$SRC_DESKTOP" ]; then
   fi
 fi
 
-python3 - <<EOF
-import json, os
+python3 - "$SRC_DESKTOP" "$DST_DESKTOP" <<'EOF'
+import json, os, sys
 
-src = json.load(open("$SRC_DESKTOP"))
+src_path, dst_path = sys.argv[1], sys.argv[2]
+src = json.load(open(src_path))
 # The tracked file holds __HOME__ instead of the home folder; render it for this machine.
 src = json.loads(json.dumps(src).replace("__HOME__", os.path.expanduser("~")))
 
 dst = {}
-if os.path.isfile("$DST_DESKTOP") and not os.path.islink("$DST_DESKTOP"):
+if os.path.isfile(dst_path) and not os.path.islink(dst_path):
     try:
-        dst = json.load(open("$DST_DESKTOP"))
-    except Exception:
-        dst = {}
+        dst = json.load(open(dst_path))
+    except Exception as e:
+        # Never overwrite a file we cannot read: the machine-local keys would be lost.
+        sys.exit(f"setup-claude-desktop: {dst_path} is not valid JSON ({e}); fix or remove it, then re-run. Nothing written.")
 
 # Machine-local keys inside preferences: preserved, not overwritten by dotfiles.
 LOCAL_PREF_KEYS = {
@@ -81,11 +83,11 @@ for top_key, top_val in src.items():
     else:
         merged[top_key] = top_val
 
-with open("$DST_DESKTOP", "w") as f:
+with open(dst_path, "w") as f:
     json.dump(merged, f, indent=2)
     f.write("\n")
 
-print("setup-claude-desktop: merged $SRC_DESKTOP -> $DST_DESKTOP")
+print(f"setup-claude-desktop: merged {src_path} -> {dst_path}")
 EOF
 
 # --- config.json (app preferences: theme, locale, etc.) ---
@@ -93,17 +95,18 @@ SRC_CONFIG="$DOTFILES/init/claude_config.json"
 DST_CONFIG="$CLAUDE_SUPPORT/config.json"
 
 if [ -f "$SRC_CONFIG" ]; then
-  python3 - <<EOF
-import json, os
+  python3 - "$SRC_CONFIG" "$DST_CONFIG" <<'EOF'
+import json, os, sys
 
-src = json.load(open("$SRC_CONFIG"))
+src_path, dst_path = sys.argv[1], sys.argv[2]
+src = json.load(open(src_path))
 
 dst = {}
-if os.path.isfile("$DST_CONFIG") and not os.path.islink("$DST_CONFIG"):
+if os.path.isfile(dst_path) and not os.path.islink(dst_path):
     try:
-        dst = json.load(open("$DST_CONFIG"))
-    except Exception:
-        dst = {}
+        dst = json.load(open(dst_path))
+    except Exception as e:
+        sys.exit(f"setup-claude-desktop: {dst_path} is not valid JSON ({e}); fix or remove it, then re-run. Nothing written.")
 
 # Keys in config.json that are sensitive or machine-local: never overwrite.
 LOCAL_CONFIG_KEYS = {
@@ -118,10 +121,10 @@ for k, v in src.items():
     if k not in LOCAL_CONFIG_KEYS and not k.startswith("dxt:"):
         merged[k] = v
 
-with open("$DST_CONFIG", "w") as f:
+with open(dst_path, "w") as f:
     json.dump(merged, f, indent=2)
     f.write("\n")
 
-print("setup-claude-desktop: merged $SRC_CONFIG -> $DST_CONFIG")
+print(f"setup-claude-desktop: merged {src_path} -> {dst_path}")
 EOF
 fi
