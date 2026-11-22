@@ -911,7 +911,7 @@ class WorkerBrief(Gate):
         self.assertAllowed(f"{self.NOTES}{self.START} --spec \"$(cat <<'EOF'\n{self.REVIEW}EOF\n)\"")
 
     def test_unreadable_brief_falls_back_to_the_whole_command(self):
-        self.assertDenied(f'echo fullstack-dev #6936; {self.START} --spec "$(cat missing.md)"', "#6936")
+        self.assertDenied(f'echo fullstack-dev "#6936"; {self.START} --spec "$(cat missing.md)"', "#6936")
 
 
 class OwningLead(Gate):

@@ -664,7 +664,6 @@ class BlockedScriptLexer(GuardTest):
             "cat $'.env.local\\x00foo'": "print",
             "cat $'.env.local\\0foo'": "print",
             "cat $'.env.local\\U00000000foo'": "print",
-            "cat $'.env.local\\x00foo'\"bar baz\" x": "print",
             "git push $'--force\\x00foo' origin main": "force push",
             "bash $'bin/\\x64eploy-raw.sh\\x00foo'": "Ship it",
             "# it's\ncat .env.local": "print",
@@ -680,6 +679,36 @@ class BlockedScriptLexer(GuardTest):
             "echo $'it\\'s'; bunx playwright test": "heavy",
             "echo a$'\\x00'\\'; cat .env.local": "print",
             "echo $'\\x00'$'\\''; cat .env.local": "print",
+            "cat .env.local > $'\\ud800'": "print",
+            "touch $'\\ud800'; cat .env.local": "print",
+            "git push --force origin main > $'\\ud800'": "force push",
+            "env -C $'\\ud800' cat .env.local": "print",
+            "echo $'\\x00'\"$(cat .env.local)\"": "print",
+            "echo $'\\x00'\"$(git push --force origin main)\"": "force push",
+            "echo $'\\x00'\"$(bunx playwright test)\"": "heavy",
+            "echo $'\\x00'`cat .env.local`": "print",
+            "echo $'\\x00'\"$(bash $'bin/\\x64eploy-raw.sh')\"": "Ship it",
+            "echo \"$(cat $'.env.lo\\x63al')\"": "print",
+            "echo \"$(echo $'it\\'s'; cat .env.local)\"": "print",
+            "echo \"$(git push $'--force\\x00foo' origin main)\"": "force push",
+            "echo \"$(bash $'bin/\\x64eploy-raw.sh')\"": "Ship it",
+            "bash -c \"cat $'.env.lo\\x63al'\"": "print",
+            "bash -c \"echo $'it\\'s'; cat .env.local\"": "print",
+            "bash -c \"bash $'bin/\\x64eploy-raw.sh'\"": "Ship it",
+            "eval \"cat $'.env.lo\\x63al'\"": "print",
+            "echo \"$(echo \"$'\")\"; cat .env.local; echo ''": "print",
+            "echo ` #`; cat $'.env.lo\\x63al'": "print",
+            "echo ` #`; echo $'it\\'s'; cat .env.local": "print",
+            "echo ` #`; git push $'--force\\x00foo' origin main": "force push",
+            "echo ` #`; bash $'bin/\\x64eploy-raw.sh'": "Ship it",
+            "echo \"$( # )\ncat .env.local\n)\"": "print",
+            "echo \"$( # )\ngit push --force origin main\n)\"": "force push",
+            "echo \"$( # )\nbunx playwright test\n)\"": "heavy",
+            "echo $(echo \")'\"); echo $(cat .env.local)": "print",
+            "bash -o errexit bin/deploy-raw.sh": "Ship it",
+            "bash +e bin/deploy-raw.sh": "Ship it",
+            "bash bin/deploy-raw.sh -c": "Ship it",
+            "X=bin/deploy-raw.sh; bash $X -c": "variable",
             "# it's\necho $(cat .env.local)": "print",
             "# it's\necho $(git push --force origin main)": "force push",
         }
@@ -687,10 +716,17 @@ class BlockedScriptLexer(GuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command, needle)
 
+    def test_a_semicolon_or_paren_in_a_comment_is_not_an_operator(self):
+        self.assertAllowed("# step 1; bash bin/deploy-raw.sh")
+        self.assertAllowed("# 1) echo done")
+        mod = self._module()
+        self.assertEqual(mod.segments("# a ; b ) c\necho hi"), ["# a ; b ) c", "echo hi"])
+        self.assertEqual(mod.segments("echo x # a ; b\necho hi"), ["echo x # a ; b", "echo hi"])
+
     def test_a_literal_dollar_quote_is_not_decoded(self):
         mod = self._module()
         for text, want in (("cat $'a\\x62c' d", "cat 'abc' d"), ("echo $'it\\'s'", "echo 'it'\\''s'"),
-                           ("cat $'x\\x00y'z w", "cat 'x' w"), ("echo \"$'a'\"", "echo \"$'a'\""),
+                           ("cat $'x\\x00y'z w", "cat 'x'z w"), ("echo \"$'a'\"", "echo \"$'a'\""),
                            ("echo '$'a", "echo '$'a"), ("echo \\$'a'", "echo \\$'a'"), ("echo $$'a'", "echo $$'a'"),
                            ("# $'a'\necho $'b'", "# $'a'\necho 'b'"), ("echo $'a", "echo $'a")):
             with self.subTest(text=text):

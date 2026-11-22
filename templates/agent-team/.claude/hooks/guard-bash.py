@@ -550,7 +550,7 @@ def ansi_c_decode(body):
             if not value:
                 return "".join(out), True
             try:
-                out.append(chr(value))
+                out.append(chr(value) if not 0xD800 <= value <= 0xDFFF else "\ufffd")
             except (ValueError, OverflowError):
                 out.append(body[start:i])
         elif (e == "c" or e == "^") and i + 2 < n:
@@ -578,79 +578,130 @@ def ansi_c_end(text, i, quote="'"):
     return -1
 
 
-def _decode_ansi_c(text):
-    """Rewrite each unquoted, unescaped $'...' as a plain single quoted word holding the decoded text.
-
-    One quote aware pass: '...', "...", a backslash escape, a # comment (to the end of its line, whatever
-    it ends with), and the two character specials ($$, $?, $!, $#, $-) are skipped, so "$'", '$', an escaped
-    dollar sign and $$' stay literal. A NUL escape cuts the word there, the way bash does."""
-    if "$'" not in text:
-        return text
-    out, i, n = [], 0, len(text)
+def _ansi_c_scan(text, i, end):
+    """Scan text from i until the closer `end` (None, '"', ')' or '`'), decoding each live $'...'.
+    Returns (out, next index). A double quote, $( ) and backtick body is scanned in its own context."""
+    out, n = [], len(text)
     while i < n:
         c = text[i]
         if c == "\\":
             out.append(text[i:i + 2])
             i += 2
-        elif c in "'\"":
-            end = ansi_c_end(text, i, c) if c == '"' else text.find("'", i + 1)
-            if end < 0:
-                out.append(text[i:])
-                break
-            out.append(text[i:end + 1])
-            i = end + 1
-        elif c == "#" and (i == 0 or text[i - 1] in COMMENT_LEAD):
-            end = text.find("\n", i)
-            end = n if end < 0 else end
-            out.append(text[i:end])
-            i = end
-        elif c == "$" and text[i + 1:i + 2] == "'":
-            end = ansi_c_end(text, i + 1, "'")
-            if end < 0:
-                out.append(text[i:])
-                break
-            decoded, cut = ansi_c_decode(text[i + 2:end])
-            out.append("'" + decoded.replace("'", "'\\''") + "'")
-            i = end + 1
-            while cut and i < n and text[i] not in WORD_BREAK:
-                if text[i] == "\\":
-                    i += 2
-                    continue
-                if text[i] == "'":
-                    close = text.find("'", i + 1)
-                elif text[i] == '"':
-                    close = ansi_c_end(text, i, '"')
-                elif text.startswith("$'", i):
-                    close = ansi_c_end(text, i + 1)
-                else:
+        elif end == '"':
+            if c == '"':
+                return out, i
+            if c == "`":
+                out.append(c)
+                inner, i = _ansi_c_scan(text, i + 1, "`")
+                out.extend(inner)
+                if i < n:
+                    out.append("`")
                     i += 1
-                    continue
-                if close < 0:
-                    break
-                i = close + 1
+            elif text.startswith("$(", i):
+                out.append("$(")
+                inner, i = _ansi_c_scan(text, i + 2, ")")
+                out.extend(inner)
+                if i < n:
+                    out.append(")")
+                    i += 1
+            else:
+                out.append(c)
+                i += 1
+        elif c == "'":
+            close = text.find("'", i + 1)
+            if close < 0:
+                out.append(text[i:])
+                return out, n
+            out.append(text[i:close + 1])
+            i = close + 1
+        elif c == '"':
+            out.append(c)
+            inner, i = _ansi_c_scan(text, i + 1, '"')
+            out.extend(inner)
+            if i < n:
+                out.append('"')
+                i += 1
+        elif c == "`":
+            if end == "`":
+                return out, i
+            out.append(c)
+            inner, i = _ansi_c_scan(text, i + 1, "`")
+            out.extend(inner)
+            if i < n:
+                out.append("`")
+                i += 1
+        elif c == ")" and end == ")":
+            return out, i
+        elif c == "#" and (i == 0 or text[i - 1] in COMMENT_LEAD):
+            stop = n
+            for mark in ("\n", "`") if end == "`" else ("\n",):
+                j = text.find(mark, i)
+                if 0 <= j < stop:
+                    stop = j
+            out.append(text[i:stop])
+            i = stop
+        elif text.startswith("$(", i):
+            out.append("$(")
+            inner, i = _ansi_c_scan(text, i + 2, ")")
+            out.extend(inner)
+            if i < n:
+                out.append(")")
+                i += 1
+        elif c == "$" and text[i + 1:i + 2] == "'":
+            close = ansi_c_end(text, i + 1, "'")
+            if close < 0:
+                out.append(text[i:])
+                return out, n
+            decoded, _cut = ansi_c_decode(text[i + 2:close])
+            out.append("'" + decoded.replace("'", "'\\''") + "'")
+            i = close + 1
         elif c == "$" and text[i + 1:i + 2] and text[i + 1] in DOLLAR_SPECIALS:
             out.append(text[i:i + 2])
             i += 2
         else:
             out.append(c)
             i += 1
-    return "".join(out)
+    return out, i
+
+
+def _decode_ansi_c(text):
+    """Rewrite each live $'...' as a plain single quoted word holding the decoded text.
+
+    One quote aware pass that follows the shell's own nesting: '...', "...", $( ), backticks, a backslash
+    escape, a # comment (to the end of its line, or of its backtick body) and the two character specials
+    ($$, $?, $!, $#, $-) are skipped or scanned in their own context, so "$'", '$', an escaped dollar sign
+    and $$' stay literal while $'...' inside "$(...)" is decoded. A NUL escape cuts only the $'...' text,
+    the way bash does, so an expansion later in the same word is still seen."""
+    if "$'" not in text:
+        return text
+    return "".join(_ansi_c_scan(text, 0, None)[0])
 
 
 def segments(command):
     """Split a command line on control operators, keeping quoted text intact."""
-    out, buf, quote, comment, i = [], [], None, False, 0
+    out, buf, quote, comment, ticks, i = [], [], None, False, False, 0
     while i < len(command):
         c = command[i]
         if quote:
+            if quote == '"' and command.startswith("$(", i):
+                end = _paren_end(command, i + 2)[0]  # a "$( )" body keeps its own quotes and operators
+                buf.append(command[i:end])
+                i = end
+                continue
             buf.append(c)
             if c == "\\" and quote == '"' and i + 1 < len(command):
                 buf.append(command[i + 1])
                 i += 1
             elif c == quote:
                 quote = None
-        elif comment and c in "'\"\\":
-            buf.append(c)  # a comment runs to the end of its line: no quote or escape in it counts
+        elif comment and c == "`" and ticks:
+            buf.append(c)  # a comment inside backticks stops at the closing backtick
+            comment, ticks = False, False
+        elif comment and c != "\n":
+            buf.append(c)  # a comment runs to the end of its line: no quote, escape or operator in it counts
+        elif c == "`":
+            ticks = not ticks
+            buf.append(c)
         elif c in "'\"":
             quote = c
             buf.append(c)
@@ -662,7 +713,7 @@ def segments(command):
             buf.append(c)
         elif c in ";|&\n" or (c in "({" and set("".join(buf).split()) <= SHELL_KEYWORDS):
             out.append("".join(buf))
-            buf, comment = [], comment and c != "\n"
+            buf, comment = [], False
         elif c in ")}" and not quote:
             out.append("".join(buf))
             buf = []
@@ -3188,15 +3239,16 @@ def check_segment(segment, depth=0, cwd=None):
     if base in BLOCKED_SCRIPTS:
         deny(blocked_reason(base))
     if base == "eval":
-        for text in [" ".join(args), *substitutions(" ".join(args))]:
+        body = _decode_ansi_c(" ".join(args))
+        for text in [body, *substitutions(body)]:
             check_hidden_script_paths(text, transfer_cwd)
             for seg in segments(text):
                 check_segment(seg, depth + 1, cwd=transfer_cwd)
     if base in SHELLS or base in {"source", "."}:
-        idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
+        idx = _shell_c_index(args)
         if idx is not None:
             if idx + 1 < len(args):
-                script = args[idx + 1]
+                script = _decode_ansi_c(args[idx + 1])
                 positional = args[idx + 2:]
                 if positional:
                     script = re.sub(
@@ -3216,7 +3268,7 @@ def check_segment(segment, depth=0, cwd=None):
                             if dest:
                                 cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
         else:
-            script = next((a for a in args if not a.startswith("-")), None)
+            script = _script_argument(args)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
                 deny(blocked_reason(os.path.basename(script)))
 
@@ -3303,6 +3355,67 @@ def check_background_wait(command):
              "unread. Run it as its own Bash call with run_in_background: true, and re-arm it after each --ack.")
 
 
+def _backtick_end(command, i):
+    """Index after the backtick closing the body that starts at i (or the end of the text)."""
+    while i < len(command):
+        if command[i] == "\\":
+            i += 2
+        elif command[i] == "`":
+            return i + 1
+        else:
+            i += 1
+    return len(command)
+
+
+def _dq_end(command, i):
+    """Index after the double quote closing the string that starts at i, following $( ) and backticks."""
+    while i < len(command):
+        c = command[i]
+        if c == "\\":
+            i += 2
+        elif c == '"':
+            return i + 1
+        elif command.startswith("$(", i):
+            i = _paren_end(command, i + 2)[0]
+        elif c == "`":
+            i = _backtick_end(command, i + 1)
+        else:
+            i += 1
+    return len(command)
+
+
+def _paren_end(command, i):
+    """(index after, closed) for the ) closing a $( that ends just before i. Quotes, comments and groups are skipped."""
+    depth, n = 1, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            i += 2
+        elif c == "'":
+            close = command.find("'", i + 1)
+            i = n if close < 0 else close + 1
+        elif c == '"':
+            i = _dq_end(command, i + 1)
+        elif c == "`":
+            i = _backtick_end(command, i + 1)
+        elif c == "#" and command[i - 1:i] in COMMENT_LEAD and i > 0:
+            close = command.find("\n", i)
+            i = n if close < 0 else close
+        elif command.startswith("$(", i):
+            i = _paren_end(command, i + 2)[0]
+        elif c == "(":
+            depth += 1
+            i += 1
+        elif c == ")":
+            depth -= 1
+            i += 1
+            if not depth:
+                return i, True
+        else:
+            i += 1
+    return n, False
+
+
 def substitutions(command):
     """Inspect active expansions; single-quoted and escaped text is data."""
     out, quote, i = [], None, 0
@@ -3334,16 +3447,9 @@ def substitutions(command):
             out.extend(substitutions(body))
             i = end
         elif command.startswith("$(", i):
-            depth, start, end = 1, i + 2, i + 2
-            while end < len(command) and depth:
-                if command.startswith("$(", end):
-                    depth += 1
-                    end += 2
-                    continue
-                if command[end] == ")":
-                    depth -= 1
-                end += 1
-            body = command[start:end - 1] if not depth else command[start:]
+            start = i + 2
+            end, closed = _paren_end(command, start)
+            body = command[start:end - 1] if closed else command[start:]
             out.append(body)
             out.extend(substitutions(body))
             i = end - 1
@@ -4163,23 +4269,40 @@ def _has_expansion(token):
     return "$" in token or "`" in token
 
 
-def _script_argument(args):
-    """The first shell argument that is neither an option nor an option's value, for a shell run without -c."""
+def _shell_options(args):
+    """Yield (index, arg, is_option) for a shell's arguments up to and including its script, skipping option values."""
     skip = False
-    for a in args:
+    for i, a in enumerate(args):
         if skip:
             skip = False
         elif a in SHELL_OPTS_WITH_ARG:
             skip = True
-        elif not a.startswith(("-", "+")):
-            return a
-    return None
+            yield i, a, True
+        elif a == "--":
+            if i + 1 < len(args):
+                yield i + 1, args[i + 1], False
+            return
+        elif a.startswith(("-", "+")):
+            yield i, a, True
+        else:
+            yield i, a, False
+            return
+
+
+def _script_argument(args):
+    """The first shell argument that is neither an option nor an option's value, for a shell run without -c."""
+    return next((a for _, a, opt in _shell_options(args) if not opt), None)
+
+
+def _shell_c_index(args):
+    """Index of a shell's -c option, or None. A -c after the script name belongs to the script."""
+    return next((i for i, a, opt in _shell_options(args) if opt and re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
 
 
 def _dynamic_probes(prog, args):
     """Deny a `$` the guard cannot resolve where the program, or a shell's script, would be named."""
     base = os.path.basename(prog)
-    shell = base in SHELLS | {"source", "."} and not any(re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a) for a in args)
+    shell = base in SHELLS | {"source", "."} and _shell_c_index(args) is None
     script = _script_argument(args) if shell else None
     runner = base == "find" and any(a in {"-exec", "-execdir", "-ok", "-okdir"} for a in args)
     if _has_expansion(prog) or (script and _has_expansion(script)) or (runner and any(map(_has_expansion, args))):
