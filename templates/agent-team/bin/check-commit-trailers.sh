@@ -24,6 +24,15 @@ done
 cd "$(dirname "$0")/.." || exit 2
 checked=0 problems=0
 looks_like_trailer='^(owner-approved|co-authored-by|refs|closes):'
+# A line in a mixed paragraph counts as a trailer attempt only when its value has the shape of one.
+ref_tok='([A-Za-z0-9_./-]*#[0-9]+|[0-9]+|https?://[^[:space:]]+)'
+shaped_trailer() { # <lowercased line>
+  case "$1" in
+    owner-approved:*) [[ "$1" =~ [0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*(\(.*\))?$ ]] ;;
+    co-authored-by:*) [[ "$1" =~ \<[^\>]+\>[[:space:]]*$ ]] ;;
+    *) [[ "${1#*:}" =~ ^[[:space:]]*${ref_tok}([,[:space:]]+${ref_tok})*[[:space:]]*$ ]] ;;
+  esac
+}
 
 check_message() { # <source>; message on stdin
   local source=$1 raw parsed n=0 line low para=0 last=-1 i p gap=0
@@ -47,10 +56,14 @@ check_message() { # <source>; message on stdin
   p=$last
   while [ "$p" -gt 0 ] && [ -z "${mixed[$((p - 1))]:-}" ] ; do p=$((p - 1)); done
   for i in "${!texts[@]}"; do
-    [ "${paras[$i]}" -ge "$p" ] || continue
     line=${texts[$i]}
     low=$(tr '[:upper:]' '[:lower:]' <<<"$line")
     [[ "$low" =~ $looks_like_trailer ]] || continue
+    # The paragraph right before the trailer block is where a misplaced trailer lands; only a line shaped like a
+    # trailer counts there, so a prose line that opens with 'Closes:' stays prose.
+    if [ "${paras[$i]}" -lt "$p" ]; then
+      [ "${paras[$i]}" -eq $((p - 1)) ] && shaped_trailer "$low" || continue
+    fi
     grep -qxF -- "$line" <<<"$parsed" && continue
     echo "$source:${nums[$i]}: not a git trailer (it must sit in the last paragraph, with no blank line before the next trailer); git does not parse it" >&2
     problems=$((problems + 1))

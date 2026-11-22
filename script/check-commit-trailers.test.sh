@@ -49,6 +49,13 @@ run --file "$tmp/prose"
 msg prose2 'fix: thing\n\nRefs: this is only prose about the cause.\nIt goes on.\n\nMore prose.\n\nCo-Authored-By: A <a@b>\n'
 run --file "$tmp/prose2"
 [ "$rc" -eq 0 ] && ok "a prose paragraph opening with Refs: passes" || bad "prose2" "rc=$rc $se"
+# A trailer-shaped line that ends the paragraph before the trailer block is not prose (#1553).
+msg misplaced 'fix: thing\n\nSome prose about the change.\nOwner-approved: Name 2026-11-23\n\nCo-Authored-By: A <a@b>\n'
+run --file "$tmp/misplaced"
+[ "$rc" -eq 1 ] && grep -q ":4: not a git trailer" <<<"$se" && ok "Owner-approved ending a mixed paragraph before the trailer block fails" || bad "misplaced" "rc=$rc so=$so se=$se"
+msg prose3 'fix: thing\n\nWe saw it.\nCloses: #5 is mentioned\n\nCo-Authored-By: A <a@b>\n'
+run --file "$tmp/prose3"
+[ "$rc" -eq 0 ] && ok "prose Closes: line right before the trailer block passes" || bad "prose3" "rc=$rc se=$se"
 msg crlf 'fix: x\r\n\r\nBody.\r\n\r\nOwner-approved: mingster 2026-11-16\r\nCo-Authored-By: A <a@b.c>\r\n'
 run --file "$tmp/crlf"
 [ "$rc" -eq 0 ] && [ -z "$se" ] && ok "CRLF line endings pass" || bad "crlf" "rc=$rc se=$se"
