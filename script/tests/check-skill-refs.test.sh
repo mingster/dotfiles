@@ -62,6 +62,10 @@ A path: docs/agents/team.md, ./crew, ~/wrap-up and /tmp.
 A named skill: /tdd and /mine.
 A plugin skill: /plugin:thing.
 DOC
+printf 'Run /tdd, /staging-review.\nRun /help /crew now\n' >"$P/docs/notes.md"
+check; grep -q 'notes.md:1: /staging-review' "$TMP/check.log" && grep -q 'notes.md:2: /crew' "$TMP/check.log" \
+  && ok "a second name next to a valid one is reported" || bad "adjacent names missed: $(cat "$TMP/check.log")"
+printf 'Built in: /help, /clear and /compact.\nA URL: https://example.com/staging-review and http://host/crew.\nA path: docs/agents/team.md, ./crew, ~/wrap-up and /tmp.\nA named skill: /tdd and /mine.\nA plugin skill: /plugin:thing.\n' >"$P/docs/notes.md"
 mkdir -p "$P/.claude/skills/mine"
 printf -- '---\nname: mine\n---\n' >"$P/.claude/skills/mine/SKILL.md"
 check && ok "built in commands, URL paths, file paths and real skills pass" || bad "false positive: $(cat "$TMP/check.log")"

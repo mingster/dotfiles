@@ -8,6 +8,7 @@ set -uo pipefail
 
 dir=${1:-}
 [ -d "$dir" ] || { echo "Usage: $0 <project-dir>" >&2; exit 2; }
+dir=${dir%/}
 dotfiles=${DOTFILES:-$(cd "$(dirname "$0")/.." && pwd)}
 
 # Retired team skills and what replaced them (CHANGELOG: they repeated pstack).
@@ -45,9 +46,10 @@ files=()
 [ -f "$dir/AGENTS.md" ] && files+=("$dir/AGENTS.md")
 for sub in docs .claude; do
   [ -d "$dir/$sub" ] || continue
-  while IFS= read -r f; do files+=("$f"); done < <(find "$dir/$sub" -name '*.md' -type f -not -path '*/skills/*' | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find "$dir/$sub" -name '*.md' -type f -not -path "$dir/$sub/skills/*" -not -path "$dir/.claude/skills/*" | sort)
 done
 
+# Doubled blanks keep a leading blank for the next name after a match eats its trailing one.
 # A name follows a space, quote, backtick or bracket (not a word, so a path like <owner>/repo is skipped).
 ref_re="(^|[[:space:]\`\"'(\\[])/[a-z][a-z0-9-]*([^[:alnum:]_/.:-]|[.,;!?]+([^[:alnum:]_/.:-]|\$)|\$)"
 status=0
@@ -64,6 +66,6 @@ for f in ${files[@]+"${files[@]}"}; do
       echo "agent-team: ${f#"$dir"/}:$line: /$name names no skill under the project, user or dotfiles trees" >&2
     fi
     status=1
-  done < <(grep -noE "$ref_re" "$f")
+  done < <(sed 's/[[:space:]]/  /g' "$f" | grep -noE "$ref_re")
 done
 exit "$status"
