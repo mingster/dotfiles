@@ -42,6 +42,11 @@ for n in $names; do
   { grep -rl GLOSSARY "$tmp/stage/$n" || true; } | while IFS= read -r f; do sed -i.bak 's/GLOSSARY/CONTEXT/g' "$f"; rm -f "$f.bak"; done
 done
 
+if [ -z "$(find "$tmp/stage" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]; then
+  echo "sync-mattpocock-skills: stage is empty (no listed skill found upstream); nothing changed" >&2
+  exit 1
+fi
+
 if [ -f "$PATCH" ] && ! (cd "$tmp/stage" && patch -s -p1 -f < "$PATCH"); then
   echo "sync-mattpocock-skills: $PATCH no longer applies to upstream $new; nothing changed" >&2
   exit 1
@@ -50,10 +55,10 @@ find "$tmp/stage" \( -name '*.orig' -o -name '*.rej' \) -delete
 
 if [ "$DRY" -eq 1 ]; then
   echo "sync-mattpocock-skills: dry run against upstream $new"
-  for n in $(cd "$tmp/stage" && echo *); do diff -rq "$tmp/stage/$n" "$SKILLS/$n" || true; done
+  for d in "$tmp/stage"/*/; do n=$(basename "$d"); diff -rq "$tmp/stage/$n" "$SKILLS/$n" || true; done
   exit 0
 fi
-for n in $(cd "$tmp/stage" && echo *); do rm -rf "${SKILLS:?}/$n"; cp -R "$tmp/stage/$n" "$SKILLS/$n"; done
+for d in "$tmp/stage"/*/; do n=$(basename "$d"); rm -rf "${SKILLS:?}/$n"; cp -R "$tmp/stage/$n" "$SKILLS/$n"; done
 sed -i.bak "s/^sha=.*/sha=$new/" "$STATE"; rm -f "$STATE.bak"
 
 echo "sync-mattpocock-skills: upstream $new"
