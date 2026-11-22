@@ -8,6 +8,7 @@ environment is asked for its own list. Machine names come from `hostname -s` and
 `orca environment list`, never from this file.
 
 Usage: fleet-workers.py [--cache FILE]   (--cache writes the line to FILE)
+Any other argument exits 2 with the usage line; -h and --help print it and exit 0. No orca call runs first.
 """
 import json
 import os
@@ -37,6 +38,15 @@ def workers(*env):
     )
 
 
+USAGE = "Usage: fleet-workers.py [--cache FILE]"
+args = sys.argv[1:]
+if args in (["-h"], ["--help"]):
+    print(USAGE)
+    sys.exit(0)
+if args and not (len(args) == 2 and args[0] == "--cache"):
+    print(USAGE, file=sys.stderr)
+    sys.exit(2)
+
 local = socket.gethostname().split(".")[0]
 # An IP has no known ssh host key, so use the ssh alias for the label.
 # The address to alias map is private: fleet-workers.local.json beside this script, gitignored.
@@ -51,10 +61,10 @@ counts.update({name: workers("--environment", eid) for eid, name in names.items(
 
 line = " | ".join(f"{n}: {c}" for n, c in counts.items())
 
-if len(sys.argv) == 3 and sys.argv[1] == "--cache":
-    tmp = sys.argv[2] + ".tmp"
+if args:
+    tmp = args[1] + ".tmp"
     with open(tmp, "w") as f:
         f.write(line + "\n")
-    os.replace(tmp, sys.argv[2])
+    os.replace(tmp, args[1])
 else:
     print(line)
