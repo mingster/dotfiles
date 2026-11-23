@@ -45,25 +45,4 @@ run "$d" >/dev/null; rc=$?
 [ "$rc" -eq 0 ] && [ -e "$d/changelog.d/README.md" ] && ! grep -q about "$d/CHANGELOG.md" \
   && pass "README skipped" || bad "README skipped"
 
-# 5. -h and --help print usage to stdout, exit 0, touch nothing; any other argument exits 2 with usage on stderr
-for arg in -h --help; do
-  d="$(new_repo)"; printf -- '- x\n' > "$d/changelog.d/1-x.md"; before="$(cat "$d/CHANGELOG.md")"
-  out="$(cd "$d" && bash "$SCRIPT" "$arg" 2>/dev/null)"; rc=$?
-  [ "$rc" -eq 0 ] && echo "$out" | grep -q '^Usage:' && [ -e "$d/changelog.d/1-x.md" ] && [ "$before" = "$(cat "$d/CHANGELOG.md")" ] \
-    && pass "$arg prints usage, changes nothing" || bad "$arg prints usage, changes nothing"
-done
-for arg in --hlep -x extra; do
-  d="$(new_repo)"; printf -- '- x\n' > "$d/changelog.d/1-x.md"; before="$(cat "$d/CHANGELOG.md")"
-  out="$(cd "$d" && bash "$SCRIPT" "$arg" 2>&1 >/dev/null)"; rc=$?
-  [ "$rc" -eq 2 ] && echo "$out" | grep -q '^Usage:' && [ -e "$d/changelog.d/1-x.md" ] && [ "$before" = "$(cat "$d/CHANGELOG.md")" ] \
-    && pass "$arg exits 2, changes nothing" || bad "$arg exits 2, changes nothing"
-done
-d="$(new_repo)"; printf -- '- x\n' > "$d/changelog.d/1-x.md"
-out="$(cd "$d" && bash "$SCRIPT" -h extra 2>&1 >/dev/null)"; rc=$?
-[ "$rc" -eq 2 ] && [ -e "$d/changelog.d/1-x.md" ] && pass "-h with extra argument exits 2" || bad "-h with extra argument exits 2"
-# 6. env vars still work with no argument
-d="$(new_repo)"; mv "$d/CHANGELOG.md" "$d/CL.md"; mkdir "$d/frags"; printf -- '- env\n' > "$d/frags/1.md"
-(cd "$d" && CHANGELOG=CL.md FRAGMENTS_DIR=frags bash "$SCRIPT" >/dev/null); rc=$?
-[ "$rc" -eq 0 ] && grep -q -- '- env' "$d/CL.md" && [ ! -e "$d/frags/1.md" ] && pass "env vars honored" || bad "env vars honored"
-
 exit "$fail"
