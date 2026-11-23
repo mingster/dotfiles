@@ -239,6 +239,9 @@ echo "secret=1" >"$dirty_repo/ignored.env"
 echo uncommitted >>"$dirty_repo/file.txt"
 echo scratch >"$dirty_repo/untracked.txt"
 git -C "$detached_repo" checkout -q --detach HEAD
+# A local commit keeps this detached HEAD off origin/main, so the non-agent run in this same HOME fails it (#1683) and only the agent reset can clean it
+echo local >>"$detached_repo/file.txt"
+git -C "$detached_repo" commit -qam local_detached
 
 cat >"$state1/fleet-pull.json" <<'EOF'
 {"hosts":["host-normal"],"agent_hosts":["host-agent"],"repos":["~/repo-dirty","~/repo-detached"]}
@@ -323,6 +326,7 @@ mkdir -p "$df_seed/script" "$df_seed/.agents/claude" "$df_seed/.agents/skills/td
 cp "$root/script/setup-claude-code.sh" "$df_seed/script/setup-claude-code.sh"
 cp "$root/script/check-hook-paths.sh" "$df_seed/script/check-hook-paths.sh"
 cp "$root/script/check-display-settings.sh" "$df_seed/script/check-display-settings.sh"
+cp "$root/script/fix-display-settings.sh" "$df_seed/script/fix-display-settings.sh"
 cp "$root/script/setup-agent-skills.sh" "$df_seed/script/setup-agent-skills.sh"
 mkdir -p "$df_seed/script/lib"
 cp "$root/script/lib/dotfiles-source.sh" "$df_seed/script/lib/dotfiles-source.sh"
@@ -467,6 +471,20 @@ else
   bad "fleet-pull did not name the display drift (ec=$ec13): $out13"
 fi
 
+# 1682: --fix-display repairs the drift (python3, no jq on the host), leaves other keys, and fleet-pull then reports no display drift
+printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
+set +e
+out14=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" --fix-display 2>&1)
+set -e
+if grep -Eq '^fix  host-a [^ ]*/dotfiles \(display keys set in \.claude/settings.json\)$' <<<"$out14" \
+  && ! grep -Eq 'display key [A-Za-z]+:' <<<"$out14" && ! grep -q s3cret <<<"$out14" \
+  && PATH="$jq_dir:$PATH" bash "$root/script/check-display-settings.sh" "$rem_home/.claude/settings.json" >/dev/null \
+  && grep -q s3cret "$rem_home/.claude/settings.json"; then
+  ok "fleet-pull --fix-display repairs drifted display keys and leaves other keys"
+else
+  bad "fleet-pull --fix-display did not repair the drift: $out14"
+fi
+
 # 1416: a settings hook pointing at a removed dotfiles script is named after the pull, and only its path is printed
 printf '{"env":{"TOKEN":"s3cret"},"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/dotfiles/script/gone.sh"}]}]}}\n' >"$rem_home/.claude/settings.json"
 set +e
@@ -522,6 +540,58 @@ if [ "$ec_u" -eq 2 ] && grep -q '^Usage:' <<<"$out_u" && ! grep -Eq '^(ok|fail|l
   ok "fleet-pull rejects an unknown flag with exit 2 and pulls nothing"
 else
   bad "fleet-pull unknown flag ran or misreported (ec=$ec_u): $out_u"
+fi
+
+# 1683: a detached HEAD on origin/main history with a clean tree is switched back to main and fast-forwarded (logged as fix);
+#       a detached HEAD with local commits, or a dirty detached tree, stays a fail that names the reason
+state10="$tmp/state10"
+state10_bare="$tmp/state10.git"
+rep_ok="$tmp/rep-detached-ok"
+rep_ok_bare="$tmp/rep-detached-ok.git"
+rep_ahead="$tmp/rep-detached-ahead"
+rep_ahead_bare="$tmp/rep-detached-ahead.git"
+rep_dirty="$tmp/rep-detached-dirty"
+rep_dirty_bare="$tmp/rep-detached-dirty.git"
+make_repo "$state10" "$state10_bare"
+make_repo "$rep_ok" "$rep_ok_bare"
+make_repo "$rep_ahead" "$rep_ahead_bare"
+make_repo "$rep_dirty" "$rep_dirty_bare"
+cat >"$state10/fleet-pull.json" <<EOF
+{"hosts":[],"repos":["$rep_ok","$rep_ahead","$rep_dirty"]}
+EOF
+git -C "$rep_ok" checkout -q --detach
+advance_origin "$rep_ok_bare" "detached-ok"
+rep_ok_tip=$(git --git-dir="$rep_ok_bare" rev-parse refs/heads/main)
+git -C "$rep_ahead" checkout -q --detach
+echo local_only >>"$rep_ahead/file.txt"
+git -C "$rep_ahead" commit -qam local_only
+git -C "$rep_dirty" checkout -q --detach
+echo uncommitted >>"$rep_dirty/file.txt"
+set +e
+out10=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state10" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec10=$?
+set -e
+if [ "$ec10" -ne 0 ] \
+  && [ "$(git -C "$rep_ok" branch --show-current)" = main ] \
+  && [ "$(git -C "$rep_ok" rev-parse HEAD)" = "$rep_ok_tip" ] \
+  && grep -qF "fix  local $rep_ok (detached HEAD on origin/main history, switched to main)" <<<"$out10" \
+  && grep -qF "ok   local $rep_ok" <<<"$out10"; then
+  ok "detached clean checkout on origin/main history is switched to main and fast-forwarded with a log line"
+else
+  bad "detached clean checkout should return to main (ec=$ec10): $out10"
+fi
+if grep -qF "fail local $rep_ahead (not on main: detached, HEAD is not on origin/main)" <<<"$out10" \
+  && [ -z "$(git -C "$rep_ahead" branch --show-current)" ]; then
+  ok "detached checkout with local commits fails and stays detached"
+else
+  bad "detached checkout with local commits should fail and stay detached: $out10"
+fi
+if grep -qF "fail local $rep_dirty (not on main: detached and dirty)" <<<"$out10" \
+  && [ -z "$(git -C "$rep_dirty" branch --show-current)" ] \
+  && grep -q uncommitted "$rep_dirty/file.txt"; then
+  ok "dirty detached checkout fails, stays detached, and keeps its changes"
+else
+  bad "dirty detached checkout should fail and keep its changes: $out10"
 fi
 
 echo "fleet-pull: $pass passed, $fail failed"

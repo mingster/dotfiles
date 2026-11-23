@@ -5,7 +5,7 @@
 #   worker-startup.sh --host-check
 #   worker-startup.sh --pick-host-only --spec FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
-#         [--route-override REASON] [--allow-delivered REASON] [--skip-dotfiles-first REASON]
+#         [--route-override REASON] [--allow-delivered REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 # --title must be "#<issue>|<role>" (for example "#123|qa-sdet"; a verifier uses its PR number), else exit 2.
 # After start the title is also set on the worker terminal and pane.
@@ -411,6 +411,14 @@ host_check() {
 
 # --- --run: optional worktree create (non-cursor), then delegate ---
 
+# Finish lines every builder brief carries (#1675, #1676). A builder cannot report done without a cold review at its head.
+builder_review_line() {
+  printf -- '- Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so a builder is allowed to. FAIL: fix, push, rerun until PASS.\n'
+}
+builder_sections_line() {
+  printf -- '- PR body sections (checked by `bash ~/dotfiles/script/check-pr-body.sh <body file>` before the PR opens): the issue closing line, the `Builder:` line (agent and model), and `## Self-check` with the verify command and the tail of its output.\n'
+}
+
 # The fixed Finish steps are not the author's to write (#968). A brief with no "## Finish" heading gets the
 # standard block appended in a copy; the original is untouched. Prints the spec path to use.
 with_finish_block() { # <spec_file> <run_id> <agent> <model>
@@ -420,12 +428,20 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
     builder_line="Builder: agent=$agent model=$model"
   fi
   if grep -qE '^## Finish([[:space:]]|$)' "$spec_file"; then
-    if [ -n "$builder_line" ] && grep -qi 'fullstack-dev' "$spec_file" && ! grep -qF "$builder_line" "$spec_file"; then
-      out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
-      cp "$spec_file" "$out"
-      printf -- '- Put the line `%s` in the PR body.\n' "$builder_line" >>"$out"
-      printf '%s\n' "$out"
-      return 0
+    if grep -qi 'fullstack-dev' "$spec_file"; then
+      local need_builder=0 need_review=0 need_sections=0
+      [ -n "$builder_line" ] && ! grep -qF "$builder_line" "$spec_file" && need_builder=1
+      grep -qF 'pr-review.sh' "$spec_file" || need_review=1
+      grep -qF 'PR body sections' "$spec_file" || need_sections=1
+      if [ $((need_builder + need_review + need_sections)) -gt 0 ]; then
+        out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
+        cp "$spec_file" "$out"
+        [ "$need_builder" -eq 0 ] || printf -- '- Put the line `%s` in the PR body.\n' "$builder_line" >>"$out"
+        [ "$need_review" -eq 0 ] || builder_review_line >>"$out"
+        [ "$need_sections" -eq 0 ] || builder_sections_line >>"$out"
+        printf '%s\n' "$out"
+        return 0
+      fi
     fi
     printf '%s\n' "$spec_file"
     return 0
@@ -437,7 +453,9 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
     printf -- '- Self-review the diff before you hand off.\n'
     if grep -qi 'fullstack-dev' "$spec_file"; then
       printf -- '- Open a PR with the issue closing line, a line `%s`.\n' "${builder_line:-Builder: agent=<agent> model=<model>}"
+      builder_sections_line
       printf -- '- Wait until `gh pr checks <n> --watch --fail-fast` (or `gh run list --branch <branch> --limit 3`) shows the checks passing at your final head. Never send worker_done with red or pending checks.\n'
+      builder_review_line
     fi
     printf -- '- When this work has a pull request, run `orca worktree set --worktree active --workspace-status in-review` before `worker_done`. When it has no pull request, run `orca worktree set --worktree active --workspace-status completed` before `worker_done`. Then send `worker_done` with the send command from your preamble, without a `--run` flag. Never wait for a reply. Never contact the user.\n'
   } >>"$out"
@@ -459,7 +477,7 @@ with_refs_line() { # <spec_file> <title>
 }
 
 usage_run() {
-  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON] [--skip-dotfiles-first REASON]" >&2
+  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
   echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
@@ -739,6 +757,34 @@ refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   die "refused: $ref already delivered by merged PR $prs; close the issue, or pass --allow-delivered REASON"
 }
 
+# A builder start whose Allowed files overlap an in-progress issue or an open PR is refused (#1678).
+# --allow-overlap REASON overrides. A missing gh or a failed lookup lets the start go on (check-issue-overlap.sh exits 0 then).
+refuse_overlapping_issue() { # <spec_file> <title> <allow_reason>
+  local spec_file=$1 title=$2 allow=$3 role kind ref repo num btype out
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || return 0
+  [ "$kind" = builder ] || return 0
+  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
+  case "$btype" in rework|verify) return 0 ;; esac
+  ref=$(grep -m1 -oE '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed -E 's/^[A-Za-z]+:?[[:space:]]+//' || true)
+  case "$title" in "#"[0-9]*"|"*) [ -n "$ref" ] || { ref=${title#\#}; ref=\#${ref%%|*}; } ;; esac # the title names the issue (with_refs_line)
+  [ -n "$ref" ] || return 0
+  num=${ref##*#}
+  repo=${ref%%#*}
+  command -v gh >/dev/null 2>&1 || return 0
+  if out=$(bash "${ISSUE_OVERLAP_CLI:-$here/check-issue-overlap.sh}" ${repo:+--repo "$repo"} --spec "$spec_file" "$num" 2>&1); then
+    return 0
+  fi
+  if [ -n "$allow" ]; then
+    printf '%s\n' "$out" >&2
+    echo "worker-startup: --allow-overlap: $ref starts despite the overlap ($allow)" >&2
+    return 0
+  fi
+  printf '%s\n' "$out" >&2
+  die "refused: $ref overlaps other work in flight; bundle it into one issue, or pass --allow-overlap REASON"
+}
+
 # A complex builder start (#1396): a fullstack-dev-strong title, or a Refs issue labelled size:L.
 # Best effort: a missing gh or a failed lookup counts as not complex.
 builder_is_complex() { # <role> <spec_file>
@@ -802,23 +848,65 @@ require_grok_host() { # <environment>
     || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
-# A started worker of any role takes the ready-for-agent label off its issue, so the issue scan does not start a second worker (#1192, #1216).
-# Best effort: a missing gh or a failed edit never fails a start that already succeeded.
-release_ready_label() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role btype ref repo num
+# The repo issue a brief names: the first Refs, Closes, Fixes or Resolves line, as owner/repo#N or #N. Empty when none.
+issue_ref_from_spec() { # <spec_file>
+  grep -m1 -E '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$1" \
+    | sed -E 's/^(Refs|Closes|Fixes|Resolves):?[[:space:]]+//; s/^([^#]*#[0-9]+).*/\1/' || true
+}
+
+# Owner 2026-11-24 (#1692): a builder start claims its issue before the worker starts. ready-for-agent comes off and the
+# in-progress status label goes on, so issue_scan never starts a second worker for it (#1192, #1216). claimed_* record what
+# the claim changed, so release_claim puts it back when the start fails. Best effort: a missing gh or a failed edit warns
+# and never fails the start itself.
+claimed_ref=
+claimed_ready=0
+claimed_triage=0
+claimed_status=0
+
+claim_issue() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role btype ref repo num labels
+  claimed_ref=
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
   [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
-  [ "$role" != qa-sdet ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  ref=$(issue_ref_from_spec "$spec_file")
   [ -n "$ref" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
   num=${ref##*#}
   repo=${ref%%#*}
-  command -v gh >/dev/null 2>&1 || return 0
-  gh issue edit "$num" ${repo:+-R "$repo"} --remove-label ready-for-agent >/dev/null 2>&1 \
-    || echo "worker-startup: could not remove ready-for-agent from $ref" >&2
+  if ! labels=$(gh issue view "$num" ${repo:+-R "$repo"} --json labels --jq '.labels[].name' 2>/dev/null); then
+    echo "worker-startup: could not read the labels of $ref, not claimed" >&2
+    return 0
+  fi
+  claimed_ready=0
+  claimed_triage=0
+  claimed_status=0
+  grep -qx 'ready-for-agent' <<<"$labels" && claimed_ready=1
+  grep -qx 'needs-triage' <<<"$labels" && claimed_triage=1
+  grep -qx 'status:進行中' <<<"$labels" && claimed_status=1
+  if gh issue edit "$num" ${repo:+-R "$repo"} --remove-label ready-for-agent --add-label "status:進行中" --remove-label needs-triage >/dev/null 2>&1; then
+    claimed_ref=$ref
+  else
+    echo "worker-startup: could not claim $ref (ready-for-agent off, status:進行中 on)" >&2
+  fi
+  return 0
+}
+
+release_claim() { # a failed start: put back the labels claim_issue changed
+  local num repo add=() remove=()
+  [ -n "$claimed_ref" ] || return 0
+  num=${claimed_ref##*#}
+  repo=${claimed_ref%%#*}
+  [ "$claimed_ready" = 1 ] && add+=(--add-label ready-for-agent)
+  [ "$claimed_triage" = 1 ] && add+=(--add-label needs-triage)
+  [ "$claimed_status" = 1 ] || remove+=(--remove-label "status:進行中")
+  claimed_ref=
+  [ "${#add[@]}" -gt 0 ] || [ "${#remove[@]}" -gt 0 ] || return 0
+  gh issue edit "$num" ${repo:+-R "$repo"} ${add[@]+"${add[@]}"} ${remove[@]+"${remove[@]}"} >/dev/null 2>&1 \
+    || echo "worker-startup: could not restore the labels on #$num after a failed start" >&2
+  return 0
 }
 
 # Owner rule 2026-11-20: every dotfiles issue starts before any other repo's. The hand dispatch path obeys it too.
@@ -851,23 +939,6 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
     return 0
   fi
   die "refused: dotfiles issue $waiting is ready and not started; start it first, or pass --skip-dotfiles-first REASON"
-}
-
-# The hand dispatch path knows an issue is in flight, so it sets the board label (docs/agents/labels.md, Status).
-mark_issue_in_flight() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role btype ref repo num
-  role=$(role_from_title "$title")
-  [ -n "$role" ] || return 0
-  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
-  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
-  case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
-  [ -n "$ref" ] || return 0
-  num=${ref##*#}
-  repo=${ref%%#*}
-  command -v gh >/dev/null 2>&1 || return 0
-  gh issue edit "$num" ${repo:+-R "$repo"} --add-label "status:進行中" --remove-label needs-triage >/dev/null 2>&1 \
-    || echo "worker-startup: could not set status:進行中 on $ref" >&2
 }
 
 # Keep every open issue of the host repo carrying a state and a P label. Best effort.
@@ -912,10 +983,10 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
-  local explicit_on=0 force_host='' on_raw='' allow_delivered='' skip_dotfiles=''
+  local explicit_on=0 force_host='' on_raw='' allow_delivered='' allow_overlap='' skip_dotfiles=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered|--skip-dotfiles-first)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered|--allow-overlap|--skip-dotfiles-first)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -934,6 +1005,7 @@ run_mode() {
           --retry-of) retry_of=$2 ;;
           --route-override) route_override=$2; [ -n "$route_override" ] || die "route override needs a reason" ;;
           --force-host) force_host=$2; [ -n "$force_host" ] || die "force-host needs a reason" ;;
+          --allow-overlap) allow_overlap=$2; [ -n "$allow_overlap" ] || die "allow-overlap needs a reason" ;;
           --allow-delivered) allow_delivered=$2; [ -n "$allow_delivered" ] || die "allow-delivered needs a reason" ;;
           --skip-dotfiles-first) skip_dotfiles=$2; [ -n "$skip_dotfiles" ] || die "skip-dotfiles-first needs a reason" ;;
         esac
@@ -991,6 +1063,7 @@ run_mode() {
   local lint_out lint_dir dispatch_log orig_spec=$spec
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
+  refuse_overlapping_issue "$spec" "$title" "$allow_overlap"
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"
   warn_live_verifier "$spec" "$title" "$name" "$run"
@@ -1110,12 +1183,12 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       cursor_repo=$WORKER_STARTUP_PLACED_REPO
     fi
+    claim_issue "$spec" "$title"
     run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
-      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
+      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} \
+      || { cursor_rc=$?; release_claim; exit "$cursor_rc"; }
     apply_terminal_title "$title" "$start_out" "$environment"
-    release_ready_label "$spec" "$title"
-    mark_issue_in_flight "$spec" "$title"
     return 0
   fi
 
@@ -1187,6 +1260,7 @@ run_mode() {
       [ -z "$environment" ] || rm_args+=(--environment "$environment")
       "$orca" "${rm_args[@]}" >/dev/null 2>&1 || echo "worker-startup: could not remove the worktree $wt after a failed start" >&2
     fi
+    release_claim
     exit "$ec"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
@@ -1216,6 +1290,7 @@ run_mode() {
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
     fi
   }
+  claim_issue "$spec" "$title"
   start_agent_worker
   local agy_ec=0
   surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?
@@ -1228,13 +1303,12 @@ run_mode() {
     pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
     start_agent_worker
   elif [ "$agy_ec" -ne 0 ]; then
+    release_claim
     exit "$agy_ec"
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
   # Only a worktree this start created: a reused one may hold terminals that are not ours.
   [ "$created_wt" != 1 ] || close_extra_terminals "$start_out" "$wt" "$environment"
-  release_ready_label "$spec" "$title"
-  mark_issue_in_flight "$spec" "$title"
   return 0
 }
 

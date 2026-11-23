@@ -545,6 +545,8 @@ grep -q 'Builder: agent=claude model=claude-sonnet-5-5-medium' "$tmp/orca-nofin.
 grep -q 'Builder: agent=<agent>' "$tmp/orca-nofin.log" && bad "builder spec Finish must not leave <agent> placeholder" || ok
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
 grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
+grep -q 'pr-review.sh <pr> <head sha>' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should tell the builder to run pr-review.sh itself (#1675)"
+grep -q 'PR body sections' "$tmp/orca-nofin.log" && grep -q 'check-pr-body.sh' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should list the PR body sections (#1676)"
 grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
 
 # 1201: a brief with no Refs line gets "Refs #<issue>" from the title, in a copy. A written Refs form is left alone.
@@ -1603,6 +1605,20 @@ PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-m
 grep -q 'allow-delivered.*follow-up slice' "$tmp/route.err" && ok || bad "the override reason should be logged ($(cat "$tmp/route.err"))"
 GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh call must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
+# A builder start whose Allowed files overlap other work is refused unless --allow-overlap REASON (#1678).
+overlap_cli="$tmp/overlap-cli.sh"
+printf '#!/usr/bin/env bash\necho "overlap: script/a.sh is also in open PR #5" >&2\nexit 1\n' >"$overlap_cli"
+printf 'Refs acme/app#7880\n\n# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved" >"$spec_file"
+ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice"
+[ "$route_ec" -ne 0 ] && ok || bad "an overlapping builder start should be refused (ec=$route_ec)"
+grep -q 'overlap: script/a.sh' "$tmp/route.err" && grep -q 'allow-overlap REASON' "$tmp/route.err" && ok || bad "refusal should print the overlap and the override ($(cat "$tmp/route.err"))"
+ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice" --allow-overlap "same file, rebased"
+[ "$route_ec" = 0 ] && ok || bad "--allow-overlap should start anyway (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'allow-overlap.*same file, rebased' "$tmp/route.err" && ok || bad "the overlap reason should be logged ($(cat "$tmp/route.err"))"
+# The overlap check also runs when the brief has no Refs line and the title names the issue.
+printf '# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved" >"$spec_file"
+ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice"
+[ "$route_ec" -ne 0 ] && grep -q 'overlap: script/a.sh' "$tmp/route.err" && ok || bad "a brief with no Refs line should still be checked from the title (ec=$route_ec)"
 # fleet-watch issue scan default title "builder - #<n>" is a builder too.
 printf 'Refs acme/app#7880\n\n# builder - #7880\n\n%s\n' "$spec_saved" >"$spec_file"
 PICK_STUB_MODE=sonnet route_run "#7880|builder" claude claude-sonnet-5-5-medium
@@ -1611,7 +1627,7 @@ printf 'Refs acme/app#7881\n\n# fullstack-dev - issue 7881\n\n%s\n' "$spec_saved
 PICK_STUB_MODE=sonnet route_run "#7881|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "an issue no merged PR closed should start (ec=$route_ec) $(cat "$tmp/route.err")"
 
-# A started worker of any role takes ready-for-agent off its issue; a verify or rework start or a failed start leaves it (#1192, #1216).
+# A builder start claims its issue before the worker starts (#1192, #1216, #1692). A verify or rework start leaves it.
 cat >"$ghbin/gh" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_STUB_LOG"
@@ -1623,10 +1639,55 @@ printf 'Refs acme/app#7900\n\n# fullstack-dev - issue 7900\n\n%s\n' "$spec_saved
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "builder start for a ready issue should succeed (ec=$route_ec) $(cat "$tmp/route.err")"
-grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent ($(cat "$GH_STUB_LOG"))"
+grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent --add-label status:進行中 --remove-label needs-triage' "$GH_STUB_LOG" && ok || bad "started builder should drop ready-for-agent and set status:進行中 ($(cat "$GH_STUB_LOG"))"
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7900|qa-sdet" claude claude-sonnet-5-5-medium
-grep -Fxq -- 'issue edit 7900 -R acme/app --remove-label ready-for-agent' "$GH_STUB_LOG" && bad "a qa-sdet start must keep ready-for-agent on the issue (#1271)" || ok
+grep -q '^issue edit' "$GH_STUB_LOG" && bad "a qa-sdet start must not edit issue labels (#1271)" || ok
+
+# #1692: the claim lands before worker-start; a failed start puts back the labels it changed; an unreadable label set is not claimed.
+prior_spec=$(cat "$spec_file")
+cat >"$ghbin/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+case "$1 $2" in
+  "issue view") [ -z "${GH_VIEW_FAIL:-}" ] || exit 1; printf '%s\n' "${GH_LABELS:-}" ;;
+  "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
+esac
+exit 0
+EOS
+chmod +x "$ghbin/gh"
+printf 'Refs acme/app#7901\n\n# fullstack-dev - issue 7901\n\n%s\n' "$spec_saved" >"$spec_file"
+export GH_LABELS=$'ready-for-agent\nP2'
+: >"$tmp/orca-route.log"
+saved_gh_log=$GH_STUB_LOG
+export GH_STUB_LOG="$tmp/orca-route.log"
+PICK_STUB_MODE=sonnet route_run "#7901|fullstack-dev" claude claude-sonnet-5-5-medium
+export GH_STUB_LOG=$saved_gh_log
+[ "$route_ec" = 0 ] && ok || bad "claim order: a builder start should succeed (ec=$route_ec) $(cat "$tmp/route.err")"
+claim_line=$(grep -n '^issue edit 7901 -R acme/app --remove-label ready-for-agent --add-label status:進行中' "$tmp/orca-route.log" | head -1 | cut -d: -f1)
+start_line=$(grep -n 'orchestration worker-start' "$tmp/orca-route.log" | head -1 | cut -d: -f1)
+[ -n "$claim_line" ] && [ -n "$start_line" ] && [ "$claim_line" -lt "$start_line" ] && ok || bad "the claim must land before worker-start (claim=$claim_line start=$start_line)"
+
+# A failed worker-start restores ready-for-agent and takes status:進行中 back off.
+cat >"$tmp/orca-fail" <<EOS
+#!/usr/bin/env bash
+case " \$* " in *" orchestration worker-start "*) echo "worker-start refused" >&2; exit 1 ;; esac
+exec "$tmp/orca" "\$@"
+EOS
+chmod +x "$tmp/orca-fail"
+: >"$GH_STUB_LOG"
+orca_stub="$tmp/orca-fail" PICK_STUB_MODE=sonnet route_run "#7901|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a refused worker-start must fail the start"
+grep -Fxq -- 'issue edit 7901 -R acme/app --add-label ready-for-agent --remove-label status:進行中' "$GH_STUB_LOG" && ok || bad "a failed start must restore ready-for-agent and drop status:進行中 ($(cat "$GH_STUB_LOG"))"
+
+# A label set that cannot be read is not claimed: no edit, and the start goes on.
+export GH_VIEW_FAIL=1
+: >"$GH_STUB_LOG"
+PICK_STUB_MODE=sonnet route_run "#7901|fullstack-dev" claude claude-sonnet-5-5-medium
+unset GH_VIEW_FAIL GH_LABELS
+grep -q '^issue edit' "$GH_STUB_LOG" && bad "an unreadable label set must not be claimed ($(cat "$GH_STUB_LOG"))" || ok
+[ "$route_ec" = 0 ] && ok || bad "an unreadable label set must not block the start (ec=$route_ec)"
+printf '%s\n' "$prior_spec" >"$spec_file"
 
 # A complex builder start (#1396): fullstack-dev-strong, or a Refs issue labelled size:L, takes the Strong pick.
 cat >"$ghbin/gh" <<'EOS'
@@ -2146,7 +2207,7 @@ GH_STUB_FAIL=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MOD
 # A started issue gets the in flight board label, and the gate runs before the start.
 : >"$GH_STUB_LOG"
 GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
-grep -Fxq -- 'issue edit 7950 -R acme/app --add-label status:進行中 --remove-label needs-triage' "$GH_STUB_LOG" && ok || bad "a started issue should get status:進行中 ($(cat "$GH_STUB_LOG"))"
+grep -Fxq -- 'issue edit 7950 -R acme/app --remove-label ready-for-agent --add-label status:進行中 --remove-label needs-triage' "$GH_STUB_LOG" && ok || bad "a started issue should get status:進行中 ($(cat "$GH_STUB_LOG"))"
 : >"$GH_STUB_LOG"
 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --skip-dotfiles-first "test"
 grep -Fxq -- 'issue edit 5 --repo acme/dots --add-label status:接下來' "$GH_STUB_LOG" && ok || bad "the label gate should run at a hand start ($(cat "$GH_STUB_LOG"))"

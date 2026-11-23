@@ -1,0 +1,1 @@
+- A pre-push hook now refuses an agent session's push to `main`, `production` or `staging`; merge through `script/ship.sh` instead (#1687).

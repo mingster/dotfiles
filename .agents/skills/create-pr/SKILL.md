@@ -29,4 +29,6 @@ Only the PR owner performs this section. In an agent team, run `~/dotfiles/scrip
 
 Prepare the title and body from the entire branch change. State the concrete outcome, link the issue or spec, and include scope, risk and validation evidence needed by the repository's review checklist. Use `Fixes #<number>` when appropriate. The owner's body rules prohibit a Test plan section, tool credit and Co-Authored-By suggestions, including on later edits.
 
+Before any `gh pr create`, run `bash ~/dotfiles/script/check-pr-body.sh --issue <n> <body file>` (the same pr-body-gate review runs; `coordinator-publication.sh` runs it too). It refuses and names the missing section: the closing line, the `Builder:` line, or `## Self-check` with a command and its output. Fix the body, then open the PR.
+
 Outside a team, push the feature branch with `git push -u origin HEAD`. Open the PR only after the push succeeds. Pass a prepared body file to `gh pr create --title <title> --body-file <path>` so newlines and literal text survive shell quoting. Report the returned PR URL. Follow the project's merge policy; opening a PR alone does not authorize merging it.

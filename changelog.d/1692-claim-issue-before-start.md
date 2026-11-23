@@ -1,0 +1,2 @@
+* `worker-startup.sh` claims a builder's issue before the worker starts: `ready-for-agent` comes off and `status:進行中` goes on, in one edit. A failed start puts back the labels it changed. Before, the labels changed only after a successful start, so a start that left the label in place let `issue_scan` start a second worker for the same issue (#1692).
+* `fleet-watch` issue_scan skips an issue with a live dispatch whose task title starts with `#<n>|`, whatever its labels (#1692).

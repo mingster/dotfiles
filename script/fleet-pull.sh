@@ -6,13 +6,17 @@
 set -u
 usage() {
   cat <<'USAGE'
-Usage: fleet-pull.sh [--help]
+Usage: fleet-pull.sh [--fix-display] [--help]
 Pulls the state dir and each configured repo on this host and every fleet host.
 An agent host checkout is reset hard to origin/main. There is no dry run mode.
+--fix-display  Before the display check, set the four Claude display keys to the fleet value in
+               ~/.claude/settings.json and every Orca profile settings.json (python3, atomic, symlinks skipped).
 USAGE
 }
+fix_display=0
 case "${1:-}" in
   '') ;;
+  --fix-display) fix_display=1 ;;
   -h|--help) usage; exit 0 ;;
   *) echo "fleet-pull: unknown argument: $1" >&2; usage >&2; exit 2 ;;
 esac
@@ -27,7 +31,8 @@ remote='
 PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 host_label=$1
 agent_host=$2
-shift 2
+fix_display=$3
+shift 3
 rc=0
 # Role files and session-start.md are rendered copies, so only agent-team.sh machine refreshes them
 render_team() {
@@ -51,6 +56,11 @@ check_display() {
   [ -f "$1/script/check-display-settings.sh" ] || return 0
   for f in "$HOME/.claude/settings.json" "$HOME"/Library/Application\ Support/orca/claude-profiles/*/home/settings.json; do
     [ -f "$f" ] || continue
+    # With --fix-display, fix first. A symlink is skipped and invalid JSON is left alone, so the check below still reports them (#1682)
+    if [ "$fix_display" = 1 ] && [ -f "$1/script/fix-display-settings.sh" ]; then
+      out=$(bash "$1/script/fix-display-settings.sh" "$f" 2>&1) || true
+      case "$out" in "fixed "*) echo "fix  $host_label $2 (display keys set in ${f#"$HOME"/})" ;; esac
+    fi
     out=$(bash "$1/script/check-display-settings.sh" "$f" 2>&1) && continue
     printf "%s\n" "$out" | while IFS= read -r line; do echo "fail $host_label $2 ($line in ${f#"$HOME"/})"; done
     rc=1
@@ -90,8 +100,39 @@ for raw in "$@"; do
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
+  if [ -z "$b" ]; then
+    # A detached HEAD on origin/main history with a clean tree goes back to main. Local commits or a dirty tree stay a fail (#1683)
+    if ! git -C "$d" fetch -q origin 2>/dev/null; then
+      echo "fail $host_label $raw (unreachable origin on fetch)"
+      rc=1
+      continue
+    fi
+    if [ -n "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      echo "fail $host_label $raw (not on main: detached and dirty)"
+      rc=1
+      continue
+    fi
+    if ! git -C "$d" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+      echo "fail $host_label $raw (not on main: detached, HEAD is not on origin/main)"
+      rc=1
+      continue
+    fi
+    if git -C "$d" rev-parse -q --verify refs/heads/main >/dev/null \
+      && ! git -C "$d" merge-base --is-ancestor main origin/main 2>/dev/null; then
+      echo "fail $host_label $raw (not on main: detached, local main has commits not on origin/main)"
+      rc=1
+      continue
+    fi
+    if ! git -C "$d" checkout -q -B main HEAD >/dev/null 2>&1; then
+      echo "fail $host_label $raw (not on main: detached, switch to main failed)"
+      rc=1
+      continue
+    fi
+    echo "fix  $host_label $raw (detached HEAD on origin/main history, switched to main)"
+    b=main
+  fi
   if [ "$b" != main ]; then
-    echo "fail $host_label $raw (not on main: ${b:-detached})"
+    echo "fail $host_label $raw (not on main: $b)"
     rc=1
     continue
   fi
@@ -137,7 +178,7 @@ exit "$rc"
 status=0
 echo "local"
 if [ -e "$state_dir/.git" ]; then
-  bash -c "$remote" _ local 0 "$state_dir" || status=1
+  bash -c "$remote" _ local 0 "$fix_display" "$state_dir" || status=1
 fi
 
 resolve_fleet_pull_config() {
@@ -188,7 +229,7 @@ is_agent_host() {
 local_agent=0
 is_agent_host local && local_agent=1
 if [ "${#repos[@]}" -gt 0 ]; then
-  bash -c "$remote" _ local "$local_agent" "${repos[@]}" || status=1
+  bash -c "$remote" _ local "$local_agent" "$fix_display" "${repos[@]}" || status=1
 fi
 
 # The remote shell expands ~, so each host pulls its own state dir.
@@ -200,7 +241,7 @@ for h in $(jq -r '(.hosts // [])[]' "$cfg"); do
   agent_flag=0
   is_agent_host "$h" && agent_flag=1
   rc=0
-  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "$agent_flag" "$remote_state" ${repos[@]+"${repos[@]}"} <<<"$remote" 2>&1) || rc=$?
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" bash -s -- "$h" "$agent_flag" "$fix_display" "$remote_state" ${repos[@]+"${repos[@]}"} <<<"$remote" 2>&1) || rc=$?
   [ -n "$out" ] && printf '%s\n' "$out"
   [ "$rc" -eq 0 ] || status=1
   # ssh exits 255 when it cannot reach the host; any other failure already named its repo.

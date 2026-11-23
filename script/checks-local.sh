@@ -32,12 +32,28 @@ while IFS= read -r f; do changed+=("$f"); done < <(git diff --diff-filter=d --na
 if [ "${#list_only[@]}" -eq 0 ]; then
   name_args=(--show-match --changed "$base" --commits "$base..HEAD")
   pr_text=$(mktemp -d)
-  if gh pr view --json title,body >"$pr_text/pr.json" 2>/dev/null; then
+  if gh pr view --json title,body,number >"$pr_text/pr.json" 2>/dev/null; then
     jq -r .title "$pr_text/pr.json" >"$pr_text/pr-title.txt"
     jq -r .body "$pr_text/pr.json" >"$pr_text/pr-body.txt"
+    jq -r .number "$pr_text/pr.json" >"$pr_text/pr-number.txt"
     name_args+=(--file "$pr_text/pr-title.txt" --file "$pr_text/pr-body.txt")
   fi
   bash script/check-project-names.sh "${name_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  # A title that names issues the body does not close or refer to, or a body closing numbers missing from this repo (#1688).
+  if [ -f "$pr_text/pr-body.txt" ]; then
+    bash script/check-pr-body-issues.sh --title "$(cat "$pr_text/pr-title.txt")" --pr "$(cat "$pr_text/pr-number.txt")" \
+      --body-file "$pr_text/pr-body.txt" || { rm -rf "$pr_text"; exit 1; }
+  fi
+  # A PR that closes a 'main red: <run id>' issue needs 'Fixes main: <run id>' in its body (#1677).
+  if [ -f "$pr_text/pr-body.txt" ]; then
+    main_fix_args=(--body-file "$pr_text/pr-body.txt")
+    while IFS= read -r issue_no; do
+      [ -n "$issue_no" ] || continue
+      issue_title=$(gh issue view "$issue_no" --json title --jq .title 2>/dev/null || true)
+      [ -z "$issue_title" ] || main_fix_args+=(--issue-title "$issue_title")
+    done < <(grep -Eio '(closes|fixes|refs) #[0-9]+' "$pr_text/pr-body.txt" | grep -Eo '[0-9]+' | sort -u)
+    bash script/check-main-fix.sh "${main_fix_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  fi
   rm -rf "$pr_text"
   bash script/check-commit-trailers.sh --commits "$base..HEAD"
 fi

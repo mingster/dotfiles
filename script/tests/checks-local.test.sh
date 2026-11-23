@@ -84,7 +84,7 @@ for t in heavy-gate fleet-watch-heavy-gate heavy-guard-hook; do
   if grep -q '^HOME=$(mktemp -d)' "$src/script/tests/$t.test.sh"; then echo "ok: $t.test.sh uses a temp HOME"
   else echo "FAIL: $t.test.sh does not set a temp HOME"; fail=1; fi
 done
-# Once isolated and passing, the three heavy-gate tests run on macOS (heavy-gate.test.sh joined after #1665).
+# Once isolated and passing, all three heavy-gate tests run on macOS (#1665 landed).
 if [ "$(grep -c '^script/tests/.*heavy.*rerun on macOS$' "$src/script/script-test-skip.list")" -eq 3 ]; then echo "ok: isolated heavy-gate tests tagged for macOS"
 else echo "FAIL: heavy-gate skip entries not tagged for macOS"; fail=1; fi
 

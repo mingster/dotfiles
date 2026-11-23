@@ -694,5 +694,19 @@ write_full_brief "$tmp/still-ok.md"
 out=$(bash "$lint" "$tmp/still-ok.md" 2>&1); ec=$?
 if [ "$ec" -eq 0 ]; then ok; else bad "a readable full brief still passes ($ec, $out)"; fi
 
+# Every missing required part is reported in one run (not just the first), and the exit is 1 once.
+cat >"$tmp/no-verify-no-scope.md" <<'EOF'
+Refs dotfiles#717
+
+## Acceptance
+- [ ] Checks pass.
+
+## Finish
+Run orca worktree set --worktree active --workspace-status in-review before worker_done.
+Self-review, then send worker_done.
+EOF
+out=$(bash "$lint" "$tmp/no-verify-no-scope.md" 2>&1); ec=$?
+if [ "$ec" -eq 1 ] && [ "$out" = "$(printf 'brief-lint: missing Out of scope\nbrief-lint: missing Verify')" ]; then ok; else bad "missing Verify and Out of scope should both print with exit 1 ($ec, $out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

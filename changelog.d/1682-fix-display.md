@@ -1,0 +1,1 @@
+- `fleet-pull.sh --fix-display` sets the four Claude display keys in `~/.claude/settings.json` and every Orca profile `settings.json` with python3 (no jq), atomically, skipping symlinks and leaving invalid JSON alone (#1682). New `script/fix-display-settings.sh`.

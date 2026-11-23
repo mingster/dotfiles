@@ -21,8 +21,8 @@ def pick(_role, avoid_family=None):
 
 
 def run(issues, backlog, state=None, interval_hours=None, occupied=0, order=None, workers=None, now=NOW, notices_out=None,
-        go_live_date=None):
-    starts = []
+        go_live_date=None, supply_recent=True, starts_out=None):
+    starts = [] if starts_out is None else starts_out
     config = scan_config('/work/app')
     if go_live_date is not None:
         config['go_live_date'] = go_live_date
@@ -31,6 +31,8 @@ def run(issues, backlog, state=None, interval_hours=None, occupied=0, order=None
     if interval_hours is not None:
         config['issue_scan']['triage_interval_hours'] = interval_hours
     state = {'issue_scan_backlog_sweep_at': NOW} if state is None else state
+    if supply_recent:
+        state.setdefault('work_order_supply_at', now)  # the supply worker (#1689) waits its interval in triage tests
 
     def start(command):
         starts.append(command)
@@ -186,6 +188,79 @@ class KeepTargetUntilGoLive(unittest.TestCase):
         self.assertIsNone(fw.work_order_status_notice(config, {}, NOW, self.live(8), 1))
         off = {'work_order': dict(self.KEEP, keep_target_until_go_live=False), 'go_live_date': '2099-01-01'}
         self.assertIsNone(fw.work_order_status_notice(off, {}, NOW, self.live(4), 2))
+
+
+class SupplyWorker(unittest.TestCase):
+    """Free seats under target_workers above the ready-for-agent supply start one architect-pm (#1689)."""
+    ORDER = {'min_active': 3, 'target_workers': 10}
+
+    def supply(self, issues, workers=(), state=None, occupied=0, backlog=3, order=ORDER):
+        starts, notices = [], []
+        _t, bits, state = run(issues, backlog=backlog, state=state, order=order, workers=list(workers),
+                              occupied=occupied, supply_recent=False, starts_out=starts, notices_out=notices)
+        supply = [c for c in starts if 'supply-architect-pm' in c]
+        triage = [c for c in starts if 'triage-architect-pm' in c]
+        return supply, triage, bits, state, notices
+
+    def test_shortfall_starts_one_supply_worker_in_place_of_triage(self):
+        supply, triage, bits, state, _n = self.supply([])
+        self.assertEqual(len(supply), 1, bits)
+        self.assertEqual(triage, [])
+        self.assertIn('supply_start=10:0', bits)
+        self.assertIn('triage_skip_supply', bits)
+        self.assertEqual(state['work_order_supply_at'], NOW)
+        command = supply[0]
+        self.assertEqual(command[command.index('--title') + 1], '#0|architect-pm|supply')
+        self.assertEqual(command[command.index('--agent') + 1], 'claude')
+        text = Path(command[command.index('--spec') + 1]).read_text(encoding='utf-8')
+        for needle in ('Role: architect-pm', 'needs-triage', 'merged', 'FAIL', 'Out of scope', 'P0',
+                       '- ' + scan_config('/w')['issue_scan']['repos'][0]):
+            self.assertIn(needle, text)
+
+    def test_shortfall_with_some_ready_issues_starts_them_and_one_supply_worker(self):
+        supply, _triage, bits, _state, _n = self.supply([row(1), row(2)], workers=TriageWorker.live(self, 5, title='#99|fullstack-dev'))
+        self.assertEqual(len(supply), 1, bits)
+        self.assertIn('issue_start=1', bits)
+        self.assertIn('issue_start=2', bits)
+
+    def test_a_live_supply_worker_blocks_a_second(self):
+        live = TriageWorker.live(self, 1, title='#0|architect-pm|supply')
+        supply, triage, bits, _state, _n = self.supply([], workers=live)
+        self.assertEqual(supply, [])
+        self.assertEqual(triage, [], bits)  # the #0| prefix also keeps triage and the sweep off
+        self.assertIn('supply_skip_live', bits)
+        state = {'issue_scan_backlog_sweep_at': NOW, 'work_order_supply_at': NOW - 600}
+        supply, _triage, bits, _state, _n = self.supply([], state=state)
+        self.assertEqual(supply, [])
+        self.assertIn('supply_skip_recent', bits)
+
+    def test_enough_supply_starts_none(self):
+        issues = [row(n) for n in range(1, 4)]
+        supply, _triage, bits, _state, _n = self.supply(issues, workers=TriageWorker.live(self, 7))
+        self.assertEqual(supply, [])
+        self.assertIn('supply_enough=3:3', bits)
+
+    def test_host_cap_and_missing_work_order_start_none(self):
+        supply, _triage, bits, _state, _n = self.supply([], occupied=4)
+        self.assertEqual(supply, [])
+        self.assertIn('supply_skip_no_seat', bits)
+        supply, _triage, bits, _state, notices = self.supply([], order=None)
+        self.assertEqual(supply, [])
+        self.assertFalse([n for n in notices if 'supply' in n])
+
+    def test_digest_line_each_pass(self):
+        _s, _t, _bits, _state, notices = self.supply([row(1)], workers=TriageWorker.live(self, 4))
+        self.assertIn('work order: 4 of 10 live, supply 1', notices)
+        _s, _t, _bits, _state, notices = self.supply([], workers=TriageWorker.live(self, 10))
+        self.assertIn('work order: 10 of 10 live, supply 0', notices)
+
+    def test_supply_spec_passes_brief_lint(self):
+        supply, _triage, _bits, _state, _n = self.supply([])
+        spec = Path(supply[0][supply[0].index('--spec') + 1])
+        repo = Path(__file__).resolve().parents[2]
+        result = subprocess.run(['bash', str(repo / 'script/brief-lint.sh'), str(spec), str(repo)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class CoordinatorHandle(unittest.TestCase):
