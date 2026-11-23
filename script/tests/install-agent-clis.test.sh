@@ -2,6 +2,8 @@
 # install-agent-clis.sh usage handling (#1588): --help and bad arguments install nothing and touch no rc file.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$(dirname "$0")/lib/asdf-pin.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 tests=0

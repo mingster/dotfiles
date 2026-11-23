@@ -4,6 +4,13 @@
 # After install, run: bash ~/dotfiles/script/setup-claude-code.sh
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: install_claude.sh (takes no arguments)" >&2
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
+fi
+
 if command -v claude >/dev/null 2>&1; then
   echo "install_claude: claude already in PATH ($(claude --version 2>/dev/null || echo ok))"
   exit 0

@@ -8,6 +8,14 @@
 # A second copy exits 0. The pid file lives in FLEET_WATCH_LOOP_DIR (default ~/.local/state/fleet-watch).
 set -euo pipefail
 
+usage() { echo "Usage: fleet-watch-loop.sh [--status | --stop]" >&2; }
+if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ -z "$1" ]; }; then usage; exit 2; fi
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+  "" | --status | --stop) ;;
+  *) usage; exit 2 ;;
+esac
+
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/dotfiles-fresh.sh
 . "$here/lib/dotfiles-fresh.sh"
