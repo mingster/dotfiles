@@ -38,7 +38,7 @@ d = json.load(open(sys.argv[1]))
 assert d["env"] == {"TOKEN": "s3cret"} and d["hooks"] == {"a": [1, 2]}
 assert list(d)[:2] == ["env", "verbose"], list(d)
 PY
-[ "$(stat -f %Lp "$H/.claude/settings.json" 2>/dev/null || stat -c %a "$H/.claude/settings.json")" = 640 ] && ok "file mode kept" || bad "file mode changed"
+[ "$(stat -c %a "$H/.claude/settings.json" 2>/dev/null || stat -f %Lp "$H/.claude/settings.json")" = 640 ] && ok "file mode kept" || bad "file mode changed"
 [ -z "$(find "$H/.claude" -name '.settings.*')" ] && ok "no temp file left" || bad "temp file left"
 cmp -s "$H/orca/p1/settings.json" "$TMP/p1.before" && grep -q "^ok $H/orca/p1/settings.json$" <<<"$out" && ok "clean file not rewritten" || bad "clean file touched"
 [ -L "$H/orca/p2/settings.json" ] && [ "$(cat "$TMP/target.json")" = '{"verbose":true}' ] && grep -q "^skip $H/orca/p2/settings.json (symlink)$" <<<"$out" && ok "symlink skipped, target unchanged" || bad "symlink handling: $out"
