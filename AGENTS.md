@@ -65,7 +65,7 @@ DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh    # bootstrap without running system
 | `script/setup-agent-skills.sh` | Links only the tracked dotfiles skills into the home skill folders, leaving tool owned folders alone |
 | `script/setup-check.sh`, `script/check-agent-startup.sh` | Read only checks. Setup readiness never installs tools or downloads browser binaries; the startup check confirms only the two Antigravity (agy) instruction links, and reports that nothing was checked when Antigravity is absent |
 | `script/install-agent-clis.sh` | Installs any missing Claude and Antigravity CLIs; only reports a missing `grok`. Signing in stays an owner step |
-| `script/setup-orca.sh` | Links Orca `presets.json` and sets up the Orca agent hooks |
+| `script/setup-orca.sh` | Links `~/.orca/presets.json` to the repo copy and backs up a differing file. It installs no hooks |
 | `script/setup-zed.sh` | Links Zed settings from `ide/zed/` into `~/.config/zed/`. Skips when Zed is not installed |
 | `script/agent-team.sh` | Not called from `install.sh`. `machine` sets up a host, `project <dir> --labels` scaffolds `docs/agents/` and adopts the team in a repo, `sync <dir>` refreshes project files, `check <dir>` fails on drift. See `docs/agents/team-reference.md` |
 | `script/team-audit-metrics.ts` | Not called from `install.sh`. `bun script/team-audit-metrics.ts --repo <owner/name>` prints the weekly team audit metrics; `script/team-audit.sh` runs it with `TEAM_AUDIT_RUN_METRICS=1` |

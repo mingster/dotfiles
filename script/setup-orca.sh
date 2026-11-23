@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Orca setup: ensure presets.json and agent hooks are configured
+# Orca setup: link presets.json into ~/.orca (backs up a differing file). Installs no agent hooks.
 set -euo pipefail
 
 # Takes no arguments: -h/--help print usage, anything else is refused before any change (#1568).
