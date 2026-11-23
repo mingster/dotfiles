@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # setup-grok.sh adds missing keys to a grok config and never changes keys the file already has.
 here=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL $1"; exit 1; }
-run() { GROK_CONFIG="$tmp/config.toml" DOTFILES="$here/.." bash "$here/setup-grok.sh" >/dev/null || fail "run"; }
+mkdir -p "$tmp/home"
+run() { HOME="$tmp/home" GROK_CONFIG="$tmp/config.toml" DOTFILES="$here/.." bash "$here/setup-grok.sh" >/dev/null || fail "run"; }
 has() { grep -qxF "$1" "$tmp/config.toml" || fail "missing: $1"; }
 
 run

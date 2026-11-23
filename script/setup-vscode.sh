@@ -9,6 +9,9 @@ if [ $# -gt 0 ]; then
 fi
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/dotfiles-source.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/dotfiles-source.sh"
+require_main_dotfiles setup-vscode "$DOTFILES"
 # shellcheck source=lib/link-user-file.sh
 . "$DOTFILES/script/lib/link-user-file.sh"
 

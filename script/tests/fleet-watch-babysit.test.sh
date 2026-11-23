@@ -10,6 +10,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 export PATH="$tmp/bin:$PATH"
+# The scheduled fleet-watch run has no coordinator terminal in its environment (#1640).
+unset ORCA_TERMINAL_HANDLE
 export USAGE_GATE_CLI="$tmp/bin/usage-gate.py"
 export BABYSIT_GH_DIR="$tmp/gh"
 export BABYSIT_STARTS="$tmp/starts"
@@ -206,6 +208,11 @@ if grep -q -- '--agent claude' "$BABYSIT_STARTS" && grep -q -- '--model opus' "$
   ok "verifier route is the non-builder pick"
 else
   bad "verifier route is the non-builder pick ($(cat "$BABYSIT_STARTS"))"
+fi
+if grep -q -- '--from term_test' "$BABYSIT_STARTS"; then
+  ok "babysit start carries --from from the config (no coordinator terminal in env)"
+else
+  bad "babysit start carries --from from the config ($(cat "$BABYSIT_STARTS"))"
 fi
 if grep -q -- '--model grok-4.7-high' "$BABYSIT_STARTS"; then
   bad "verifier must refuse the builder agent and model"

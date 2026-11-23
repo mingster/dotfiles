@@ -2,9 +2,12 @@
 # Create and trust a worktree on the execution environment before Cursor starts.
 # Usage: --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV]
 #        [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
+#        -h | --help   prints this usage and exits 0
 # Refuses Strong tier roles other than qa-sdet (elon, architect-pm, secops-finops).
 # qa-sdet may run on Cursor grok for a Claude-built PR.
 set -euo pipefail
+# -h and --help print the usage and exit 0 before any file is read (#1624).
+case "${1:-}" in -h | --help) echo "Usage: start-cursor-worker.sh --run ID --spec FILE --title TEXT --model ID [--from HANDLE] [--on ENV] [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF]) | -h | --help"; exit 0 ;; esac
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"

@@ -4,6 +4,7 @@
 #   remote-heavy.sh --host <ssh host> --repo-dir <remote checkout> --dir <remote worktree>
 #                   [--sub <subdir>] [--weight N] [--memory-mb MIB] [--gate <remote heavy-gate.sh>] [--max-wait SECONDS]
 #                   [--fetch <worktree-relative path/glob> ... --into <local dir>] -- <command>
+#   remote-heavy.sh -h | --help   prints this usage and exits 0
 #
 # Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
 # detached in the remote worktree, reinstalls packages (with the project's postinstall) when the lockfile changed or node_modules is missing, and runs
@@ -18,6 +19,9 @@
 # in --into, so select unique artifact names when fetching from multiple directories.
 # The remote command does not inherit the caller's stdin: the remote shell's stdin is the bundle stream.
 set -euo pipefail
+
+# -h and --help print the usage and exit 0 before any argument is read (#1624).
+case "${1:-}" in -h | --help) echo "Usage: remote-heavy.sh --host <ssh host> --repo-dir <remote checkout> --dir <remote worktree> [--sub <subdir>] [--weight N] [--memory-mb MIB] [--gate <remote heavy-gate.sh>] [--max-wait SECONDS] [--fetch <path/glob> ... --into <local dir>] -- <command> | -h | --help"; exit 0 ;; esac
 
 # shellcheck disable=SC2016 # expanded on the remote host
 host="" repo_dir="" dir="" sub=. weight=1 memory="${HEAVY_GATE_MEMORY_MB:-}" gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh' max_wait=""

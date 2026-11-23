@@ -1,6 +1,8 @@
 #!/bin/bash
 # Root owned gate to the credential folder. secrets-gate-setup.sh installs it as /opt/secrets-gate/secrets-gate
 # (root, mode 755) next to its config. The folder is root 700 inside a root controlled path, so this is the only way in.
+# Usage: secrets-gate fingerprint <file> | sync [--dry-run] | receive | deploy-read <name> | check-path <path> | -h | --help
+# -h and --help print that usage and exit 0 before the config is read.
 # Fixed command list, anything else is refused (exit 2):
 #   fingerprint <file>      size and 8 hex fingerprint of one file in the folder, never its content
 #   sync [--dry-run]        source host: push the folder to root@<host> of every fleet host over ssh, prints file names only
@@ -13,6 +15,7 @@
 # A non root caller may point SECRETS_GATE_CONF, SG_RSYNC and SG_TRUST_UID elsewhere (tests); under root they are
 # ignored. Under root the first thing that runs is a re-exec with an empty environment and a PATH of system
 # folders only (no user writable folder), so nothing the calling account sets can steer a command here.
+case "${1:-}" in -h | --help) echo "Usage: secrets-gate fingerprint <file> | sync [--dry-run] | receive | deploy-read <name> | check-path <path> | -h | --help"; exit 0 ;; esac
 if [ -z "${SG_CLEAN:-}" ] && [ "$(/usr/bin/id -u)" -eq 0 ]; then
   exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$0" "$@"
 fi

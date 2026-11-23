@@ -13,7 +13,7 @@ bashbin=$(command -v bash)
 mkbin() {
   local d=$1; shift
   mkdir -p "$d"
-  for t in mkdir ln dirname date mv; do ln -s "$(command -v $t)" "$d/$t"; done
+  for t in mkdir ln dirname date mv id; do ln -s "$(command -v $t)" "$d/$t"; done
   for t in "$@"; do printf '#!/bin/sh\necho "$0 $*" >> "$STUB_LOG"\n' > "$d/$t"; chmod +x "$d/$t"; done
 }
 

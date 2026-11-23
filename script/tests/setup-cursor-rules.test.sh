@@ -11,6 +11,7 @@ check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((f
 
 df="$tmp/dotfiles"
 mkdir -p "$df/script" "$df/ide/cursor/rules" "$tmp/bin"
+mkdir -p "$df/script/lib"; cp "$here/script/lib/dotfiles-source.sh" "$df/script/lib/"
 cp "$here/script/setup-cursor.sh" "$df/script/"
 printf '#!/bin/sh\nexit 0\n' > "$df/script/link-cursor-user.sh"
 cp "$df/script/link-cursor-user.sh" "$df/script/link-cursor-hooks.sh"

@@ -11,6 +11,9 @@ case "${1:-}" in
 esac
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/dotfiles-source.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/dotfiles-source.sh"
+require_main_dotfiles link-cursor-hooks "$DOTFILES"
 SRC_DIR="$DOTFILES/ide/cursor"
 HOOKS_SRC="$SRC_DIR/hooks"
 HOOKS_JSON="$SRC_DIR/hooks.json"

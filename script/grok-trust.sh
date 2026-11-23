@@ -2,9 +2,11 @@
 # Pre-trust worker worktrees for Grok so a new worktree does not stop at the folder-trust question
 # ("Agent startup blocked: agent-trust-workspace"). Grok keeps the answer in ~/.grok/trusted_folders.toml
 # (GROK_HOME overrides ~/.grok), one [folders."<path>"] table per folder.
-# Usage: grok-trust.sh <worktree path>...   Idempotent: a folder already listed is left alone.
+# Usage: grok-trust.sh <worktree path>... | -h | --help
+# Idempotent: a folder already listed is left alone. -h and --help touch no file.
 set -euo pipefail
 
+case "${1:-}" in -h | --help) echo "Usage: grok-trust.sh <worktree path>... | -h | --help"; exit 0 ;; esac
 [ $# -ge 1 ] || { echo "usage: grok-trust.sh <worktree path>..." >&2; exit 2; }
 home=${GROK_HOME:-$HOME/.grok}
 store=$home/trusted_folders.toml

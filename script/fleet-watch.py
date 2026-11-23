@@ -5916,6 +5916,7 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     command = [
         'bash', startup,
         '--run', run_id,
+        '--from', from_terminal,
         '--spec', build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag, standing=bool(standing_host)),
         '--title', title,
         '--agent', agent,
