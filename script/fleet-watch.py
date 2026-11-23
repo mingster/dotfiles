@@ -5916,7 +5916,6 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     command = [
         'bash', startup,
         '--run', run_id,
-        '--from', from_terminal,
         '--spec', build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag, standing=bool(standing_host)),
         '--title', title,
         '--agent', agent,
@@ -6474,7 +6473,17 @@ def babysit_pass(
         # Orca refuses every start from fleet-watch's terminal once it refuses one, so skip the doomed worktree setup.
         if fenced:
             return BabysitStartResult(1, fenced[0])
-        result = real_start(command)
+        # The scheduled run has no coordinator terminal in its environment, and worker-startup refuses with
+        # "need --from" without one (#1640). The command stays free of --from (#1204): hand it over as the env.
+        handle = babysit_settings(config)[2]
+        set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
+        if set_handle:
+            os.environ['ORCA_TERMINAL_HANDLE'] = handle
+        try:
+            result = real_start(command)
+        finally:
+            if set_handle:
+                os.environ.pop('ORCA_TERMINAL_HANDLE', None)
         reason = getattr(result, 'reason', '') or ''
         if result != 0 and 'consumer_fenced' in reason:
             fenced.append(reason)

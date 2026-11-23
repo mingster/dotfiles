@@ -95,6 +95,7 @@ if [ -z "$spec" ] || ! bash "$BABYSIT_LINT" "$spec" >/dev/null 2>&1; then
   exit 1
 fi
 printf '%s\n' "$*" >> "$BABYSIT_STARTS"
+printf '%s\n' "${ORCA_TERMINAL_HANDLE:-}" >> "$BABYSIT_STARTS.handle"
 exit 0
 EOF
 chmod +x "$tmp/worker-startup.sh"
@@ -209,10 +210,10 @@ if grep -q -- '--agent claude' "$BABYSIT_STARTS" && grep -q -- '--model opus' "$
 else
   bad "verifier route is the non-builder pick ($(cat "$BABYSIT_STARTS"))"
 fi
-if grep -q -- '--from term_test' "$BABYSIT_STARTS"; then
-  ok "babysit start carries --from from the config (no coordinator terminal in env)"
+if grep -qx 'term_test' "$BABYSIT_STARTS.handle" && ! grep -q -- '--from' "$BABYSIT_STARTS"; then
+  ok "babysit start gets ORCA_TERMINAL_HANDLE from the config (no coordinator terminal in env), no --from"
 else
-  bad "babysit start carries --from from the config ($(cat "$BABYSIT_STARTS"))"
+  bad "babysit start gets ORCA_TERMINAL_HANDLE from the config ($(cat "$BABYSIT_STARTS.handle" 2>&1))"
 fi
 if grep -q -- '--model grok-4.7-high' "$BABYSIT_STARTS"; then
   bad "verifier must refuse the builder agent and model"
