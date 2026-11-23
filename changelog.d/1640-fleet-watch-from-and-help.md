@@ -1,0 +1,1 @@
+fleet-watch babysit starts hand worker-startup the coordinator terminal from the config as ORCA_TERMINAL_HANDLE, so a scheduled run starts verifiers again. `team-audit.sh --report` reads the coordinator's worker-startup durations over ssh off the coordinator host.

@@ -32,6 +32,9 @@
 # times from the dispatch log TEAM_AUDIT_DISPATCHES, default ~/agent-state/team-dispatches.tsv) and
 # prints three sections: problems with evidence (FINDING and WARN lines plus the observation log),
 # proposals with a recommended option, and stage times (median, p75, max, samples, fully verified).
+# On a host with no worker-startup durations log, --report reads the coordinator's over ssh (host from
+# TEAM_AUDIT_COORDINATOR_HOST, else coordinator_host in ship.local.json) and names the host it read, or says
+# it was unreachable.
 # --log appends or bumps a row of the observation log TEAM_AUDIT_LOG (default
 # ~/agent-state/team-observations.tsv: date, finding, evidence, count, fix ticket, status) and
 # prints "promote: open a fix ticket for <finding>" from count 2.
@@ -108,7 +111,7 @@ fi
 
 report=0
 case "${1:-}" in
-  -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,42p' "$0"; exit 0 ;;
   --report) report=1; shift ;;
 esac
 case "${1:-}" in -*) echo "team-audit: unknown flag $1" >&2; exit 2 ;; esac
@@ -144,7 +147,7 @@ if [ "$report" -eq 1 ]; then
     bun "$HERE/team-audit-metrics.ts" "${args[@]}" > "$mdir/$i.json" 2> "$mdir/$i.err" || true
   done
   printf '%s\n' "$checks" > "$mdir/checks.txt"
-  python3 - "$LOG_FILE" "$mdir" <<'REPORT' || exit 2
+  python3 - "$LOG_FILE" "$mdir" "$HERE" <<'REPORT' || exit 2
 import glob, json, os, sys
 
 log_path, mdir = sys.argv[1], sys.argv[2]
@@ -220,6 +223,35 @@ sources = (
     ("worker-startup", os.path.join(os.environ.get("WORKER_STARTUP_STATE") or os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(home, ".local", "state"), "worker-startup"), "durations.log"), r"duration_s=(\d+)\s*$"),
     ("fleet-pull", os.environ.get("SHIP_FLEET_PULL_LOG") or os.path.join(home, ".claude", "state", "fleet-pull-after-ship.log"), r"^fleet-pull .* duration_s=(\d+)\s*$"),
 )
+def coordinator_host():
+    """The coordinator host from TEAM_AUDIT_COORDINATOR_HOST or coordinator_host in ship.local.json. '' on the coordinator itself."""
+    import json, socket, subprocess
+    host = os.environ.get("TEAM_AUDIT_COORDINATOR_HOST", "")
+    if not host:
+        here = sys.argv[3]
+        try:
+            out = subprocess.run([sys.executable, os.path.join(here, "apply-local-overlay.py"), os.path.join(here, "ship.config.example.json"),
+                                  os.path.join(here, "ship.local.json")], capture_output=True, text=True, timeout=10)
+            host = json.loads(out.stdout).get("coordinator_host", "") or ""
+        except (OSError, ValueError, subprocess.SubprocessError):
+            host = ""
+    return "" if host == socket.gethostname().split(".")[0] else host
+
+
+def remote_log(host):
+    """(text, error) of the coordinator's worker-startup durations log. text is None when ssh fails."""
+    import subprocess
+    try:
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", host,
+                            'cat "${WORKER_STARTUP_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/worker-startup}/durations.log"'],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, str(e)
+    if r.returncode != 0:
+        return None, (r.stderr.strip().splitlines() or [f"ssh exit {r.returncode}"])[-1]
+    return r.stdout, ""
+
+
 print("| step | median_s | max_s | samples |")
 print("| --- | --- | --- | --- |")
 for name, path, pattern in sources:
@@ -231,6 +263,16 @@ for name, path, pattern in sources:
                 vals.append(int(hit.group(1)))
     except OSError:
         pass
+    if not vals and name == "worker-startup":
+        # Off the coordinator host the local log is empty: read the coordinator's over ssh (#1641).
+        host = coordinator_host()
+        if host:
+            text, err = remote_log(host)
+            if text is None:
+                print(f"worker-startup: coordinator host {host} unreachable ({err}), no durations read")
+            else:
+                vals = [int(h.group(1)) for h in (re.search(pattern, r) for r in text.splitlines()) if h]
+                print(f"worker-startup: read from coordinator host {host}")
     print(f"| {name} | {statistics.median(vals) if vals else 'unknown'} | {max(vals) if vals else 'unknown'} | {len(vals)} |")
 REPORT
   bases=""
