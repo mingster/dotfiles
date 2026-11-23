@@ -1,0 +1,2 @@
+fleet-watch: `work_order.keep_target_until_go_live` keeps triage starting every pass while fewer than `target_workers` are live before `go_live_date`, and sends `work order: N of T live, started X` at most once an hour (#1655).
+fleet-watch: issue scan starts (ready issues, rework, triage, backlog sweep) get `ORCA_TERMINAL_HANDLE` from `from_terminal`, as babysit starts already did, so they stop parking with `need --from` (#1655).
