@@ -100,8 +100,39 @@ for raw in "$@"; do
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
+  if [ -z "$b" ]; then
+    # A detached HEAD on origin/main history with a clean tree goes back to main. Local commits or a dirty tree stay a fail (#1683)
+    if ! git -C "$d" fetch -q origin 2>/dev/null; then
+      echo "fail $host_label $raw (unreachable origin on fetch)"
+      rc=1
+      continue
+    fi
+    if [ -n "$(git -C "$d" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+      echo "fail $host_label $raw (not on main: detached and dirty)"
+      rc=1
+      continue
+    fi
+    if ! git -C "$d" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+      echo "fail $host_label $raw (not on main: detached, HEAD is not on origin/main)"
+      rc=1
+      continue
+    fi
+    if git -C "$d" rev-parse -q --verify refs/heads/main >/dev/null \
+      && ! git -C "$d" merge-base --is-ancestor main origin/main 2>/dev/null; then
+      echo "fail $host_label $raw (not on main: detached, local main has commits not on origin/main)"
+      rc=1
+      continue
+    fi
+    if ! git -C "$d" checkout -q -B main HEAD >/dev/null 2>&1; then
+      echo "fail $host_label $raw (not on main: detached, switch to main failed)"
+      rc=1
+      continue
+    fi
+    echo "fix  $host_label $raw (detached HEAD on origin/main history, switched to main)"
+    b=main
+  fi
   if [ "$b" != main ]; then
-    echo "fail $host_label $raw (not on main: ${b:-detached})"
+    echo "fail $host_label $raw (not on main: $b)"
     rc=1
     continue
   fi
