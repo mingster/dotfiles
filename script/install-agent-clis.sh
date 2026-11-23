@@ -2,7 +2,17 @@
 # Install missing provider CLIs. Authentication remains an owner action.
 # Official installers: code.claude.com/docs/en/setup,
 # antigravity.google/docs/cli/install/.
+# Usage: install-agent-clis.sh [-h|--help]   (--vendor-install is the internal re-entry flag)
 set -euo pipefail
+usage() { echo "Usage: install-agent-clis.sh [-h|--help]"; }
+if [ "$#" -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then
+  usage
+  exit 0
+fi
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != --vendor-install ]; }; then
+  usage >&2
+  exit 2
+fi
 DOTFILES="${DOTFILES:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 export PATH="$HOME/.local/bin:$PATH:${ASDF_DATA_DIR:-$HOME/.asdf}/shims"
 # Keep vendor shell-profile edits out of tracked dotfiles, including symlinked

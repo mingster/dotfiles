@@ -39,4 +39,21 @@ assert_count 'bare Claude without arguments is not counted' 0 'claude'
 # Deliberate refuse (#1074): Codex is not an agent session.
 assert_count 'Codex CLI is not counted' 0 'codex --full-auto'
 
+# Usage handling (#1590): nothing on stdout, so a caller never reads a count after a usage error.
+check_usage() {
+  local label=$1 want_ec=$2 out err ec=0; shift 2
+  out=$("$root/script/count-agents.sh" "$@" 2>"${TMPDIR:-/tmp}/count-agents.err.$$") || ec=$?
+  err=$(cat "${TMPDIR:-/tmp}/count-agents.err.$$"); rm -f "${TMPDIR:-/tmp}/count-agents.err.$$"
+  if [[ $ec != "$want_ec" || -n $out || $err != Usage:* ]]; then
+    printf 'FAIL: %s: ec=%s stdout=[%s] stderr=[%s]\n' "$label" "$ec" "$out" "$err" >&2
+    exit 1
+  fi
+  tests=$((tests + 1))
+}
+check_usage '--help' 0 --help
+check_usage '-h' 0 -h
+check_usage '--stdn typo' 2 --stdn
+check_usage 'extra argument' 2 --stdin extra
+check_usage 'bare unknown word' 2 bogus
+
 printf 'PASS: %s tests\n' "$tests"
