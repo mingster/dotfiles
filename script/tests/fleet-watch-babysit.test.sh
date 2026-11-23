@@ -317,7 +317,7 @@ if run_pass "$tmp/state-verdict.json" only "" "$tmp/verdict.out"; then
 else
   bad "verdict suffix pass exits 0"
 fi
-if [ "$(starts)" = 0 ] && grep -q 'action=skip has-verdict' "$tmp/verdict.out"; then
+if [ "$(starts)" = 0 ] && grep -q 'action=skip \(has-verdict\|ready\)' "$tmp/verdict.out"; then
   ok "Verdict with agent and model suppresses a verifier"
 else
   bad "Verdict with agent and model suppresses a verifier ($(cat "$tmp/verdict.out"))"

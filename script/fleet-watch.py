@@ -3266,7 +3266,9 @@ def issue_scan_sort_key(issue):
 def issue_scan_queue_key(repo, issue):
     """Owner rule 2026-11-20: every dotfiles issue goes before any other repo's, then the sort key."""
     dotfiles_first = 0 if str(repo).rsplit('/', 1)[-1] == 'dotfiles' else 1
-    return (dotfiles_first,) + issue_scan_sort_key(issue)
+    # A red main fix goes before everything else, in any repo (#1677).
+    main_red_first = 0 if str(issue.get('title') or '').startswith(MAIN_RED_TITLE_PREFIX) else 1
+    return (main_red_first, dotfiles_first) + issue_scan_sort_key(issue)
 
 
 # role label -> (worker title role, usage-gate preset role). No role label means fullstack-dev.
@@ -3412,7 +3414,8 @@ def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
 
 _VERDICT_LINE_RE = re.compile(
     r'^Verdict: (?P<status>PASS\+NOTES|PASS|FAIL) head=(?P<head>[0-9a-f]{40})'
-    r'(?: verifier=(?P<verifier>[A-Za-z0-9_-]+) author=(?P<author>[A-Za-z0-9_-]+))?$'
+    r'(?: verifier=(?P<verifier>[A-Za-z0-9_-]+) author=(?P<author>[A-Za-z0-9_-]+)'
+    r'(?: agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+)?)?$'
 )
 
 
@@ -3491,6 +3494,21 @@ def pr_verdict_valid_for_head(pr_row, repo_root=None):
         pid_v = _git_patch_id(repo_root, verdict_head)
         return bool(pid_v and pid_v == _git_patch_id(repo_root, head))
     return False
+
+
+SHIP_FALLBACK_AFTER = 15 * 60
+
+
+def verdict_age_seconds(pr_row, now):
+    """Seconds since the newest Verdict comment was posted. An unreadable time reads as old, so it never blocks."""
+    newest = ''
+    for comment in pr_row.get('comments') or []:
+        if isinstance(comment, dict) and _VERDICT_LINE_RE.match(_receipt_first_line(comment.get('body'))):
+            newest = max(newest, comment.get('createdAt') or '')
+    try:
+        return now - calendar.timegm(time.strptime(newest, '%Y-%m-%dT%H:%M:%SZ'))
+    except ValueError:
+        return SHIP_FALLBACK_AFTER
 
 
 def pr_has_conflict(pr_row, repo_root=None):
@@ -5647,11 +5665,11 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standi
         text = (
             'Refs %s#%s%s\n\n'
             'Role: qa-sdet. Verify this open PR at head %s the way a user would, '
-            'and post the Verdict with script/post-verdict.sh. %s%s\n\n'
+            'and post the Verdict with script/post-verdict.sh (add --ship on a PASS or PASS+NOTES: it runs ship.sh at once; put any SHIP REFUSED line in worker_done). %s%s\n\n'
             '## Acceptance\n'
             '- [ ] a Verdict for head %s is posted\n\n'
             '## Out of scope\n'
-            'Merging. fleet-watch starts ship.sh for a ready head. Verdict format stays as it is.\n\n'
+            'Merging by hand. post-verdict.sh --ship runs ship.sh after your PASS, and fleet-watch starts ship.sh for a ready head. Verdict format stays as it is.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -6363,7 +6381,7 @@ def standing_prompt(repo, pr_row, builder, root, dispatch_id, final):
         verify += ' Run: bash script/checks-local.sh 2>&1 | tail -40.'
     text = (
         'Next PR to verify. Refs %s#%s. headRefOid %s. %s First run: git fetch origin pull/%s/head && git checkout --detach %s. '
-        '## Verify: %s Then post the Verdict: script/post-verdict.sh --verifier %s. Stay at this prompt and do not send worker_done.'
+        '## Verify: %s Then post the Verdict: script/post-verdict.sh --verifier %s (add --ship on a PASS or PASS+NOTES). Stay at this prompt and do not send worker_done.'
     ) % (repo, number, head, who, number, head, verify, dispatch_id)
     if final:
         text += (' This is your last PR: after posting the Verdict run orca worktree set --worktree active '
@@ -7006,15 +7024,22 @@ def issue_scan_pass(
             if pr_class == 'ready':
                 if shipped.get(head):
                     continue
+                # The verifier ships right after its PASS (#1679). This fallback waits 15 minutes for it.
+                if verdict_age_seconds(pr_row, now) < SHIP_FALLBACK_AFTER:
+                    log_bits.append('ship_wait=%d' % pr_num)
+                    continue
                 shipped[head] = True
                 if persist_state:
                     persist_state()
                 command = build_ship_command(repo, pr_row, root)
-                if start_worker(command) == 0:
+                code, reason = start_result_parts(start_worker(command))
+                if code == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
                     log_bits.append('ship_start=%s' % head[:8])
                     count_started()
                 else:
+                    # Once per head: shipped[head] is already set, so there is no retry loop.
+                    notices.append('ship refused %s #%d %s: %s' % (repo, pr_num, head[:8], reason or 'exit %d' % code))
                     log_bits.append('ship_fail=%d' % pr_num)
                     count_failed()
                 continue
@@ -7374,12 +7399,73 @@ def workflow_notices(config, state, now, fetch=None, act=None):
     return []
 
 
-def main_red_notices(config, state, now, fetch=None):
-    """Tell the coordinator once per run id when the latest Checks run on main is not success."""
+MAIN_RED_TITLE_PREFIX = 'main red: '
+
+
+def main_red_failing_step(repo, run_id, run=subprocess.run):
+    """'job / step' of the first failed step of a run, '' when gh cannot say."""
+    try:
+        out = run(['gh', 'run', 'view', str(run_id), '--repo', repo, '--json', 'jobs'],
+                  capture_output=True, text=True, timeout=30, check=True)
+        for job in json.loads(out.stdout).get('jobs') or []:
+            for step in job.get('steps') or []:
+                if step.get('conclusion') == 'failure':
+                    return '%s / %s' % (job.get('name'), step.get('name'))
+    except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
+        pass
+    return ''
+
+
+def main_red_find_issue(repo, title, run=subprocess.run):
+    """Number of an open issue with this exact title, else None."""
+    try:
+        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--search',
+                   '"%s" in:title' % title, '--json', 'number,title', '--limit', '20'],
+                  capture_output=True, text=True, timeout=30, check=True)
+        for row in json.loads(out.stdout):
+            if row.get('title') == title:
+                return row.get('number')
+    except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def main_red_create_issue(repo, title, body, run=subprocess.run):
+    """Number of the new issue, None when gh fails."""
+    try:
+        out = run(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', body,
+                   '--label', 'P1', '--label', 'ready-for-agent'],
+                  capture_output=True, text=True, timeout=30, check=True)
+        return int(out.stdout.strip().rsplit('/', 1)[-1])
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def main_red_issue_body(run_id, url, step):
+    return (
+        'Checks on main failed in run %s: %s\n\nFailing step: %s\n\n'
+        '## Acceptance\n'
+        '- [ ] Checks on main is green again; the fix names the failing step above.\n'
+        '- [ ] The PR body has the line `Fixes main: %s`.\n'
+        '- [ ] bash script/checks-local.sh exits 0.\n\n'
+        '## Out of scope\n'
+        'Other failures and unrelated cleanup.\n'
+    ) % (run_id, url, step or 'unknown (read the run log)', run_id)
+
+
+def main_red_notices(config, state, now, fetch=None, find_issue=None, create_issue=None, failing_step=None):
+    """Tell the coordinator once per run id when the latest Checks run on main is not success.
+
+    Once per run id it also files or reuses a P1 issue 'main red: <run id>' that the issue scan starts ahead of
+    the queue (#1677). A failed create is retried on the next pass."""
     if fetch is None:
         fetch = fetch_main_checks_run
+    find_issue = find_issue or main_red_find_issue
+    create_issue = create_issue or main_red_create_issue
+    failing_step = failing_step or main_red_failing_step
     notices = []
     told = state.setdefault('main_red', {})
+    filed = state.setdefault('main_red_issue', {})
     for repo in (config.get('pr_watch') or {}).get('repos') or []:
         run = fetch(repo)
         if run is None:
@@ -7387,10 +7473,21 @@ def main_red_notices(config, state, now, fetch=None):
         run_id = str(run.get('databaseId') or '')
         if not run_id or run.get('conclusion') == 'success':
             told.pop(repo, None)
+            filed.pop(repo, None)
             continue
+        number = None
+        if filed.get(repo) != run_id:
+            title = '%s%s' % (MAIN_RED_TITLE_PREFIX, run_id)
+            number = find_issue(repo, title)
+            if number is None:
+                number = create_issue(repo, title, main_red_issue_body(
+                    run_id, run.get('url'), failing_step(repo, run_id)))
+            if number is not None:
+                filed[repo] = run_id
         if told.get(repo) != run_id:
             told[repo] = run_id
-            notices.append(Urgent(f"{repo}: Checks on main is {run.get('conclusion')}, ship.sh refuses until fixed: {run.get('url')}"))
+            where = ', fixer issue #%s' % number if number is not None else ', fixer issue not filed'
+            notices.append(Urgent(f"{repo}: Checks on main is {run.get('conclusion')}, ship.sh refuses until fixed: {run.get('url')}{where}"))
     return notices
 
 

@@ -38,6 +38,16 @@ if [ "${#list_only[@]}" -eq 0 ]; then
     name_args+=(--file "$pr_text/pr-title.txt" --file "$pr_text/pr-body.txt")
   fi
   bash script/check-project-names.sh "${name_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  # A PR that closes a 'main red: <run id>' issue needs 'Fixes main: <run id>' in its body (#1677).
+  if [ -f "$pr_text/pr-body.txt" ]; then
+    main_fix_args=(--body-file "$pr_text/pr-body.txt")
+    while IFS= read -r issue_no; do
+      [ -n "$issue_no" ] || continue
+      issue_title=$(gh issue view "$issue_no" --json title --jq .title 2>/dev/null || true)
+      [ -z "$issue_title" ] || main_fix_args+=(--issue-title "$issue_title")
+    done < <(grep -Eio '(closes|fixes|refs) #[0-9]+' "$pr_text/pr-body.txt" | grep -Eo '[0-9]+' | sort -u)
+    bash script/check-main-fix.sh "${main_fix_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+  fi
   rm -rf "$pr_text"
   bash script/check-commit-trailers.sh --commits "$base..HEAD"
 fi

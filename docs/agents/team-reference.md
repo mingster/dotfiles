@@ -129,6 +129,8 @@ Money rules and prices, spending and contracts, customer messages, irreversible 
 
 ### Review
 
+Shipping follows the Verdict at once: the verifier passes `--ship` to `post-verdict.sh`, which runs `ship.sh` at the exact head (ship.sh's gates stay the authority) and reports a refusal in its `worker_done`. As a fallback, fleet-watch ships a PR whose PASS Verdict is at the current head and 15 minutes old, once per head, and reports a refusal once in the digest. When the latest push Checks run on main fails, fleet-watch files or reuses a P1 issue `main red: <run id>` once per run id and the issue scan starts its fixer ahead of every other issue; the fix PR body carries `Fixes main: <run id>` (`script/check-main-fix.sh`, run by `checks-local.sh`).
+
 A PR owner never reviews its own PR. Review has two layers after Actions Checks pass: the read only bot review in Actions (`script/pr-review.sh`) and the verifier Verdict (`qa-sdet` from another model family running the change as a user would, parent against head, posted via `script/post-verdict.sh`). Review checks the diff against `## Scope` and answers three questions: does the diff meet each acceptance line, is there a real bug, would the new test go red without the fix. The first round lists every finding; later rounds check only earlier points plus the new diff. Style is never a FAIL. A flake reruns the job once, never an empty commit.
 
 Standard depth is one read. Strong depth adds a stronger model and the security check for money, sign-in, schema, hooks and workflows. A script picks the depth from the file list. Changes only to docs and changelog pass with no agent.
