@@ -133,8 +133,8 @@ case9_sync_team_skills_agent_team() {
     || fail "case9 must select agent-team-guard-migration.test.sh for agent-team.sh"
   grep -Fq 'Selected: script/tests/agent-team-project-gaps.test.sh' <<<"$out" \
     || fail "case9 must select agent-team-project-gaps.test.sh for agent-team.sh"
-  # release-guard-rules.test.sh + the agent-team-*.test.sh prefix family + the always-run no-project-names guard
-  want=2
+  # release-guard-rules.test.sh + the agent-team-*.test.sh prefix family + the always-run no-project-names and script-docs-coverage guards
+  want=3
   for f in "$root"/script/tests/agent-team-*.test.sh; do
     [ -e "$f" ] || continue
     grep -Fq "Selected: script/tests/$(basename "$f")" <<<"$out" \
@@ -152,12 +152,12 @@ case10_script_plus_already_selected_test() {
     bash "$root/script/select-changed-script-tests.sh" --list-only script/ship.sh script/tests/ship.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 must not fall back when test path is already selected"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 2 ] || fail "case10 want Script tests: 2 got ${count:-0}"
+  [ "${count:-0}" -eq 3 ] || fail "case10 want Script tests: 3 got ${count:-0}"
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/pr-review.sh script/tests/pr-review.test.sh 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "case10 pr-review mix must not fall back"
   count=$(grep -E '^Script tests: [0-9]+$' <<<"$out" | awk '{print $3}')
-  [ "${count:-0}" -eq 3 ] || fail "case10 pr-review want Script tests: 3 got ${count:-0}"
+  [ "${count:-0}" -eq 4 ] || fail "case10 pr-review want Script tests: 4 got ${count:-0}"
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 
@@ -269,12 +269,12 @@ case11_table_driven_mapped_paths() {
   out=$(list_selector_output script/usage-gate.py script/usage-gate-hook.py)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 usage-gate pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 3 ] || fail "case11 usage-gate pair want Script tests: 3 got ${count:-0}"
+  [ "${count:-0}" -eq 4 ] || fail "case11 usage-gate pair want Script tests: 4 got ${count:-0}"
 
   out=$(list_selector_output templates/agent-team/changelog.d/README.md templates/agent-team/bin/changelog-compile.sh)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 agent-team pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 8 ] || fail "case11 agent-team pair want Script tests: 8 got ${count:-0}"
+  [ "${count:-0}" -eq 9 ] || fail "case11 agent-team pair want Script tests: 9 got ${count:-0}"
 
   out=$(list_selector_output script/unmapped-helper.sh)
   grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \

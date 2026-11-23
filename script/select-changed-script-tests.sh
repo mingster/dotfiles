@@ -272,6 +272,8 @@ done
 
 # Always-run guards: fast checks that must see every PR, whatever it touches.
 add_if_exists "script/tests/no-project-names.test.sh"
+# A new script with its own test never hits the full suite, so this runs on every PR (#1600).
+add_if_exists "script/tests/script-docs-coverage.test.sh"
 
 IFS=$'\n'
 sorted=$(printf '%s\n' ${selected+"${selected[@]}"} | LC_ALL=C sort -u)
