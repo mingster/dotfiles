@@ -72,7 +72,7 @@ Enforcer "none" means only the agent's reading holds the rule.
 | **New UI page:** the owner's look before production uses phone screenshots of the design or prototype, stored in `~/.claude/state/screenshots/<repo>/<issue>/`. | none |
 | **Straight to staging:** release-manager promotes trunk to staging after merges. Production follows Owner pauses. Japanese homepage copy needs a native reader before launch. | none |
 | **Heavy jobs:** Playwright and production builds run through `~/dotfiles/script/heavy-gate.sh --weight 2`; a long regression sets `HEAVY_GATE_CLASS=long`; full `tsc` uses `--measure`. Only the coordinator runs `hw-probe.sh --calibrate`. | `.claude/hooks/guard-bash.py`, `script/heavy-gate.sh` |
-| **Strikes:** follow the project's token budget and strike rule in `AGENTS.md`. | `.claude/hooks/strikes.py` |
+| **Strikes:** follow the project's token budget and strike rule in `AGENTS.md`. | `strikes.py` and `worker-budget.py` in `$HOME/.claude/hooks` (dotfiles, wired in `.claude/settings.json`) |
 | **Zero secrets:** never print env files, secrets or keys to output or markdown; never open a secret file with a printing command. | `.claude/hooks/guard-bash.py` (secret readers, `.env` copies) |
 | **Messages that name the owner files:** to mention the owner approval file or script in a GitHub or Orca message, write the message to a file with the Write tool and send it with `--body-file`. | `.claude/hooks/guard-bash.py` (text guard) |
 | **Push an explicit branch:** `git push origin HEAD:refs/heads/<branch>`, never a bare `git push`. | `.claude/hooks/guard-bash.py` (push to a protected branch) |
