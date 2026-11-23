@@ -188,5 +188,38 @@ class KeepTargetUntilGoLive(unittest.TestCase):
         self.assertIsNone(fw.work_order_status_notice(off, {}, NOW, self.live(4), 2))
 
 
+class CoordinatorHandle(unittest.TestCase):
+    """The scheduled run has no ORCA_TERMINAL_HANDLE; issue scan starts get it from issue_scan.from_terminal (#1655)."""
+
+    def handles(self, issues, backlog):
+        seen = []
+
+        def start(command):
+            seen.append((command[command.index('--name') + 1] if '--name' in command else command[-1],
+                         fw.os.environ.get('ORCA_TERMINAL_HANDLE'), '--from' in command))
+            return 0
+
+        config = scan_config('/work/app')
+        with patch.dict(fw.os.environ, {}, clear=False), patch.object(fw, 'rpc', side_effect=fake_rpc):
+            fw.os.environ.pop('ORCA_TERMINAL_HANDLE', None)
+            fw.issue_scan_pass(
+                config, {'issue_scan_backlog_sweep_at': NOW}, NOW, [], pr_fetch=lambda _r: [],
+                list_issues=lambda _r: list(issues), gate_check=lambda _c: True,
+                admit_fn=lambda *_a: {'admitted': True, 'occupied': 0}, start_worker=start, act=lambda _c: 0,
+                repo_id_lookup=lambda _h, _r: 'repo-id', pick_fn=pick, list_backlog=lambda _r: backlog,
+            )
+            self.assertIsNone(fw.os.environ.get('ORCA_TERMINAL_HANDLE'))
+        return seen
+
+    def test_issue_start_gets_the_handle_without_from(self):
+        seen = self.handles([row(1)], backlog=0)
+        self.assertTrue(seen)
+        self.assertEqual({(handle, has_from) for _name, handle, has_from in seen}, {('term_coord', False)})
+
+    def test_triage_start_gets_the_handle(self):
+        seen = self.handles([], backlog=3)
+        self.assertIn(('triage-architect-pm', 'term_coord', False), seen)
+
+
 if __name__ == '__main__':
     unittest.main()

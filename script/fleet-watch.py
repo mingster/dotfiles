@@ -4997,6 +4997,25 @@ def babysit_settings(config):
     return startup, run_id, from_terminal, roots
 
 
+def with_coordinator_handle(config, start):
+    """Wrap a worker start so worker-startup sees the coordinator's ORCA_TERMINAL_HANDLE.
+
+    The scheduled run has no coordinator terminal in its environment, and worker-startup refuses with
+    "need --from" without one (#1640, #1655). The command stays free of --from (#1204): hand it over as the env."""
+    handle = babysit_settings(config)[2]
+
+    def start_with_handle(command):
+        set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
+        if set_handle:
+            os.environ['ORCA_TERMINAL_HANDLE'] = handle
+        try:
+            return start(command)
+        finally:
+            if set_handle:
+                os.environ.pop('ORCA_TERMINAL_HANDLE', None)
+    return start_with_handle
+
+
 def babysit_cap(config):
     raw = (config.get('babysit') or {}).get('per_pass_cap', BABYSIT_PASS_CAP)
     try:
@@ -6509,21 +6528,13 @@ def babysit_pass(
     fenced = []
     real_start = start_worker
 
+    handed_start = with_coordinator_handle(config, real_start)
+
     def start_worker(command):
         # Orca refuses every start from fleet-watch's terminal once it refuses one, so skip the doomed worktree setup.
         if fenced:
             return BabysitStartResult(1, fenced[0])
-        # The scheduled run has no coordinator terminal in its environment, and worker-startup refuses with
-        # "need --from" without one (#1640). The command stays free of --from (#1204): hand it over as the env.
-        handle = babysit_settings(config)[2]
-        set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
-        if set_handle:
-            os.environ['ORCA_TERMINAL_HANDLE'] = handle
-        try:
-            result = real_start(command)
-        finally:
-            if set_handle:
-                os.environ.pop('ORCA_TERMINAL_HANDLE', None)
+        result = handed_start(command)
         reason = getattr(result, 'reason', '') or ''
         if result != 0 and 'consumer_fenced' in reason:
             fenced.append(reason)
@@ -6885,6 +6896,7 @@ def issue_scan_pass(
         admit_fn = admit
     if start_worker is None:
         start_worker = default_issue_scan_start
+    start_worker = with_coordinator_handle(config, start_worker)
     if act is None:
         act = run_gh
     if start_detached is None:
