@@ -1,0 +1,1 @@
+check-pr-body-issues: a PR body must close or refer to every issue number its title names, and a body that closes a number missing from this repo (a body pasted from another repo) is refused by pr-review.sh and checks-local.sh (#1688).

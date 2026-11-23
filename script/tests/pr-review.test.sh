@@ -21,6 +21,7 @@ case "$1" in
         case "$*" in
           *comments*) [ -f "$FAKE/issue-comments.json" ] && cat "$FAKE/issue-comments.json" || echo "[]" ;;
           *closingIssuesReferences*) echo 41 ;;
+          *"--json title"*) cat "$FAKE/pr-title" 2>/dev/null || echo "fix: thing (#41)" ;;
           *"--json body"*)
             if [ -f "$FAKE/pr-body" ]; then cat "$FAKE/pr-body"; else
               printf '## Self-check\n```\nbash script/checks-local.sh\n```\n3 passed\n\nCloses #41\nBuilder: agent=claude model=sonnet\n'
@@ -57,7 +58,10 @@ case "$1" in
     esac
     ;;
   api)
-    if [[ "$*" == *"/statuses/"* ]]; then
+    if [[ "$*" == *"/issues/9874"* ]]; then
+      echo "gh: Not Found (HTTP 404)" >&2
+      exit 1
+    elif [[ "$*" == *"/statuses/"* ]]; then
       [ -z "${FAKE_STATUS_FAIL:-}" ] || exit 1
       echo "$*" >> "$FAKE/status-calls"
     elif [[ "$2" == "user" ]]; then
@@ -183,7 +187,7 @@ done < <(sed 's/{{PR}}/7/g' "$root/script/review-prompt.txt")
 # Missing or empty review-prompt.txt fails closed with a one-line reason
 rm -f "$tmp/posted" "$tmp/claude-args"
 mkdir -p "$tmp/no-prompt-script"
-cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$tmp/no-prompt-script/"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/check-pr-body-issues.sh" "$tmp/no-prompt-script/"
 if FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY="fake/o" \
   REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY="claude" \
   bash "$tmp/no-prompt-script/pr-review.sh" 7 "$sha" >"$tmp/missing-prompt.out" 2>&1; then
@@ -233,6 +237,14 @@ if run; then fail "a body without ## Self-check must fail the review run"; fi
 [ ! -e "$tmp/posted" ] || fail "a failing body posts no review"
 [ ! -e "$tmp/claude-args" ] || fail "a failing body runs no review agent"
 rm -f "$tmp/pr-body"
+
+# #1688: a body that closes another repo's number stops the review before any agent runs (the title names none)
+printf '## Self-check\n```\nbash script/checks-local.sh\n```\n3 passed\n\nCloses #9874\nBuilder: agent=claude model=sonnet\n' > "$tmp/pr-body"
+printf 'chore: thing\n' > "$tmp/pr-title"
+if run; then fail "a body closing a number that does not exist here must fail the review run"; fi
+[ ! -e "$tmp/posted" ] || fail "a foreign-number body posts no review"
+[ ! -e "$tmp/claude-args" ] || fail "a foreign-number body runs no review agent"
+rm -f "$tmp/pr-body" "$tmp/pr-title"
 
 if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
 
@@ -661,7 +673,7 @@ FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USA
 # script path must still resolve it. Run a copy of the tree from its own root by relative path.
 rel="$tmp/rel"
 mkdir -p "$rel/script" "$rel/bin"
-cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/review-prompt.txt" "$rel/script/"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/check-pr-body-issues.sh" "$root/script/review-prompt.txt" "$rel/script/"
 printf '#!/usr/bin/env bash\necho "agy $*" > "$FAKE/agy-args"\ncat "$FAKE/answer"\n' > "$rel/bin/agy"
 chmod +x "$rel/bin/agy"
 printf '#!/usr/bin/env bash\necho "--agent antigravity --model fake"\n' > "$tmp/agy-usage-gate"

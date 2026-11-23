@@ -47,6 +47,8 @@ if [ "${#list_only[@]}" -eq 0 ]; then
       [ -z "$issue_title" ] || main_fix_args+=(--issue-title "$issue_title")
     done < <(grep -Eio '(closes|fixes|refs) #[0-9]+' "$pr_text/pr-body.txt" | grep -Eo '[0-9]+' | sort -u)
     bash script/check-main-fix.sh "${main_fix_args[@]}" || { rm -rf "$pr_text"; exit 1; }
+    # #1688: the body closes or refers to the issues the title names, and closes no other repo's numbers.
+    bash script/check-pr-body-issues.sh --title "$(cat "$pr_text/pr-title.txt")" --body-file "$pr_text/pr-body.txt" || { rm -rf "$pr_text"; exit 1; }
   fi
   rm -rf "$pr_text"
   bash script/check-commit-trailers.sh --commits "$base..HEAD"

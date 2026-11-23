@@ -185,6 +185,16 @@ if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | pyth
   echo "PR body fails pr-body-gate: ${body_reason:-no reason given}. Fix the PR body, then rerun." >&2
   exit 1
 fi
+# #1688: the body must close or refer to the issues the title names, and must not close numbers from another repo.
+issue_body=$(mktemp)
+gh pr view "$pr" --repo "$repo" --json body --jq .body >"$issue_body"
+pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq .title)
+if ! issue_reason=$(bash "$PR_REVIEW_DIR/check-pr-body-issues.sh" --title "$pr_title" --body-file "$issue_body" --repo "$repo" 2>&1); then
+  rm -f "$issue_body"
+  echo "PR body fails the issue check: ${issue_reason}. Fix the PR body, then rerun." >&2
+  exit 1
+fi
+rm -f "$issue_body"
 
 review_me=$(
   gh api user --jq .login 2>/dev/null ||
