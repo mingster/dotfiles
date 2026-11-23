@@ -465,6 +465,31 @@ else
   bad "fleet-pull did not name the stale hook (ec=$ec11): $out11"
 fi
 
+# 1648: a non-login ssh has no Homebrew prefix on PATH, so the remote run adds it and still finds jq
+case "$jq_dir" in
+  /opt/homebrew/bin | /usr/local/bin)
+    # macOS ships /usr/bin/jq, so build a bare PATH that holds the system tools but not jq
+    bare_bin="$tmp/bare-bin"
+    mkdir -p "$bare_bin"
+    for f in /usr/bin/* /bin/*; do [ "${f##*/}" = jq ] || ln -sf "$f" "$bare_bin/${f##*/}"; done
+    cat >"$ssh_rem_bin/ssh" <<EOS
+#!/usr/bin/env bash
+while [ "\$#" -gt 0 ] && [ "\$1" != bash ]; do shift; done
+export HOME="$rem_home"
+exec env PATH="$bare_bin" sh -c "\$*"
+EOS
+    set +e
+    out12=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+    set -e
+    if grep -q 'stale hook SessionStart' <<<"$out12" && ! grep -q 'requires jq' <<<"$out12"; then
+      ok "remote run without a Homebrew prefix on PATH still finds jq"
+    else
+      bad "remote run without Homebrew PATH did not find jq: $out12"
+    fi
+    ;;
+  *) ok "skip: jq lives in $jq_dir, not a Homebrew prefix" ;;
+esac
+
 # 1464: --help prints usage and exits 0, an unknown flag exits 2 with usage, and neither touches a checkout or host
 advance_origin "$state1_bare" arg-check
 head_before=$(git -C "$state1" rev-parse HEAD)
