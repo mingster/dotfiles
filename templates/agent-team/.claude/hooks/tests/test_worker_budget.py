@@ -5,6 +5,7 @@ The hook runs as Claude Code does (JSON on stdin) with HOME pointed at a tempora
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,7 @@ HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 class WorkerBudgetTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="budget-home-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.transcript = os.path.join(self.home, "transcript.jsonl")
 
     def run_hook(self, worktree, turns, event, worker=True, tool="Edit", cmd=None, mail=None):

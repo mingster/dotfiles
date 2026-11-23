@@ -5,6 +5,7 @@ The hook runs as Claude Code does (JSON on stdin) with HOME pointed at a tempora
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ COMMAND = "bun test web/src/x/__tests__/a.test.ts"
 class StrikesTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="strikes-home-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
 
     def run_hook(self, event, output=""):
         payload = {"tool_name": "Bash", "hook_event_name": event, "session_id": "s1",
