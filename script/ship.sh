@@ -244,13 +244,17 @@ if [ -n "$main_run" ] && [ "$(jq -r .conclusion <<<"$main_run")" != success ]; t
     || refuse "cannot read the files of main commit ${main_sha:0:12}"
   fix_files=$(gh api --paginate "repos/$repo/pulls/$pr/files" --jq '.[] | (.filename // .path)') \
     || refuse "cannot read PR $pr files"
-  # Tests a file list selects, minus the always-run guard that every PR selects.
+  # Tests a file list selects, minus the always-run guards the selector adds for every PR (a path no test maps to
+  # selects only those).
+  select_tests() {
+    bash "${SHIP_SELECT_TESTS:-$ship_dir/select-changed-script-tests.sh}" --list-only "$@" | sed -n 's/^Selected: //p' | LC_ALL=C sort -u
+  }
+  always_tests=$(select_tests ship-no-such-path.txt) || true
   selected_tests() {
     local -a paths=()
     local line
     while IFS= read -r line; do [ -n "$line" ] && paths+=("$line"); done
-    bash "$ship_dir/select-changed-script-tests.sh" --list-only "${paths[@]+"${paths[@]}"}" \
-      | sed -n 's/^Selected: //p' | grep -v '^script/tests/no-project-names\.test\.sh$' | LC_ALL=C sort -u
+    comm -23 <(select_tests "${paths[@]+"${paths[@]}"}") <(printf '%s\n' "$always_tests")
   }
   main_tests=$(selected_tests <<<"$main_files") || true
   fix_tests=$(selected_tests <<<"$fix_files") || true
