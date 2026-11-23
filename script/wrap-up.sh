@@ -198,7 +198,9 @@ daily_extras() {
     if [ "$limit" -lt 10 ]; then daily_say "Skip $tool: round budget spent"; continue; fi
     run_limited "$limit" "$@" >> "$daily_detail" 2>&1; rc=$?
     daily_say "$tool: exit $rc"
-    [ "$rc" -eq 0 ] || fail="${fail:+$fail, }$tool exit $rc"
+    # Out of time is not a failure: the cache stays and tomorrow's run retries it (#1533).
+    if [ "$rc" -eq 124 ]; then extras_note="$extras_note, $tool timed out"
+    elif [ "$rc" -ne 0 ]; then fail="${fail:+$fail, }$tool exit $rc"; fi
   done
   [ -z "$fail" ] || { extras_fail=$fail; return 1; }
 }
