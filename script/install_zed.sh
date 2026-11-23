@@ -3,6 +3,13 @@
 # Docs: https://zed.dev/docs/installation
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: install_zed.sh (takes no arguments)" >&2
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
+fi
+
 if command -v zed >/dev/null 2>&1; then
   echo "install_zed: zed already in PATH"
   exit 0

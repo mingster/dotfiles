@@ -78,4 +78,27 @@ assert_line 'address without an overlay' '1 | 203.0.113.9: 2'
 printf '%s' '{"203.0.113.9":"host-b"}' > "$work/fleet-workers.local.json"
 assert_line 'local overlay names the address' '1 | host-b: 2'
 
+# Argument handling (#1589): usage exits before any orca call and writes no cache file.
+cat > "$work/bin/orca" <<'ORCA'
+#!/usr/bin/env bash
+echo called >> "$FAKE_CALLS"
+ORCA
+check_args() {
+  local label=$1 want_ec=$2 ec=0 out err; shift 2
+  : > "$work/calls"; rm -f "$work/f" "$work/chache.out"
+  out=$(PATH="$work/bin:$PATH" FAKE_CALLS="$work/calls" python3 "$work/fleet-workers.py" "$@" 2>"$work/err") || ec=$?
+  err=$(cat "$work/err")
+  if [[ $ec != "$want_ec" || -s $work/calls || -e $work/f || $err$out != *sage:* ]]; then
+    printf 'FAIL: %s: ec=%s calls=%s out=[%s] err=[%s]\n' "$label" "$ec" "$(wc -l < "$work/calls")" "$out" "$err" >&2
+    exit 1
+  fi
+  tests=$((tests + 1))
+}
+check_args '--help' 0 --help
+check_args '-h' 0 -h
+check_args '--bogus' 2 --bogus
+check_args '--chache f' 2 --chache "$work/f"
+check_args '--cache alone' 2 --cache
+check_args 'extra arguments' 2 --cache "$work/f" extra
+
 printf 'PASS: %s tests\n' "$tests"

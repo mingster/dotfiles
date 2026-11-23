@@ -9,7 +9,7 @@ target provider and model (exiting 3 if refused), then probes the required CLI o
 environment's login-shell PATH in an Orca terminal and refreshes `~/dotfiles` and the `~/.orca/presets.json`
 symlink (`script/setup-orca.sh`) on that host before dispatch. A missing CLI, failed probe, or
 unconfirmed exit refuses dispatch and names the required CLI. Install missing tools on that
-environment with `script/install-agent-clis.sh`; sign-in remains a user action. `script/usage-gate-hook.py`
+environment with `script/install-agent-clis.sh` (usage: `install-agent-clis.sh [-h|--help]`, any other argument exits 2 before installing); sign-in remains a user action. `script/usage-gate-hook.py`
 blocks direct `orca orchestration worker-start --on` invocations so remote starts always pass
 this preflight. The Cursor helper below includes the same usage gate and preset refresh.
 
@@ -135,7 +135,7 @@ Once a card has been Done for 30 minutes, `script/board-clean.py` removes its wo
 
 | Tool | Role in coordinator and fleet operations |
 | --- | --- |
-| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. |
+| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. Takes only `--no-pull`; `-h` and `--help` print the usage, any other argument exits 2 before any host contact. |
 | `script/new-coordinator.sh` | Sets up a new Mac as the coordinator from `agent-state` (`--dry-run` first). |
 | `script/take-over-coordinator.sh` | Manual coordinator failover and handback using `coordinator.conf` (`--yes`). |
 | `script/orca-reply.sh` | Replies to a worker's orchestration message and nudges its terminal so an idle session wakes up. |

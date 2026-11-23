@@ -6,12 +6,15 @@
 # since the owner replaced it with Grok (#1264, #1527).
 set -euo pipefail
 
+usage="Usage: $0 [--stdin]"
+case "$#:$*" in
+  0:|1:--stdin) ;;
+  1:-h|1:--help) echo "$usage" >&2; exit 0 ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac
+
 process_args() {
-  case "$#:$*" in
-    0:) ps -eo args ;;
-    1:--stdin) cat ;;
-    *) printf 'Usage: %s [--stdin]\n' "$0" >&2; return 2 ;;
-  esac
+  if [ "$#" -eq 0 ]; then ps -eo args; else cat; fi
 }
 
 process_args "$@" | awk '
