@@ -7872,6 +7872,24 @@ def coordinator_notices(config, state, now, reachable=ssh_reachable, alert=run_a
     return [text]
 
 
+def acquire_pass_lock(state_path):
+    """Hold an exclusive lock beside the state file for the life of the process, or return None when another pass has it.
+
+    The loop, the 5 minute automation and a manual run all load state at their start. Without the lock two of them
+    see no record for a PR head and each start a verifier (#1706). The OS drops the lock when the process dies.
+    """
+    import fcntl
+    state_path = Path(state_path)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(str(state_path) + '.lock', 'w')
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+
 def save_state(path, state):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
@@ -8706,6 +8724,12 @@ def main():
 
     if not args.state:
         parser.error('--state is required when --admit is not specified')
+
+    if not args.babysit_dry_run:
+        pass_lock = acquire_pass_lock(args.state)
+        if pass_lock is None:
+            print('fleet-watch: another pass is running on %s; skipping this one' % args.state, file=sys.stderr)
+            return 0
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
     if args.babysit_only or args.babysit_dry_run:

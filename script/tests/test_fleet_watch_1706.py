@@ -1,5 +1,9 @@
 """#1706: babysit starts no verifier for a PR that already has a live one on this head, or that is no longer open."""
+import fcntl
 import importlib.util
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -93,6 +97,39 @@ class VerifierGuards(unittest.TestCase):
             starts, lines = self.run_pass({}, root, pr_rows=[verifier_pr()], pr_state_fetch=fresh)
         self.assertEqual(calls, [REPO])
         self.assertEqual(starts, [], lines)
+
+
+class OnePassPerState(unittest.TestCase):
+    """#1706 reopened: the loop, the 5 minute automation and a manual run each load state, see no record and start a verifier."""
+    SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'
+
+    def run_cli(self, state, config):
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT), '--config', str(config), '--state', str(state), '--babysit-only'],
+            capture_output=True, text=True, timeout=60,
+        )
+
+    def test_second_pass_on_the_same_state_exits_without_starting_anything(self):
+        with tempfile.TemporaryDirectory() as root:
+            state, config = Path(root) / 'state.json', Path(root) / 'config.json'
+            config.write_text(json.dumps({'babysit': {'repos': ['o/r'], 'startup': '/bin/true'}}))
+            with open(str(state) + '.lock', 'w') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)  # another pass is running
+                result = self.run_cli(state, config)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('another pass is running', result.stderr)
+            self.assertFalse(state.exists())
+
+    def test_lock_is_free_again_once_the_holder_exits(self):
+        with tempfile.TemporaryDirectory() as root:
+            state = Path(root) / 'state.json'
+            first = fw.acquire_pass_lock(state)
+            self.assertIsNotNone(first)
+            self.assertIsNone(fw.acquire_pass_lock(state))
+            first.close()
+            again = fw.acquire_pass_lock(state)
+            self.assertIsNotNone(again)
+            again.close()
 
 
 if __name__ == '__main__':
