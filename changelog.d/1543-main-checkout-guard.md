@@ -1,0 +1,1 @@
+setup scripts: setup-zed, setup-orca, setup-grok, setup-cursor, link-cursor-user, link-cursor-hooks, setup-vscode, setup-antigravity and setup-claude-desktop refuse to wire the home from a linked worktree and name the main checkout, so a worktree run can no longer point editor and Orca settings into a checkout that gets removed (#1543).

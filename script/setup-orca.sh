@@ -9,6 +9,9 @@ if [ $# -gt 0 ]; then
 fi
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
+# shellcheck source=lib/dotfiles-source.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
+require_main_dotfiles setup-orca "$DOTFILES"
 
 mkdir -p "$HOME/.orca"
 
