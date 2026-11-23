@@ -84,3 +84,5 @@ export PATH="$HOME/.stripe/bin:$PATH"
 # >>> grok installer >>>
 export PATH="$HOME/.grok/bin:$PATH"
 # <<< grok installer <<<
+
+export MAS_NO_AUTO_INDEX=1
