@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # heavy-gate median wait and wrap-up round freshness; no live Orca.
 set -euo pipefail
 # shellcheck source=script/tests/lib/asdf-pin.sh

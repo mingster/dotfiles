@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Submit command text to the real PreToolUse hook; no workload is executed.
 set -euo pipefail
 # shellcheck source=script/tests/lib/asdf-pin.sh

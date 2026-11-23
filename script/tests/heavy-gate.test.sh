@@ -927,7 +927,7 @@ time.sleep(30)
         self.assertEqual(self.events(), [])
         self.set_reading('11 90')
         _, err = self.finish(p)
-        self.assertEqual(err, 'heavy-gate: child exited with status 0\n')
+        self.assertRegex(err, r'\Aheavy-gate: waited \d+s for admission\nheavy-gate: child exited with status 0\n\Z')
         self.assertEqual(len(self.events()), 2)
 
     def test_missing_config_warns_and_uses_complete_fallback(self):
