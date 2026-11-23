@@ -14,6 +14,13 @@
 #      ~/.config/fleet-watch/config.json usually has none, and then every check says so on stderr), WORKER_DONE_OWNER_DIR (default ~/.claude/state/dispatch-owners),
 #      COORDINATOR_DRAIN_STATE (dropped lead stops, one handle per line, default ~/.claude/state/coordinator-drain.log).
 set -uo pipefail
+case "${1:-}" in -h | --help)
+  echo "usage: coordinator-drain.sh [orca orchestration check args, passed through unchanged, e.g. --run RUN --wait]"
+  echo "  adds --json when missing; with --wait, re-checks while every returned message was dropped"
+  echo "  env: FLEET_WATCH_CONFIG (fleet-watch config with the leads key), WORKER_DONE_OWNER_DIR (dispatch owner dir),"
+  echo "       COORDINATOR_DRAIN_STATE (dropped lead stops log)"
+  exit 0 ;;
+esac
 orca=${ORCA_CLI_COMMAND:-orca}
 args=("$@")
 case " $* " in *" --json "*) ;; *) args+=(--json) ;; esac

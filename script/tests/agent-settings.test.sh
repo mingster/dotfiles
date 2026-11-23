@@ -106,3 +106,18 @@ grep -q 'UNMANAGED .config/Cursor/User/settings.local.json' "$TEST_ROOT/out"
 OSTYPE=darwin bash "$ROOT/script/setup-check.sh" --agent-settings-only > "$TEST_ROOT/out" || :
 grep -q 'UNMANAGED Library/Application Support/orca/settings.json' "$TEST_ROOT/out"
 echo 'PASS: macOS app support and Linux XDG settings are inventoried'
+for flag in -h --help; do
+  python3 "$ROOT/script/agent-settings-check.py" "$flag" > "$TEST_ROOT/out" 2>&1
+  grep -q 'usage:' "$TEST_ROOT/out"
+  grep -q 'DOTFILES' "$TEST_ROOT/out"
+  grep -q 'AGENT_PRIVATE_BACKUP_MANIFEST' "$TEST_ROOT/out"
+  ! grep -q 'private backup manifest not' "$TEST_ROOT/out"
+done
+echo 'PASS: --help prints usage without running the audit'
+mkdir -p "$TEST_ROOT/notgit"
+if DOTFILES="$TEST_ROOT/notgit" python3 "$ROOT/script/agent-settings-check.py" > "$TEST_ROOT/out" 2>&1; then
+  echo 'FAIL: non git root accepted'; exit 1
+fi
+grep -q "$TEST_ROOT/notgit" "$TEST_ROOT/out"
+! grep -q Traceback "$TEST_ROOT/out"
+echo 'PASS: a root that is not a git checkout fails in one line, no traceback'
