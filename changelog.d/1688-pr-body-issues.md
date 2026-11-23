@@ -1,0 +1,1 @@
+The PR body gate refuses a body that does not close or refer to each issue number in the PR title, or that closes a number missing from this repo (`check-pr-body-issues.sh`, run by `checks-local.sh` and `pr-review.sh`).

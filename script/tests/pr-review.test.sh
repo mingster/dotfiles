@@ -183,7 +183,7 @@ done < <(sed 's/{{PR}}/7/g' "$root/script/review-prompt.txt")
 # Missing or empty review-prompt.txt fails closed with a one-line reason
 rm -f "$tmp/posted" "$tmp/claude-args"
 mkdir -p "$tmp/no-prompt-script"
-cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$tmp/no-prompt-script/"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/check-pr-body-issues.sh" "$tmp/no-prompt-script/"
 if FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY="fake/o" \
   REVIEW_USAGE_GATE="$tmp/review-usage-gate" AUTHOR_FAMILY="claude" \
   bash "$tmp/no-prompt-script/pr-review.sh" 7 "$sha" >"$tmp/missing-prompt.out" 2>&1; then
@@ -661,7 +661,7 @@ FAKE="$tmp" FAKE_HEAD=$sha PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o REVIEW_USA
 # script path must still resolve it. Run a copy of the tree from its own root by relative path.
 rel="$tmp/rel"
 mkdir -p "$rel/script" "$rel/bin"
-cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/review-prompt.txt" "$rel/script/"
+cp "$root/script/pr-review.sh" "$root/script/pr-body-gate.py" "$root/script/check-pr-body-issues.sh" "$root/script/review-prompt.txt" "$rel/script/"
 printf '#!/usr/bin/env bash\necho "agy $*" > "$FAKE/agy-args"\ncat "$FAKE/answer"\n' > "$rel/bin/agy"
 chmod +x "$rel/bin/agy"
 printf '#!/usr/bin/env bash\necho "--agent antigravity --model fake"\n' > "$tmp/agy-usage-gate"
