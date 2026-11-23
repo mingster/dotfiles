@@ -1,0 +1,1 @@
+fleet automation prechecks (wrapper and the four automation-precheck-*.sh scripts) print one usage line for -h or --help and exit 0 without running the job or writing its log; any other argument exits 2 and runs nothing (#1623).

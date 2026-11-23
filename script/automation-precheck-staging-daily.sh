@@ -7,6 +7,12 @@
 # Only the staging deploy step is skipped when staging equals main; otherwise the wake asks for
 # release-manager staging deploy and the pstack swarm live lanes (production follows go_live_date in the fleet-watch config).
 set -uo pipefail
+usage='Usage: automation-precheck-staging-daily.sh [-h|--help]'
+if [ $# -gt 0 ]; then
+  if [ $# -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then echo "$usage"; exit 0; fi
+  echo "$usage" >&2
+  exit 2
+fi
 
 state_dir="${AGENT_STATE_DIR:-$HOME/agent-state}"
 fleet_pull_cfg="${FLEET_PULL_CONFIG:-$state_dir/fleet-pull.json}"

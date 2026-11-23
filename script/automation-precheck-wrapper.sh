@@ -6,8 +6,11 @@
 # Exit 1: the job ran fine. Exit 2: the job failed (the tail of this run's log goes to stderr).
 # 143 or 130: the wrapper was stopped.
 set -uo pipefail
-name=${1:?automation name}
-log=${2:?log path}
+usage='Usage: automation-precheck-wrapper.sh <name> <log-path> -- <command...>'
+case "${1:-}" in -h | --help) echo "$usage"; exit 0 ;; esac
+[ $# -ge 2 ] || { echo "$usage" >&2; exit 2; }
+name=$1
+log=$2
 shift 2
 [ "${1:-}" = -- ] && shift
 [ $# -gt 0 ] || {

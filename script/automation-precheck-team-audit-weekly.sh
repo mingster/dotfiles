@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Append team-audit.sh (agent-team.sh check per project) and the weekly metrics for fleet automations (report only).
 set -uo pipefail
+usage='Usage: automation-precheck-team-audit-weekly.sh [-h|--help]'
+if [ $# -gt 0 ]; then
+  if [ $# -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then echo "$usage"; exit 0; fi
+  echo "$usage" >&2
+  exit 2
+fi
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 log=${TEAM_AUDIT_WEEKLY_LOG:-$HOME/.local/state/agent-team/team-audit-weekly.log}
 mkdir -p "$(dirname "$log")"
