@@ -29,7 +29,7 @@ echo 'PASS: template docs name no missing bin check script'
 python3 - "$ROOT/.agents/claude/settings.json" <<'PY'
 import json, sys
 s = json.load(open(sys.argv[1]))
-want = {"verbose": True, "spinnerTipsEnabled": False, "prefersReducedMotion": True, "tui": "fullscreen"}
+want = {"verbose": False, "spinnerTipsEnabled": False, "prefersReducedMotion": True, "tui": "fullscreen"}
 bad = {k: s.get(k) for k, v in want.items() if s.get(k) != v}
 sys.exit(f"FAIL: display keys differ: {bad}") if bad else None
 PY
