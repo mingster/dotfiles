@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Writes one owner approval file. Runs as root through sudo, from the copy that
 # script/approval-root-setup.sh installs; the owner's bin/owner-approve.sh pipes the JSON in.
-# Usage: approval-write <namespace> < approval.json
+# Usage: approval-write <namespace> < approval.json   (-h and --help print this text)
 # Result: <root>/<namespace>/approval.json, root owned, mode 0644 (world readable, writable by root only).
 # AGENT_APPROVAL_ROOT replaces the root folder only when this runs as a non root user (tests).
 set -euo pipefail
 umask 022
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 ns=${1:-}
 case "$ns" in
-  ''|*[!A-Za-z0-9._-]*|.|..) echo "approval-write: namespace must be letters, digits, dot, dash or underscore" >&2; exit 2 ;;
+  ''|-*|*[!A-Za-z0-9._-]*|.|..) echo "approval-write: namespace must be letters, digits, dot, dash or underscore" >&2; exit 2 ;;
 esac
 root=/usr/local/etc/agent-team
 [ "$(id -u)" -eq 0 ] || root=${AGENT_APPROVAL_ROOT:-$root}

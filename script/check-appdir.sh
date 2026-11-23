@@ -2,8 +2,10 @@
 # Fail when a tracked file spells out the old per-category app folder or installs a cask into it.
 # Apps live in /Applications. A script that needs an app path calls app_path (script/lib/app-path.sh),
 # the one file allowed to name the old folder. _outdated/ and CHANGELOG.md are history.
-# Usage: check-appdir.sh [<repo dir>]   (default: the repo this script is in)
+# Usage: check-appdir.sh [<repo dir>]   (default: the repo this script is in; -h and --help print this text)
 set -euo pipefail
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
 git -C "$root" rev-parse --git-dir >/dev/null 2>&1 || { echo "check-appdir: $root is not a git checkout" >&2; exit 2; }
 old="/Applications/""_dev"   # split so this file does not match itself

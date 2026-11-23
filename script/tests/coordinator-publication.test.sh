@@ -941,5 +941,8 @@ sleep 1
 hc_after=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null || true)
 [ "$hc_after" -eq "$hc_count" ] && ok "Checks receipt prevents duplicate head-checks" || bad "duplicate head-checks lines"
 
+out=$(bash "$here/coordinator-publication.sh" --help 2>&1); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *--author-model* && "$out" == *--force* && "$out" == *ignored* ]] && ok "--help lists every flag and marks the ignored ones" || bad "--help: $code $out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
