@@ -848,23 +848,65 @@ require_grok_host() { # <environment>
     || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
-# A started worker of any role takes the ready-for-agent label off its issue, so the issue scan does not start a second worker (#1192, #1216).
-# Best effort: a missing gh or a failed edit never fails a start that already succeeded.
-release_ready_label() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role btype ref repo num
+# The repo issue a brief names: the first Refs, Closes, Fixes or Resolves line, as owner/repo#N or #N. Empty when none.
+issue_ref_from_spec() { # <spec_file>
+  grep -m1 -E '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$1" \
+    | sed -E 's/^(Refs|Closes|Fixes|Resolves):?[[:space:]]+//; s/^([^#]*#[0-9]+).*/\1/' || true
+}
+
+# Owner 2026-11-24 (#1692): a builder start claims its issue before the worker starts. ready-for-agent comes off and the
+# in-progress status label goes on, so issue_scan never starts a second worker for it (#1192, #1216). claimed_* record what
+# the claim changed, so release_claim puts it back when the start fails. Best effort: a missing gh or a failed edit warns
+# and never fails the start itself.
+claimed_ref=
+claimed_ready=0
+claimed_triage=0
+claimed_status=0
+
+claim_issue() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role btype ref repo num labels
+  claimed_ref=
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
   [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
-  [ "$role" != qa-sdet ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  ref=$(issue_ref_from_spec "$spec_file")
   [ -n "$ref" ] || return 0
+  command -v gh >/dev/null 2>&1 || return 0
   num=${ref##*#}
   repo=${ref%%#*}
-  command -v gh >/dev/null 2>&1 || return 0
-  gh issue edit "$num" ${repo:+-R "$repo"} --remove-label ready-for-agent >/dev/null 2>&1 \
-    || echo "worker-startup: could not remove ready-for-agent from $ref" >&2
+  if ! labels=$(gh issue view "$num" ${repo:+-R "$repo"} --json labels --jq '.labels[].name' 2>/dev/null); then
+    echo "worker-startup: could not read the labels of $ref, not claimed" >&2
+    return 0
+  fi
+  claimed_ready=0
+  claimed_triage=0
+  claimed_status=0
+  grep -qx 'ready-for-agent' <<<"$labels" && claimed_ready=1
+  grep -qx 'needs-triage' <<<"$labels" && claimed_triage=1
+  grep -qx 'status:進行中' <<<"$labels" && claimed_status=1
+  if gh issue edit "$num" ${repo:+-R "$repo"} --remove-label ready-for-agent --add-label "status:進行中" --remove-label needs-triage >/dev/null 2>&1; then
+    claimed_ref=$ref
+  else
+    echo "worker-startup: could not claim $ref (ready-for-agent off, status:進行中 on)" >&2
+  fi
+  return 0
+}
+
+release_claim() { # a failed start: put back the labels claim_issue changed
+  local num repo add=() remove=()
+  [ -n "$claimed_ref" ] || return 0
+  num=${claimed_ref##*#}
+  repo=${claimed_ref%%#*}
+  [ "$claimed_ready" = 1 ] && add+=(--add-label ready-for-agent)
+  [ "$claimed_triage" = 1 ] && add+=(--add-label needs-triage)
+  [ "$claimed_status" = 1 ] || remove+=(--remove-label "status:進行中")
+  claimed_ref=
+  [ "${#add[@]}" -gt 0 ] || [ "${#remove[@]}" -gt 0 ] || return 0
+  gh issue edit "$num" ${repo:+-R "$repo"} ${add[@]+"${add[@]}"} ${remove[@]+"${remove[@]}"} >/dev/null 2>&1 \
+    || echo "worker-startup: could not restore the labels on #$num after a failed start" >&2
+  return 0
 }
 
 # Owner rule 2026-11-20: every dotfiles issue starts before any other repo's. The hand dispatch path obeys it too.
@@ -897,23 +939,6 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
     return 0
   fi
   die "refused: dotfiles issue $waiting is ready and not started; start it first, or pass --skip-dotfiles-first REASON"
-}
-
-# The hand dispatch path knows an issue is in flight, so it sets the board label (docs/agents/labels.md, Status).
-mark_issue_in_flight() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role btype ref repo num
-  role=$(role_from_title "$title")
-  [ -n "$role" ] || return 0
-  [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
-  btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
-  case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
-  [ -n "$ref" ] || return 0
-  num=${ref##*#}
-  repo=${ref%%#*}
-  command -v gh >/dev/null 2>&1 || return 0
-  gh issue edit "$num" ${repo:+-R "$repo"} --add-label "status:進行中" --remove-label needs-triage >/dev/null 2>&1 \
-    || echo "worker-startup: could not set status:進行中 on $ref" >&2
 }
 
 # Keep every open issue of the host repo carrying a state and a P label. Best effort.
@@ -1158,12 +1183,12 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       cursor_repo=$WORKER_STARTUP_PLACED_REPO
     fi
+    claim_issue "$spec" "$title"
     run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
-      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} || exit $?
+      ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} \
+      || { cursor_rc=$?; release_claim; exit "$cursor_rc"; }
     apply_terminal_title "$title" "$start_out" "$environment"
-    release_ready_label "$spec" "$title"
-    mark_issue_in_flight "$spec" "$title"
     return 0
   fi
 
@@ -1235,6 +1260,7 @@ run_mode() {
       [ -z "$environment" ] || rm_args+=(--environment "$environment")
       "$orca" "${rm_args[@]}" >/dev/null 2>&1 || echo "worker-startup: could not remove the worktree $wt after a failed start" >&2
     fi
+    release_claim
     exit "$ec"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
@@ -1264,6 +1290,7 @@ run_mode() {
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
     fi
   }
+  claim_issue "$spec" "$title"
   start_agent_worker
   local agy_ec=0
   surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?
@@ -1276,13 +1303,12 @@ run_mode() {
     pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
     start_agent_worker
   elif [ "$agy_ec" -ne 0 ]; then
+    release_claim
     exit "$agy_ec"
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
   # Only a worktree this start created: a reused one may hold terminals that are not ours.
   [ "$created_wt" != 1 ] || close_extra_terminals "$start_out" "$wt" "$environment"
-  release_ready_label "$spec" "$title"
-  mark_issue_in_flight "$spec" "$title"
   return 0
 }
 

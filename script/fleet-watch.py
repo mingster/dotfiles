@@ -3976,6 +3976,15 @@ def live_start_title(command, workers):
     )
 
 
+def issue_has_live_dispatch(workers, number):
+    """True when a live worker's task title starts with '#<number>|', whatever the issue's labels say (#1692)."""
+    prefix = '#%d|' % number
+    return any(
+        isinstance(w, dict) and str(w.get('_task_title') or '').startswith(prefix) and worker_row_is_live(w)
+        for w in workers or []
+    )
+
+
 def build_issue_start_command(config, repo, issue_row, placement=None, route=None):
     """placement is (host, repo_id) to start on a remote host instead of the local checkout.
 
@@ -7350,6 +7359,9 @@ def issue_scan_pass(
             continue
         ready_queue_count += len(issues)
         for row in issues:
+            if issue_has_live_dispatch(workers, row['number']):
+                log_bits.append('issue_live=%d' % row['number'])
+                continue
             if not issue_scan_eligible(row):
                 continue
             if issue_already_claimed(repo, row['number']):
