@@ -68,7 +68,7 @@
   },
   "wrap_up": {
     "hosts": {
-      "host-id": "/path/to/private/wrap-up-scheduled.log"
+      "host-id": "/path/to/private/wrap-up-daily.log"
     },
     "issue_repo": "owner/name"
   },
