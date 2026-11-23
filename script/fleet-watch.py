@@ -2365,6 +2365,12 @@ def refusal_token(reason):
     return reason_token(reason)
 
 
+def start_gate_refusal(reason):
+    """True when worker-startup refused on a gate that says nothing about the brief (#1170 follow-up)."""
+    text = str(reason or '').lower()
+    return ('is ready and not started' in text or 'overlaps other work in flight' in text)
+
+
 def count_refused(token):
     if _PASS is None:
         return
@@ -7542,7 +7548,7 @@ def issue_scan_pass(
         if row['number'] in pending_list:
             pending_list.remove(row['number'])
         suffix = ':%s' % reason if reason else ''
-        if code in BABYSIT_DEFERRED_EXITS or (code != 0 and refusal_token(reason) == 'usage_gate'):
+        if code in BABYSIT_DEFERRED_EXITS or (code != 0 and (refusal_token(reason) == 'usage_gate' or start_gate_refusal(reason))):
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
