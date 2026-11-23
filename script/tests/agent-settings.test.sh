@@ -79,7 +79,7 @@ mkdir -p "$cursor_fixture/script/lib" "$cursor_fixture/ide/cursor/hooks" "$curso
 for name in link-cursor-user.sh link-cursor-hooks.sh; do
   cp "$ROOT/script/$name" "$cursor_fixture/script/"
 done
-cp "$ROOT/script/lib/link-user-file.sh" "$cursor_fixture/script/lib/"
+cp "$ROOT/script/lib/link-user-file.sh" "$ROOT/script/lib/dotfiles-source.sh" "$cursor_fixture/script/lib/"
 for name in cli-config.json settings.json keybindings.json environment.json hooks.json; do
   cp "$ROOT/ide/cursor/$name" "$cursor_fixture/ide/cursor/"
 done

@@ -3,6 +3,10 @@
 here=$(cd "$(dirname "$0")/.." && pwd)
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 fail() { echo "FAIL $1"; exit 1; }
+export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
+export HOME="$tmp/home"; mkdir -p "$HOME"
+# shellcheck source=tests/lib/asdf-pin.sh
+. "$here/tests/lib/asdf-pin.sh"
 run() { GROK_CONFIG="$tmp/config.toml" DOTFILES="$here/.." bash "$here/setup-grok.sh" >/dev/null || fail "run"; }
 has() { grep -qxF "$1" "$tmp/config.toml" || fail "missing: $1"; }
 

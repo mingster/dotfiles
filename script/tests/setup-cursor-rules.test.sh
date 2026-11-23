@@ -10,8 +10,10 @@ pass=0; fail=0
 check() { if [ "$2" = 0 ]; then pass=$((pass+1)); echo "ok   $1"; else fail=$((fail+1)); echo "FAIL $1"; fi; }
 
 df="$tmp/dotfiles"
-mkdir -p "$df/script" "$df/ide/cursor/rules" "$tmp/bin"
+mkdir -p "$df/script/lib" "$df/ide/cursor/rules" "$tmp/bin"
 cp "$here/script/setup-cursor.sh" "$df/script/"
+cp "$here/script/lib/dotfiles-source.sh" "$df/script/lib/"
+ln -s "$(command -v id)" "$tmp/bin/id"
 printf '#!/bin/sh\nexit 0\n' > "$df/script/link-cursor-user.sh"
 cp "$df/script/link-cursor-user.sh" "$df/script/link-cursor-hooks.sh"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/brew"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/cursor"
