@@ -23,6 +23,8 @@ command -v jq >/dev/null || { echo 'fleet-pull requires jq' >&2; exit 1; }
 
 # shellcheck disable=SC2016
 remote='
+# A non-login ssh has a bare PATH, so add both Homebrew prefixes (Apple silicon, Intel) to find jq (#1648)
+PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 host_label=$1
 agent_host=$2
 shift 2
