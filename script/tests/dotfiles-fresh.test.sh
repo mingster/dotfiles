@@ -55,4 +55,11 @@ out=$(bash "$here/check-dotfiles-fresh.sh" "$s" 2>&1); rc=$?
 check "lint fails when ship.sh drops it" "$rc" 1
 case "$out" in *ship.sh*) echo "ok: names the script"; ;; *) echo "FAIL: $out"; fail=1 ;; esac
 bash "$here/check-dotfiles-fresh.sh" 2>/dev/null; check "lint passes on the real scripts" "$?" 0
+out=$(bash "$here/check-dotfiles-fresh.sh" --help 2>&1); rc=$?
+check "lint --help exits 0" "$rc" 0
+case "$out" in *Usage*) echo "ok: --help prints usage" ;; *) echo "FAIL: --help output: $out"; fail=1 ;; esac
+out=$(bash "$here/check-dotfiles-fresh.sh" "$tmp/no-such-dir" 2>&1); rc=$?
+check "lint on a missing directory exits 2" "$rc" 2
+case "$out" in *"$tmp/no-such-dir"*) echo "ok: names the directory" ;; *) echo "FAIL: $out"; fail=1 ;; esac
+bash "$here/check-dotfiles-fresh.sh" "$tmp" "$tmp" >/dev/null 2>&1; check "lint with two arguments exits 2" "$?" 2
 exit "$fail"

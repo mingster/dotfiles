@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # elon-startup.sh arguments: -h and --help print usage and exit 0, anything else but --no-pull exits 2,
 # both before any host contact or pull. fleet-pull.sh is a stub; HOME and AGENT_STATE_DIR are temp.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 pass=0 fail=0

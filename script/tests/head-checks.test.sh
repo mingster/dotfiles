@@ -385,3 +385,24 @@ esac
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY
+help_out=$(bash "$(cd "$(dirname "$0")/.." && pwd)/head-checks.sh" --help 2>&1) || { echo "FAIL --help exits 0"; exit 1; }
+for f in --repo --pr --ref --base --config --train-heads; do
+  [[ "$help_out" == *"$f"* ]] || { echo "FAIL --help lists $f"; exit 1; }
+done
+echo "ok   --help lists every flag"
+
+# --help must not run the dotfiles preflight (session-sync fetches origin/main): copy the script beside a marking stub.
+hc_root=$(cd "$(dirname "$0")/.." && pwd)
+help_dir=$(mktemp -d)
+mkdir -p "$help_dir/lib"
+cp "$hc_root/head-checks.sh" "$help_dir/head-checks.sh"
+cp "$hc_root/lib/dotfiles-fresh.sh" "$help_dir/lib/dotfiles-fresh.sh"
+printf '#!/usr/bin/env bash\ntouch "%s/synced"\n' "$help_dir" > "$help_dir/session-sync.sh"
+for flag in --help -h; do
+  rm -f "$help_dir/synced"
+  help_out=$(env -u DOTFILES_FRESH_DONE bash "$help_dir/head-checks.sh" "$flag" 2>&1) || { echo "FAIL $flag exits 0"; exit 1; }
+  [[ "$help_out" == *"Usage: head-checks.sh"* ]] || { echo "FAIL $flag prints usage"; exit 1; }
+  [ ! -e "$help_dir/synced" ] || { echo "FAIL $flag ran session-sync (network call)"; exit 1; }
+done
+rm -rf "$help_dir"
+echo "ok   --help and -h make no session-sync call"

@@ -1,0 +1,1 @@
+Scripts print usage for -h and --help (pr-review, post-verdict, head-checks, coordinator-publication, secrets-sync, secrets-gate-setup, check-stale-worktrees, check-appdir, approval-write, orca-reply, check-docs-updated). pr-review rejects a non numeric PR before any gh call.

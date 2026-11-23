@@ -675,4 +675,14 @@ for call in script/pr-review.sh "$rel/script/pr-review.sh"; do
   [ -s "$tmp/agy-args" ] || fail "antigravity review via $call runs bin/agy"
 done
 
+# #1611: --help prints usage on stdout (exit 0), a non numeric pr prints usage on stderr (exit 2), both before any gh call.
+rm -f "$tmp/calls"
+out=$(FAKE="$tmp" PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o bash "$root/script/pr-review.sh" --help 2>&1) \
+  || fail "--help exits 0"
+[[ "$out" == *Usage:* ]] || fail "--help prints usage"
+rc=0
+err=$(FAKE="$tmp" PATH="$tmp:$PATH" GITHUB_REPOSITORY=fake/o bash "$root/script/pr-review.sh" abc 2>&1 >/dev/null) || rc=$?
+[ "$rc" -eq 2 ] && [[ "$err" == *Usage:* ]] || fail "a non numeric pr exits 2 with usage (rc=$rc)"
+[ ! -e "$tmp/calls" ] || fail "usage paths make no gh call"
+
 echo "pr-review tests passed"

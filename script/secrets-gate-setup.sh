@@ -2,6 +2,7 @@
 # Owner runs this once per host. Makes the credential folder root owned and installs the gate (secrets-gate.sh).
 # Usage: secrets-gate-setup.sh [--dry-run] --role source|receiver [--dir <path>] [--hosts "h1 h2"] [--deploy "n1 n2"]
 #                              [--pubkey "<ssh-ed25519 line>"]
+#   -h, --help print this Usage block
 #   --dry-run  print every step it would take (and the sudoers, authorized_keys and sshd text), change nothing, run no sudo
 #   --role     source: this host holds the master copy and pushes it. One passwordless sudoers entry, `sync` only.
 #              receiver: a fleet host that only receives. No sudoers entry at all. Needs --pubkey (the source's gate key).
@@ -14,6 +15,7 @@
 # with `PermitRootLogin forced-commands-only`, so root login works for that command only and nothing runs as the
 # shared worker account. Every privileged step goes through `sudo`. The SG_* variables move the targets for tests only.
 set -euo pipefail
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 here=$(cd "$(dirname "$0")" && pwd)
 gate_dir=${SG_GATE_DIR:-/opt/secrets-gate}
 sudoers_file=${SG_SUDOERS_FILE:-/etc/sudoers.d/secrets-gate}
@@ -27,6 +29,7 @@ export SG_TRUST_UID=${SG_TRUST_UID:-0}
 dry=0 role='' dir='' hosts='' deploy='' pubkey=''
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --dry-run) dry=1; shift ;;
     --role) role=${2:?--role needs a value}; shift 2 ;;
     --dir) dir=${2:?--dir needs a path}; shift 2 ;;

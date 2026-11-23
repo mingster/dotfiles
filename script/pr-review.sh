@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# One cold review of a PR head by a fresh agent: script/pr-review.sh <pr> <head sha>.
+# One cold review of a PR head by a fresh agent.
+# Usage: script/pr-review.sh <pr> <head sha>
+#        <pr> is a PR number; it may be empty when <head sha> is a 40 character commit SHA.
+#        -h and --help print this text.
 # The agent only reads; this script alone posts, and only a well formed answer.
 set -euo pipefail
 
@@ -104,8 +107,11 @@ review_run_invoke() {
   esac
 }
 
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 pr=${1:-}
 head=${2:-}
+[[ -z "$pr" || "$pr" =~ ^[0-9]+$ ]] || { print_usage >&2; exit 2; }
 repo=${GITHUB_REPOSITORY:-}
 if [ -z "$repo" ]; then
   repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)

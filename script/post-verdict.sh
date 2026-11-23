@@ -2,7 +2,8 @@
 # Post a Verdict comment in the exact form ship.sh parses, so nobody types the first line by hand.
 # Usage: post-verdict.sh --repo owner/name --pr N --result PASS|PASS+NOTES|FAIL --head <40 hex sha>
 #        --verifier <dispatch id> --author <dispatch id|unknown|coordinator id> [--command "<cmd>"]
-#        [--agent <agent> --model <model>] [--correction "<comment url|id>"] [--notes "<text>"] [--print]
+#        [--agent <agent> --model <model>] [--correction|--corrects|--supersedes "<comment url|id>"] [--notes "<text>"] [--print]
+# --corrects and --supersedes are aliases of --correction. -h and --help print this Usage block.
 # --agent and --model record the verifier's own agent and model on the Verdict line (together, or neither).
 # ship.sh needs them and refuses a verifier whose agent and model match the builder's.
 # --author other than ctx_* or unknown must be listed in coordinator_ids of script/ship.local.json.
@@ -12,6 +13,8 @@
 set -euo pipefail
 
 die() { echo "post-verdict: $*" >&2; exit 1; }
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 
 repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" agent="" model="" print_only=false
 while [ $# -gt 0 ]; do

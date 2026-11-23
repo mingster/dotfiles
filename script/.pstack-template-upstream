@@ -1,4 +1,4 @@
-sha=6b0300214a09fd6029cfb7077043125758cd1fd2
+sha=7a583913eb1b8d1a0ee76753d1a2cf072e7b54f9
 tree=harness/pstack/claude-code .agents
 tree=cursor-team-kit vendor/cursor-team-kit
 skill=dyl-stack/skills/principle-the-algorithm
