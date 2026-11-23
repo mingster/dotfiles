@@ -4,8 +4,14 @@
 # fleet-pull (a fast-forward of clean main checkouts and an agent-team.sh machine render of
 # ~/.claude role files and hooks). It never installs or deletes anything.
 # Usage: elon-startup.sh [--no-pull]
+# -h and --help print the usage and exit 0; any other argument exits 2 before any host contact or pull.
 # Hosts and repos come from fleet-pull.config.json (untracked). Needs jq.
 set -u
+usage='Usage: elon-startup.sh [--no-pull]'
+case "${1:-}" in
+  -h|--help) [ $# -eq 1 ] && { echo "$usage"; exit 0; } ;;
+esac
+{ [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --no-pull ]; }; } || { echo "$usage" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 state=${AGENT_STATE_DIR:-$HOME/agent-state}
 command -v jq >/dev/null || { echo 'elon-startup requires jq' >&2; exit 1; }
