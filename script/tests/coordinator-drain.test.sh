@@ -186,5 +186,22 @@ env -u FLEET_WATCH_CONFIG HOME="$tmp/home" PATH="$tmp/bin:$PATH" bash -c ': > "$
 [ "$(ids)" = "" ] && ok || bad "default config with leads drops the lead stop: $(ids)"
 grep -q "no leads" "$tmp/err" && bad "no warning when the config has leads" || ok
 
+cat > "$tmp/bin/orca-fail" <<'EOS'
+#!/usr/bin/env bash
+echo called >> "$ORCA_LOG"
+exit 9
+EOS
+chmod +x "$tmp/bin/orca-fail"
+for flag in -h --help; do
+  : > "$ORCA_LOG"
+  ORCA_CLI_COMMAND="$tmp/bin/orca-fail" bash "$script" "$flag" >"$tmp/out" 2>"$tmp/err"; rc=$?
+  [ "$rc" = 0 ] && ok || bad "$flag exits 0"
+  grep -q "usage:" "$tmp/out" && ok || bad "$flag prints usage"
+  for name in FLEET_WATCH_CONFIG WORKER_DONE_OWNER_DIR COORDINATOR_DRAIN_STATE; do
+    grep -q "$name" "$tmp/out" && ok || bad "$flag usage names $name"
+  done
+  [ ! -s "$ORCA_LOG" ] && ok || bad "$flag makes no orca call"
+done
+
 echo "coordinator-drain: $pass passed, $fail failed"
 [ "$fail" = 0 ]
