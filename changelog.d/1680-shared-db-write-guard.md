@@ -1,0 +1,1 @@
+- New hook `script/check-shared-db-write.py` (PreToolUse on Bash) refuses DDL and migrations aimed at a shared dev database, unless the command is `bin/bootstrap-regression-shard.ts` or the role is release-manager. Verifier temp databases stay allowed. The database names come from the private `~/.config/dotfiles/shared-db.pattern`, not from the script (#1680).
