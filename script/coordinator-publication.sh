@@ -251,6 +251,8 @@ esac
 [[ "$branch" =~ ^refs/ ]] && die "pass a branch name, not a ref ($branch)"
 
 bash "$lib" "$body_file" || exit 1
+# The same pr-body-gate review applies, run now so a builder fixes the body before the PR opens (#1676).
+bash "$(dirname "$lib")/../check-pr-body.sh" "$body_file" || exit 1
 
 if [ -z "$worktree" ]; then
   worktree=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git worktree; pass --worktree"

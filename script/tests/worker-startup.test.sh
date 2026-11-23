@@ -545,6 +545,8 @@ grep -q 'Builder: agent=claude model=claude-sonnet-5-5-medium' "$tmp/orca-nofin.
 grep -q 'Builder: agent=<agent>' "$tmp/orca-nofin.log" && bad "builder spec Finish must not leave <agent> placeholder" || ok
 grep -q '40 hex' "$tmp/orca-nofin.log" && bad "builder spec Finish should not demand a Self-review head sha" || ok
 grep -q 'gh pr checks' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should wait for green checks"
+grep -q 'pr-review.sh <pr> <head sha>' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should tell the builder to run pr-review.sh itself (#1675)"
+grep -q 'PR body sections' "$tmp/orca-nofin.log" && grep -q 'check-pr-body.sh' "$tmp/orca-nofin.log" && ok || bad "builder spec Finish should list the PR body sections (#1676)"
 grep -q '^## Finish' "$nofin_spec" && bad "the original brief file should be untouched" || ok
 
 # 1201: a brief with no Refs line gets "Refs #<issue>" from the title, in a copy. A written Refs form is left alone.
@@ -1603,6 +1605,16 @@ PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-m
 grep -q 'allow-delivered.*follow-up slice' "$tmp/route.err" && ok || bad "the override reason should be logged ($(cat "$tmp/route.err"))"
 GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh call must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
+# A builder start whose Allowed files overlap other work is refused unless --allow-overlap REASON (#1678).
+overlap_cli="$tmp/overlap-cli.sh"
+printf '#!/usr/bin/env bash\necho "overlap: script/a.sh is also in open PR #5" >&2\nexit 1\n' >"$overlap_cli"
+printf 'Refs acme/app#7880\n\n# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved" >"$spec_file"
+ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice"
+[ "$route_ec" -ne 0 ] && ok || bad "an overlapping builder start should be refused (ec=$route_ec)"
+grep -q 'overlap: script/a.sh' "$tmp/route.err" && grep -q 'allow-overlap REASON' "$tmp/route.err" && ok || bad "refusal should print the overlap and the override ($(cat "$tmp/route.err"))"
+ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice" --allow-overlap "same file, rebased"
+[ "$route_ec" = 0 ] && ok || bad "--allow-overlap should start anyway (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'allow-overlap.*same file, rebased' "$tmp/route.err" && ok || bad "the overlap reason should be logged ($(cat "$tmp/route.err"))"
 # fleet-watch issue scan default title "builder - #<n>" is a builder too.
 printf 'Refs acme/app#7880\n\n# builder - #7880\n\n%s\n' "$spec_saved" >"$spec_file"
 PICK_STUB_MODE=sonnet route_run "#7880|builder" claude claude-sonnet-5-5-medium

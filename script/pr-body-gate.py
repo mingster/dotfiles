@@ -116,8 +116,10 @@ def finish_block_reason(body, issue=None):
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    issue = argv[1] if len(argv) == 2 and argv[0] == '--issue' and argv[1].isdigit() else None
     text = sys.stdin.read()
-    reason = finish_block_reason(text)
+    reason = finish_block_reason(text, issue)
     if reason:
         print(reason)
         return 1
