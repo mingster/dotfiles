@@ -3626,6 +3626,50 @@ def pr_has_live_fix_worker(workers, pr_row):
     return False
 
 
+REWORK_EXCERPT_CAP = 20000  # head-checks.sh posts at most 20000 characters, so a receipt always fits whole
+REWORK_STEP_TAIL_LINES = 40
+
+
+def _rework_comment_text(comment):
+    """The comment link and its full body, capped at REWORK_EXCERPT_CAP."""
+    body = comment.get('body') or ''
+    if len(body) > REWORK_EXCERPT_CAP:
+        body = body[:REWORK_EXCERPT_CAP] + '\n[... comment cut at %d characters, see the link]' % REWORK_EXCERPT_CAP
+    url = comment.get('url')
+    return ('Comment: %s\n' % url if url else '') + body
+
+
+def checks_failing_step(body):
+    """(step name, last 40 output lines) of the failing step in a head-checks receipt, or None.
+
+    A retried step (``retrying once``) is not the failure. A receipt cut to fit its cap lists the
+    failing Result lines before any Command line; the failing step is then the last Command."""
+    lines = (body or '').splitlines()
+
+    def failing(line):
+        return (line.startswith('Result: ') and not line.startswith('Result: exit 0')
+                and 'retrying once' not in line)
+
+    def tail(start, stop):
+        kept = [l for l in lines[start:stop] if l.strip() and not l.startswith(('Result: ', 'Duration: ', 'Total: '))]
+        return kept[-REWORK_STEP_TAIL_LINES:]
+
+    command = ''
+    start = 0
+    for idx, line in enumerate(lines):
+        if line.startswith('Command: '):
+            command, start = line[len('Command: '):].strip(), idx + 1
+        elif failing(line):
+            if command:
+                return command, '\n'.join(tail(start, idx) + [line])
+            commands = [i for i, l in enumerate(lines) if l.startswith('Command: ')]
+            if not commands:
+                return None
+            last = commands[-1]
+            return lines[last][len('Command: '):].strip(), '\n'.join(tail(last + 1, len(lines)) + [line])
+    return None
+
+
 def rework_failure_excerpt(pr_row):
     head = pr_row.get('headRefOid') or ''
     comments = pr_row.get('comments') or []
@@ -3633,11 +3677,16 @@ def rework_failure_excerpt(pr_row):
     if comment:
         first = _receipt_first_line(comment.get('body'))
         if first.startswith('Checks: FAIL'):
-            return (comment.get('body') or '')[:8000]
+            text = _rework_comment_text(comment)
+            step = checks_failing_step(comment.get('body'))
+            if step:
+                text = 'Failing step: %s\nLast %d lines of that step:\n%s\n\n%s' % (
+                    step[0], REWORK_STEP_TAIL_LINES, step[1], text)
+            return text
     for label in ('Review', 'Verdict'):
         comment = newest_comment_receipt(comments, label, head)
         if comment and rs.newest_receipt_kind(comments, label, head) == 'FAIL':
-            return (comment.get('body') or '')[:8000]
+            return _rework_comment_text(comment)
     for check in pr_row.get('statusCheckRollup') or []:
         if not isinstance(check, dict) or _check_conclusion(check) not in ('FAILURE', 'ERROR'):
             continue
