@@ -254,7 +254,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/bootstrap-asdf-tools.sh` | Installs and pins `python` and `nodejs` from `.tool-versions` via `asdf`. |
 | `script/bun-pin-check.sh` | Warns when a local or remote host's `bun` version is older than the repo's `package.json` pin (`packageManager` or `engines.bun`). |
 | `script/switch-login-shell-zsh.sh` | Links zsh dotfiles and switches the host's login shell to `zsh` so remote Orca probes and hooks share one PATH. |
-| `script/agent-settings-check.py` | Read-only coverage check classifying local agent settings against public templates and `AGENT_PRIVATE_BACKUP_MANIFEST`. |
+| `script/agent-settings-check.py` | Read-only coverage check classifying local agent settings against public templates and `AGENT_PRIVATE_BACKUP_MANIFEST`. `-h` or `--help` prints usage. A `DOTFILES` root that is not a git checkout fails with one `ERROR` line. |
 | `script/backup-claude-desktop.sh` | Copies sanitized live Claude Desktop settings into `init/claude_desktop_config.json`, replacing the home path with `__HOME__` only at a path boundary. Covered by `script/tests/claude-desktop-roundtrip.test.sh`. |
 | `script/contribute-to-agents.sh` | Appends a dated reusable lesson to `.agents/claude/notes/<topic>.md`. |
 
