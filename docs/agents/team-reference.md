@@ -555,3 +555,11 @@ installs under `$HOME/.asdf`. `script/tests/asdf-pin-coverage.test.sh` fails whe
 ## Fleet status check
 
 `script/check-fleet-status.py` compares what Orca reports with what runs. It asks this machine and every `orca environment list` host (aliases from `fleet-workers.local.json`) for live, in progress workers, then reads each worker's terminal. A worker is really active when its terminal has a live agent process and its screen changed in the last 10 minutes (`--window-minutes N`) or shows a running tool. Others are listed as "reported active, actually idle" or "actually gone" with the dispatch id and title. Load and memory come from the fleet load sensor `worker-placement.py` reads. An unreachable host is named, never counted as 0 or full. Exit 0 when report and reality match, 1 on any mismatch or unreachable host. It only reports; the coordinator nudges or frees the workers before filling seats.
+
+## Builder gates (#1675, #1676, #1678)
+
+| Script | What it does |
+|--------|-------------|
+| `script/check-builder-review.sh <pr> <sha>` (or `--worktree <dir>`) | Exits 1 unless the PR has a `Review: PASS head=<sha>` comment at that head, and prints `bash ~/dotfiles/script/pr-review.sh <pr> <sha>`. A builder runs `pr-review.sh` itself (it starts a fresh cold reviewer); FAIL means fix, push, rerun. |
+| `script/check-pr-body.sh [--issue <n>] <body file>` | Runs `pr-body-gate.py` before the PR opens and names the missing section (closing line, `Builder:` line, `## Self-check` with a command and its output). `coordinator-publication.sh` and the `create-pr` skill run it. The builder brief's Finish block lists the required sections. |
+| `script/check-issue-overlap.sh [--repo r] [--spec file] <issue>` | Prints each file in the issue's Allowed files that is also in an open `status:進行中` issue's Allowed files or an open PR's file list, and exits 1. `worker-startup.sh` runs it for builder starts and refuses unless `--allow-overlap REASON`. The architect-pm role and `team.md` Issue budget are to run it before filing (owner gated change, pending). |

@@ -33,6 +33,12 @@ Closes #6676
 - Reviewed refusal cases in fixture remotes only.
 
 Review: required (publication helper)
+
+Builder: agent=claude model=claude-sonnet-5-5
+
+## Self-check
+$ bash script/tests/coordinator-publication.test.sh
+all passed
 EOF
 }
 
@@ -310,6 +316,12 @@ say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses upstream branch mismatch
 printf '%s\n' '## Verification' '- one' '- two' > "$BODY"
 out=$(pub feat-mismatch); code=$?
 say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses wrong Verification bullet count" "$out"
+
+good_body
+sed -i.bak '/^## Self-check/,$d' "$BODY"; rm -f "$BODY.bak"
+out=$(pub feat-mismatch); code=$?
+say "$([ "$code" -ne 0 ] && echo 0 || echo 1)" "refuses a body with no Self-check and names it (#1676)" "$out"
+grep -qF '## Self-check' <<<"$out" && ok "refusal names ## Self-check" || bad "refusal should name ## Self-check ($out)"
 
 good_body
 printf '\n## Test plan\n- x' >> "$BODY"
