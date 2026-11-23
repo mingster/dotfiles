@@ -74,6 +74,26 @@ map_script_py_base() {
   add_glob_under_root "script/tests/test_${py}_*.py"
 }
 
+# A hook or .claude/bin script under templates/agent-team/ has its own tests beside the generic cases (#1635).
+map_agent_team_unit() {
+  local path=$1 name hyphen under
+  case "$path" in
+    templates/agent-team/.claude/hooks/*.py|templates/agent-team/.claude/bin/*) ;;
+    *) return 0 ;;
+  esac
+  name=$(basename "$path")
+  name=${name%.*}
+  hyphen=${name//_/-}
+  under=${name//-/_}
+  add_if_exists "script/tests/${hyphen}.test.sh"
+  add_glob_under_root "script/tests/${hyphen}-*.test.sh"
+  case "$path" in
+    templates/agent-team/.claude/hooks/*.py)
+      add_if_exists "templates/agent-team/.claude/hooks/tests/test_${under}.py"
+      ;;
+  esac
+}
+
 add_full_suite() {
   add_glob_under_root "script/*.test.sh"
   add_glob_under_root "script/tests/*.test.sh"
@@ -234,7 +254,11 @@ map_file() {
     templates/agent-team/.claude/bin/state-of-play.sh)
       add_if_exists "script/tests/state-of-play.test.sh"
       ;;
+    templates/agent-team/.claude/hooks/tests/test_*.py)
+      add_test "$path"
+      ;;
     templates/agent-team/*)
+      map_agent_team_unit "$path"
       add_glob_under_root "script/tests/agent-team-cases-*.test.sh"
       add_if_exists "script/tests/release-guard-rules.test.sh"
       add_if_exists "script/tests/role-word-budget.test.sh"
@@ -300,6 +324,10 @@ run_one() {
   case "$test_path" in
     *.test.sh) bash "$ROOT/$test_path" ;;
     script/tests/*.test.py) python3 "$ROOT/$test_path" ;;
+    templates/agent-team/.claude/hooks/tests/test_*.py)
+      pattern=$(basename "$test_path")
+      python3 -m unittest "discover" -s "$ROOT/templates/agent-team/.claude/hooks/tests" -p "$pattern"
+      ;;
     script/tests/test_*.py)
       pattern=$(basename "$test_path")
       python3 -m unittest "discover" -s "$ROOT/script/tests" -p "$pattern"

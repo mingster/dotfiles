@@ -503,3 +503,32 @@ case25_mac_scripts_select_their_tests() {
 }
 
 case25_mac_scripts_select_their_tests
+
+# #1635: agent-team hooks and .claude/bin scripts select the tests written for them, not only the generic cases.
+case26_agent_team_units_select_their_tests() {
+  local out pair path test
+  for pair in templates/agent-team/.claude/hooks/strikes.py:script/tests/strikes.test.sh \
+    templates/agent-team/.claude/hooks/strikes.py:templates/agent-team/.claude/hooks/tests/test_strikes.py \
+    templates/agent-team/.claude/hooks/worker-budget.py:script/tests/worker-budget.test.sh \
+    templates/agent-team/.claude/hooks/worker-budget.py:templates/agent-team/.claude/hooks/tests/test_worker_budget.py \
+    templates/agent-team/.claude/hooks/guard-bash.py:script/tests/guard-bash-config.test.sh \
+    templates/agent-team/.claude/hooks/guard-bash.py:templates/agent-team/.claude/hooks/tests/test_guard_bash.py \
+    templates/agent-team/.claude/bin/env-peek.py:script/tests/env-peek.test.sh; do
+    path=${pair%%:*}; test=${pair#*:}
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "$path" 2>&1)
+    grep -Fxq "Selected: $test" <<<"$out" || fail "case26 $path must select $test: $out"
+  done
+  # A touched hook test is a runnable test type, and a change to the hook still keeps the generic cases.
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only templates/agent-team/.claude/hooks/strikes.py 2>&1)
+  grep -Fxq 'Selected: script/tests/agent-team-cases-safety.test.sh' <<<"$out" || fail "case26 generic cases dropped: $out"
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" templates/agent-team/.claude/hooks/tests/test_strikes.py 2>&1) \
+    || fail "case26 running a touched hook test failed: $out"
+  grep -Fq 'unsupported test type' <<<"$out" && fail "case26 hook test type not runnable"
+  grep -Fxq 'Selected: templates/agent-team/.claude/hooks/tests/test_strikes.py' <<<"$out" || fail "case26 touched hook test must select itself: $out"
+  ok "case26 agent-team hooks and bin select their own tests"
+}
+
+case26_agent_team_units_select_their_tests
