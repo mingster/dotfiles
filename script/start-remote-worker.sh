@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 # Same arguments as Orca worker-start, requiring --on and --agent.
+# Usage: start-remote-worker.sh --on <environment> --agent <agent> [--worktree <selector>] [--model <model>] [--json] [other worker-start flags]
+# Refused (exit 2): --terminal, --environment, --pairing-code. -h and --help print the usage and exit 0.
 # Probe the execution environment's login-shell PATH before creating a worker.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"
 orca=${ORCA_CLI_COMMAND:-orca}
+usage='Usage: start-remote-worker.sh --on <environment> --agent <agent> [--worktree <selector>] [--model <model>] [--json] [other worker-start flags]
+Refused with exit 2: --terminal, --environment, --pairing-code.'
+case "${1:-}" in -h|--help) printf '%s\n' "$usage"; exit 0 ;; esac
 args=("$@")
 environment='' agent='' worktree='' model=''
 while [ $# -gt 0 ]; do
