@@ -82,7 +82,9 @@ exit 0
 STUB
 printf '#!/bin/sh\necho "cp $*" >>"$CALLS"\nexit 1\n' >"$istub/cp"
 chmod +x "$istub"/*
-irun() { : >"$calls"; env HOME="$ihome" PATH="$istub:$PATH" CALLS="$calls" OBSIDIAN_APPLICATIONS_DIR="$apps" "$@" bash "$script" >"$tmp/iout" 2>&1; }
+# The script gates on $OSTYPE, which bash sets itself (an env value is ignored), so the Intel
+# branch only runs on a real Mac. Set it inside bash and source the script so Linux CI reaches it too.
+irun() { : >"$calls"; env HOME="$ihome" PATH="$istub:$PATH" CALLS="$calls" OBSIDIAN_APPLICATIONS_DIR="$apps" "$@" bash -c 'OSTYPE=darwin22.0; . "$1"' _ "$script" >"$tmp/iout" 2>&1; }
 
 DESC="a failing copy stops the script"
 irun env; check test $? -ne 0
