@@ -176,7 +176,7 @@ sh install.sh
 - Prefer small, focused changes; match existing shell and doc style.
 - A change under `script/` or `templates/` updates a doc in the same PR (`docs/`, `README.md`, `RELEASE-NOTES.md`, a `.md` beside the file), or the PR body says `Docs: none, <reason>`. `script/check-docs-updated.sh` enforces it in head checks. A label change updates `docs/agents/labels.md`.
 - Never edit `CHANGELOG.md` in a PR. Add a `changelog.d/<issue>-<slug>.md` fragment (`<branch-slug>.md` with no issue); release runs `bin/changelog-compile.sh` to compile them.
-- Scripts must pass `shellcheck --severity=error`. CI enforces this on `install.sh`, `mac/stowall`, and the three `system_setup.sh` files. Run: `bash script/shellcheck-dotfiles.sh`
+- Scripts must pass `shellcheck --severity=error`. CI enforces this on `install.sh`, `mac/stowall`, the three `system_setup.sh` files, `script/*.sh` and `script/lib/*.sh`. Run: `bash script/shellcheck-dotfiles.sh`
 - Installs must be idempotent and safe to re-run. Follow the Homebrew pattern for external tools: check before installing.
 - `_outdated/` is read-only historical context. Update the active files under `mac/`, `arch/`, `debian/` instead.
 - Do not edit `ide/vscode/AzureDataStudio.code-profile` directly. Update `script/install_vscode_extensions.sh` and re-export.

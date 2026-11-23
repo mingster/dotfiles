@@ -107,6 +107,6 @@ vscjava.vscode-maven
 
 command -v code >/dev/null 2>&1 || { echo "install_vscode_extensions: VS Code CLI (code) not found on PATH; skipping." >&2; exit 0; }
 
-for i in ${pkglist[@]}; do
+for i in "${pkglist[@]}"; do
   code --install-extension $i
 done
