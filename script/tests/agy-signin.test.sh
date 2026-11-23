@@ -6,7 +6,7 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
 [ -x "$PYTHON" ] || { echo "missing python3" >&2; exit 1; }
 "$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
-import importlib.util, json, os, pathlib, sys, tempfile, unittest
+import importlib.util, json, os, pathlib, subprocess, sys, tempfile, unittest
 from unittest import mock
 root = pathlib.Path(sys.argv[1])
 def load(name, filename):
@@ -101,6 +101,44 @@ class Pass(unittest.TestCase):
         workers = [worker('d1', 't1', host='hostb'), worker('d2', 't2', host='hostc')]
         notices = self.sweep(workers, {'t1': SIGN_IN, 't2': SIGN_IN}, 1000)
         self.assertEqual(len(notices), 2)
+
+class Cli(unittest.TestCase):
+    """The command line: help, mistyped commands, and the exit codes callers read."""
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.state = pathlib.Path(self.tmp) / 'agy-unavailable.json'
+        self.env = dict(os.environ, AGY_UNAVAILABLE_STATE=str(self.state))
+
+    def cli(self, *args, stdin=''):
+        return subprocess.run([sys.executable, str(root / 'agy-signin.py'), *args],
+                              input=stdin, capture_output=True, text=True, env=self.env, timeout=30)
+
+    def test_help_prints_the_docstring_on_stdout_and_exits_zero(self):
+        for args in (('-h',), ('--help',), ('mark', '--help')):
+            proc = self.cli(*args)
+            self.assertEqual(proc.returncode, 0, args)
+            self.assertIn('agy-signin.py match', proc.stdout, args)
+            self.assertEqual(proc.stderr, '', args)
+        self.assertFalse(self.state.exists())
+
+    def test_mistyped_or_incomplete_commands_print_the_docstring_on_stderr_and_exit_two(self):
+        for args in ((), ('bogus',), ('unavailable',), ('mark',)):
+            proc = self.cli(*args)
+            self.assertEqual(proc.returncode, 2, args)
+            self.assertIn('agy-signin.py match', proc.stderr, args)
+            self.assertEqual(proc.stdout, '', args)
+
+    def test_match_exit_codes(self):
+        self.assertEqual(self.cli('match', stdin=SIGN_IN).returncode, 0)
+        self.assertEqual(self.cli('match', stdin=WORKING).returncode, 1)
+
+    def test_mark_then_unavailable_round_trip(self):
+        self.assertEqual(self.cli('unavailable', 'hostb').returncode, 1)
+        first = self.cli('mark', 'hostb')
+        self.assertEqual((first.returncode, first.stdout.strip()), (0, 'notify'))
+        self.assertEqual(self.cli('mark', 'hostb').stdout.strip(), 'known')
+        self.assertEqual(self.cli('unavailable', 'hostb').returncode, 0)
+        self.assertEqual(self.cli('unavailable', 'hostc').returncode, 1)
 
 unittest.main(argv=['agy-signin'], verbosity=1)
 PY

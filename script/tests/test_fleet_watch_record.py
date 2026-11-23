@@ -105,6 +105,31 @@ class ContractSkip(unittest.TestCase):
         self.assertEqual(text, '')
         self.assertNotIn(self.live, proc.stdout)
 
+    def test_help_prints_usage_and_exits_zero_without_reading_the_run(self):
+        for flag in ('-h', '--help'):
+            with tempfile.TemporaryDirectory() as tmp:
+                env, log = self.logging_orca(tmp, 'exit 1\n')
+                env['FLEET_WATCH_RECORD_RUN'] = self.live
+                proc = self.run_recorder(env, flag)
+                text = log.read_text() if log.exists() else ''
+            self.assertEqual(proc.returncode, 0, flag)
+            self.assertIn('fleet-watch-record.py --dry', proc.stdout, flag)
+            self.assertEqual(proc.stderr, '', flag)
+            self.assertEqual(text, '', flag)
+
+    def test_unknown_argument_prints_usage_on_stderr_and_exits_two(self):
+        for args in (('--nope',), ('--dry', '--nope')):
+            with tempfile.TemporaryDirectory() as tmp:
+                env, log = self.logging_orca(tmp, 'echo 1.4.258\n')
+                env['FLEET_WATCH_RECORD_RUN'] = 'run_scratch'
+                proc = self.run_recorder(env, *args)
+                text = log.read_text() if log.exists() else ''
+            self.assertEqual(proc.returncode, 2, args)
+            self.assertIn('unknown argument', proc.stderr, args)
+            self.assertIn('fleet-watch-record.py --dry', proc.stderr, args)
+            self.assertEqual(proc.stdout, '', args)
+            self.assertEqual(text, '', args)
+
     def test_scratch_run_is_the_send_target(self):
         with tempfile.TemporaryDirectory() as tmp:
             env, log = self.logging_orca(tmp, r'''

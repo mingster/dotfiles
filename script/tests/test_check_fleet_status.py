@@ -103,10 +103,28 @@ class CheckFleetStatus(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"{self.host}: UNREACHABLE", out)
 
-    def test_bad_usage_exits_two(self):
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertEqual(cfs.main(["--nope"]), 2)
+    def test_help_prints_usage_and_what_is_checked_on_stdout_and_exits_zero(self):
+        def no_orca(cmd, timeout=15):
+            raise AssertionError(cmd)
+
+        cfs.run = no_orca
+        for flag in ("-h", "--help"):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cfs.main([flag])
+            self.assertEqual(code, 0, flag)
+            self.assertIn("Usage: check-fleet-status.py [--window-minutes N] [--json]", out.getvalue())
+            self.assertIn("each worker Orca reports", out.getvalue())
+            self.assertEqual(err.getvalue(), "", flag)
+
+    def test_bad_usage_prints_usage_on_stderr_and_exits_two(self):
+        for args in (["--nope"], ["--window-minutes"], ["--window-minutes", "x"]):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = cfs.main(args)
+            self.assertEqual(code, 2, args)
+            self.assertIn("Usage: check-fleet-status.py", err.getvalue(), args)
+            self.assertEqual(out.getvalue(), "", args)
 
 
 if __name__ == "__main__":

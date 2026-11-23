@@ -97,6 +97,9 @@ def mark(host, now=None, path=None):
 
 
 def main(argv):
+    if any(arg in ('-h', '--help') for arg in argv[1:]):
+        print(__doc__.rstrip())
+        return 0
     cmd = argv[1] if len(argv) > 1 else ''
     if cmd == 'match':
         return 0 if is_sign_in_screen(sys.stdin.read()) else 1

@@ -28,6 +28,10 @@ import sys
 import time
 
 DEFAULT_WINDOW_MINUTES = 10
+USAGE = "Usage: check-fleet-status.py [--window-minutes N] [--json]"
+HELP = (USAGE + "\nChecks every fleet host: each worker Orca reports as live and in progress must be "
+        "really active (a live agent with a recent screen change or a running tool). Exits 1 on any "
+        "mismatch or unreachable host.")
 RUNNING_TOOL = re.compile(r"esc to interrupt|Running…|Running\.\.\.|ctrl\+c to interrupt", re.IGNORECASE)
 LOAD = re.compile(r"\bload=(?P<l>[0-9.]+)")
 CORES = re.compile(r"\bcores=(?P<c>[0-9]+)")
@@ -157,6 +161,9 @@ def main(argv):
     window = DEFAULT_WINDOW_MINUTES
     as_json = False
     args = list(argv)
+    if any(a in ("-h", "--help") for a in args):
+        print(HELP)
+        return 0
     while args:
         a = args.pop(0)
         if a == "--json":
@@ -164,7 +171,7 @@ def main(argv):
         elif a == "--window-minutes" and args and args[0].isdigit():
             window = int(args.pop(0))
         else:
-            print("Usage: check-fleet-status.py [--window-minutes N] [--json]", file=sys.stderr)
+            print(USAGE, file=sys.stderr)
             return 2
     now_ms = time.time() * 1000
     sensor = sensor_rows()
