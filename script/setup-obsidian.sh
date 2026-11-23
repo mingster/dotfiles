@@ -12,12 +12,15 @@
 #
 # Idempotent — safe to re-run. Steps that are already done are skipped.
 # Usage: setup-obsidian.sh   (no arguments; -h and --help print this line, any other argument exits 2)
-case "${1-}" in
-  -h|--help) echo "Usage: setup-obsidian.sh   (Install Obsidian and wire up the vault sync; no arguments)"; exit 0 ;;
-esac
-if [ "$#" -ne 0 ]; then
-  echo "Usage: setup-obsidian.sh   (no arguments; got: $*)" >&2
-  exit 2
+# Arguments are read only when run directly; a test that sources this file passes its own $1.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1-}" in
+    -h|--help) echo "Usage: setup-obsidian.sh   (Install Obsidian and wire up the vault sync; no arguments)"; exit 0 ;;
+  esac
+  if [ "$#" -ne 0 ]; then
+    echo "Usage: setup-obsidian.sh   (no arguments; got: $*)" >&2
+    exit 2
+  fi
 fi
 set -euo pipefail
 
