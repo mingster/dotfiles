@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Refuse a push to a protected branch from an agent session (CLAUDECODE or ORCA_TERMINAL_HANDLE set).
+# Agents open a PR and merge it with script/ship.sh, which merges through `gh pr merge` and so never runs this hook.
+# Wired by install.sh (core.hooksPath). Git passes "<local ref> <local sha> <remote ref> <remote sha>" lines on stdin.
+# production and staging cover other repos that have those branches; this repo has none.
+protected="main production staging"
+
+if [ -z "${CLAUDECODE:-}" ] && [ -z "${ORCA_TERMINAL_HANDLE:-}" ]; then
+  exit 0
+fi
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  branch=${remote_ref#refs/heads/}
+  case " $protected " in
+    *" $branch "*)
+      echo "pre-push: refused a push to $branch from an agent session." >&2
+      echo "Open a PR for your branch and merge it with script/ship.sh." >&2
+      exit 1
+      ;;
+  esac
+done
+exit 0

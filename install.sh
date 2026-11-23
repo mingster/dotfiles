@@ -60,6 +60,8 @@ ln -sfn "$DOTFILES_ROOT/.config/starship.toml" "$HOME/.config/starship.toml"
 
 git config --global core.excludesfile "$DOTFILES_ROOT/.gitignore_global"
 git config --global core.attributesfile "$DOTFILES_ROOT/.gitattributes"
+# Hooks in .githooks: commit-msg checks names, pre-push refuses agent pushes to main (#1687).
+git -C "$DOTFILES_ROOT" config core.hooksPath .githooks
 
 # Common directories
 mkdir -p "$HOME/.config/micro"
