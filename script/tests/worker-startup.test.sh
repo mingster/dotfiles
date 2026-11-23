@@ -2224,6 +2224,18 @@ role_stamp_start "prestamped" fullstack-dev --run run_x --spec "$tmp/spec-presta
   --agent claude --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean"
 [ "$(grep -c 'Worker role:' "$tmp/orca-stamp.log")" = 1 ] && ok || bad "stamp: a prestamped brief ends with one stamp"
 
+# --- #1631: every brief copy a start makes is gone when the start exits ---
+leak_tmp="$tmp/leak-tmp"; mkdir -p "$leak_tmp"
+: >"$tmp/orca-leak.log"
+env -u BASH_ENV TMPDIR="$leak_tmp" \
+  PATH="$run_path" ORCA_CLI_COMMAND="$orca_stub" ORCA_STUB_LOG="$tmp/orca-leak.log" \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+  WORKER_STARTUP_STATE="$launch_state" \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title "#1|fullstack-dev" --agent claude \
+  --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean" >/dev/null 2>&1
+grep -q 'orchestration worker-start' "$tmp/orca-leak.log" && ok || bad "leak: the start reached worker-start"
+[ -z "$(ls -A "$leak_tmp")" ] && ok || bad "leak: TMPDIR is empty after a start (left: $(ls "$leak_tmp" | tr '\n' ' '))"
+
 rm -f "$bin/hostname"
 
 echo "worker-startup: $pass passed, $fail failed"

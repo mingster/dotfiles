@@ -24,7 +24,7 @@ stamp_worker_role() { # <spec_file> <title> [fallback_role] -> prints the stampe
     printf '%s\n' "$spec_file"
     return 0
   fi
-  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-role.XXXXXX") || { echo "cannot write the spec copy" >&2; return 1; }
+  out=$(mktemp "${WORKER_BRIEF_DIR:-${TMPDIR:-/tmp}}/worker-startup-role.XXXXXX") || { echo "cannot write the spec copy" >&2; return 1; }
   {
     printf 'Worker role: %s\n' "$role"
     sed '/^Worker role: [a-z0-9-]*$/d' "$spec_file"

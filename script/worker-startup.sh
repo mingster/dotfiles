@@ -56,6 +56,11 @@ resolve_fleet_pull_config() {
 
 die() { echo "worker-startup: $*" >&2; exit 1; }
 
+# Brief copies (finish block, refs line, preamble, role stamp) live in one folder that goes away when the start exits (#1631).
+WORKER_BRIEF_DIR=$(mktemp -d "${TMPDIR:-/tmp}/worker-startup.XXXXXX") || die "cannot make the brief folder"
+export WORKER_BRIEF_DIR
+trap 'rm -rf "$WORKER_BRIEF_DIR"' EXIT
+
 this_host_name() {
   local name
   name=$(hostname -s 2>/dev/null || true)
@@ -416,7 +421,7 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
   fi
   if grep -qE '^## Finish([[:space:]]|$)' "$spec_file"; then
     if [ -n "$builder_line" ] && grep -qi 'fullstack-dev' "$spec_file" && ! grep -qF "$builder_line" "$spec_file"; then
-      out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+      out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
       cp "$spec_file" "$out"
       printf -- '- Put the line `%s` in the PR body.\n' "$builder_line" >>"$out"
       printf '%s\n' "$out"
@@ -425,7 +430,7 @@ with_finish_block() { # <spec_file> <run_id> <agent> <model>
     printf '%s\n' "$spec_file"
     return 0
   fi
-  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+  out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
   cp "$spec_file" "$out"
   {
     printf '\n## Finish\n'
@@ -448,7 +453,7 @@ with_refs_line() { # <spec_file> <title>
     printf '%s\n' "$spec_file"
     return 0
   fi
-  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-spec.XXXXXX") || die "cannot write the spec copy"
+  out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
   { printf 'Refs #%s\n' "$issue"; cat "$spec_file"; } >"$out"
   printf '%s\n' "$out"
 }
@@ -499,7 +504,7 @@ prepend_role_preamble() { # <spec_file> <title>
     printf '%s\n' "$spec_file"
     return 0
   fi
-  out=$(mktemp "${TMPDIR:-/tmp}/worker-startup-preamble.XXXXXX") || die "cannot write the spec copy"
+  out=$(mktemp "$WORKER_BRIEF_DIR/preamble.XXXXXX") || die "cannot write the spec copy"
   {
     "$python3" "$here/worker-preamble.py" --role "$role"
     printf '\n'
