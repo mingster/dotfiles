@@ -5776,6 +5776,17 @@ def pick_failure_reason(data, avoid=None):
     return 'no-pick'
 
 
+def pr_open_now(repo, number, fetch):
+    """'OPEN' when a fresh read of the open list still has this PR, 'closed' when it does not, '' when the read fails."""
+    rows = fetch(repo)
+    if rows is None:
+        return ''
+    for row in rows:
+        if isinstance(row, dict) and row.get('number') == number and pr_open_for_dispatch(row):
+            return 'OPEN'
+    return 'closed'
+
+
 def pr_open_for_dispatch(pr_row):
     """An open pull request with no merge or close time. Merged and closed rows are not dispatched."""
     if not isinstance(pr_row, dict):
@@ -6721,7 +6732,7 @@ def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
-    closed_fetch=None, runner_fetch=None, standing_io=None,
+    closed_fetch=None, runner_fetch=None, standing_io=None, pr_state_fetch=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -6994,6 +7005,13 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += 1
             continue
+        if kind == 'verifier':
+            # The pass list can be minutes old and may be cached, so read the open list again just before the start (#1706).
+            live_state = pr_open_now(repo, number, pr_state_fetch or pr_fetch)
+            if live_state != 'OPEN':
+                lines.append(_babysit_line(repo, number, head, 'skip', 'not-open' if live_state else 'state-unknown'))
+                log_bits.append('not_open=%s' % number)
+                continue
         headroom = _pick_headroom(picked)
         if kind == 'verifier' and standing_cfg['enabled'] and agent == 'antigravity' \
                 and (repo, number) not in standing_failed:
@@ -8854,6 +8872,7 @@ def main():
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
         now=now, term_times=term_times, pr_fetch=fetch_once, closed_fetch=closed_from_pass,
+        pr_state_fetch=fetch_open_prs,
     )
     for line in babysit_lines:
         print(line)

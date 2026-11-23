@@ -1,0 +1,1 @@
+fleet-watch babysit re-reads the open PR list right before it starts a verifier and skips a PR that is no longer open, so a verifier is not started for a PR that merged or closed after the pass listed it (#1706).
