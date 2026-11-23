@@ -17,7 +17,7 @@ export FLEET_TOOLCHAIN_LATEST_BUN=1.4.4
 export FLEET_TOOLCHAIN_LATEST_NODE=24.22.1
 export FLEET_TOOLCHAIN_LATEST_PYTHON3=3.15.2
 
-base_tools='"git":"2.56.0","gh":"2.103.3","jq":"1.8.2","python3":"3.15.2","shellcheck":"0.11.0","claude":"2.1.319","agent":"2026.11.05-86047df","agy":"1.5.3"'
+base_tools='"git":"2.56.0","gh":"2.103.3","jq":"1.8.2","python3":"3.15.2","shellcheck":"0.11.0","claude":"2.1.319","agent":"2026.11.05-86047df","agy":"1.5.3","grok":"0.1.0"'
 
 export FLEET_TOOLCHAIN_VERSIONS="{
   \"coord-a\": {$base_tools, \"orca\": \"1.4.253\", \"bun\": \"1.4.4\", \"node\": \"24.22.1\"},
@@ -132,6 +132,7 @@ make_tool "$fake_bin" orca "1.4.253"
 make_tool "$fake_bin" claude "2.1.319 (Claude Code)"
 make_tool "$fake_bin" agent "2026.11.05-86047df"
 make_tool "$fake_bin" agy "1.5.3"
+make_tool "$fake_bin" grok "0.1.0"
 
 remote_bin="$tmp/remote-bin"
 mkdir -p "$remote_bin"
@@ -146,6 +147,7 @@ make_tool "$remote_bin" orca "1.4.251"
 make_tool "$remote_bin" claude "2.1.311 (Claude Code)"
 make_tool "$remote_bin" agent "2026.10.22-27dcf5f"
 make_tool "$remote_bin" agy "1.5.2"
+make_tool "$remote_bin" grok "0.1.0"
 
 cat > "$tmp/fake-ssh" <<EOS
 #!/usr/bin/env bash
@@ -196,6 +198,18 @@ miss_rc=$?
 check "missing tool exits non-zero" "$([ "$miss_rc" -ne 0 ] && echo 0 || echo 1)"
 check "missing tool prints missing line" "$(echo "$miss_out" | grep -q 'worker-a agy missing'; echo $?)"
 make_tool "$remote_bin" agy "1.5.2"
+rm -f "$remote_bin/grok"
+grok_out=$(
+  PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_TOOLCHAIN_PATH="$fake_bin:/usr/bin:/bin" \
+  FLEET_ORCA_APP_BIN="$fake_bin" \
+  FLEET_PULL_CONFIG="$tmp/fleet-no-coord.json" \
+  FLEET_TOOLCHAIN_RUN="$tmp/fake-ssh" \
+  FLEET_TOOLCHAIN_VERSIONS='' \
+  "$here/fleet-toolchain-check.sh" 2>&1
+)
+check "missing grok prints missing line" "$(echo "$grok_out" | grep -q 'worker-a grok missing'; echo $?)"
+make_tool "$remote_bin" grok "0.1.0"
 
 # Unreadable version exits non-zero
 make_tool "$remote_bin" claude "error: unreadable"
@@ -460,6 +474,27 @@ orca_out=$(FAKE_PS=$'/usr/sbin/sshd\n2.1.319\nclaude --dangerously-skip-permissi
 check "842 peer with live agents is skipped and named" \
   "$(echo "$orca_out" | grep -q 'worker-a apply: orca upgrade skipped, live agents: claude'; echo $?)"
 check "842 peer with live agents downloads nothing" "$(grep -q '^worker-a curl' "$orca_log" && echo 1 || echo 0)"
+check "1577 peer with only grok live is skipped and named" \
+  "$(FAKE_PS=$'/usr/sbin/sshd\ngrok' orca_apply 1.4.251 | grep -q 'worker-a apply: orca upgrade skipped, live agents: grok'; echo $?)"
+check "1577 TOOLS lists grok" "$(grep -q '^TOOLS=.*\bgrok\b' "$here/fleet-toolchain-check.sh"; echo $?)"
+check "1577 header names grok among the live agents" "$(grep -q 'agy or grok process' "$here/fleet-toolchain-check.sh"; echo $?)"
+
+# 1578: usage and unknown arguments stop before the config is read or ssh is opened
+ssh_log="$tmp/args-ssh.log"; : > "$ssh_log"
+printf '#!/usr/bin/env bash\necho ssh >> "%s"\n' "$ssh_log" > "$tmp/args-ssh"; chmod +x "$tmp/args-ssh"
+args_run() { FLEET_PULL_CONFIG="$tmp/missing-config.json" FLEET_TOOLCHAIN_RUN="$tmp/args-ssh" "$here/fleet-toolchain-check.sh" "$@" 2>&1; }
+for a in -h --help; do
+  out=$(args_run "$a"); rc=$?
+  check "1578 $a prints usage, exits 0" "$([ "$rc" = 0 ] && echo "$out" | grep -qF 'Usage: fleet-toolchain-check.sh [--apply]'; echo $?)"
+done
+for a in --bogus --aply -apply; do
+  out=$(args_run "$a"); rc=$?
+  check "1578 $a exits 2 with usage" "$([ "$rc" = 2 ] && echo "$out" | grep -qF 'Usage: fleet-toolchain-check.sh [--apply]'; echo $?)"
+done
+out=$(args_run --apply extra); rc=$?
+check "1578 a second argument exits 2 with usage" "$([ "$rc" = 2 ] && echo "$out" | grep -qF 'Usage: fleet-toolchain-check.sh [--apply]'; echo $?)"
+check "1578 bad arguments never open ssh" "$([ -s "$ssh_log" ] && echo 1 || echo 0)"
+
 : > "$orca_log"
 # Deliberate refuse (#1074): a Codex process is not a live agent, so it does not skip the Orca upgrade.
 orca_out=$(FAKE_PS=$'/opt/homebrew/bin/codex exec' orca_apply 1.4.251)

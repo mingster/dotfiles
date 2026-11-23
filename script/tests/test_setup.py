@@ -100,6 +100,39 @@ class SetupTests(unittest.TestCase):
                 finally:
                     held.rename(path)
 
+    def test_check_skills_links_accepts_real_directories_beside_a_link(self):
+        self.ready_home()
+        for directory in ('.agents/skills', '.claude/skills'):
+            (self.home / directory / 'orchestration').mkdir()
+        result = self.run_script('setup-check.sh')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('OK shared skills links\n', result.stdout)
+        self.assertIn('OK Claude skills links\n', result.stdout)
+
+    def test_check_skills_links_rejects_empty_and_all_broken_folders(self):
+        self.ready_home()
+        for directory, label in (('.agents/skills', 'shared skills links'),
+                                 ('.claude/skills', 'Claude skills links')):
+            root = self.home / directory
+            link = root / 'example'
+            target = link.resolve()
+            link.unlink()
+            for case in ('empty', 'broken', 'real directory only'):
+                with self.subTest(item=label, case=case):
+                    if case == 'broken':
+                        link.symlink_to(self.home / 'gone', target_is_directory=True)
+                    if case == 'real directory only':
+                        link.unlink(missing_ok=True)
+                        (root / 'orchestration').mkdir()
+                    result = self.run_script('setup-check.sh')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('MISSING ' + label + '\n', result.stdout)
+                    if case == 'broken':
+                        link.unlink()
+            if (root / 'orchestration').exists():
+                (root / 'orchestration').rmdir()
+            link.symlink_to(target, target_is_directory=True)
+
     def test_check_rejects_empty_hook_configuration(self):
         self.ready_home()
         (self.home / '.claude/settings.json').write_text('{}')

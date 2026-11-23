@@ -9,7 +9,7 @@ target provider and model (exiting 3 if refused), then probes the required CLI o
 environment's login-shell PATH in an Orca terminal and refreshes `~/dotfiles` and the `~/.orca/presets.json`
 symlink (`script/setup-orca.sh`) on that host before dispatch. A missing CLI, failed probe, or
 unconfirmed exit refuses dispatch and names the required CLI. Install missing tools on that
-environment with `script/install-agent-clis.sh`; sign-in remains a user action. `script/usage-gate-hook.py`
+environment with `script/install-agent-clis.sh` (usage: `install-agent-clis.sh [-h|--help]`, any other argument exits 2 before installing); sign-in remains a user action. `script/usage-gate-hook.py`
 blocks direct `orca orchestration worker-start --on` invocations so remote starts always pass
 this preflight. The Cursor helper below includes the same usage gate and preset refresh.
 

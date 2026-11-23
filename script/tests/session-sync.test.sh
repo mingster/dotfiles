@@ -129,5 +129,24 @@ out=$(cd "$proj" && HOME="$hook_home" CLAUDE_PROJECT_DIR="$proj" PATH=/usr/bin:/
 check "state-of-play runs session-sync for the project" "$(grep -qx "stub session-sync $proj" <<<"$out"; echo $?)"
 check "state-of-play still exits 0" "$ec"
 
+# Usage handling (#1591): --help and mistyped flags never reach git
+bin="$tmp/fetchbin"; mkdir -p "$bin"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/git-calls"\n' "$tmp" >"$bin/git"; chmod +x "$bin/git"
+for flag in --help -h; do
+  : >"$tmp/git-calls"
+  out=$(PATH="$bin:$PATH" bash "$here/session-sync.sh" "$flag" 2>"$tmp/err"); ec=$?
+  check "$flag exits 0" "$ec"
+  check "$flag prints Usage: on stdout" "$(grep -q '^Usage:' <<<"$out"; echo $?)"
+  check "$flag runs no git" "$([ ! -s "$tmp/git-calls" ]; echo $?)"
+done
+for flag in --bogus --dotfiles-onyl; do
+  : >"$tmp/git-calls"
+  out=$(PATH="$bin:$PATH" bash "$here/session-sync.sh" "$flag" 2>"$tmp/err"); ec=$?
+  check "$flag exits 2" "$([ "$ec" = 2 ] && echo 0 || echo 1)"
+  check "$flag prints Usage: on stderr" "$(grep -q '^Usage:' "$tmp/err"; echo $?)"
+  check "$flag prints nothing on stdout" "$([ -z "$out" ]; echo $?)"
+  check "$flag runs no git" "$([ ! -s "$tmp/git-calls" ]; echo $?)"
+done
+
 echo "session-sync: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
