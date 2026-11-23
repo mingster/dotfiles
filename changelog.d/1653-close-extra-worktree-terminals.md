@@ -1,0 +1,1 @@
+* `worker-startup.sh` now closes the extra terminals Orca opens in a new worktree (a plain shell, a setup shell) once the worker terminal is up, so only the "#<n>|<role>" terminal stays. Best effort, local and remote, other worktrees untouched (#1653).
