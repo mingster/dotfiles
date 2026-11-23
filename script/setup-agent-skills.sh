@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Home directories belong to tools; only tracked dotfiles skills get links.
+# Usage: setup-agent-skills.sh   (no arguments; -h and --help print this line, any other argument exits 2)
+case "${1-}" in
+  -h|--help) echo "Usage: setup-agent-skills.sh   (Link the tracked dotfiles skills into the home skill folders; no arguments)"; exit 0 ;;
+esac
+if [ "$#" -ne 0 ]; then
+  echo "Usage: setup-agent-skills.sh   (no arguments; got: $*)" >&2
+  exit 2
+fi
 set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)

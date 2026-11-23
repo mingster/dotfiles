@@ -6,6 +6,9 @@
 # Usage: secrets-pack.sh <source-dir> <image.dmg>
 set -euo pipefail
 
+case "${1-}" in
+  -h|--help) echo "usage: secrets-pack.sh <source-dir> <image.dmg>"; exit 0 ;;
+esac
 src=${1:-}
 out=${2:-}
 if [ -z "$src" ] || [ -z "$out" ]; then

@@ -2,6 +2,14 @@
 # Verify the Antigravity (agy) startup instruction links installed from dotfiles.
 # It checks only the two agy links. Claude, Grok and Orca links are not checked.
 # When Antigravity is absent it checks nothing and says so on its last line.
+# Usage: check-agent-startup.sh   (no arguments; -h and --help print this line, any other argument exits 2)
+case "${1-}" in
+  -h|--help) echo "Usage: check-agent-startup.sh   (Check the two Antigravity startup instruction links; no arguments)"; exit 0 ;;
+esac
+if [ "$#" -ne 0 ]; then
+  echo "Usage: check-agent-startup.sh   (no arguments; got: $*)" >&2
+  exit 2
+fi
 set -euo pipefail
 # shellcheck source=lib/app-path.sh disable=SC1091
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/app-path.sh"

@@ -9,6 +9,9 @@
 # Usage: secrets-unpack.sh <image.dmg> <target-dir>
 set -euo pipefail
 
+case "${1-}" in
+  -h|--help) echo "usage: secrets-unpack.sh <image.dmg> <target-dir>"; exit 0 ;;
+esac
 img=${1:-}
 dest=${2:-}
 if [ -z "$img" ] || [ -z "$dest" ]; then
