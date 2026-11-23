@@ -532,3 +532,15 @@ case26_agent_team_units_select_their_tests() {
 }
 
 case26_agent_team_units_select_their_tests
+
+# #1636: start-remote-worker.sh selects test_remote_worker.py and never falls back to the full suite.
+case27_start_remote_worker_selects_its_test() {
+  local out
+  out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+    bash "$root/script/select-changed-script-tests.sh" --list-only script/start-remote-worker.sh 2>&1)
+  grep -Fxq 'Selected: script/tests/test_remote_worker.py' <<<"$out" || fail "case27 must select test_remote_worker.py: $out"
+  grep -Fq 'Fallback:' <<<"$out" && fail "case27 must not fall back to the full suite: $out"
+  ok "case27 start-remote-worker.sh maps its test"
+}
+
+case27_start_remote_worker_selects_its_test

@@ -198,6 +198,10 @@ map_file() {
     script/setup-agent-skills.sh)
       add_if_exists "script/tests/setup-user-level-team.test.sh"
       ;;
+    script/start-remote-worker.sh)
+      map_script_sh_base "start-remote-worker"
+      add_if_exists "script/tests/test_remote_worker.py"
+      ;;
     script/*.sh)
       base=${path#script/}
       base=${base%.sh}
