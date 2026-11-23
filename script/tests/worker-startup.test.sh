@@ -416,6 +416,15 @@ case " \$* " in
   *" worktree set "*)
     exit 0
     ;;
+  *" terminal list "*)
+    # The worker, a plain shell and a setup shell in this worktree, plus one terminal in another worktree.
+    printf '%s\n' '{"ok":true,"result":{"terminals":[{"handle":"term_fixture4242","worktreePath":"'"\$WT_PROOF"'"},{"handle":"term_extra_shell","worktreePath":"'"\$WT_PROOF"'"},{"handle":"term_extra_setup","worktreePath":"'"\$WT_PROOF"'"},{"handle":"term_other_wt","worktreePath":"/elsewhere/other"}]}}'
+    exit 0
+    ;;
+  *" terminal close "*)
+    printf '%s\n' '{"ok":true,"result":{}}'
+    exit 0
+    ;;
 esac
 exit 99
 EOS
@@ -637,6 +646,12 @@ grep -q -- "--task-title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "worke
 grep -q -- "terminal rename --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "terminal should be renamed to the title ($(cat "$tmp/orca-title.log"))"
 grep -q -- "terminal set-pane-title --terminal term_fixture4242 --title #123|qa-sdet" "$tmp/orca-title.log" && ok || bad "pane title should be set"
 grep -E "terminal (rename|set-pane-title)" "$tmp/orca-title.log" | grep -q -- '--environment' && bad "a local worker title must not pass --environment" || ok
+# #1653: after the start only the worker terminal stays in its new worktree; other worktrees are untouched.
+grep -q -- "terminal close --terminal term_extra_shell" "$tmp/orca-title.log" && ok || bad "extra shell terminal should be closed ($(cat "$tmp/orca-title.log"))"
+grep -q -- "terminal close --terminal term_extra_setup" "$tmp/orca-title.log" && ok || bad "extra setup terminal should be closed"
+grep -q -- "terminal close --terminal term_fixture4242" "$tmp/orca-title.log" && bad "the worker terminal must stay open" || ok
+grep -q -- "terminal close --terminal term_other_wt" "$tmp/orca-title.log" && bad "a terminal in another worktree must stay open" || ok
+grep "terminal close" "$tmp/orca-title.log" | grep -q -- '--environment' && bad "a local close must not pass --environment" || ok
 # Optional suffix: "#<issue>|<role>|free text" starts, and the role is read from the second field.
 : >"$tmp/orca-title.log"
 set +e
@@ -978,6 +993,10 @@ case " \$* " in
     printf '%s\n' '{"ok":true,"result":{}}'
     exit 0
     ;;
+  *" terminal list "*)
+    printf '%s\n' '{"ok":true,"result":{"terminals":[{"handle":"term_rem_worker","worktreePath":"$wt_proof"},{"handle":"term_rem_extra","worktreePath":"$wt_proof"},{"handle":"term_rem_other","worktreePath":"/elsewhere/other"}]}}'
+    exit 0
+    ;;
 esac
 exit 99
 EOS
@@ -1184,6 +1203,11 @@ for t in rename set-pane-title; do
   grep "terminal $t" "$tmp/orca-on-remote-app-id.log" | grep -q -- '--environment host-remote' && ok \
     || bad "remote worker: terminal $t must pass --environment host-remote ($(grep "terminal $t" "$tmp/orca-on-remote-app-id.log"))"
 done
+
+# #1653: the remote start closes the extra terminal on that host, keeps the worker and other worktrees.
+grep -q -- "terminal close --terminal term_rem_extra --environment host-remote" "$tmp/orca-on-remote-app-id.log" && ok \
+  || bad "remote extra terminal should be closed with --environment host-remote ($(grep 'terminal close' "$tmp/orca-on-remote-app-id.log"))"
+grep "terminal close" "$tmp/orca-on-remote-app-id.log" | grep -q -e term_rem_worker -e term_rem_other && bad "remote close must keep the worker and other worktrees" || ok
 
 # Brief lint with --on (#1233): lint_dir comes from the local --repo, so checks-local is required only for repos that have it.
 sed 's#Run bash script/checks-local.sh\.#Run npm test.#' "$spec_file" >"$tmp/spec-no-checks.txt"

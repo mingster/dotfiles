@@ -492,6 +492,24 @@ apply_terminal_title() { # <title> <worker-start json> [environment]
     || echo "worker-startup: could not set pane title on $handle" >&2
 }
 
+# Close the extra terminals Orca opens beside the worker (a plain shell, a setup shell) so only the worker
+# terminal stays in its worktree (#1653). Best effort: a failure warns and never fails the start.
+close_extra_terminals() { # <worker-start json> <worktree path> [environment]
+  local start_json=$1 wt_path=$2 env=${3:-} handle list_json extra h
+  handle=$(jq -r '.result.terminal | if type == "object" then .handle else . end // empty' <<<"$start_json" 2>/dev/null || true)
+  { [ -n "$handle" ] && [ -n "$wt_path" ]; } || return 0
+  list_json=$("$orca" terminal list --json ${env:+--environment "$env"} 2>/dev/null) \
+    || { echo "worker-startup: could not list terminals to close extras in $wt_path" >&2; return 0; }
+  extra=$(jq -r --arg wt "$wt_path" --arg keep "$handle" \
+    '.result.terminals[]? | select(.worktreePath == $wt and .handle != $keep) | .handle' <<<"$list_json" 2>/dev/null) \
+    || { echo "worker-startup: could not read the terminal list for $wt_path" >&2; return 0; }
+  for h in $extra; do
+    "$orca" terminal close --terminal "$h" ${env:+--environment "$env"} >/dev/null 2>&1 \
+      || echo "worker-startup: could not close extra terminal $h" >&2
+  done
+  return 0
+}
+
 # Resolved poteto-mode, ORCA-ADAPTER, and role-file paths, ahead of the brief. Idempotent.
 prepend_role_preamble() { # <spec_file> <title>
   local spec_file=$1 title=$2 role out
@@ -1213,6 +1231,8 @@ run_mode() {
     exit "$agy_ec"
   fi
   apply_terminal_title "$title" "$start_out" "$environment"
+  # Only a worktree this start created: a reused one may hold terminals that are not ours.
+  [ "$created_wt" != 1 ] || close_extra_terminals "$start_out" "$wt" "$environment"
   release_ready_label "$spec" "$title"
   mark_issue_in_flight "$spec" "$title"
   return 0
