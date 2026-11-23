@@ -10,7 +10,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) print_usage; exit 0 ;;
     --body-file) body_file=${2:?--body-file needs a value}; shift 2 ;;
-    --issue-title) titles+=("${2:?--issue-title needs a value}"); shift 2 ;;
+    --issue-title) [ $# -ge 2 ] || { echo "check-main-fix: --issue-title needs a value" >&2; exit 2; }; titles+=("$2"); shift 2 ;;
     *) echo "check-main-fix: unknown argument: $1" >&2; exit 2 ;;
   esac
 done

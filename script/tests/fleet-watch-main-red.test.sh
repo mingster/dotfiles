@@ -92,6 +92,14 @@ class MainRedFixer(unittest.TestCase):
         self.assertTrue(watch.issue_scan_has_acceptance(body))
         self.assertTrue(any('#501' in str(n) for n in notices))
 
+    def test_the_issue_body_passes_the_brief_lint_the_issue_scan_runs(self):
+        import tempfile
+        body = watch.main_red_issue_body('7', 'https://example.test/runs/7', 'script-tests / run tests')
+        with tempfile.NamedTemporaryFile('w', suffix='.md') as spec:
+            spec.write('Refs owner/repo#9\n\n%s\n\n## Verify\nbash script/checks-local.sh\n\n## Finish\ndone\n' % body)
+            spec.flush()
+            self.assertEqual(watch.brief_lint_missing(spec.name), [])
+
     def test_repeat_detect_makes_no_second_issue(self):
         calls, io = self.fakes()
         state = {}

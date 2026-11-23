@@ -17,5 +17,7 @@ body $'Fixes main: 1111\n'
 run 'main red: 4242' >/dev/null; [ $? -eq 1 ] && ok "other run id refused" || bad "other run id passed"
 body $'no line\n'
 run 'an ordinary issue' >/dev/null && ok "ordinary issue needs nothing" || bad "ordinary issue refused"
+body $'no line\n'
+bash "$here/check-main-fix.sh" --body-file "$tmp/body.md" --issue-title '' >/dev/null 2>&1 && ok "an empty title (failed lookup) is skipped" || bad "empty title crashed"
 out=$(bash "$here/check-main-fix.sh" --help 2>&1); [ $? -eq 0 ] && grep -q Usage <<<"$out" && ok "--help prints usage" || bad "--help"
 echo "passed=$pass failed=$fail"; [ "$fail" -eq 0 ]

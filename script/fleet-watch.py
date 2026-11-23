@@ -3414,7 +3414,8 @@ def status_rollup_failure_after_rerun(pr, workflow_watch_state, repo):
 
 _VERDICT_LINE_RE = re.compile(
     r'^Verdict: (?P<status>PASS\+NOTES|PASS|FAIL) head=(?P<head>[0-9a-f]{40})'
-    r'(?: verifier=(?P<verifier>[A-Za-z0-9_-]+) author=(?P<author>[A-Za-z0-9_-]+))?$'
+    r'(?: verifier=(?P<verifier>[A-Za-z0-9_-]+) author=(?P<author>[A-Za-z0-9_-]+)'
+    r'(?: agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+)?)?$'
 )
 
 
@@ -5664,11 +5665,11 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standi
         text = (
             'Refs %s#%s%s\n\n'
             'Role: qa-sdet. Verify this open PR at head %s the way a user would, '
-            'and post the Verdict with script/post-verdict.sh. %s%s\n\n'
+            'and post the Verdict with script/post-verdict.sh (add --ship on a PASS or PASS+NOTES: it runs ship.sh at once; put any SHIP REFUSED line in worker_done). %s%s\n\n'
             '## Acceptance\n'
             '- [ ] a Verdict for head %s is posted\n\n'
             '## Out of scope\n'
-            'Merging. fleet-watch starts ship.sh for a ready head. Verdict format stays as it is.\n\n'
+            'Merging by hand. post-verdict.sh --ship runs ship.sh after your PASS, and fleet-watch starts ship.sh for a ready head. Verdict format stays as it is.\n\n'
             '## Verify\n'
             '%s\n\n'
             '## Finish\n'
@@ -6380,7 +6381,7 @@ def standing_prompt(repo, pr_row, builder, root, dispatch_id, final):
         verify += ' Run: bash script/checks-local.sh 2>&1 | tail -40.'
     text = (
         'Next PR to verify. Refs %s#%s. headRefOid %s. %s First run: git fetch origin pull/%s/head && git checkout --detach %s. '
-        '## Verify: %s Then post the Verdict: script/post-verdict.sh --verifier %s. Stay at this prompt and do not send worker_done.'
+        '## Verify: %s Then post the Verdict: script/post-verdict.sh --verifier %s (add --ship on a PASS or PASS+NOTES). Stay at this prompt and do not send worker_done.'
     ) % (repo, number, head, who, number, head, verify, dispatch_id)
     if final:
         text += (' This is your last PR: after posting the Verdict run orca worktree set --worktree active '
@@ -7446,7 +7447,9 @@ def main_red_issue_body(run_id, url, step):
         '## Acceptance\n'
         '- [ ] Checks on main is green again; the fix names the failing step above.\n'
         '- [ ] The PR body has the line `Fixes main: %s`.\n'
-        '- [ ] bash script/checks-local.sh exits 0.\n'
+        '- [ ] bash script/checks-local.sh exits 0.\n\n'
+        '## Out of scope\n'
+        'Other failures and unrelated cleanup.\n'
     ) % (run_id, url, step or 'unknown (read the run log)', run_id)
 
 

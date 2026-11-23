@@ -64,6 +64,13 @@ class AutoShip(unittest.TestCase):
         self.assertEqual(len(starts), 1)
         self.assertIn('ship_start=%s' % HEAD[:8], log)
 
+    def test_a_real_verdict_line_with_agent_and_model_counts(self):
+        row = pr(HEAD, 3600)
+        row['comments'][0]['body'] += ' agent=claude model=claude-opus-5-5'
+        starts, _n, _l = scan([row], {})
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(fw.classify_open_pr(row), 'ready')
+
     def test_pass_younger_than_fifteen_minutes_waits_for_the_verifier(self):
         state = {}
         starts, _n, _l = scan([pr(HEAD, 5 * 60)], state)
