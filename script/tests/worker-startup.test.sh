@@ -834,6 +834,7 @@ chmod +x "$helper_dir/worker-startup.sh" "$helper_dir/worker-placement.py"
 cat >"$helper_dir/start-cursor-worker.sh" <<EOS
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>"$tmp/cursor.args"
+prev=; for a in "\$@"; do [ "\$prev" != --spec ] || cp "\$a" "$tmp/cursor.spec"; prev=\$a; done
 exit 0
 EOS
 chmod +x "$helper_dir/start-cursor-worker.sh"
@@ -860,7 +861,7 @@ env -u BASH_ENV \
 ec_cfin=$?
 set -e
 [ "$ec_cfin" = 0 ] && ok || bad "cursor no-Finish brief exits 0 ($ec_cfin) $(cat "$tmp/cursor-fin.err")"
-cursor_spec=$(awk '{for (i = 1; i <= NF; i++) if ($i == "--spec") print $(i + 1)}' "$tmp/cursor.args")
+cursor_spec="$tmp/cursor.spec"
 grep -q 'workspace-status in-review' "$cursor_spec" && ok || bad "cursor Finish should set in-review when there is a PR ($(cat "$cursor_spec" 2>/dev/null))"
 grep -q 'Read these files before any work' "$cursor_spec" && ok || bad "cursor spec should carry the role preamble"
 grep -q 'workspace-status completed' "$cursor_spec" && ok || bad "cursor Finish should set completed when there is no PR"
