@@ -385,3 +385,8 @@ esac
 print(f'passed {passed}, failed {failed}')
 sys.exit(bool(failed))
 PY
+help_out=$(bash "$(cd "$(dirname "$0")/.." && pwd)/head-checks.sh" --help 2>&1) || { echo "FAIL --help exits 0"; exit 1; }
+for f in --repo --pr --ref --base --config --train-heads; do
+  [[ "$help_out" == *"$f"* ]] || { echo "FAIL --help lists $f"; exit 1; }
+done
+echo "ok   --help lists every flag"

@@ -134,5 +134,10 @@ before=$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")
 out=$(verdict 51 --result PASS --head "$old" --verifier ctx_verify --author ctx_author); code=$?
 [ "$code" -ne 0 ] && [[ "$out" == *"stale head: PR is at $h"* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")" = "$before" ] && ok "a stale head is refused, nothing posted" || bad "stale head: $out"
 
+before=$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")
+out=$(bash "$here/post-verdict.sh" --help 2>&1); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *--corrects* && "$out" == *--supersedes* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")" = "$before" ] \
+  && ok "--help prints the Usage block with the aliases and posts nothing" || bad "--help: $code $out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

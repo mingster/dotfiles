@@ -2,7 +2,9 @@
 # Reply to an orchestration message (or send a new one), then nudge the recipient's terminal.
 # A bare `orca orchestration reply` does not wake an idle agent session; it sees the reply only on its next input.
 # Usage: orca-reply.sh --to <terminal handle> (--id <message id> | --subject <text>) --body <text> [--from <handle>]
+#        -h and --help print this text.
 set -euo pipefail
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 
 orca_cli=${ORCA_CLI_COMMAND:-orca}
 bound=${ORCA_REPLY_BOUND_SECONDS:-30}
@@ -16,6 +18,7 @@ bounded() {
 to="" id="" subject="" body="" from=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --to) to=${2-}; shift 2 || break ;;
     --id) id=${2-}; shift 2 || break ;;
     --subject) subject=${2-}; shift 2 || break ;;

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Usage: check-stale-worktrees.sh <repo-path>
+# Usage: check-stale-worktrees.sh <repo-path>   (-h and --help print this text)
 # Flags worktrees whose work is merged or abandoned (#1188). Read only: removes nothing.
 # Prints "<path> <reason> <dirty-count>" per stale worktree; exit 1 if any, else 0.
 # Never flags the main worktree, any `_checks*` directory, or a path listed (relative to $HOME,
 # one per line) in the repo's optional `.agents/reusable-worktrees`.
 set -uo pipefail
-[ $# -eq 1 ] || { echo "Usage: $0 <repo-path>" >&2; exit 2; }
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
+[ $# -eq 1 ] && [[ "$1" != -* ]] || { echo "Usage: $0 <repo-path>" >&2; exit 2; }
 repo=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || { echo "check-stale-worktrees: not a git repo: $1" >&2; exit 2; }
 command -v gh >/dev/null 2>&1 || gh_missing=1
 

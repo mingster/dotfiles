@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 # Run a repository's ordered checks in an isolated worktree at one exact head.
+# Usage: head-checks.sh --repo <dir> (--pr <N> | --ref <sha>) [--base <ref>] [--config <file>] [--train-heads <list>]
+#   --repo         repository directory
+#   --pr / --ref   the head to check: a PR number or a commit SHA (exactly one)
+#   --base         base ref to compare against, instead of the PR base
+#   --config       checks file to use instead of .agents/head-checks.conf
+#   --train-heads  heads of a merge train, checked together
+#   -h, --help     print this Usage block
 # Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
 # host has no reachable local Postgres (pg_isready finds no server; having the client tools is not enough). Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
@@ -50,6 +57,7 @@ export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
 # lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
 # 5 seconds, the gap between mkdir and the pid write); the live pid is left in lock_holder. A stale lock is
@@ -77,6 +85,7 @@ lock_acquire() {
 }
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --repo) [ $# -ge 2 ] || need_value "$1"; repo="${2:-}"; shift 2 ;;
     --pr) [ $# -ge 2 ] || need_value "$1"; pr="${2:-}"; shift 2 ;;
     --ref) [ $# -ge 2 ] || need_value "$1"; ref="${2:-}"; shift 2 ;;

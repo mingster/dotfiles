@@ -2,11 +2,14 @@
 # Coordinator publication: push an explicit engineering branch and open a PR from a body file.
 # Usage:
 #   coordinator-publication.sh --repo owner/name --branch <name> --body-file <path> [--title <title>] [--worktree <path>]
+#                              [--run <id>] [--author-family <f>] [--author-provider <p>] [--author-model <m>] [--author-dispatch <id>] [--from <handle>]
+# --run, --author-*, and --from are accepted and ignored (each takes a value). --force is refused. -h and --help print this Usage block.
 # Refuses protected branches, force push, tracked secret env files, and invalid PR bodies.
 # Retries push and gh pr create at most three times; writes a receipt for idempotent resume.
 set -euo pipefail
 
 die() { echo "coordinator-publication: refused: $*" >&2; exit 1; }
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 fail() { echo "coordinator-publication: failed: $*" >&2; exit 1; }
 
 origin_slug_from_url() {
@@ -226,6 +229,7 @@ need_value() { echo "coordinator-publication: $1 needs a value" >&2; exit 2; }
 repo="" branch="" body_file="" title="" worktree=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --repo) [ $# -ge 2 ] || need_value "$1"; repo="${2:-}"; shift 2 ;;
     --branch) [ $# -ge 2 ] || need_value "$1"; branch="${2:-}"; shift 2 ;;
     --body-file) [ $# -ge 2 ] || need_value "$1"; body_file="${2:-}"; shift 2 ;;
