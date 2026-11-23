@@ -82,7 +82,7 @@ dry=$(bash "$script" --dry-run --install 2>&1)
 over=$(echo "$dry" | grep -oE -- '--precheck-timeout [0-9]+' | awk '$2 > 600' | head -1)
 [ -z "$over" ] && check 'every precheck timeout fits the Orca 600s cap' true || check "every precheck timeout fits the Orca 600s cap ($over)" false
 echo "$dry" | grep -q '\[dry-run\]' && echo "$dry" | grep -q 'fleet-watch' && check 'dry-run prints fleet-watch create' true || check 'dry-run prints fleet-watch create' false
-echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run prints wrap-up create' true || check 'dry-run prints wrap-up create' false
+echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run installs no 10 minute wrap-up-scheduled round' false || check 'dry-run installs no 10 minute wrap-up-scheduled round' true
 echo "$dry" | grep -q 'wrap-up-daily' && echo "$dry" | grep -q '0 4 \* \* \*' && check 'dry-run prints wrap-up-daily create at 04:00' true || check 'dry-run prints wrap-up-daily create at 04:00' false
 echo "$dry" | grep -q 'wrap-up.sh --daily' && check 'dry-run wrap-up-daily runs wrap-up.sh --daily' true || check 'dry-run wrap-up-daily runs wrap-up.sh --daily' false
 echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync drift create' true || check 'dry-run prints sync drift create' false
@@ -98,7 +98,7 @@ echo "$dry" | grep -q 'would create' && check 'dry-run labels would-create' true
 
 first=$(bash "$script" --install 2>&1)
 echo "$first" | grep -q 'fleet-watch created' && check 'first install creates fleet-watch' true || check 'first install creates fleet-watch' false
-echo "$first" | grep -q 'wrap-up-scheduled created' && check 'first install creates wrap-up-scheduled' true || check 'first install creates wrap-up-scheduled' false
+echo "$first" | grep -q 'wrap-up-scheduled' && check 'first install creates no wrap-up-scheduled' false || check 'first install creates no wrap-up-scheduled' true
 echo "$first" | grep -q 'wrap-up-daily created' && check 'first install creates wrap-up-daily' true || check 'first install creates wrap-up-daily' false
 echo "$first" | grep -q 'sync-team-skills-drift created' && check 'first install creates sync drift' true || check 'first install creates sync drift' false
 echo "$first" | grep -q 'team-audit-weekly created' && check 'first install creates team audit weekly' true || check 'first install creates team audit weekly' false
@@ -108,7 +108,7 @@ echo "$first" | grep -q 'daily-program-1900 created' && check 'first install cre
 
 status_off=$(bash "$script" --status)
 echo "$status_off" | grep -q 'fleet-watch: disabled' && check 'non-coordinator status disabled fleet-watch' true || check 'non-coordinator status disabled fleet-watch' false
-echo "$status_off" | grep -q 'wrap-up-scheduled: enabled' && check 'non-coordinator status enabled wrap-up' true || check 'non-coordinator status enabled wrap-up' false
+echo "$status_off" | grep -q 'wrap-up-scheduled' && check 'status lists no wrap-up-scheduled' false || check 'status lists no wrap-up-scheduled' true
 echo "$status_off" | grep -q 'wrap-up-daily: enabled' && check 'non-coordinator status enabled wrap-up-daily' true || check 'non-coordinator status enabled wrap-up-daily' false
 echo "$status_off" | grep -q 'daily-program-1900: disabled' && check 'non-coordinator status disabled daily-program-1900' true || check 'non-coordinator status disabled daily-program-1900' false
 
@@ -118,28 +118,45 @@ import json, os
 p = os.environ["FAKE_ORCA_STORE"]
 d = json.load(open(p))
 for a in d["automations"]:
-    if a["name"] == "wrap-up-scheduled":
+    if a["name"] == "wrap-up-daily":
         a["rrule"] = "0 */2 * * *"
         a["enabled"] = False
 json.dump(d, open(p, "w"))
 PY
 fix_stale=$(bash "$script" --install 2>&1)
-echo "$fix_stale" | grep -q 'wrap-up-scheduled updated' && check 're-run updates stale disabled wrap-up-scheduled' true || check 're-run updates stale disabled wrap-up-scheduled' false
+echo "$fix_stale" | grep -q 'wrap-up-daily updated' && check 're-run updates stale disabled wrap-up-daily' true || check 're-run updates stale disabled wrap-up-daily' false
 stale_fixed_ok=0
 if python3 - <<'PY'
 import json, os, sys
 d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 by_name = {a["name"]: a for a in d["automations"]}
-w = by_name["wrap-up-scheduled"]
+w = by_name["wrap-up-daily"]
 f = by_name["fleet-watch"]
-if w.get("rrule") != "*/10 * * * *" or not w.get("enabled") or f.get("enabled"):
+if w.get("rrule") != "0 4 * * *" or not w.get("enabled") or f.get("enabled"):
     sys.exit(1)
 PY
 then
   stale_fixed_ok=1
 fi
-check 're-run fixes stale 0 */2 * * * rrule and enables wrap-up while keeping fleet-watch disabled' test "$stale_fixed_ok" -eq 1
+check 're-run fixes stale 0 */2 * * * rrule and enables wrap-up-daily while keeping fleet-watch disabled' test "$stale_fixed_ok" -eq 1
 echo "$status_off" | grep -q 'fleet-toolchain: disabled' && check 'non-coordinator status disabled fleet-toolchain' true || check 'non-coordinator status disabled fleet-toolchain' false
+
+# A host that still has the old 10 minute wrap-up-scheduled entry loses it on re-install (owner decision 2026-11-23, #1533).
+python3 - <<'PY'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+old = dict(next(a for a in d["automations"] if a["name"] == "wrap-up-daily"))
+old["id"] = "auto_legacy_wrap_10"
+old["name"] = "wrap-up-scheduled"
+old["rrule"] = "*/10 * * * *"
+d["automations"].append(old)
+json.dump(d, open(p, "w"))
+PY
+legacy_wrap=$(bash "$script" --install 2>&1)
+echo "$legacy_wrap" | grep -q 'wrap-up-scheduled removed' && check 're-install removes the legacy 10 minute wrap-up-scheduled' true || check 're-install removes the legacy 10 minute wrap-up-scheduled' false
+bash "$script" --status | grep -q 'wrap-up-scheduled' && check 'status lists no wrap-up-scheduled after removal' false || check 'status lists no wrap-up-scheduled after removal' true
+echo "$legacy_wrap" | grep -q 'wrap-up-daily unchanged' && check 'legacy removal leaves wrap-up-daily untouched' true || check 'legacy removal leaves wrap-up-daily untouched' false
 
 # A host that still has the old staging-daily-1900 entry loses it on re-install (#834).
 python3 - <<'PY'
@@ -167,7 +184,7 @@ coord=$(bash "$script" --install 2>&1)
 echo "$coord" | grep -q 'updated\|unchanged' && check 'coordinator install settles' true || check 'coordinator install settles' false
 coord_status=$(bash "$script" --status)
 echo "$coord_status" | grep -q 'fleet-watch: enabled' && check 'coordinator status enabled fleet-watch' true || check 'coordinator status enabled fleet-watch' false
-echo "$coord_status" | grep -q 'wrap-up-scheduled: enabled' && check 'coordinator status enabled wrap-up' true || check 'coordinator status enabled wrap-up' false
+echo "$coord_status" | grep -q 'wrap-up-daily: enabled' && check 'coordinator status enabled wrap-up-daily' true || check 'coordinator status enabled wrap-up-daily' false
 echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator status enabled fleet-toolchain' true || check 'coordinator status enabled fleet-toolchain' false
 echo "$coord_status" | grep -q 'daily-program-1900: enabled' && check 'coordinator status enabled daily-program-1900' true || check 'coordinator status enabled daily-program-1900' false
 echo "$coord_status" | grep -q 'sync-team-skills-drift: disabled' && check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' true || check 'coordinator creates sync-team-skills-drift disabled (owner opt-in)' false
@@ -193,17 +210,17 @@ wrap_row=$(python3 -c '
 import json, os
 d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
 for a in d["automations"]:
-    if a["name"] == "wrap-up-scheduled":
+    if a["name"] == "wrap-up-daily":
         print(json.dumps(a))
 ')
 wrap_cmd=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["precheck"]["command"])')
 wrap_prompt=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["prompt"])')
 case "$wrap_cmd" in *' || exit $?; exit 1') check 'precheck passes the wrapper exit code to Orca' true ;; *) check 'precheck passes the wrapper exit code to Orca' false ;; esac
 case "$wrap_prompt" in *"$wrap_cmd"*) check 'manual run prompt carries the precheck command' true ;; *) check 'manual run prompt carries the precheck command' false ;; esac
-case "$wrap_prompt" in *'"ok wrap-up-scheduled" or "FAILED wrap-up-scheduled"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
+case "$wrap_prompt" in *'"ok wrap-up-daily" or "FAILED wrap-up-daily"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
-[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 8 ] \
-  && check 'coordinator install has eight automations' true || check 'coordinator install has eight automations' false
+[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 7 ] \
+  && check 'coordinator install has seven automations' true || check 'coordinator install has seven automations' false
 
 fw_id=$(python3 -c '
 import json, os
@@ -218,7 +235,7 @@ echo "$runs" | grep -q 'skipped_precheck' && check 'run history shows skipped_pr
 
 un=$(bash "$script" --uninstall 2>&1)
 echo "$un" | grep -q 'fleet-watch removed' && check 'uninstall removes fleet-watch' true || check 'uninstall removes fleet-watch' false
-echo "$un" | grep -q 'wrap-up-scheduled removed' && check 'uninstall removes wrap-up-scheduled' true || check 'uninstall removes wrap-up-scheduled' false
+echo "$un" | grep -q 'wrap-up-daily removed' && check 'uninstall removes wrap-up-daily' true || check 'uninstall removes wrap-up-daily' false
 echo "$un" | grep -q 'sync-team-skills-drift removed' && check 'uninstall removes sync drift' true || check 'uninstall removes sync drift' false
 echo "$un" | grep -q 'team-audit-weekly removed' && check 'uninstall removes team audit weekly' true || check 'uninstall removes team audit weekly' false
 echo "$un" | grep -q 'weekly-update removed' && check 'uninstall removes weekly-update' true || check 'uninstall removes weekly-update' false
@@ -250,13 +267,13 @@ wrap_pc=$(python3 -c '
 import json, os
 d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
 for a in d["automations"]:
-    if a["name"] == "wrap-up-scheduled":
+    if a["name"] == "wrap-up-daily":
         print(a["precheck"]["command"])
         print(a["rrule"])
 ')
 echo "$wrap_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'wrap precheck uses trace wrapper' true || check 'wrap precheck uses trace wrapper' false
-echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --scheduled' true || check 'wrap precheck runs wrap-up.sh --scheduled' false
-echo "$wrap_pc" | grep -q '\*/10 \* \* \* \*' && check 'wrap-up schedule is 10 min' true || check 'wrap-up schedule is 10 min' false
+echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --daily' true || check 'wrap precheck runs wrap-up.sh --daily' false
+echo "$wrap_pc" | grep -q '0 4 \* \* \*' && check 'wrap-up schedule is daily at 04:00' true || check 'wrap-up schedule is daily at 04:00' false
 
 echo "$wrap_pc" | grep -q 'WRAP_UP_ISSUE_REPO=mingster/agent-state' && check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' true || check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' false
 
@@ -273,7 +290,7 @@ wrap_issue_pc=$(python3 -c '
 import json, os
 d=json.load(open(os.environ["FAKE_ORCA_STORE"]))
 for a in d["automations"]:
-    if a["name"] == "wrap-up-scheduled":
+    if a["name"] == "wrap-up-daily":
         print(a["precheck"]["command"])
 ')
 echo "$wrap_issue_pc" | grep -q 'WRAP_UP_ISSUE_REPO=owner/private-issues' && check 'wrap precheck passes WRAP_UP_ISSUE_REPO from automations.env' true || check 'wrap precheck passes WRAP_UP_ISSUE_REPO from automations.env' false
@@ -474,7 +491,7 @@ if [ -f "$FAKE_ORCA_STORE" ]; then
 import json, os, sys
 d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 autos = d.get("automations", [])
-if len(autos) != 8:
+if len(autos) != 7:
     sys.exit(1)
 want = os.environ["CANON_HOME_DOTFILES"]
 bad = os.environ["FAKE_WT"]

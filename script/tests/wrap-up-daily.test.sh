@@ -32,7 +32,19 @@ FAKE
 for tool in brew bun; do
   printf '#!/usr/bin/env bash\necho "%s $*" >> "$FAKE_DIR/tools.log"\nexit "${FAKE_%s_RC:-0}"\n' "$tool" "$(echo "$tool" | tr a-z A-Z)" > "$tmp/bin/$tool"
 done
-printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/lsof"
+# Fake lsof: logs every call. A recursive +D scan walks node_modules and takes 10 s or more per worktree on a real host (#1533,
+# niteking), so the daily round must not use it; one whole listing (-Fn) answers every worktree instead.
+cat > "$tmp/bin/lsof" <<'FAKE'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_DIR/lsof.log"
+for a in "$@"; do
+  case "$a" in
+    +D) exit 1 ;;
+    -Fn) printf 'p4242\nn/dev/null\n'; [ ! -f "$FAKE_DIR/open-files" ] || sed 's/^/n/' "$FAKE_DIR/open-files"; exit 0 ;;
+  esac
+done
+exit 1
+FAKE
 printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/ps"
 chmod +x "$tmp/bin/"*
 export FAKE_DIR="$tmp" ROUND_REPO="$tmp/repo"
@@ -61,6 +73,8 @@ for n in merged dirty live fresh; do g worktree add -q -b "b-$n" "$tmp/wt-$n" ma
 echo scratch > "$tmp/wt-dirty/notes.txt"
 mkdir -p "$tmp/wt-dirty/node_modules/.cache" "$tmp/wt-dirty/web/.next" "$tmp/wt-dirty/web/node_modules/.cache"
 echo x > "$tmp/wt-dirty/node_modules/.cache/a"; echo x > "$tmp/wt-dirty/web/.next/a"; echo x > "$tmp/wt-dirty/web/node_modules/.cache/a"
+g worktree add -q -b b-held "$tmp/wt-held" main
+printf '%s\n' "$tmp/wt-held" > "$tmp/open-files" # a process whose cwd is the worktree
 g worktree add -q -b b-unpushed "$tmp/wt-unpushed" main
 git -C "$tmp/wt-unpushed" -c user.name=Test -c user.email=test@example.invalid commit -qm 'only here' --allow-empty
 g worktree add -q -b b-openpr "$tmp/wt-openpr" main
@@ -79,7 +93,7 @@ jq -n --arg p "$tmp/wt-live" '{ok:true,result:{terminals:[{handle:"t-live",cwd:$
 
 # Age everything except wt-fresh past 3 hours. git status refreshes the index, so touch the git files again after it.
 old=202601010000
-for n in merged dirty live unpushed openpr squash moved; do
+for n in merged dirty live held unpushed openpr squash moved; do
   wt="$tmp/wt-$n"; gd=$(git -C "$wt" rev-parse --absolute-git-dir)
   find "$wt" "$gd" -exec touch -t "$old" {} +
   git -C "$wt" status --porcelain >/dev/null
@@ -129,6 +143,10 @@ check 'keeps a worktree with uncommitted work' present "$tmp/wt-dirty"
 check 'keeps a worktree with unpushed commits' present "$tmp/wt-unpushed"
 check 'keeps a worktree with an open PR' present "$tmp/wt-openpr"
 check 'keeps a worktree with a live terminal' present "$tmp/wt-live"
+check 'keeps a worktree a process holds a file open in' present "$tmp/wt-held"
+check 'says a process holds it' grep -Fq "Kept worktree $tmp/wt-held (held open by a running process)" "$tmp/round-detail.log"
+check 'never runs the slow recursive lsof +D scan' bash -c '! grep -Fq -- "+D" "$1"' _ "$tmp/lsof.log"
+check 'asks lsof for the whole listing' grep -Fq -- '-Fn' "$tmp/lsof.log"
 check 'keeps a worktree changed in the last 3 hours' present "$tmp/wt-fresh"
 check 'keeps a merged PR branch that moved on after the merge' present "$tmp/wt-moved"
 check 'says why for each kept one' bash -c 'for r in "uncommitted changes" "commits not on any remote" "open PR" "active or unknown Orca terminal" "changed in the last 180 minutes"; do grep -Fq -- "$r" "$1" || exit 1; done' _ "$tmp/round-detail.log"
@@ -145,6 +163,25 @@ check 'keeps a big log written in the last 3 hours' present "$tmp/workspaces/pro
 check 'keeps an old log under the size limit' present "$tmp/workspaces/proj/small-old.log"
 check 'runs brew cleanup -s' tool_called 'brew cleanup -s'
 check 'runs bun pm cache rm' tool_called 'bun pm cache rm'
+
+# The 10 minute round is gone (#1533), so the coordinator's daily round also moves finished board cards to Done and cleans old ones.
+board_conf="$tmp/coordinator.conf"; printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+for step in done clean; do
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FAKE_DIR/board-%s-calls"\nexit 0\n' "$step" > "$tmp/board-$step-stub"
+done
+chmod +x "$tmp/board-done-stub" "$tmp/board-clean-stub"
+export BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-stub"
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'coordinator daily round runs board-done across the fleet' grep -Fq -- '--fleet --apply' "$tmp/board-done-calls"
+check 'coordinator daily round cleans Done cards across the fleet' grep -Fq -- '--fleet --apply' "$tmp/board-clean-calls"
+rm -f "$tmp/board-done-calls" "$tmp/board-clean-calls"
+bash "$root/script/wrap-up.sh" --daily --dry-run > "$tmp/output" 2>&1
+check 'coordinator daily dry run asks board-done not to set cards' grep -Fq -- '--fleet --dry-run' "$tmp/board-done-calls"
+rm -f "$tmp/board-done-calls" "$tmp/board-clean-calls"
+printf 'coordinator someone-else\n' > "$board_conf"
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'a non-coordinator daily round leaves the board alone' bash -c '! test -e "$1" && ! test -e "$2"' _ "$tmp/board-done-calls" "$tmp/board-clean-calls"
+unset BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE WRAP_UP_BOARD_CLEAN
 
 # A second lock-free run is harmless and the daily lock is its own file.
 check 'the daily round does not use the scheduled lock or log' bash -c '! test -e "$1/wrap-up-scheduled.lock" && ! test -e "$1/wrap-up-scheduled.failures"' _ "$tmp/state"
