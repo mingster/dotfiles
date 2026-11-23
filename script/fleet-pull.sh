@@ -45,6 +45,17 @@ check_hooks() {
   printf "%s\n" "$out" | while IFS= read -r line; do echo "fail $host_label $2 ($line)"; done
   rc=1
 }
+# The four Claude display keys must match on every host and Orca profile, or the subagent list differs per machine (#1409)
+check_display() {
+  local f out
+  [ -f "$1/script/check-display-settings.sh" ] || return 0
+  for f in "$HOME/.claude/settings.json" "$HOME"/Library/Application\ Support/orca/claude-profiles/*/home/settings.json; do
+    [ -f "$f" ] || continue
+    out=$(bash "$1/script/check-display-settings.sh" "$f" 2>&1) && continue
+    printf "%s\n" "$out" | while IFS= read -r line; do echo "fail $host_label $2 ($line in ${f#"$HOME"/})"; done
+    rc=1
+  done
+}
 for raw in "$@"; do
   d=${raw/#\~/$HOME}
   if [ ! -e "$d/.git" ]; then
@@ -75,6 +86,7 @@ for raw in "$@"; do
     echo "ok   $host_label $d $(git -C "$d" rev-parse --short HEAD)$reset_note"
     render_team "$d" "$raw"
     check_hooks "$d" "$raw"
+    check_display "$d" "$raw"
     continue
   fi
   b=$(git -C "$d" branch --show-current 2>/dev/null || true)
@@ -116,6 +128,7 @@ for raw in "$@"; do
     fi
     render_team "$d" "$raw"
     check_hooks "$d" "$raw"
+    check_display "$d" "$raw"
   fi
 done
 exit "$rc"
