@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # heavy-gate median wait and wrap-up round freshness; no live Orca.
 set -euo pipefail
+# The heavy-gate lock lives under $HOME/.cache/heavy-gate. A temp HOME keeps this test off the host's real lock (#1414).
+export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
+HOME=$(mktemp -d)
+export HOME
+trap 'rm -rf "$HOME"' EXIT
 path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
 PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"

@@ -1,8 +1,8 @@
-# Hosted runners skip script tests that need macOS-only tools or heavy-gate host locks.
+# Hosted runners skip script tests that need macOS-only tools or heavy-gate host locks. Tests tagged "rerun on macOS" run in checks-local.sh on macOS.
 # Format: <repo-relative test path> <reason>
-script/tests/heavy-gate.test.sh uses heavy-gate host lock; rerun on coordinator host
-script/tests/fleet-watch-heavy-gate.test.sh uses heavy-gate host lock; rerun on coordinator host
-script/tests/heavy-guard-hook.test.sh uses heavy-gate host lock; rerun on coordinator host
+script/tests/heavy-gate.test.sh fails 6 admission message tests once run (#1665); rerun on coordinator host
+script/tests/fleet-watch-heavy-gate.test.sh uses heavy-gate host lock (temp HOME in the test); rerun on macOS
+script/tests/heavy-guard-hook.test.sh uses heavy-gate host lock (temp HOME in the test); rerun on macOS
 script/tests/install-mac-server.test.sh needs macOS Homebrew dry-run paths; rerun on macOS
 script/tests/switch-login-shell-zsh.test.sh needs macOS login shell paths; rerun on macOS
 script/tests/pull-project-a-pg-backups.test.sh needs macOS stat/find shims; rerun on macOS

@@ -1,0 +1,1 @@
+checks-local: on macOS it runs the macOS-only script tests from script-test-skip.list; fleet-watch-heavy-gate and heavy-guard-hook use a temp HOME instead of the host heavy-gate lock and run too (#1414). AGENTS.md says --labels creates the 20 issue labels and three status labels (#1413).

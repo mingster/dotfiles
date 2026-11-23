@@ -102,8 +102,9 @@ the dotfiles bootstrap. Scaffold it with:
 
 The script infers the tracker from the `origin` remote, seeds `docs/agents/*.md` from the templates in
 `.agents/skills/setup-matt-pocock-skills/`, appends an `## Agent skills` block to `AGENTS.md` (creating
-a `CLAUDE.md` pointer when the repo has neither file), and with `--labels` creates the five triage
-labels on the GitHub remote. It is idempotent and never overwrites a file that already exists. Use
+a `CLAUDE.md` pointer when the repo has neither file), and with `--labels` creates the 20 issue labels and
+the three `status:` board labels on the GitHub remote (list in `docs/agents/labels.md`). It is idempotent and never
+overwrites a file that already exists. Use
 `--dry-run` first. For a repo that needs judgement (monorepo, non-GitHub tracker), run the
 `setup-matt-pocock-skills` skill instead.
 
