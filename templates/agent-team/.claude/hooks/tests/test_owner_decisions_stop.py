@@ -2,6 +2,7 @@
 import json
 import os
 import stat
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,7 @@ HOOK = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 class OwnerDecisionsStopTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="ods-")
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.script = os.path.join(self.dir, "owner-decisions.sh")
         # Stub: issue 7 has a decision (exit 0), 8 has none (exit 1), 9 fails (exit 2). Logs "<repo> <n>".
         with open(self.script, "w") as fh:

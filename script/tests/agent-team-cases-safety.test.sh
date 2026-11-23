@@ -239,5 +239,17 @@ else
   check "acceptance: scratch adoption preserves project-owned values across project, sync, check" bad
 fi
 
+# ── #1632: the hook test files remove their temp homes after each test ──────
+hook_tests="$DOTFILES/templates/agent-team/.claude/hooks/tests"
+leak_tmp="$tmp/hook-tests-tmpdir"
+mkdir -p "$leak_tmp"
+for hook_test in test_guard_bash test_team_gates test_worker_budget test_owner_decisions_stop test_strikes; do
+  if (cd "$hook_tests" && TMPDIR="$leak_tmp" python3 -m unittest "$hook_test" >/dev/null 2>&1) && [ -z "$(ls -A "$leak_tmp")" ]; then
+    check "hook test $hook_test leaves TMPDIR empty" ok
+  else
+    check "hook test $hook_test leaves TMPDIR empty (left: $(ls "$leak_tmp" | head -3 | tr '\n' ' '))" bad
+  fi
+  find "$leak_tmp" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+done
 
 agent_team_cases_done

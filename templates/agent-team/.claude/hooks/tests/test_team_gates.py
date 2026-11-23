@@ -12,6 +12,7 @@ Run from the repo root: python3 -m unittest discover -s .claude/hooks/tests
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,7 @@ def sh(cwd, *cmd):
 class Gate(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="gate-home-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         self.bin = os.path.join(self.home, "bin")
         os.makedirs(self.bin)
         self.issue = {"labels": [], "body": "", "comments": []}

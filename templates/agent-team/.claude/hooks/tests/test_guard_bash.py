@@ -8,6 +8,7 @@ import datetime
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -84,6 +85,7 @@ def oldest_python3():
 class GuardTest(unittest.TestCase):
     def setUp(self):
         self.home = tempfile.mkdtemp(prefix="guard-home-")
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
         # #960: a host with /usr/local/etc/agent-team would make the guard ignore the temp home approval.
         # addCleanup, not enterContext: that needs Python 3.11 and the system python on some fleet hosts is 3.9 (#1129).
         patcher = mock.patch.dict(os.environ, {"GUARD_APPROVAL_ROOT": os.path.join(self.home, "no-root")})
@@ -1412,6 +1414,7 @@ class ProductionTestData(GuardTest):
                 "production_hosts": ["prod.example"],
             }, f)
         self.origin = self.home + "-origin.git"
+        self.addCleanup(shutil.rmtree, self.origin, ignore_errors=True)
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", self.origin], check=True)
         self.git("remote", "add", "origin", self.origin)
         self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "approval.json")}
@@ -1723,7 +1726,8 @@ class BuilderOwnerPathGate(GuardTest):
         with open(spec, "w", newline="") as f:
             f.write(body.replace("\n", eol))
         out = subprocess.run(["bash", "-c", f'. "{WORKER_ROLE_LIB}"; stamp_worker_role "$1" "$2"', "_", spec, title],
-                             capture_output=True, text=True, check=True)
+                             capture_output=True, text=True, check=True,
+                             env=dict(os.environ, WORKER_BRIEF_DIR=self.home))
         with open(out.stdout.strip(), newline="") as f:
             return f.read()
 

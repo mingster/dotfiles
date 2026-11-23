@@ -1011,3 +1011,31 @@ grep -Fq 'worker-show failed for dispatch d-peer on an unpaired host; skipped.' 
 ! grep -Fq 'all worktrees kept' "$tmp/stderr" || idle_fail 'a peer_changed error kept every worktree'
 grep -Fxq 'worktree rm --worktree id:w-gone --force' "$idle/rm.log" || idle_fail 'a peer_changed error stopped the idle sweep'
 echo 'ok a peer_changed worker-show error is reported and skipped, not a failed run'
+
+# #1535: a scheduled child gives the per worktree loop its own budget (WRAP_UP_WORKTREE_BUDGET), so slow worktrees cannot
+# spend the repo's whole time and starve branch cleanup. A worktree reached after the budget is kept for the next round.
+cat > "$tmp/bin/git" <<'FAKE'
+#!/usr/bin/env bash
+case " $* " in *" status --porcelain "*) case "$*" in *bud-wt*) sleep 2 ;; esac ;; esac
+exec "$REAL_GIT" "$@"
+FAKE
+chmod +x "$tmp/bin/git"
+export REAL_GIT="$real_git" ORCA_CLI_COMMAND="$tmp/bin/orca"
+git init -q --bare "$tmp/origin-bud"
+git init -q -b main "$tmp/repo-bud"
+git -C "$tmp/repo-bud" config user.email test@example.invalid
+git -C "$tmp/repo-bud" config user.name Test
+git -C "$tmp/repo-bud" commit -qm c --allow-empty
+git -C "$tmp/repo-bud" remote add origin "$tmp/origin-bud"
+git -C "$tmp/repo-bud" push -q -u origin main
+for n in 1 2 3; do git -C "$tmp/repo-bud" worktree add -q "$tmp/bud-wt$n" -b "bud$n"; done
+git -C "$tmp/repo-bud" branch bud-extra
+bud_fail() { echo "FAIL $1"; cat "$tmp/bud-out" "$tmp/bud-err"; exit 1; }
+WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_TOTAL_TIMEOUT=60 WRAP_UP_WORKTREE_BUDGET=1 \
+  bash "$here/wrap-up.sh" --apply --repo "$tmp/repo-bud" > "$tmp/bud-out" 2> "$tmp/bud-err" || true
+[ "$(grep -c 'worktree step budget spent' "$tmp/bud-out")" -ge 1 ] || bud_fail 'no worktree kept for the step budget'
+[ "$(grep -c '^Remove worktree ' "$tmp/bud-out")" -ge 1 ] || bud_fail 'budget stopped the first worktree'
+grep -Fq 'Delete local bud-extra' "$tmp/bud-out" || bud_fail 'slow worktrees starved branch cleanup'
+! grep -Fq 'overall time limit' "$tmp/bud-out" || bud_fail 'the step budget was recorded as a run failure'
+rm -f "$tmp/bin/git"
+echo 'ok a slow worktree loop stops at its own budget and branch cleanup still runs'

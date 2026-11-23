@@ -92,6 +92,16 @@ else: sys.exit(99)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn(text, result.stderr)
 
+    def test_help_flags_print_usage_naming_every_flag_and_exit_0(self):
+        for flag in ('-h', '--help'):
+            with self.subTest(flag=flag):
+                result = self.run_args(flag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name in ('--on', '--agent', '--worktree', '--model', '--json',
+                             '--terminal', '--environment', '--pairing-code'):
+                    self.assertIn(name, result.stdout)
+                self.assertFalse(self.log.exists())
+
     def test_unknown_flag_with_a_value_still_passes_through(self):
         (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
         (self.bin / 'agy').chmod(0o700)
