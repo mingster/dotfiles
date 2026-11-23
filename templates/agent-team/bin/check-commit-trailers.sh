@@ -11,11 +11,11 @@
 set -uo pipefail
 
 usage() { echo "Usage: $0 [--file <path>]... [--commits <range>]" >&2; exit 2; }
-commits="" files=()
+commits="" files=() given=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --commits) [ $# -ge 2 ] || usage; commits=$2; shift 2 ;;
-    --file) [ $# -ge 2 ] || usage; files+=("$(cd "$(dirname "$2")" 2>/dev/null && pwd)/$(basename "$2")"); shift 2 ;;
+    --file) [ $# -ge 2 ] || usage; given+=("$2"); case "$2" in /*) files+=("$2") ;; *) files+=("$PWD/$2") ;; esac; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -77,8 +77,9 @@ if [ -n "$commits" ]; then
     check_message "${sha:0:12}" < <(git show -s --format=%B "$sha")
   done <<<"$shas"
 fi
-for f in ${files[@]+"${files[@]}"}; do
-  [ -f "$f" ] || { echo "check-commit-trailers: no such file: $f" >&2; exit 2; }
+for i in ${files[@]+"${!files[@]}"}; do
+  f=${files[$i]}
+  [ -f "$f" ] || { echo "check-commit-trailers: no such file: ${given[$i]}" >&2; exit 2; }
   check_message "$f" <"$f"
 done
 echo "$checked checked, $problems problems"

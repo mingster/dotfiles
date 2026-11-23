@@ -78,6 +78,12 @@ else: sys.exit(1)
     run('stop at first red',line('lint')+'\nexit 9\n'+line('tests'),1)
     if order.read_text()=='lint\n': passed+=1; print('ok   later checks never start')
     else: failed+=1; print('FAIL later checks ran')
+    # #1633: BSD sed dies with "illegal byte sequence" on bytes its locale cannot read; the log seds must not.
+    for loc in ('C','en_US.UTF-8'):
+        env['LC_ALL']=loc
+        run('step output with non-UTF-8 bytes passes under LC_ALL='+loc,"printf '\\377\\376 \\344\\270\\255\\n'; printf 'UNCHECKED: x y\\n'",0)
+    env.pop('LC_ALL')
+    run('a real failing step still fails with non-ASCII output',"printf '\\377\\n'; exit 3",1)
     # A killed check (exit 137) still blocks, but says the code was not judged.
     run('kill signal check',line('before')+'\nkill -9 $$\n'+line('after'),1)
     receipt=comments.read_text(); result_line=[l for l in receipt.splitlines() if l.startswith('Result: ')][-1]

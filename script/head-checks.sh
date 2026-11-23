@@ -12,6 +12,8 @@
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Step output is arbitrary bytes. BSD sed aborts with "illegal byte sequence" when the locale cannot read them (#1633).
+logsed() { LC_ALL=C sed "$@"; }
 print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 # -h/--help must print usage before the preflight, which fetches origin/main.
 for arg in "$@"; do
@@ -135,12 +137,13 @@ finish() {
   {
     printf 'Checks: %s head=%s%s%s\n\n' "$result" "$sha" "${main_sha:+ main=$main_sha}" "${train_heads:+ train-heads=$train_heads}"
     if [ -n "$changed" ]; then
-      unchecked_paths=$(sed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
+      unchecked_paths=$(logsed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
       [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
     fi
     cat "$log"
   } | python3 -c '
 import os,re,sys
+sys.stdin.reconfigure(encoding="utf-8",errors="replace")
 text=sys.stdin.read()
 for key,value in os.environ.items():
     if len(value)>3 and re.search(r"SECRET|TOKEN|PASSWORD|DATABASE_URL|API_KEY",key,re.I): text=text.replace(value,"[redacted]")
@@ -462,7 +465,7 @@ fi
 test_summary() {
   python3 - "$1" <<'PYTEST'
 import re, sys
-text = open(sys.argv[1]).read()
+text = open(sys.argv[1], errors="replace").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
 if re.search(r"^bun test v", text, re.M):
     executed = sum(int(n) for n in re.findall(r"^\s*(\d+) (?:pass|fail)\s*$", text, re.M))
@@ -476,7 +479,7 @@ PYTEST
 load_errors_only() {
   python3 - "$1" <<'PYLOAD'
 import re, sys
-text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1]).read())
+text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1], errors="replace").read())
 if not re.search(r"^bun test v", text, re.M): sys.exit(1)
 fails = sum(int(n) for n in re.findall(r"^\s*(\d+) fail\s*$", text, re.M))
 errors = sum(int(n) for n in re.findall(r"^\s*(\d+) errors?\s*$", text, re.M))
@@ -516,7 +519,7 @@ db_step_runner() {
 # db_wait_receipt <step output>: the remote heavy-gate's wait for admission, so the audit can split wait from run time.
 db_wait_receipt() {
   local waited
-  waited=$(sed -n 's/^heavy-gate: waited \([0-9]*\)s for admission$/\1/p; s/^heavy-gate: wait cap of \([0-9.]*\)s reached.*/\1/p' "$1" | tail -1)
+  waited=$(logsed -n 's/^heavy-gate: waited \([0-9]*\)s for admission$/\1/p; s/^heavy-gate: wait cap of \([0-9.]*\)s reached.*/\1/p' "$1" | tail -1)
   [ -z "$waited" ] || printf 'Remote wait: %ss\n' "$waited"
 }
 # db_lock_acquire: one run at a time may use the remote database-step checkout, like the local _checks lock.
@@ -608,8 +611,8 @@ while IFS= read -r command || [ -n "$command" ]; do
     stop_watcher
     step_pid=""
     if [ "$step_status" -eq 0 ]; then
-      sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
-      sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+      logsed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+      logsed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
       [ ${#db_prefix[@]} -eq 0 ] || db_wait_receipt "$output" >> "$log"
@@ -620,15 +623,15 @@ while IFS= read -r command || [ -n "$command" ]; do
       break
     else
       status=$step_status
-      sed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
-      sed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
+      logsed -n '/^UNCHECKED: /p' "$output" >> "$changed.unchecked"
+      logsed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
       if [ ${#db_prefix[@]} -gt 0 ]; then
         db_wait_receipt "$output" >> "$log"
         # Exit 75 is the remote heavy-gate giving up on admission: the step never ran.
         if [ "$status" -eq 75 ] && grep -q '^heavy-gate: wait cap' "$output"; then
-          gate_reason=$(sed -n 's/^heavy-gate: wait cap of [0-9.]*s reached, not admitted: //p' "$output" | tail -1)
+          gate_reason=$(logsed -n 's/^heavy-gate: wait cap of [0-9.]*s reached, not admitted: //p' "$output" | tail -1)
           check_result=INFRA
           printf 'Result: host busy; the database host heavy-gate did not admit the step within its wait cap (%s), so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: %ss\n' "${gate_reason:-no reason reported}" "$((SECONDS - started))" >> "$log"
           rm -f "$output"
