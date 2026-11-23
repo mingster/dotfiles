@@ -139,5 +139,32 @@ out=$(bash "$here/post-verdict.sh" --help 2>&1); code=$?
 [ "$code" -eq 0 ] && [[ "$out" == *--corrects* && "$out" == *--supersedes* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")" = "$before" ] \
   && ok "--help prints the Usage block with the aliases and posts nothing" || bad "--help: $code $out"
 
+# Issue 1679: --ship runs ship.sh after a PASS at the current head, no bypass flags. Fake ship.sh and a fake dotfiles checkout.
+ship_log="$MF_DIR/ship.log"; : > "$ship_log"
+fake_ship="$MF_DIR/fake-ship.sh"
+printf '#!/usr/bin/env bash\necho "ship $*" >> "%s"\n[ -z "${FAKE_SHIP_REFUSE:-}" ] || { echo "ship: refused: $FAKE_SHIP_REFUSE" >&2; exit 1; }\n' "$ship_log" > "$fake_ship"
+df_origin="$MF_DIR/df-origin.git"; df="$MF_DIR/df"
+git init -q --bare "$df_origin"; git clone -q "$df_origin" "$df" 2>/dev/null
+mkdir -p "$df/script"; printf '#!/usr/bin/env bash\necho fleet-pull >> "%s"\n' "$ship_log" > "$df/script/fleet-pull.sh"
+git -C "$df" add -A >/dev/null; git -C "$df" -c user.email=t@t -c user.name=t commit -qm init
+git -C "$df" push -q origin HEAD:main 2>/dev/null; git -C "$df" branch -u origin/main >/dev/null 2>&1
+export POST_VERDICT_SHIP_SH="$fake_ship" POST_VERDICT_DOTFILES="$df"
+h=$(new_pr 60)
+out=$(verdict 60 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship); code=$?
+[ "$code" -eq 0 ] && grep -qx 'ship --repo example/repo --pr 60' "$ship_log" && ! grep -q fleet-pull "$ship_log" && ok "--ship: PASS at head runs ship.sh with only --repo and --pr, no fleet-pull for another repo" || bad "--ship PASS: $out / $(cat "$ship_log")"
+: > "$ship_log"; h=$(new_pr 61)
+out=$(FAKE_SHIP_REFUSE="Checks on main is red" verdict 61 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *"SHIP REFUSED"*"Checks on main is red"* ]] && [ "$(grep -c '^ship ' "$ship_log")" = 1 ] && ok "--ship: a refusal is printed with ship.sh's reason, once, verdict stays posted" || bad "--ship refusal: $code $out"
+: > "$ship_log"; h=$(new_pr 62); old=$(printf '%040d' 2)
+out=$(verdict 62 --result PASS --head "$old" --verifier ctx_verify --author ctx_author --ship); code=$?
+[ "$code" -ne 0 ] && [ ! -s "$ship_log" ] && ok "--ship: PASS at an old head posts nothing and ships nothing" || bad "--ship old head: $code $out"
+out=$(verdict 62 --result FAIL --head "$h" --verifier ctx_verify --author ctx_author --command c --notes "- [ ] x" --ship); code=$?
+[ "$code" -ne 0 ] && [ ! -s "$ship_log" ] && ok "--ship: a FAIL Verdict never ships" || bad "--ship FAIL: $code $out"
+# dotfiles repo: pull and fleet-pull follow a successful ship
+: > "$ship_log"; h=$(new_pr 63)
+out=$(bash "$here/post-verdict.sh" --repo example/dotfiles --pr 63 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship 2>&1); code=$?
+grep -qx 'fleet-pull' "$ship_log" && ok "--ship: dotfiles runs git pull then fleet-pull.sh" || bad "--ship dotfiles ($code): $out / $(cat "$ship_log")"
+unset POST_VERDICT_SHIP_SH POST_VERDICT_DOTFILES
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

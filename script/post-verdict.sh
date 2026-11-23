@@ -8,6 +8,9 @@
 # ship.sh needs them and refuses a verifier whose agent and model match the builder's.
 # --author other than ctx_* or unknown must be listed in coordinator_ids of script/ship.local.json.
 # The PR's current head must equal --head, or it refuses (stale head) and posts nothing.
+# --ship (PASS or PASS+NOTES only) runs ship.sh --repo --pr right after the Verdict is posted at the head, with no bypass flag.
+# For a repo named dotfiles it then runs git pull in ~/dotfiles and script/fleet-pull.sh. A refusal prints
+# "post-verdict: SHIP REFUSED: <ship.sh's reason>" and exits 0 (the Verdict stays posted): put that line in worker_done.
 # --print shows the comment body and posts nothing. The comment is always new: an edit never counts.
 # A FAIL needs --command and at least one "- [ ]" fix line in --notes. PASS does not.
 set -euo pipefail
@@ -16,7 +19,7 @@ die() { echo "post-verdict: $*" >&2; exit 1; }
 print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 
-repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" agent="" model="" print_only=false
+repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" agent="" model="" print_only=false ship=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|--pr|--result|--head|--verifier|--author|--command|--notes|--agent|--model|--correction|--corrects|--supersedes)
@@ -28,6 +31,7 @@ while [ $# -gt 0 ]; do
       esac
       shift 2 ;;
     --print) print_only=true; shift ;;
+    --ship) ship=true; shift ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -51,6 +55,7 @@ if [ "$author" != unknown ] && [[ "$author" != ctx_* ]]; then
   jq -e --arg a "$author" '(.coordinator_ids // []) | index($a) != null' <<<"$cfg" >/dev/null \
     || die "--author $author is not a dispatch id, unknown, or a configured coordinator id (set coordinator_ids in script/ship.local.json)"
 fi
+[ "$ship" = false ] || [[ "$result" =~ ^PASS ]] || die "--ship needs a PASS or PASS+NOTES result"
 [ "$verifier" != "$author" ] || die "the author cannot supply the verifier verdict"
 [ -z "$agent$model" ] || { [[ "$agent" =~ ^[A-Za-z0-9._-]+$ ]] && [[ "$model" =~ ^[A-Za-z0-9._:-]+$ ]]; } \
   || die "--agent and --model go together and may hold only letters, digits and . _ : -"
@@ -79,3 +84,18 @@ printf '%s\n' "$body" | gh pr comment "$pr" --repo "$repo" --body-file - >/dev/n
 status_state=failure; [ "$result" = FAIL ] || status_state=success
 gh api -X POST "repos/$repo/statuses/$head" -f state="$status_state" -f context=review -f description="Verdict: $result ($verifier)" >/dev/null
 echo "post-verdict: posted $result for PR $pr at ${head:0:12}"
+[ "$ship" = true ] || exit 0
+# Ship right after a PASS at the head. ship.sh's own gates decide; no bypass flag is ever passed.
+now_head=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid) || die "cannot re-read the PR head before shipping"
+[ "$now_head" = "$head" ] || { echo "post-verdict: SHIP SKIPPED: PR moved to $now_head after the Verdict"; exit 0; }
+ship_sh=${POST_VERDICT_SHIP_SH:-$(cd "$(dirname "$0")" && pwd)/ship.sh}
+if ship_out=$(bash "$ship_sh" --repo "$repo" --pr "$pr" 2>&1); then
+  echo "post-verdict: shipped PR $pr"
+  if [ "${repo##*/}" = dotfiles ]; then
+    df=${POST_VERDICT_DOTFILES:-$HOME/dotfiles}
+    git -C "$df" pull --ff-only >/dev/null 2>&1 || echo "post-verdict: git pull in $df failed, run it by hand"
+    bash "$df/script/fleet-pull.sh" >/dev/null 2>&1 || echo "post-verdict: fleet-pull.sh failed, run it by hand"
+  fi
+else
+  echo "post-verdict: SHIP REFUSED: $(tail -n 1 <<<"$ship_out")"
+fi

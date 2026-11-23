@@ -1,0 +1,1 @@
+fleet-watch files a P1 `main red: <run id>` issue once per failed main Checks run and starts its fixer ahead of the queue; `post-verdict.sh --ship` ships right after a PASS and the fleet-watch fallback ships a 15 minute old PASS once per head (#1677 #1679).
