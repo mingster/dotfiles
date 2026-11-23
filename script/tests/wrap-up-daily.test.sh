@@ -196,5 +196,12 @@ check 'bun still runs after a quick brew with little budget left' tool_called 'b
 FAKE_BREW_RC=3 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
 check 'a second failing round makes the streak two' test "$(cat "$tmp/state/wrap-up-daily.failures" 2>/dev/null)" = 2
 
+# A cache cleaner that only runs out of time (exit 124) is not a failed round: the cache stays and the next day's run retries it (#1533).
+rm -f "$tmp/state/wrap-up-daily.failures"
+FAKE_BUN_RC=124 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'a cleaner timeout does not fail the round' bash -c 'tail -n1 "$1" | grep -Fq "round ok"' _ "$tmp/round.log"
+check 'a cleaner timeout leaves no failure streak' test ! -s "$tmp/state/wrap-up-daily.failures"
+check 'a cleaner timeout is named in the round line' bash -c 'tail -n1 "$1" | grep -Fq "bun pm cache rm timed out"' _ "$tmp/round.log"
+
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
