@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # heavy-gate median wait and wrap-up round freshness; no live Orca.
 set -euo pipefail
 # The heavy-gate lock lives under $HOME/.cache/heavy-gate. A temp HOME keeps this test off the host's real lock (#1414).
