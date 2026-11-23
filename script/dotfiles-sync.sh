@@ -5,7 +5,8 @@
 # Usage: dotfiles-sync.sh (takes no arguments: -h/--help print usage, anything else exits 2, #1581)
 if [ $# -gt 0 ]; then
   echo "Usage: dotfiles-sync.sh (takes no arguments)" >&2
-  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
 fi
 bash "$(cd "$(dirname "$0")" && pwd)/session-sync.sh" --dotfiles-only
 exit 0

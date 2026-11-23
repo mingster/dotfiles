@@ -9,6 +9,7 @@
 set -euo pipefail
 
 usage() { echo "Usage: fleet-watch-loop.sh [--status | --stop]" >&2; }
+if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ -z "$1" ]; }; then usage; exit 2; fi
 case "${1:-}" in
   -h | --help) usage; exit 0 ;;
   "" | --status | --stop) ;;

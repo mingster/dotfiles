@@ -7,7 +7,8 @@ set -euo pipefail
 # Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
 if [ $# -gt 0 ]; then
   echo "Usage: shellcheck-dotfiles.sh (takes no arguments)" >&2
-  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
 fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"

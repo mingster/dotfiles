@@ -46,6 +46,37 @@ for name in fleet-watch-loop dotfiles-sync install_asdf install_aws_cli install_
   done
 done
 
+# Extra or empty arguments never count as help or a valid flag: usage, exit 2, nothing ran.
+for name in fleet-watch-loop dotfiles-sync install_asdf install_aws_cli install_claude install_gcloud \
+  install_java_dev install_vscode_extensions install_zed shellcheck-dotfiles; do
+  for multi in "-h --stp" "--help --bogus" "--stp -h" "EMPTY" "EMPTY --stp"; do
+    n=$((n + 1))
+    h="$tmp/home-$n"
+    mkdir -p "$h"
+    : >"$tmp/calls"
+    script="$root/script/$name.sh"
+    [ "$name" = dotfiles-sync ] && script="$tmp/sync/dotfiles-sync.sh"
+    args=()
+    for w in $multi; do [ "$w" = EMPTY ] && args+=("") || args+=("$w"); done
+    out=$(HOME="$h" PATH="$tmp/bin:$PATH" OSTYPE=linux-gnu PYTHON="$tmp/bin/python-stub" \
+      FLEET_WATCH_CONFIG=c FLEET_WATCH_STATE=s FLEET_WATCH_LOOP_ONCE=1 FLEET_WATCH_LOOP_DIR="$tmp/loop-$n" \
+      bash "$script" "${args[@]}" 2>&1 </dev/null)
+    rc=$?
+    [ "$rc" -eq 2 ] || fail "$name [$multi] exited $rc, want 2: $out"
+    [[ "$out" == *sage:* ]] || fail "$name [$multi] printed no usage: $out"
+    [ ! -s "$tmp/calls" ] || fail "$name [$multi] ran: $(tr '\n' ' ' <"$tmp/calls")"
+    [ ! -e "$tmp/loop-$n" ] || fail "$name [$multi] touched the loop dir"
+    [ -z "$(find "$h" -mindepth 1 | head -1)" ] || fail "$name [$multi] wrote under HOME"
+    pass=$((pass + 1))
+  done
+done
+# fleet-watch-loop.sh: a valid flag followed by anything is still refused.
+for multi in "--status --stp" "--stop --stp"; do
+  # shellcheck disable=SC2086
+  FLEET_WATCH_LOOP_DIR="$tmp/loop-x" bash "$root/script/fleet-watch-loop.sh" $multi >/dev/null 2>&1 </dev/null
+  [ $? -eq 2 ] || fail "fleet-watch-loop.sh [$multi] did not exit 2"
+done
+
 # No argument still does the job.
 : >"$tmp/calls"
 HOME="$tmp/h0" FLEET_WATCH_CONFIG=c FLEET_WATCH_STATE=s FLEET_WATCH_LOOP_ONCE=1 FLEET_WATCH_LOOP_DIR="$tmp/loop-0" \
