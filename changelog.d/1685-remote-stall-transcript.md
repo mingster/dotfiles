@@ -1,0 +1,1 @@
+- Fleet watch no longer flags an active remote worker as stalled: it reads the worker's transcript with `worker-read --environment` and flags only a worker silent for the stall window. The notice names `~/dotfiles/.agents/skills/orca-team/worker-watch.sh`.

@@ -2816,8 +2816,53 @@ def _report_foreign_stall(state, dispatch_id, notices, log_bits):
     reported[dispatch_id] = True
     log_bits.append('stall_report=%s' % dispatch_id)
     notices.append(Urgent(
-        'stalled worker %s is not one fleet-watch started; coordinator recovers it with worker-watch.sh'
-        % dispatch_id))
+        'stalled worker %s is not one fleet-watch started; coordinator recovers it with '
+        '~/dotfiles/.agents/skills/orca-team/worker-watch.sh' % dispatch_id))
+
+
+REMOTE_READ_PAGE = 100
+REMOTE_READ_MAX_PAGES = 20
+_ACTIVITY_BLOCK_TYPES = ('tool-call', 'tool-result')
+
+
+def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit):
+    """'active', 'silent' or 'unknown' for a remote dispatch, from the newest tool activity in its transcript.
+
+    worker-read pages oldest first, so every page is read until the cursor ends. A transcript longer
+    than the page cap, or a failed read, is 'unknown' and the worker is neither flagged nor stopped.
+    """
+    newest = None
+    cursor = ''
+    for _ in range(REMOTE_READ_MAX_PAGES):
+        args = ['orchestration', 'worker-read', '--dispatch', dispatch_id, '--limit', str(REMOTE_READ_PAGE)]
+        if environment:
+            args += ['--environment', environment]
+        if cursor:
+            args += ['--cursor', cursor]
+        try:
+            result = rpc_call(*args)
+        except SEND_ERRORS:
+            return 'unknown'
+        transcript = result.get('transcript') if isinstance(result, dict) else None
+        transcript = transcript if isinstance(transcript, dict) else {}
+        messages = [m for m in (transcript.get('messages') or []) if isinstance(m, dict)]
+        for message in messages:
+            blocks = message.get('blocks') or []
+            if not any(isinstance(b, dict) and b.get('type') in _ACTIVITY_BLOCK_TYPES for b in blocks):
+                continue
+            stamp = _normalize_terminal_time_ms(message.get('timestamp'))
+            if stamp is not None and (newest is None or stamp > newest):
+                newest = stamp
+        cursor = transcript.get('nextCursor') or ''
+        if not cursor or not messages:
+            break
+    else:
+        return 'unknown'
+    if cursor:
+        return 'unknown'
+    if newest is None:
+        return 'silent'
+    return 'active' if now - newest < stall_limit else 'silent'
 
 
 def _stall_notice_reason(reason, code):
@@ -3156,12 +3201,15 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             last_s = _normalize_terminal_time_ms(term_times.get(term))
         is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
         if host_id != 'local':
-            if is_stalled:
-                log_bits.append('remote_stall_unknown=%s' % did)
-                if _own_row(state, did):
-                    restart_own(w, did)
-                else:
-                    _report_foreign_stall(state, did, notices, log_bits)
+            # The terminal clock is not visible for a remote worker, so its transcript decides.
+            if is_stalled and not (state.get('stall_reported') or {}).get(did):
+                activity = remote_worker_activity(rpc_call, did, remote_environment(w), now, stall_limit)
+                log_bits.append('remote_stall_check=%s:%s' % (did, activity))
+                if activity == 'silent':
+                    if _own_row(state, did):
+                        restart_own(w, did)
+                    else:
+                        _report_foreign_stall(state, did, notices, log_bits)
             continue
         if term not in local_handles:
             continue
