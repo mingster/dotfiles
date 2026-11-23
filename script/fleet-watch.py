@@ -3622,18 +3622,33 @@ def _rework_comment_text(comment):
 
 
 def checks_failing_step(body):
-    """(step name, last 40 output lines) of the first failing step in a head-checks receipt, or None."""
+    """(step name, last 40 output lines) of the failing step in a head-checks receipt, or None.
+
+    A retried step (``retrying once``) is not the failure. A receipt cut to fit its cap lists the
+    failing Result lines before any Command line; the failing step is then the last Command."""
     lines = (body or '').splitlines()
+
+    def failing(line):
+        return (line.startswith('Result: ') and not line.startswith('Result: exit 0')
+                and 'retrying once' not in line)
+
+    def tail(start, stop):
+        kept = [l for l in lines[start:stop] if l.strip() and not l.startswith(('Result: ', 'Duration: ', 'Total: '))]
+        return kept[-REWORK_STEP_TAIL_LINES:]
+
     command = ''
     start = 0
     for idx, line in enumerate(lines):
         if line.startswith('Command: '):
             command, start = line[len('Command: '):].strip(), idx + 1
-        elif line.startswith('Result: ') and not line.startswith('Result: exit 0'):
-            if not command:
+        elif failing(line):
+            if command:
+                return command, '\n'.join(tail(start, idx) + [line])
+            commands = [i for i, l in enumerate(lines) if l.startswith('Command: ')]
+            if not commands:
                 return None
-            tail = [l for l in lines[start:idx] if l.strip()][-REWORK_STEP_TAIL_LINES:]
-            return command, '\n'.join(tail + [line])
+            last = commands[-1]
+            return lines[last][len('Command: '):].strip(), '\n'.join(tail(last + 1, len(lines)) + [line])
     return None
 
 

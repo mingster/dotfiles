@@ -278,6 +278,19 @@ class ReworkBriefKeepsFailure(unittest.TestCase):
         self.assertIn('noise 2999', text)
 
 
+    def test_cut_receipt_and_retried_step(self):
+        cut = ('Checks: FAIL head=%s\n\nResult: exit 1; remaining checks stopped\nDuration: 3s\n'
+               'Command: bash first.sh\nCommand: bash last-step.sh\nREAL ERROR LINE\n[... 9 lines omitted]\n'
+               'Total: 9s\n' % self.HEAD)
+        text = self.brief(cut)
+        self.assertIn('Failing step: bash last-step.sh', text)
+        self.assertIn('REAL ERROR LINE', text)
+        retried = ('Checks: FAIL head=%s\n\nCommand: tsc\nkilled\nResult: exit 137; retryable infra failure; '
+                   'retrying once when load drops\nDuration: 1s\nResult: exit 0\nDuration: 2s\n\n'
+                   'Command: bash real-fail.sh\nboom\nResult: exit 1; remaining checks stopped\n' % self.HEAD)
+        self.assertIn('Failing step: bash real-fail.sh', self.brief(retried))
+
+
 class IssueScanOrder(unittest.TestCase):
     def test_p0_before_p1_before_oldest(self):
         rows = [
