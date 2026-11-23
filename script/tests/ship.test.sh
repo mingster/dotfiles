@@ -670,6 +670,17 @@ red_main_case 19 feat-fix-main-test "Fixes main: 777" ship script/tests/post-ver
 red_main_case 20 feat-fix-unrelated "Fixes main: 777" refuse notes/unrelated.txt "Fixes main with unrelated files refuses" failure "touches neither the files nor the tests"
 red_main_case 21 feat-cancelled-main "" refuse script/post-verdict.sh "cancelled main says rerun or fix main first" cancelled "rerun or fix main first"
 
+# A second always-run guard in the selector (as #1601 adds) must not make an unrelated PR overlap main's tests (#1620).
+cat > "$MF_DIR/fake-selector" <<'SEL'
+#!/usr/bin/env bash
+shift # --list-only
+for p in "$@"; do [ "$p" = script/post-verdict.sh ] && echo "Selected: script/tests/post-verdict.test.sh"; done
+echo "Selected: script/tests/no-project-names.test.sh"
+echo "Selected: script/tests/script-docs-coverage.test.sh"
+SEL
+chmod +x "$MF_DIR/fake-selector"
+SHIP_SELECT_TESTS="$MF_DIR/fake-selector" red_main_case 23 feat-fix-unrelated-2 "Fixes main: 777" refuse notes/unrelated.txt "Fixes main with unrelated files refuses with two always-run guards" failure "touches neither the files nor the tests"
+
 # gh failing while reading main's Checks run refuses and merges nothing.
 mf_pr_add 22 feat-main-gh-fails "Body"
 h=$(jq -r .headRefOid "$MF_GH_DIR/pr-22.json")
