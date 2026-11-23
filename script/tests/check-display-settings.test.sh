@@ -31,6 +31,8 @@ out=$("$SCRIPT" "$TMP/empty.json"); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' 
 "$SCRIPT" "$TMP/missing.json" >/dev/null 2>&1; [ "$?" = 2 ] && ok "missing file exits 2" || bad "missing file"
 echo 'not json' > "$TMP/bad.json"
 "$SCRIPT" "$TMP/bad.json" >/dev/null 2>&1; [ "$?" = 2 ] && ok "unreadable file exits 2" || bad "unreadable file"
+: > "$TMP/zero.json"
+"$SCRIPT" "$TMP/zero.json" >/dev/null 2>&1; [ "$?" = 2 ] && ok "zero-byte file exits 2" || bad "zero-byte file"
 
 echo "pass=$pass fail=$fail"
 [ "$fail" = 0 ]

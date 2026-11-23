@@ -9,6 +9,8 @@ for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break 
 f=${1:-$HOME/.claude/settings.json}
 command -v jq >/dev/null || { echo 'check-display-settings requires jq' >&2; exit 2; }
 [ -f "$f" ] || { echo "no settings file: $f" >&2; exit 2; }
+# jq -e fails on empty input (zero bytes or whitespace only), so an empty file is unreadable, not clean.
+jq -e . "$f" >/dev/null 2>&1 || { echo "unreadable settings file: $f" >&2; exit 2; }
 out=$(jq -r '
   . as $s
   | {verbose: true, spinnerTipsEnabled: false, prefersReducedMotion: true, tui: "fullscreen"}
