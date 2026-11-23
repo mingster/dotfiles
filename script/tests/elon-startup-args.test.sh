@@ -3,6 +3,8 @@
 # both before any host contact or pull. fleet-pull.sh is a stub; HOME and AGENT_STATE_DIR are temp.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
+# shellcheck source=lib/asdf-pin.sh
+. "$root/script/tests/lib/asdf-pin.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 pass=0 fail=0
