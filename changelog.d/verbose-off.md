@@ -1,0 +1,1 @@
+- Fleet display setting `verbose` is now off (owner decision 2026-11-24); check-display-settings expects `verbose=false`.

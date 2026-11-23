@@ -334,5 +334,5 @@
   },
   "teammateMode": "auto",
   "timeFormat": "24-hour",
-  "verbose": true
+  "verbose": false
 }

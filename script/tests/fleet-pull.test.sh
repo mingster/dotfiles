@@ -352,8 +352,8 @@ git -C "$df_seed" push -q origin main
 local_home="$tmp/local-home"
 rem_home="$tmp/rem-home"
 mkdir -p "$local_home/.claude" "$rem_home/.claude"
-printf '{"keep_settings":true,"verbose":true,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen"}\n' >"$local_home/.claude/settings.json"
-printf '{"keep_settings":true,"verbose":true,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
+printf '{"keep_settings":true,"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen"}\n' >"$local_home/.claude/settings.json"
+printf '{"keep_settings":true,"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
 git clone -q "$df_bare" "$local_home/dotfiles"
 git clone -q "$df_bare" "$rem_home/dotfiles"
 advance_origin "$df_bare" "df-advance"
@@ -455,12 +455,12 @@ else
 fi
 
 # 1409: a host whose display keys drifted is named after the pull, and only the key is printed
-printf '{"env":{"TOKEN":"s3cret"},"verbose":false,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
+printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
 set +e
 out13=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec13=$?
 set -e
-if [ "$ec13" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(display key verbose: false in \.claude/settings.json\)$' <<<"$out13" \
+if [ "$ec13" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(display key verbose: true in \.claude/settings.json\)$' <<<"$out13" \
   && grep -q 'display key prefersReducedMotion: missing' <<<"$out13" && ! grep -q s3cret <<<"$out13"; then
   ok "fleet-pull names a host with drifted display keys without printing other settings values"
 else
@@ -468,7 +468,7 @@ else
 fi
 
 # 1416: a settings hook pointing at a removed dotfiles script is named after the pull, and only its path is printed
-printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/dotfiles/script/gone.sh"}]}]}}\n' >"$rem_home/.claude/settings.json"
+printf '{"env":{"TOKEN":"s3cret"},"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/dotfiles/script/gone.sh"}]}]}}\n' >"$rem_home/.claude/settings.json"
 set +e
 out11=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
 ec11=$?

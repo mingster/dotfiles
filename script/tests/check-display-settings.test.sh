@@ -13,14 +13,14 @@ bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
 "$SCRIPT" "$ROOT/.agents/claude/settings.json" >/dev/null && ok "tracked source has the four keys" || bad "tracked source drifted"
 
-echo '{"verbose":true,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","env":{"SECRET":"hunter2"}}' > "$TMP/clean.json"
+echo '{"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","env":{"SECRET":"hunter2"}}' > "$TMP/clean.json"
 out=$("$SCRIPT" "$TMP/clean.json"); rc=$?
 [ "$rc" = 0 ] && [ -z "$out" ] && ok "matching host exits 0" || bad "matching host (rc=$rc, out=$out)"
 
-echo '{"verbose":false,"spinnerTipsEnabled":false,"tui":"default","env":{"SECRET":"hunter2"}}' > "$TMP/drift.json"
+echo '{"verbose":true,"spinnerTipsEnabled":false,"tui":"default","env":{"SECRET":"hunter2"}}' > "$TMP/drift.json"
 out=$("$SCRIPT" "$TMP/drift.json"); rc=$?
 [ "$rc" = 1 ] && ok "drifted host exits 1" || bad "drifted host (rc=$rc)"
-want='display key verbose: false
+want='display key verbose: true
 display key prefersReducedMotion: missing
 display key tui: "default"'
 [ "$out" = "$want" ] && ok "names each drifted key" || bad "output: $out"
