@@ -670,6 +670,29 @@ red_main_case 19 feat-fix-main-test "Fixes main: 777" ship script/tests/post-ver
 red_main_case 20 feat-fix-unrelated "Fixes main: 777" refuse notes/unrelated.txt "Fixes main with unrelated files refuses" failure "touches neither the files nor the tests"
 red_main_case 21 feat-cancelled-main "" refuse script/post-verdict.sh "cancelled main says rerun or fix main first" cancelled "rerun or fix main first"
 
+# Several commits landed on main since the last green push run: the fix may touch any of them (#1670).
+range_case() { # <pr> <branch> <pr file> <expect> <label> [text]
+  local n=$1 b=$2 file=$3 expect=$4 label=$5 text=${6:-touches neither}
+  local base_sha mid_sha
+  base_sha=$(printf 'b%.0s' {1..40}); mid_sha=$(printf 'c%.0s' {1..40})
+  mf_pr_add "$n" "$b" "Body" "$file"
+  jq '.body += "\nFixes main: 777"' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"; set_checks "$n" "$green_checks"; post_verdict "$n" PASS "$h"
+  jq -n --arg s "$main_sha" '{databaseId:777,conclusion:"failure",url:"https://example.test/runs/777",headSha:$s}' > "$MF_GH_DIR/main-run.json"
+  jq -n --arg s "$base_sha" '{databaseId:700,conclusion:"success",url:"https://example.test/runs/700",headSha:$s}' > "$MF_GH_DIR/main-base.json"
+  printf 'notes/head-only.txt\n' > "$MF_GH_DIR/commit-$main_sha.txt"
+  printf 'script/range-earlier.sh\nnotes/head-only.txt\n' > "$MF_GH_DIR/commit-compare-$base_sha...$main_sha.txt"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  rm -f "$MF_GH_DIR/main-run.json" "$MF_GH_DIR/main-base.json"
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+range_case 24 feat-range-fix script/range-earlier.sh ship "fix touching an earlier commit of the red range ships"
+range_case 25 feat-range-unrelated notes/unrelated.txt refuse "fix touching nothing in the red range refuses"
+
 # A second always-run guard in the selector (as #1601 adds) must not make an unrelated PR overlap main's tests (#1620).
 cat > "$MF_DIR/fake-selector" <<'SEL'
 #!/usr/bin/env bash

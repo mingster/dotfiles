@@ -86,6 +86,7 @@ cmd="$1 ${2:-}"; shift 2 || true
       repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;;
       repos/*/pulls/*/commits) pr=${a#*/pulls/}; pr=${pr%%/*}; want_commits=1 ;;
       repos/*/commits/*) commit_sha=${a##*/} ;;
+      repos/*/compare/*) commit_sha=compare-${a##*/compare/} ;;
     esac; done ;;
     *)
       # A missing PR number means the PR of the current branch, as with the real gh.
@@ -127,7 +128,9 @@ case "$cmd" in
     jq -s --arg b "${base:-}" '[.[] | select(.state=="OPEN" and ($b=="" or .baseRefName==$b)) | {number}]' "$MF_GH_DIR"/pr-*.json ;;
   "run list") # latest Checks run on main: $MF_GH_DIR/main-run.json holds one run object, green when absent; main-run-fails makes gh error
     [ ! -f "$MF_GH_DIR/main-run-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
-    if [ -f "$MF_GH_DIR/main-run.json" ]; then jq -s '.' "$MF_GH_DIR/main-run.json"; else echo '[{"databaseId":1,"conclusion":"success","url":"https://example.test/runs/1"}]'; fi ;;
+    if [[ " ${all_args[*]} " == *" --status success "* ]]; then # the last green push run: main-base.json, none when absent
+      if [ -f "$MF_GH_DIR/main-base.json" ]; then jq -s '.' "$MF_GH_DIR/main-base.json"; else echo '[]'; fi
+    elif [ -f "$MF_GH_DIR/main-run.json" ]; then jq -s '.' "$MF_GH_DIR/main-run.json"; else echo '[{"databaseId":1,"conclusion":"success","url":"https://example.test/runs/1"}]'; fi ;;
   "pr diff") jq -r '.files[].path' "$file" ;;
   "repo view") # visibility: $MF_GH_DIR/visibility-<owner>__<name> holds PRIVATE, INTERNAL or PUBLIC (default); visibility-fails makes gh error
     [ ! -f "$MF_GH_DIR/visibility-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
@@ -145,7 +148,8 @@ case "$cmd" in
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
   api*) # a PR's commits come from .commits in its json (default none), as the pulls/N/commits endpoint prints them
     if [ -n "$want_commits" ]; then jq '.commits // []' "$file"; exit 0; fi
-    # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them
+    # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them;
+    # a compare range's files from commit-compare-<base>...<head>.txt
     if [ -n "$commit_sha" ]; then cat "$MF_GH_DIR/commit-$commit_sha.txt"
     elif [ -n "$pr" ] && [ -n "$jq_expr" ]; then jq -r ".files | $jq_expr" "$file"
     elif [ -n "$pr" ]; then jq '[.files[]]' "$file"

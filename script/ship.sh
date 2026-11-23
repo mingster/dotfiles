@@ -226,7 +226,7 @@ jq -e '[(.statusCheckRollup // [])[] | select((.isRequired // true) != false)
   || refuse "required checks are not all SUCCESS at head ${head:0:12}"
 
 # 2b. The latest finished push Checks run on main is SUCCESS, unless this PR names that run as the one it fixes
-# and touches what that run tested (a push to main only runs the tests for the files it changed).
+# and touches what that run tested, in any commit since the last green run (a push to main only runs the tests for the files it changed).
 main_run=$(gh run list --repo "$repo" --workflow Checks --branch main --event push --status completed --limit 1 \
   --json databaseId,conclusion,url,headSha) || refuse "cannot read the latest Checks run on main"
 main_run=$(jq -c '.[0] // empty' <<<"$main_run")
@@ -243,8 +243,18 @@ if [ -n "$main_run" ] && [ "$(jq -r .conclusion <<<"$main_run")" != success ]; t
     || refuse "latest Checks run on main is $main_conclusion: $main_run_url; $fix_hint, or put 'Fixes main: $main_run_id' on its own line in the PR body"
   main_sha=$(jq -r '.headSha // empty' <<<"$main_run")
   [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]] || refuse "Checks run $main_run_id on main has no valid head sha"
-  main_files=$(gh api "repos/$repo/commits/$main_sha" --jq '.files[].filename') \
-    || refuse "cannot read the files of main commit ${main_sha:0:12}"
+  # Every commit since the last green push run counts, not only the failed head: the break may sit in an earlier
+  # commit of that range (#1670). With no green run to start from, the head commit alone.
+  base_run=$(gh run list --repo "$repo" --workflow Checks --branch main --event push --status success --limit 1 \
+    --json headSha) || refuse "cannot read the last green Checks run on main"
+  base_sha=$(jq -r '.[0].headSha // empty' <<<"$base_run")
+  if [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] && [ "$base_sha" != "$main_sha" ]; then
+    main_files=$(gh api "repos/$repo/compare/$base_sha...$main_sha" --jq '.files[].filename') \
+      || refuse "cannot read the files of main commits ${base_sha:0:12}...${main_sha:0:12}"
+  else
+    main_files=$(gh api "repos/$repo/commits/$main_sha" --jq '.files[].filename') \
+      || refuse "cannot read the files of main commit ${main_sha:0:12}"
+  fi
   fix_files=$(gh api --paginate "repos/$repo/pulls/$pr/files" --jq '.[] | (.filename // .path)') \
     || refuse "cannot read PR $pr files"
   # Tests a file list selects, minus the always-run guards the selector adds for every PR (a path no test maps to
