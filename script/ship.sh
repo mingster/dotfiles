@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Ship one verified PR with squash merge and read-back confirmation (pstack Shipping run).
 # Usage: ship.sh --repo <owner/name> --pr <n> [--dry-run] [--environment ENV] [--mechanical | --verdict-from <owner/dotfiles#N>]
+#        -h and --help print this text.
 # Lanes: code and script PRs need a verifier Verdict: PASS whose agent and model differ from the builder's
 # (PR body line "Builder: agent=<a> model=<m>"). The same model family is refused unless the Verdict
 # comment is tagged same-family-different-model. The body also needs checked Acceptance and a
@@ -17,6 +18,8 @@
 # A pin must be an ancestor of dotfiles origin/main and must not move behind the base's pin.
 # After a dotfiles merge that touched the team template, template-sync-pr.sh opens the pin bump PRs (#1247).
 set -euo pipefail
+print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
 
 ship_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/dotfiles-fresh.sh

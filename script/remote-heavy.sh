@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Run a heavy job (Playwright or production build) for the current commit on a remote host.
-#
+# Usage:
 #   remote-heavy.sh --host <ssh host> --repo-dir <remote checkout> --dir <remote worktree>
 #                   [--sub <subdir>] [--weight N] [--memory-mb MIB] [--gate <remote heavy-gate.sh>] [--max-wait SECONDS]
 #                   [--fetch <worktree-relative path/glob> ... --into <local dir>] -- <command>
+#   -h and --help print this text.
 #
 # Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
 # detached in the remote worktree, reinstalls packages (with the project's postinstall) when the lockfile changed or node_modules is missing, and runs
@@ -18,6 +19,8 @@
 # in --into, so select unique artifact names when fetching from multiple directories.
 # The remote command does not inherit the caller's stdin: the remote shell's stdin is the bundle stream.
 set -euo pipefail
+print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
 
 # shellcheck disable=SC2016 # expanded on the remote host
 host="" repo_dir="" dir="" sub=. weight=1 memory="${HEAVY_GATE_MEMORY_MB:-}" gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh' max_wait=""

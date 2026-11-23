@@ -13,9 +13,12 @@
 # A non root caller may point SECRETS_GATE_CONF, SG_RSYNC and SG_TRUST_UID elsewhere (tests); under root they are
 # ignored. Under root the first thing that runs is a re-exec with an empty environment and a PATH of system
 # folders only (no user writable folder), so nothing the calling account sets can steer a command here.
+# Usage: secrets-gate.sh <command> [args]   (-h and --help print this text)
 if [ -z "${SG_CLEAN:-}" ] && [ "$(/usr/bin/id -u)" -eq 0 ]; then
   exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$0" "$@"
 fi
+print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
 set -u
 set -f # no globbing anywhere: a name with a star is a name
 
