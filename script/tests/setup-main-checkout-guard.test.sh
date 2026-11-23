@@ -47,7 +47,7 @@ mkdir -p "$tmp/bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/zed"; chmod +x "$tmp/bin/zed"
 ln -s "$main" "$home/dotfiles"
 mkdir -p "$main/ide/zed"; echo '{}' >"$main/ide/zed/settings.json"
-out=$(HOME="$home" DOTFILES_REAL_HOME="$home" DOTFILES="$home/dotfiles" PATH="$tmp/bin:$PATH" bash "$root/script/setup-zed.sh" 2>&1)
+out=$(env -u XDG_CONFIG_HOME HOME="$home" DOTFILES_REAL_HOME="$home" DOTFILES="$home/dotfiles" PATH="$tmp/bin:$PATH" bash "$root/script/setup-zed.sh" 2>&1)
 rc=$?
 if [ "$rc" -eq 0 ] && [ -L "$home/.config/zed/settings.json" ] && ! echo "$out" | grep -q refusing; then
   ok "main checkout passes the guard and links zed settings"
