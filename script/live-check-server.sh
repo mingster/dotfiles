@@ -75,25 +75,26 @@ poll_seconds="${LIVE_CHECK_POLL_SECONDS:-}"
 ready_seconds="${LIVE_CHECK_READY_SECONDS:-}"
 token="${LIVE_CHECK_TOKEN:-}"
 lease_seconds="${LIVE_CHECK_LEASE_SECONDS:-}"
+need_value() { echo "live-check-server: $1 needs a value" >&2; exit 2; }
 action=""
 cmd_args=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) repo_key="${2:-}"; shift 2 ;;
-    --config) config_file="${2:-}"; shift 2 ;;
-    --host) host="${2:-}"; shift 2 ;;
-    --dir) dir="${2:-}"; shift 2 ;;
-    --sub) sub="${2:-}"; shift 2 ;;
-    --port) port="${2:-}"; shift 2 ;;
-    --url) url="${2:-}"; shift 2 ;;
-    --start-cmd) start_cmd="${2:-}"; shift 2 ;;
-    --state-dir) state_dir="${2:-}"; shift 2 ;;
-    --wait-seconds) wait_seconds="${2:-}"; shift 2 ;;
-    --poll-seconds) poll_seconds="${2:-}"; shift 2 ;;
-    --ready-seconds) ready_seconds="${2:-}"; shift 2 ;;
-    --lease-seconds) lease_seconds="${2:-}"; shift 2 ;;
-    --token) token="${2:-}"; shift 2 ;;
+    --repo) [ $# -ge 2 ] || need_value "$1"; repo_key="${2:-}"; shift 2 ;;
+    --config) [ $# -ge 2 ] || need_value "$1"; config_file="${2:-}"; shift 2 ;;
+    --host) [ $# -ge 2 ] || need_value "$1"; host="${2:-}"; shift 2 ;;
+    --dir) [ $# -ge 2 ] || need_value "$1"; dir="${2:-}"; shift 2 ;;
+    --sub) [ $# -ge 2 ] || need_value "$1"; sub="${2:-}"; shift 2 ;;
+    --port) [ $# -ge 2 ] || need_value "$1"; port="${2:-}"; shift 2 ;;
+    --url) [ $# -ge 2 ] || need_value "$1"; url="${2:-}"; shift 2 ;;
+    --start-cmd) [ $# -ge 2 ] || need_value "$1"; start_cmd="${2:-}"; shift 2 ;;
+    --state-dir) [ $# -ge 2 ] || need_value "$1"; state_dir="${2:-}"; shift 2 ;;
+    --wait-seconds) [ $# -ge 2 ] || need_value "$1"; wait_seconds="${2:-}"; shift 2 ;;
+    --poll-seconds) [ $# -ge 2 ] || need_value "$1"; poll_seconds="${2:-}"; shift 2 ;;
+    --ready-seconds) [ $# -ge 2 ] || need_value "$1"; ready_seconds="${2:-}"; shift 2 ;;
+    --lease-seconds) [ $# -ge 2 ] || need_value "$1"; lease_seconds="${2:-}"; shift 2 ;;
+    --token) [ $# -ge 2 ] || need_value "$1"; token="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     acquire|release|status|stop)
       action="$1"

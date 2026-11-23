@@ -1,0 +1,1 @@
+scripts: `switch-login-shell-zsh.sh` refuses `--dotfiles` without a directory and unknown arguments (exit 2) and prints usage for `--help`; `head-checks.sh`, `coordinator-publication.sh`, `live-check-server.sh` and `doc-fact-check.sh` print `<flag> needs a value` and exit 2 when a flag has no value (#1607 #1608).

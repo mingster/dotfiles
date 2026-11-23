@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 # A PR that changes script/ or templates/ must change a doc too, or say why not.
-# Usage: check-docs-updated.sh [--body-file F | --body TEXT] (--base REF [--head REF] | --files-from F | <path>...)
+# Usage: check-docs-updated.sh [-h | --help] [--body-file F | --body TEXT] (--base REF [--head REF] | --files-from F | <path>...)
 # A doc is anything under docs/, README.md, RELEASE-NOTES.md, a template .md, or a .md in the same
 # directory as a changed file. changelog.d/ and CHANGELOG.md never count. The PR body can opt out with
 # a line `Docs: none, <reason>`. With no body given, the body comes from the open PR at HEAD_CHECK_SHA
 # (set by head-checks.sh) or at --head, read with gh. Prints each problem and exits 1 when there is one.
 set -euo pipefail
 
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 usage() { echo "check-docs-updated: $*" >&2; exit 2; }
 
 base="" head="" files_from="" body="" have_body=0
 files=()
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help) print_usage; exit 0 ;;
     --base) base=${2:?--base needs a ref}; shift 2 ;;
     --head) head=${2:?--head needs a ref}; shift 2 ;;
     --files-from) files_from=${2:?--files-from needs a file}; shift 2 ;;
