@@ -67,5 +67,27 @@ check "worktree refusal names the main checkout" 'echo "$out" | grep -q "switch-
 check "worktree refusal creates no links" '[ -z "$(ls -A "$REAL")" ]'
 check "worktree refusal runs no chsh" '! grep -q "^chsh " "$TMP/log"'
 
+# #1607: argument errors and --help change nothing.
+: >"$TMP/log"
+mkdir -p "$TMP/home2"
+arg_run() {
+  rc=0
+  out="$(HOME="$TMP/home2" SHELL=/usr/bin/fish PATH="$TMP/bin:$PATH" STUB_LOG="$TMP/log" SHELLS_FILE="$TMP/shells" \
+    bash "$SCRIPT" "$@" 2>"$TMP/err")" || rc=$?
+}
+arg_run --dotfiles
+check "--dotfiles without a directory exits 2" '[ "$rc" -eq 2 ]'
+check "--dotfiles without a directory names the flag" 'grep -qx "switch-login-shell-zsh: --dotfiles needs a directory" "$TMP/err"'
+arg_run --help
+check "--help exits 0" '[ "$rc" -eq 0 ]'
+check "--help prints usage" 'echo "$out$(cat "$TMP/err")" | grep -q "Usage: switch-login-shell-zsh.sh"'
+arg_run -h
+check "-h exits 0" '[ "$rc" -eq 0 ]'
+arg_run --bogus
+check "unknown flag exits 2" '[ "$rc" -eq 2 ]'
+check "unknown flag prints usage on stderr" 'grep -q "Usage: switch-login-shell-zsh.sh" "$TMP/err"'
+check "argument errors leave HOME untouched" '[ -z "$(ls -A "$TMP/home2")" ]'
+check "argument errors run no chsh or zsh" '[ ! -s "$TMP/log" ]'
+
 echo "pass=$PASS fail=$FAIL"
 [ "$FAIL" -eq 0 ]

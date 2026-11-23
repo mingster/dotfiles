@@ -50,6 +50,7 @@ export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
+need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
 # lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
 # 5 seconds, the gap between mkdir and the pid write); the live pid is left in lock_holder. A stale lock is
 # renamed aside first, so of two takers only the rename winner proceeds.
@@ -76,12 +77,12 @@ lock_acquire() {
 }
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) repo="${2:-}"; shift 2 ;;
-    --pr) pr="${2:-}"; shift 2 ;;
-    --ref) ref="${2:-}"; shift 2 ;;
-    --base) explicit_base="${2:-}"; shift 2 ;;
-    --train-heads) train_heads="${2:-}"; shift 2 ;;
-    --config) override="${2:-}"; shift 2 ;;
+    --repo) [ $# -ge 2 ] || need_value "$1"; repo="${2:-}"; shift 2 ;;
+    --pr) [ $# -ge 2 ] || need_value "$1"; pr="${2:-}"; shift 2 ;;
+    --ref) [ $# -ge 2 ] || need_value "$1"; ref="${2:-}"; shift 2 ;;
+    --base) [ $# -ge 2 ] || need_value "$1"; explicit_base="${2:-}"; shift 2 ;;
+    --train-heads) [ $# -ge 2 ] || need_value "$1"; train_heads="${2:-}"; shift 2 ;;
+    --config) [ $# -ge 2 ] || need_value "$1"; override="${2:-}"; shift 2 ;;
     *) usage "unknown argument $1" ;;
   esac
 done
