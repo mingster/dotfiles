@@ -135,7 +135,7 @@ Once a card has been Done for 30 minutes, `script/board-clean.py` removes its wo
 
 | Tool | Role in coordinator and fleet operations |
 | --- | --- |
-| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. |
+| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. Takes only `--no-pull`; `-h` and `--help` print the usage, any other argument exits 2 before any host contact. |
 | `script/new-coordinator.sh` | Sets up a new Mac as the coordinator from `agent-state` (`--dry-run` first). |
 | `script/take-over-coordinator.sh` | Manual coordinator failover and handback using `coordinator.conf` (`--yes`). |
 | `script/orca-reply.sh` | Replies to a worker's orchestration message and nudges its terminal so an idle session wakes up. |
