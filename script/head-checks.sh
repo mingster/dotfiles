@@ -12,6 +12,11 @@
 # for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+# -h/--help must print usage before the preflight, which fetches origin/main.
+for arg in "$@"; do
+  case "$arg" in -h|--help) print_usage; exit 0 ;; esac
+done
 # shellcheck source=lib/dotfiles-fresh.sh
 . "$script_dir/lib/dotfiles-fresh.sh"
 is_tsc_step() {
@@ -57,7 +62,6 @@ export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
-print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
 # lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
 # 5 seconds, the gap between mkdir and the pid write); the live pid is left in lock_holder. A stale lock is
