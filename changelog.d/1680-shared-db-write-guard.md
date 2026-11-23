@@ -1,0 +1,3 @@
+- New hook `script/check-shared-db-write.py` (PreToolUse on Bash) refuses DDL and migrations aimed at a shared dev database, unless the command is `bin/bootstrap-regression-shard.ts` or the role is release-manager. Verifier temp databases stay allowed. The database names come from the private `~/.config/dotfiles/shared-db.pattern`, not from the script (#1680).
+- checks-local.test.sh expects all three isolated heavy-gate tests tagged for macOS, as the skip list now has (#1680).
+- template-doc-claims.test.sh expects the display key `verbose` off, as the tracked settings now have (#1680).
