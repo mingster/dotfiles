@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # -h and --help print usage on stdout and exit 0 before any other state is read, for the scripts of #1611 to #1614.
 # A stub gh that records every call proves no gh call happens. HOME and cwd are throwaways.
 set -uo pipefail
