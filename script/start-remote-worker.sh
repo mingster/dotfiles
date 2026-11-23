@@ -11,17 +11,17 @@ environment='' agent='' worktree='' model=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --on|--agent|--worktree|--model)
-      [ $# -ge 2 ] || exit 2
+      [ $# -ge 2 ] || { echo "start-remote-worker: $1 needs a value" >&2; exit 2; }
       case "$1" in
-        --on) [ -z "$environment" ] || exit 2; environment=$2 ;;
-        --agent) [ -z "$agent" ] || exit 2; agent=$2 ;;
-        --worktree) [ -z "$worktree" ] || exit 2; worktree=$2 ;;
+        --on) [ -z "$environment" ] || { echo 'start-remote-worker: --on given twice' >&2; exit 2; }; environment=$2 ;;
+        --agent) [ -z "$agent" ] || { echo 'start-remote-worker: --agent given twice' >&2; exit 2; }; agent=$2 ;;
+        --worktree) [ -z "$worktree" ] || { echo 'start-remote-worker: --worktree given twice' >&2; exit 2; }; worktree=$2 ;;
         --model) model=$2 ;;
       esac; shift 2 ;;
     --terminal|--environment|--pairing-code)
       echo "start-remote-worker: refused alternate placement or existing terminal: $1" >&2; exit 2 ;;
     --json) shift ;;
-    *) [ $# -ge 2 ] || exit 2; shift 2 ;;
+    *) [ $# -ge 2 ] || { echo "start-remote-worker: $1 needs a value" >&2; exit 2; }; shift 2 ;;
   esac
 done
 [ -n "$environment" ] && [ -n "$agent" ] || {

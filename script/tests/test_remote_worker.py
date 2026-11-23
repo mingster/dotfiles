@@ -73,6 +73,32 @@ else: sys.exit(99)
                                '--worktree', worktree, '--spec', 'Fixture task'],
                               env=self.env, capture_output=True, text=True)
 
+    def run_args(self, *argv):
+        return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'), *argv],
+                              env=self.env, capture_output=True, text=True)
+
+    def test_malformed_command_lines_print_a_reason_and_exit_2(self):
+        cases = [
+            (['--on'], 'start-remote-worker: --on needs a value'),
+            (['--agent'], 'start-remote-worker: --agent needs a value'),
+            (['--bogus'], 'start-remote-worker: --bogus needs a value'),
+            (['--on', 'x', '--on', 'y'], 'start-remote-worker: --on given twice'),
+            (['--agent', 'claude', '--agent', 'grok', '--on', 'x'], 'start-remote-worker: --agent given twice'),
+            (['--worktree', 'a', '--worktree', 'b'], 'start-remote-worker: --worktree given twice'),
+        ]
+        for argv, text in cases:
+            with self.subTest(argv=argv):
+                result = self.run_args(*argv)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(text, result.stderr)
+
+    def test_unknown_flag_with_a_value_still_passes_through(self):
+        (self.bin / 'agy').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'agy').chmod(0o700)
+        result = self.run_args('--on', 'fixture-environment', '--agent', 'antigravity',
+                               '--worktree', 'path:/srv/fixture', '--spec', 'x')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_usage_gate_refusal_stops_before_any_orca_call(self):
         self.gate.write_text('import sys\nsys.exit(3)\n')
         result = self.launch()

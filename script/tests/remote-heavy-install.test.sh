@@ -39,5 +39,33 @@ printf 'lock v3\n' > "$tmp/lane/bun.lock"
 INSTALL_EXIT=1 run_heavy; rc=$?
 if [ "$rc" -ne 0 ] && ! grep -q 'lock v3' "$tmp/lane/.remote-heavy-lock-sha" 2>/dev/null; then check "a failed install exits non zero and leaves no stamp for the new lockfile" ok; else check "a failed install exits non zero and leaves no stamp for the new lockfile" bad; fi
 
+
+# Two runs on one host never share an install log (#1599). Lane b fails after lane a has started writing.
+export TMPDIR="$tmp/tmpd"; mkdir -p "$TMPDIR" "$tmp/lane-a" "$tmp/lane-b"
+printf 'lock\n' > "$tmp/lane-a/bun.lock"; printf 'lock\n' > "$tmp/lane-b/bun.lock"
+cat > "$tmp/bin/bun" <<'STUB'
+#!/bin/sh
+lane=$(basename "$PWD")
+case "$lane" in
+  lane-b)
+    for i in $(seq 1 3); do echo "LOG-B-$i"; done; : > "$SYNC/b-wrote"
+    for i in $(seq 1 100); do [ -f "$SYNC/a-wrote" ] && break; sleep 0.1; done
+    exit 1 ;;
+  lane-a)
+    for i in $(seq 1 100); do [ -f "$SYNC/b-wrote" ] && break; sleep 0.1; done; echo "LOG-A-line"; : > "$SYNC/a-wrote"
+    for i in $(seq 1 100); do [ -f "$SYNC/b-done" ] && break; sleep 0.1; done
+    mkdir -p node_modules; exit 0 ;;
+esac
+STUB
+chmod +x "$tmp/bin/bun"
+export SYNC="$tmp/sync"; mkdir -p "$SYNC"
+heavy_lane() { PATH="$tmp/bin:$PATH" bash "$heavy" --host fixture --repo-dir checkout --dir "$tmp/$1" --gate "$tmp/gate" -- true >"$tmp/out-$1" 2>&1; echo $? > "$tmp/rc-$1"; }
+heavy_lane lane-a & pa=$!
+heavy_lane lane-b; : > "$SYNC/b-done"; wait "$pa"
+if [ "$(cat "$tmp/rc-lane-b")" != 0 ] && [ "$(cat "$tmp/rc-lane-a")" = 0 ]; then check "concurrent runs: the failing one exits non zero, the other succeeds" ok; else check "concurrent runs: the failing one exits non zero, the other succeeds" bad; fi
+if grep -q LOG-B-3 "$tmp/out-lane-b" && ! grep -q LOG-A "$tmp/out-lane-b"; then check "the failure tail shows only its own install output" ok; else check "the failure tail shows only its own install output" bad; fi
+if [ -z "$(ls -A "$TMPDIR")" ]; then check "no install log is left in the temp dir" ok; else check "no install log is left in the temp dir" bad; fi
+unset TMPDIR
+
 echo "remote-heavy-install: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+[ "$fail" -eq 0  ]

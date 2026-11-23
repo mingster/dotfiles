@@ -79,7 +79,8 @@ max_wait=${max_wait#m}
 memory=${memory#m} # the leading m keeps an empty value from vanishing in the ssh word list
 # The bundle on stdin carries HEAD, so no git transport shares stdout with the login shell.
 bundle=$(mktemp)
-trap 'rm -f "$bundle"' EXIT
+install_log=$(mktemp)
+trap 'rm -f "$bundle" "$install_log"' EXIT
 base64 -d > "$bundle"
 # The bundle holds only commits past main, so the remote needs main first; a full bundle does not.
 git -C "$repo_dir" fetch -q origin main 2>/dev/null || true
@@ -105,8 +106,8 @@ if [ -f bun.lock ]; then
   if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
     rm -f "$stamp"
     DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
-      bun install --frozen-lockfile >/tmp/remote-heavy-install.log 2>&1 \
-      || { tail -20 /tmp/remote-heavy-install.log >&2; exit 1; }
+      bun install --frozen-lockfile >"$install_log" 2>&1 \
+      || { tail -20 "$install_log" >&2; rm -f "$install_log"; exit 1; }
     echo "$lock_sum" > "$stamp"
   fi
 fi
