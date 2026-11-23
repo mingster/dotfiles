@@ -20,9 +20,12 @@ def pick(_role, avoid_family=None):
     return {'selected': {'provider': 'claude', 'model': 'opus'}}
 
 
-def run(issues, backlog, state=None, interval_hours=None, occupied=0, order=None, workers=None, now=NOW, notices_out=None):
+def run(issues, backlog, state=None, interval_hours=None, occupied=0, order=None, workers=None, now=NOW, notices_out=None,
+        go_live_date=None):
     starts = []
     config = scan_config('/work/app')
+    if go_live_date is not None:
+        config['go_live_date'] = go_live_date
     if order is not None:
         config['work_order'] = order
     if interval_hours is not None:
@@ -126,6 +129,63 @@ class TriageWorker(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('Setup: none', spec.read_text(encoding='utf-8'))
+
+
+class KeepTargetUntilGoLive(unittest.TestCase):
+    """work_order.keep_target_until_go_live holds the fleet at target_workers before go live (#1655)."""
+    KEEP = {'min_active': 3, 'target_workers': 8, 'keep_target_until_go_live': True}
+
+    def recent_state(self):
+        return {'issue_scan_backlog_sweep_at': NOW, 'issue_scan_triage_at': {scan_config('/w')['issue_scan']['repos'][0]: NOW - 60}}
+
+    def live(self, n):
+        return TriageWorker.live(self, n)
+
+    def test_switch_off_keeps_the_triage_interval(self):
+        order = dict(self.KEEP, keep_target_until_go_live=False)
+        triage, bits, _state = run([], backlog=3, state=self.recent_state(), order=order, workers=self.live(4),
+                                   go_live_date='2099-01-01')
+        self.assertEqual(triage, [])
+        self.assertIn('triage_skip_recent', bits)
+
+    def test_before_go_live_four_live_triages_without_waiting(self):
+        notices = []
+        triage, bits, _state = run([], backlog=3, state=self.recent_state(), order=self.KEEP, workers=self.live(4),
+                                   go_live_date='2099-01-01', notices_out=notices)
+        self.assertEqual(len(triage), 1, bits)
+        self.assertNotIn('work order: 4 active, grill backlog', notices)
+
+    def test_at_target_the_interval_holds(self):
+        triage, bits, _state = run([], backlog=3, state=self.recent_state(), order=self.KEEP, workers=self.live(8),
+                                   go_live_date='2099-01-01')
+        self.assertEqual(triage, [])
+        self.assertIn('triage_skip_recent', bits)
+
+    def test_on_or_after_go_live_the_switch_does_nothing(self):
+        for go_live in ('1970-01-02', '1970-01-01', 'soon', None):  # NOW is 1970-01-02 in Asia/Taipei
+            triage, bits, _state = run([], backlog=3, state=self.recent_state(), order=self.KEEP, workers=self.live(4),
+                                       go_live_date=go_live)
+            self.assertEqual(triage, [], go_live)
+            self.assertIn('triage_skip_recent', bits)
+
+    def test_host_cap_still_holds(self):
+        triage, bits, _state = run([], backlog=3, state=self.recent_state(), order=self.KEEP, workers=self.live(4),
+                                   go_live_date='2099-01-01', occupied=4)
+        self.assertEqual(triage, [])
+        self.assertIn('triage_skip_no_seat', bits)
+
+    def test_status_line_at_most_once_an_hour_and_only_after_a_start(self):
+        config = {'work_order': self.KEEP, 'go_live_date': '2099-01-01'}
+        state = {}
+        self.assertIsNone(fw.work_order_status_notice(config, state, NOW, self.live(4), 0))
+        self.assertEqual(fw.work_order_status_notice(config, state, NOW, self.live(4), 2),
+                         'work order: 4 of 8 live, started 2')
+        self.assertIsNone(fw.work_order_status_notice(config, state, NOW + 3599, self.live(5), 1))
+        self.assertEqual(fw.work_order_status_notice(config, state, NOW + 3600, self.live(5), 1),
+                         'work order: 5 of 8 live, started 1')
+        self.assertIsNone(fw.work_order_status_notice(config, {}, NOW, self.live(8), 1))
+        off = {'work_order': dict(self.KEEP, keep_target_until_go_live=False), 'go_live_date': '2099-01-01'}
+        self.assertIsNone(fw.work_order_status_notice(off, {}, NOW, self.live(4), 2))
 
 
 if __name__ == '__main__':

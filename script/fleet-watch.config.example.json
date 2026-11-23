@@ -3,7 +3,8 @@
   "go_live_date": "2099-01-01",
   "work_order": {
     "min_active": 3,
-    "target_workers": 8
+    "target_workers": 8,
+    "keep_target_until_go_live": false
   },
   "host_caps": {
     "primary-code-host": 4,

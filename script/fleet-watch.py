@@ -4118,8 +4118,10 @@ def build_triage_command(config, repo, agent, model):
     return [part for part in command if part]
 
 
-def work_order_settings(config):
-    """(min_active, target_workers) from the work_order block, or None when it is not configured (#1281)."""
+def work_order_settings(config, now=None):
+    """(min_active, target_workers) from the work_order block, or None when it is not configured (#1281).
+
+    Given `now`, keep_target_until_go_live raises min_active to target_workers before go_live_date (#1655)."""
     block = config.get('work_order') if isinstance(config, dict) else None
     if not isinstance(block, dict):
         return None
@@ -4129,7 +4131,44 @@ def work_order_settings(config):
             out.append(int(block.get(key, default)))
         except (TypeError, ValueError):
             out.append(default)
+    if now is not None and work_order_keeps_target(config, now):
+        out[0] = out[1]
     return tuple(out)
+
+
+def work_order_keeps_target(config, now):
+    """True when work_order.keep_target_until_go_live is on and today (Asia/Taipei) is before go_live_date (#1655).
+
+    A missing or malformed go_live_date turns the switch off."""
+    block = config.get('work_order') if isinstance(config, dict) else None
+    if not isinstance(block, dict) or block.get('keep_target_until_go_live') is not True:
+        return False
+    go_live = str(config.get('go_live_date') or '')
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', go_live):
+        return False
+    today = datetime.datetime.fromtimestamp(now, datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d')
+    return today < go_live
+
+
+WORK_ORDER_STATUS_INTERVAL = 3600
+
+
+def work_order_status_notice(config, state, now, workers, started):
+    """At most one line an hour while the switch holds the fleet at target: `work order: N of T live, started X` (#1655)."""
+    if not started or not work_order_keeps_target(config, now):
+        return None
+    target = work_order_settings(config)[1]
+    live = active_worker_count(workers)
+    if live >= target:
+        return None
+    try:
+        recent = now - float(state.get('work_order_status_at')) < WORK_ORDER_STATUS_INTERVAL
+    except (TypeError, ValueError):
+        recent = False
+    if recent:
+        return None
+    state['work_order_status_at'] = now
+    return 'work order: %d of %d live, started %d' % (live, target, started)
 
 
 def active_worker_count(workers):
@@ -4165,9 +4204,10 @@ def issue_scan_try_triage(
     coordinator gets one status line (#1281)."""
     log_bits = []
     scan = config.get('issue_scan') or {}
-    order = work_order_settings(config)
+    order = work_order_settings(config, now)
     active = active_worker_count(workers)
     urgent = order is not None and active < order[0]
+    keeping = work_order_keeps_target(config, now)
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     last_starts = state.setdefault('issue_scan_triage_at', {})
     used = 0
@@ -4205,7 +4245,7 @@ def issue_scan_try_triage(
             last_starts[repo] = now
             used += 1
             log_bits.append('triage_start=%d' % backlog)
-            if urgent and notices is not None:
+            if urgent and not keeping and notices is not None:
                 notices.append('work order: %d active, grill backlog' % active)
             count_started()
         else:
@@ -8505,6 +8545,9 @@ def main():
         babysit_repos=babysit_dispatch_repos(config),
     )
     notices += scan_extra
+    status = work_order_status_notice(config, state, now, workers, _PASS.started if _PASS is not None else 0)
+    if status:
+        notices.append(status)
     notices += usage_gate_notices(state, now)
     if inventory_ok:
         try:
