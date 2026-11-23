@@ -323,6 +323,7 @@ mkdir -p "$df_seed/script" "$df_seed/.agents/claude" "$df_seed/.agents/skills/td
 cp "$root/script/setup-claude-code.sh" "$df_seed/script/setup-claude-code.sh"
 cp "$root/script/check-hook-paths.sh" "$df_seed/script/check-hook-paths.sh"
 cp "$root/script/check-display-settings.sh" "$df_seed/script/check-display-settings.sh"
+cp "$root/script/fix-display-settings.sh" "$df_seed/script/fix-display-settings.sh"
 cp "$root/script/setup-agent-skills.sh" "$df_seed/script/setup-agent-skills.sh"
 mkdir -p "$df_seed/script/lib"
 cp "$root/script/lib/dotfiles-source.sh" "$df_seed/script/lib/dotfiles-source.sh"
@@ -465,6 +466,20 @@ if [ "$ec13" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(display key verb
   ok "fleet-pull names a host with drifted display keys without printing other settings values"
 else
   bad "fleet-pull did not name the display drift (ec=$ec13): $out13"
+fi
+
+# 1682: --fix-display repairs the drift (python3, no jq on the host), leaves other keys, and fleet-pull then reports no display drift
+printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
+set +e
+out14=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" --fix-display 2>&1)
+set -e
+if grep -Eq '^fix  host-a [^ ]*/dotfiles \(display keys set in \.claude/settings.json\)$' <<<"$out14" \
+  && ! grep -Eq 'display key [A-Za-z]+:' <<<"$out14" && ! grep -q s3cret <<<"$out14" \
+  && PATH="$jq_dir:$PATH" bash "$root/script/check-display-settings.sh" "$rem_home/.claude/settings.json" >/dev/null \
+  && grep -q s3cret "$rem_home/.claude/settings.json"; then
+  ok "fleet-pull --fix-display repairs drifted display keys and leaves other keys"
+else
+  bad "fleet-pull --fix-display did not repair the drift: $out14"
 fi
 
 # 1416: a settings hook pointing at a removed dotfiles script is named after the pull, and only its path is printed
