@@ -244,6 +244,29 @@ else
     pass=$((pass+1)); echo "ok   --report makes $n gh calls (at most 3)"
   else fail=$((fail+1)); echo "FAIL --report made $n gh calls"; cat "$GH_CALLS"; fi
 
+  # Off the coordinator host the local durations log is empty: read the coordinator's over ssh (#1641).
+  mkdir -p "$tmp/emptyws"
+  cat > "$tmp/bin/ssh" <<'EOF'
+#!/bin/bash
+echo "ssh $*" >> "$SSH_CALLS"
+[ "${SSH_FAIL:-}" = 1 ] && { echo "ssh: connect to host coord port 22: Connection refused" >&2; exit 255; }
+printf '2026-11-20T10:00:00Z worker-startup run=a duration_s=40\n2026-11-20T11:00:00Z worker-startup run=b duration_s=60\n'
+EOF
+  chmod +x "$tmp/bin/ssh"; export SSH_CALLS="$tmp/ssh-calls"; : > "$SSH_CALLS"
+  rep=$(WORKER_STARTUP_STATE="$tmp/emptyws" TEAM_AUDIT_COORDINATOR_HOST=coord-host SHIP_FLEET_PULL_LOG="$tmp/fp.log" TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
+    DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1)
+  rcheck "--report off the coordinator reads the coordinator's worker-startup log" '^\| worker-startup \| 50(\.0)? \| 60 \| 2 \|$'
+  rcheck "--report names the host it read" '^worker-startup: read from coordinator host coord-host$'
+  if grep -q 'coord-host' "$SSH_CALLS"; then pass=$((pass+1)); echo "ok   --report ssh'd to the configured coordinator host"; else fail=$((fail+1)); echo "FAIL no ssh to coord-host"; fi
+  rep=$(SSH_FAIL=1 WORKER_STARTUP_STATE="$tmp/emptyws" TEAM_AUDIT_COORDINATOR_HOST=coord-host SHIP_FLEET_PULL_LOG="$tmp/fp.log" TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
+    DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1)
+  rcheck "--report says the coordinator host is unreachable" '^worker-startup: coordinator host coord-host unreachable \(.*Connection refused\), no durations read$'
+  rcheck "--report keeps unknown when the host is unreachable" '^\| worker-startup \| unknown \| unknown \| 0 \|$'
+  : > "$SSH_CALLS"
+  rep=$(WORKER_STARTUP_STATE="$tmp/wsstate" TEAM_AUDIT_COORDINATOR_HOST=coord-host SHIP_FLEET_PULL_LOG="$tmp/fp.log" TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/obs.tsv" TEAM_AUDIT_DISPATCHES="$fx/team-audit-dispatches.tsv" \
+    DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1)
+  if [ ! -s "$SSH_CALLS" ]; then pass=$((pass+1)); echo "ok   --report with a local log makes no ssh call"; else fail=$((fail+1)); echo "FAIL ssh called despite a local log"; fi
+
   setup; withremote; printf -- '---\nname: dev\nskills: [nosuch]\n---\nbody\n' > "$P/.claude/agents/dev.md"
   rep=$(TEAM_AUDIT_NOW=2026-11-09T12:00:00Z TEAM_AUDIT_LOG="$tmp/none.tsv" DOTFILES="$D" "$here/team-audit.sh" --report "$P" 2>&1); code=$?
   if [ "$code" = 1 ]; then pass=$((pass+1)); echo "ok   --report with a finding exits 1"; else fail=$((fail+1)); echo "FAIL --report finding exit $code"; fi
