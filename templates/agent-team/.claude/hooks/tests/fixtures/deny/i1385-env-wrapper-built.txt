@@ -1,0 +1,1 @@
+x=deploy-raw; env FOO=1 bash bin/$x.sh

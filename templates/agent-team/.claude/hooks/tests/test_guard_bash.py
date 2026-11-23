@@ -629,6 +629,86 @@ class BlockedScriptMentions(GuardTest):
         self.assertAllowed("perl -lne print file.txt")
 
 
+class BuiltScriptNames(GuardTest):
+    """A blocked script name built at run time, and plain lines checked on their own (#1385)."""
+    PUSH = "git push --force origin main"
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh"]}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg}
+
+    def _module(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_built", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_built_names_denied(self):
+        for command in ("x=deploy-raw; bash bin/$x.sh", "x=deploy; bash bin/${x}-raw.sh", "bash bin/deploy-{raw,x}.sh",
+                        "bash bin/{deploy-raw.sh,x}", "bash bin/deploy-r{a,b}w.sh", "bash bin/$'\\x64eploy-raw.sh'",
+                        "bash bin/$'\\144eploy-raw.sh'", "bash bin/dep*-raw.sh", "bash bin/deploy-ra?.sh",
+                        "bash bin/$(echo deploy-raw).sh", "x=de; y=ploy-raw; z=.sh; bash bin/$x$y$z",
+                        "x=deploy; y=-raw.sh; $x$y", "x=deploy-raw; env A=1 bash bin/$x.sh",
+                        "ls bin | xargs -I{} bash bin/{}", "ls bin | xargs -n 1 sh",
+                        "find bin -name 'deploy-*' -exec bash {} \\;", "find bin -name 'd*' -exec {} \\;"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "blocked script name")
+
+    def test_expansions_that_do_not_run_a_script_allowed(self):
+        for command in ("ls bin/*.sh", "git add bin/dep*", "shellcheck bin/*.sh", "ls bin/{a,b}.sh",
+                        "for f in tests/*.sh; do bash \"$f\"; done", "ls bin | xargs grep -l foo",
+                        "find . -name '*.py' -exec grep -n x {} \\;", "bash $HOME/bin/setup.sh",
+                        "echo $'tab\\there'; ls", "cat <<'EOF' > notes.md\nbash bin/deploy-raw.sh was refused\nEOF\nls"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_built_name_helpers(self):
+        mod = self._module()
+        mod.BLOCKED_SCRIPTS = {"deploy-raw.sh"}
+        any_, one = mod._ANY, mod._ONE
+        body = "\\x64\\u0065\\160'"
+        self.assertEqual(mod._ansi_c(body + "tail", 0), ("dep", len(body)))
+        self.assertTrue(mod._built_name_hit(f"bin/{any_}-raw.sh"))
+        self.assertTrue(mod._built_name_hit(f"deploy-ra{one}.sh"))
+        self.assertFalse(mod._built_name_hit(f"bin/{any_}"))
+        self.assertFalse(mod._built_name_hit(f"bin/{any_}.txt"))
+        self.assertEqual(sorted(mod._brace_expand(f"a{mod._LB}b{mod._COMMA}c{mod._RB}")), ["ab", "ac"])
+        self.assertEqual(mod._brace_expand(f"a{mod._LB}b{mod._RB}"), ["a{b}"])
+
+    def test_an_error_in_the_built_name_check_denies(self):
+        mod = self._module()
+        mod.BLOCKED_SCRIPTS = {"deploy-raw.sh"}
+        with mock.patch.object(mod, "_built_words", side_effect=RuntimeError("boom")), \
+                mock.patch.object(mod, "deny", side_effect=SystemExit(0)) as deny:
+            with self.assertRaises(SystemExit):
+                mod.check_built_blocked_names("ls")
+        deny.assert_called_once()
+
+    def test_a_denied_command_hidden_by_a_comment_or_heredoc_quote(self):
+        for command in ("# it's\n" + self.PUSH, "echo a # \"\n" + self.PUSH, "echo \"a\" # '\n" + self.PUSH,
+                        "cat <<'EOF'\nit's\nEOF\n" + self.PUSH, "cat <<-'EOF'\n\tit's\n\tEOF\n" + self.PUSH,
+                        "cat <<EOF\nit's\nEOF\n" + self.PUSH, "echo $'a\\'b'; " + self.PUSH,
+                        "echo $'a\\'b'\n" + self.PUSH):
+            with self.subTest(command=command):
+                self.assertDenied(command, "force-push main")
+
+    def test_prose_naming_a_denied_command_stays_allowed(self):
+        self.assertAllowed("git commit -m \"title\n\nuse " + self.PUSH + " carefully\"")
+        self.assertAllowed("# it's fine\nls")
+        self.assertAllowed("cat <<EOF\nit's plain\nEOF\nls")
+
+    def test_plain_lines_stop_at_a_line_they_cannot_read(self):
+        mod = self._module()
+        calls = []
+        with mock.patch.object(mod, "check_segment", side_effect=lambda seg, cwd=None: calls.append(seg)):
+            mod.check_plain_lines("ls\necho \"a\nb\"\nls -l")
+        self.assertEqual(calls, ["ls"])
+        self.assertEqual(mod._flatten_ansi_c("echo $'a\\'b'; ls"), "echo 'ab'; ls")
+
+
 class ProjectConfigRules(GuardTest):
     """Rules a project turns on in guard-config.json, driven by a sample config."""
     SHA = "0123456789abcdef0123456789abcdef01234567"

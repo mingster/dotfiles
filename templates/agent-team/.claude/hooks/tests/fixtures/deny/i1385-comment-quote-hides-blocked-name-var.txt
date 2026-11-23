@@ -1,0 +1,2 @@
+# it's
+x=deploy-raw; bash bin/$x.sh

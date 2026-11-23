@@ -1,0 +1,1 @@
+bash bin/deploy-r{a,b}w.sh

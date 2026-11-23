@@ -1,0 +1,1 @@
+x=deploy-raw; source bin/$x.sh

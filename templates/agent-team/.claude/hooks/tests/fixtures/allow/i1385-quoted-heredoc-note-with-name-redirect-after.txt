@@ -1,0 +1,4 @@
+cat <<'EOF' > notes.md
+bash bin/deploy-raw.sh was refused
+EOF
+ls

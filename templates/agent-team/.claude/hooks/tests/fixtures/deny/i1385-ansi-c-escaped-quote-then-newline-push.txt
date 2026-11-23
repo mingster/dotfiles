@@ -1,0 +1,2 @@
+echo $'a\'b'
+git push --force origin main

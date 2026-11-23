@@ -1,0 +1,1 @@
+x=de; y=ploy-raw; z=.sh; bash bin/$x$y$z

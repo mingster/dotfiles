@@ -4022,6 +4022,366 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# A blocked script name built at run time (#1385): a variable, a glob, a brace, an ANSI-C `$'\x..'` string, a
+# substitution, `xargs` or `find -exec`. It matches only the word the shell runs (the program, or the script a
+# shell reads), so `ls bin/*.sh` and `git add bin/dep*` stay allowed.
+_ANY, _ONE, _LB, _RB, _COMMA = "\ue000", "\ue001", "\ue002", "\ue003", "\ue004"
+_RUN_SHELLS = SHELLS | {"source", "."}
+_XARGS_FLAGS_WITH_VALUE = {"-n", "-P", "-L", "-s", "-d", "-a", "-E", "-I", "-l", "-J"}
+_ANSI_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f",
+                 "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+_ANSI_NUMBER = re.compile(r"x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}")
+_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-]")
+_HEREDOC_TAG = re.compile(r"<<(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def _ansi_c(text, i):
+    """(decoded text, index after the closing quote) for a `$'...'` string whose body starts at text[i]."""
+    out = []
+    while i < len(text):
+        c = text[i]
+        if c == "'":
+            return "".join(out), i + 1
+        if c != "\\" or i + 1 >= len(text):
+            out.append(c)
+            i += 1
+            continue
+        m = _ANSI_NUMBER.match(text, i + 1)
+        if m:
+            raw = m.group(0)
+            out.append(chr(int(raw[1:], 16) if raw[0] in "xuU" else int(raw, 8) & 0xFF))
+            i += 1 + len(raw)
+        else:
+            out.append(_ANSI_ESCAPES.get(text[i + 1], "\\" + text[i + 1]))
+            i += 2
+    return "".join(out), len(text)
+
+
+def _skip_balanced(text, i, open_ch, close_ch):
+    """Index after the bracket pair whose opener is text[i]; the end of text when it never closes."""
+    depth = 0
+    while i < len(text):
+        depth += (text[i] == open_ch) - (text[i] == close_ch)
+        i += 1
+        if depth == 0:
+            return i
+    return len(text)
+
+
+def _var_end(text, i):
+    """Index after `$name`, `${...}` or a one character special starting at text[i]."""
+    if text[i + 1:i + 2] == "{":
+        return _skip_balanced(text, i + 1, "{", "}")
+    m = _VAR_NAME.match(text, i + 1)
+    return m.end() if m else i + 1
+
+
+def _built_words(line):
+    """Command segments of one shell line, each a list of pattern words. A pattern holds literal characters,
+    _ANY for what an expansion or `*` can produce, _ONE for `?` and `[..]`, and brace markers."""
+    segs, words, buf, started, i, n = [], [], [], False, 0, len(line)
+
+    def end_word():
+        nonlocal buf, started
+        if started:
+            words.append("".join(buf))
+        buf, started = [], False
+
+    def end_seg():
+        nonlocal words
+        end_word()
+        if words:
+            segs.append(words)
+        words = []
+
+    while i < n:
+        c = line[i]
+        if c == "'":
+            j = line.find("'", i + 1)
+            j = n if j < 0 else j
+            buf.append(line[i + 1:j])
+            started, i = True, j + 1
+        elif c == '"':
+            started, i = True, i + 1
+            while i < n and line[i] != '"':
+                d = line[i]
+                if d == "\\" and i + 1 < n:
+                    buf.append(line[i + 1] if line[i + 1] in '$`"\\' else line[i:i + 2])
+                    i += 2
+                elif d == "$" and line[i + 1:i + 2] == "(":
+                    buf.append(_ANY)
+                    i = _skip_balanced(line, i + 1, "(", ")")
+                elif d == "`":
+                    buf.append(_ANY)
+                    j = line.find("`", i + 1)
+                    i = n if j < 0 else j + 1
+                elif d == "$":
+                    buf.append(_ANY)
+                    i = _var_end(line, i)
+                else:
+                    buf.append(d)
+                    i += 1
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            buf.append(line[i + 1])
+            started, i = True, i + 2
+        elif c == "$" and line[i + 1:i + 2] == "'":
+            text, i = _ansi_c(line, i + 2)
+            buf.append(text)
+            started = True
+        elif c == "$" and line[i + 1:i + 2] == "(":
+            buf.append(_ANY)
+            started, i = True, _skip_balanced(line, i + 1, "(", ")")
+        elif c == "`":
+            j = line.find("`", i + 1)
+            buf.append(_ANY)
+            started, i = True, (n if j < 0 else j + 1)
+        elif c == "$":
+            buf.append(_ANY)
+            started, i = True, _var_end(line, i)
+        elif c == "*":
+            buf.append(_ANY)
+            started, i = True, i + 1
+        elif c == "?":
+            buf.append(_ONE)
+            started, i = True, i + 1
+        elif c == "[":
+            j = line.find("]", i + 2)
+            buf.append(_ONE if j > 0 else "[")
+            started, i = True, (j + 1 if j > 0 else i + 1)
+        elif c in "{},":
+            buf.append({"{": _LB, "}": _RB, ",": _COMMA}[c])
+            started, i = True, i + 1
+        elif c in " \t\r":
+            end_word()
+            i += 1
+        elif c in ";&|()\n":
+            end_seg()
+            i += 1
+        elif c == "#" and not started:
+            break
+        else:
+            buf.append(c)
+            started, i = True, i + 1
+    end_seg()
+    return segs
+
+
+def _brace_expand(word, budget=512):
+    """Every expansion of the brace marker pairs in a pattern word; a pair with no comma stays literal."""
+    out = [word]
+    pair = re.compile(f"{_LB}([^{_LB}{_RB}]*){_RB}")
+    for _ in range(64):
+        nxt, changed = [], False
+        for w in out:
+            m = pair.search(w)
+            if not m:
+                nxt.append(w)
+            elif _COMMA not in m.group(1):
+                nxt.append(w[:m.start()] + "{" + m.group(1) + "}" + w[m.end():])
+                changed = True
+            else:
+                nxt.extend(w[:m.start()] + part + w[m.end():] for part in m.group(1).split(_COMMA))
+                changed = True
+        out = nxt[:budget]
+        if not changed:
+            break
+    restore = {_LB: "{", _RB: "}", _COMMA: ","}
+    return [re.sub(f"[{_LB}{_RB}{_COMMA}]", lambda m: restore[m.group(0)], w) for w in out]
+
+
+def _built_name_hit(word):
+    """True when a word the shell runs can spell a blocked script name by expansion."""
+    for alt in _brace_expand(word):
+        last = alt.rsplit("/", 1)[-1]
+        if not last or set(last) <= {_ANY, _ONE}:
+            continue
+        regex = "".join(".*" if c == _ANY else "." if c == _ONE else re.escape(c) for c in last)
+        if any(re.fullmatch(regex, name, re.I) for name in BLOCKED_SCRIPTS):
+            return True
+    return False
+
+
+def _bare_expansion(word):
+    last = word.rsplit("/", 1)[-1]
+    return bool(last) and set(last) <= {_ANY, _ONE}
+
+
+def _fragment_in(text):
+    """True when the command holds three letters in a row of a blocked script name (a name split across variables)."""
+    low = text.lower()
+    return any(run[k:k + 3] in low for name in BLOCKED_SCRIPTS
+               for run in re.findall(r"[a-z0-9]+", name.lower()) for k in range(len(run) - 2))
+
+
+def _deny_built_name():
+    deny("A blocked script name can be built here by a variable, glob, brace, `$'..'` string, substitution, "
+         "`xargs` or `find -exec`, so the guard cannot see which script runs. Write the script path out in full "
+         "on its own plain line, or run the approved entry point instead.")
+
+
+def _program_index(words):
+    i = 0
+    while i < len(words) and (ENV_ASSIGN.match(words[i]) or os.path.basename(words[i]) in WRAPPERS
+                              or os.path.basename(words[i]) == "env"):
+        i += 1
+    return i
+
+
+def _xargs_program(words, start):
+    i = start + 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in _XARGS_FLAGS_WITH_VALUE else 1
+    return i
+
+
+def _runs_shell_or_placeholder(word):
+    return os.path.basename(word) in _RUN_SHELLS or _LB + _RB in word or _built_name_hit(word)
+
+
+def _built_segment(words, command):
+    start = _program_index(words)
+    if start >= len(words):
+        return
+    prog = words[start]
+    base = os.path.basename(prog)
+    if base == "xargs":
+        j = _xargs_program(words, start)
+        if j < len(words) and _runs_shell_or_placeholder(words[j]):
+            _deny_built_name()
+    if base == "find":
+        for k, w in enumerate(words[:-1]):
+            if w in ("-exec", "-execdir", "-ok", "-okdir") and _runs_shell_or_placeholder(words[k + 1]):
+                _deny_built_name()
+    if _built_name_hit(prog) or (_bare_expansion(prog) and _fragment_in(command)):
+        _deny_built_name()
+    if base in _RUN_SHELLS:
+        script = next((w for w in words[start + 1:] if not w.startswith("-")), None)
+        if script is not None and (_built_name_hit(script) or (_bare_expansion(script) and _fragment_in(command))):
+            _deny_built_name()
+
+
+def check_built_blocked_names(command):
+    """Deny a command that runs a blocked script whose name only exists after the shell expands it."""
+    try:
+        if not BLOCKED_SCRIPTS:
+            return
+        lines, i = command.split("\n"), 0
+        while i < len(lines):
+            line = lines[i]
+            i += 1
+            segs = _built_words(line)
+            for words in segs:
+                _built_segment(words, command)
+            tag = _HEREDOC_TAG.search(line)
+            feeds_shell = any(_program_index(w) < len(w) and os.path.basename(w[_program_index(w)]) in _RUN_SHELLS
+                              for w in segs)
+            if tag and not feeds_shell:
+                end = next((j for j in range(i, len(lines))
+                            if (lines[j].lstrip("\t") if tag.group(1) else lines[j]) == tag.group(3)), len(lines))
+                i = end + 1
+    except SystemExit:
+        raise
+    except Exception:
+        _deny_built_name()
+
+
+# A second opinion for every command (#1385): a quote in a comment or a heredoc body can make the parsers above
+# read the rest of a command as quoted text, which hides a deny. Each line before the first one this grammar
+# cannot read with certainty is plain, so it goes through check_segment on its own.
+UNQUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*()([A-Za-z_][A-Za-z0-9_]*)[ \t]*")
+
+
+def _plain_line(line):
+    """(text before any comment, heredoc match or None) for a line this scan reads with certainty, else None."""
+    quote, heredoc, i = "", None, 0
+    while i < len(line):
+        c = line[i]
+        if c in "\\`\r":
+            return None
+        if c == "$":
+            nxt = line[i + 1:i + 2]
+            if nxt == "'" and not quote:
+                j = i + 2
+                while j < len(line) and line[j] != "'":
+                    j += 2 if line[j] == "\\" else 1
+                if j >= len(line):
+                    return None
+                i = j + 1
+                continue
+            if not (nxt.isalnum() or nxt == "_"):
+                return None
+        elif quote:
+            quote = "" if c == quote else quote
+        elif c in "'\"":
+            quote = c
+        elif c == "#" and (i == 0 or line[i - 1] in " \t;&|()<>"):
+            line = line[:i]
+            break
+        elif c in "<>" and line[i + 1:i + 2] == "(":
+            return None
+        elif c == "<" and line[i + 1:i + 2] == "<" and heredoc is None:
+            heredoc = i
+        elif c == "<" and heredoc is not None and i > heredoc + 1:
+            return None
+        i += 1
+    if quote:
+        return None
+    if heredoc is None:
+        return line, None
+    match = PLAIN_HEREDOC.fullmatch(line, heredoc) or UNQUOTED_HEREDOC.fullmatch(line, heredoc)
+    return (line, match) if match else None
+
+
+def _flatten_ansi_c(text):
+    """Rewrite each `$'..'` string as a plain single quoted one, so the other parsers cannot lose the line in it."""
+    out, i = [], 0
+    while i < len(text):
+        j = text.find("$'", i)
+        if j < 0:
+            break
+        body, end = _ansi_c(text, j + 2)
+        out.append(text[i:j] + "'" + body.replace("'", "") + "'")
+        i = end
+    return "".join(out) + text[i:]
+
+
+def check_plain_lines(command):
+    """Run check_segment on each plain line before the first line this scan cannot read with certainty."""
+    try:
+        lines, i, cur_cwd = command.split("\n"), 0, GATE_CWD
+        while i < len(lines):
+            sink = text_sink_heredoc(lines[i])
+            plain = (lines[i], sink) if sink else _plain_line(lines[i])
+            if plain is None:
+                return
+            text, heredoc = plain
+            i += 1
+            end = None
+            if heredoc:
+                dash, tag = heredoc[1], heredoc[3]
+                end = next((j for j in range(i, len(lines))
+                            if (lines[j].lstrip("\t") if dash else lines[j]) == tag), None)
+                if end is None or (heredoc[2] == "" and any(c in "$`\\" for c in "\n".join(lines[i:end]))):
+                    return
+                if not sink:  # the opener of a body this scan does not read (python3 - <<'PY', bash <<EOF)
+                    i = end + 1
+                    continue
+            for seg in segments(_flatten_ansi_c(text[:heredoc.start()] if heredoc else text)):
+                check_segment(seg, cwd=cur_cwd)
+                prog, args = program_and_args(words(seg))
+                if prog in ("cd", "pushd") and args:
+                    dest = next((a for a in args if not a.startswith("-")), None)
+                    if dest:
+                        cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+            if end is not None:
+                i = end + 1
+    except SystemExit:
+        raise
+    except Exception:
+        return
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4041,6 +4401,8 @@ def check_command(command):
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
     check_blocked_script_mentions(RAW_COMMAND)
+    check_built_blocked_names(RAW_COMMAND)
+    check_plain_lines(RAW_COMMAND)
     if INDIRECT:
         deny(INDIRECT[0])
 

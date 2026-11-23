@@ -1,0 +1,1 @@
+bash bin/$'deploy\x2draw.sh'

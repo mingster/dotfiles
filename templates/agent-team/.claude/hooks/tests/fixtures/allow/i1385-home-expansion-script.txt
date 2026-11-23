@@ -1,0 +1,1 @@
+bash $HOME/bin/setup.sh
