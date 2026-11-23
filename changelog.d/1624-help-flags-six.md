@@ -1,0 +1,1 @@
+ship, remote-heavy, start-cursor-worker, check-hook-paths, grok-trust and secrets-gate print usage for -h and --help and exit 0 before reading config or writing files. grok-trust no longer creates its store for --help.

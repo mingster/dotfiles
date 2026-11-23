@@ -4,7 +4,10 @@
 #        [--role NAME] (--worktree-path PATH | --name NAME --repo PATH_OR_SELECTOR [--base-branch REF])
 # Refuses Strong tier roles other than qa-sdet (elon, architect-pm, secops-finops).
 # qa-sdet may run on Cursor grok for a Claude-built PR.
+# -h and --help print this text.
 set -euo pipefail
+print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
+for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck disable=SC1091
 . "$here/lib/pr-review-gates.sh"
