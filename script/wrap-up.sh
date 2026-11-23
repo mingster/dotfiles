@@ -292,6 +292,7 @@ scheduled_round() {
       WRAP_UP_PANE_TIMEOUT=${WRAP_UP_SCHEDULED_PANE_TIMEOUT:-20} \
       WRAP_UP_MAIN_TIMEOUT=${WRAP_UP_SCHEDULED_MAIN_TIMEOUT:-20} \
       WRAP_UP_RELEASE_BUDGET=${WRAP_UP_SCHEDULED_RELEASE_BUDGET:-25} \
+      WRAP_UP_WORKTREE_BUDGET=${WRAP_UP_SCHEDULED_WORKTREE_BUDGET:-120} \
       WRAP_UP_OPTIONAL_STEP=${WRAP_UP_SCHEDULED_OPTIONAL_STEP:-20} \
       daily_child "$kill_limit" "$wrap_up" "$child_mode" "$repo_path" "$detail_file" "$repo_pipe" ${daily_env[@]+"${daily_env[@]}"}
     code=$?
@@ -1962,10 +1963,18 @@ recent_worktree() {
   [ -n "$(find "$gd/HEAD" "$gd/index" -mmin -"$min" 2>/dev/null)" ] && return 0
   [ -n "$(find "$1" \( -name node_modules -o -name .next -o -name .git \) -prune -o -type f -mmin -"$min" -print -quit 2>/dev/null)" ]
 }
+# A scheduled child gives this loop its own budget (#1535), so slow per worktree checks cannot spend the repo's whole time
+# before branch cleanup and the cache step run. A worktree reached after it is kept and retried next round.
+worktree_step_start=$SECONDS
+worktree_budget_spent() {
+  [ -n "${WRAP_UP_SCHEDULED_CHILD:-}" ] && [ -n "${WRAP_UP_WORKTREE_BUDGET:-}" ] \
+    && [ $((SECONDS - worktree_step_start)) -ge "$WRAP_UP_WORKTREE_BUDGET" ]
+}
 process_worktree() {
   local why='' force='' dest=''
   reason='on a remote branch'
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
+  elif worktree_budget_spent; then why='worktree step budget spent, next round'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why=$protected_reason
   elif archive_branch "$branch"; then why='archive branch'
