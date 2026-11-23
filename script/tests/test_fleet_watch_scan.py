@@ -249,6 +249,35 @@ class BuildReworkCommand(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
 
+class ReworkBriefKeepsFailure(unittest.TestCase):
+    """#1684: a long Verdict FAIL or Checks FAIL keeps its failure section and step name in the brief."""
+    CONFIG = BuildReworkCommand.CONFIG
+    HEAD = 'b' * 40
+
+    def brief(self, body, url='https://github.com/o/r/pull/9#issuecomment-1'):
+        row = pr(9, head=self.HEAD, branch='mingster/issue-1', comments=[{'body': body, 'url': url}])
+        cmd = fw.build_rework_start_command(self.CONFIG, REPO, row)
+        return Path(cmd[cmd.index('--spec') + 1]).read_text(encoding='utf-8')
+
+    def test_long_verdict_fail_keeps_failure_section_and_link(self):
+        body = 'Verdict: FAIL head=%s\n' % self.HEAD + 'finding line\n' * 1500 + '## Failure\nREAL ERROR LINE\n'
+        self.assertGreater(len(body), 8000)
+        text = self.brief(body)
+        self.assertIn('REAL ERROR LINE', text)
+        self.assertIn('issuecomment-1', text)
+
+    def test_checks_fail_names_step_and_last_40_lines(self):
+        noise = ''.join('noise %d\n' % i for i in range(3000))
+        body = ('Checks: FAIL head=%s\n\nCommand: bash ok.sh\nResult: exit 0\nDuration: 1s\n\n'
+                'Command: bash script/broken-step.sh\n%sREAL ERROR LINE\nResult: exit 1; remaining checks stopped\n'
+                % (self.HEAD, noise))
+        text = self.brief(body)
+        self.assertIn('Failing step: bash script/broken-step.sh', text)
+        self.assertIn('REAL ERROR LINE', text)
+        self.assertNotIn('noise 100\n', text.split('Failing step:')[1].split('\n\n')[0])
+        self.assertIn('noise 2999', text)
+
+
 class IssueScanOrder(unittest.TestCase):
     def test_p0_before_p1_before_oldest(self):
         rows = [
