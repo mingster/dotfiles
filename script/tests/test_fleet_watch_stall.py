@@ -97,7 +97,7 @@ class WorkerStallHelpers(unittest.TestCase):
         notices, log_bits = fw.worker_stall_pass(
             stall_test_config(), state, T0, [remote_row], {}, lambda *_a: {},
         )
-        self.assertIn('remote_stall_unknown=ctx_remote_1', log_bits)
+        self.assertIn('remote_stall_check=ctx_remote_1:silent', log_bits)
         self.assertEqual(len(notices), 1)
         self.assertIn('ctx_remote_1', notices[0])
 
@@ -362,8 +362,9 @@ class WorkerStallPass(unittest.TestCase):
 
         notices, bits = fw.worker_stall_pass(
             stall_test_config(), {}, T0, [w], term_times, rpc)
-        self.assertFalse(calls)
-        self.assertTrue(any(b.startswith('remote_stall_unknown=') for b in bits))
+        self.assertEqual(calls[0][:2], ('orchestration', 'worker-read'))
+        self.assertIn('--environment', calls[0])
+        self.assertTrue(any(b.startswith('remote_stall_check=disp_fixture:silent') for b in bits))
 
     def test_stall_no_sender_terminal_skips_restart_and_logs(self):
         """Without runs[].terminal for the resolved run, do not stop; log and keep trying next pass."""
@@ -776,3 +777,75 @@ class MainTerminalListFailure(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def remote_worker(**kw):
+    """A supervised worker on a paired server; its clock reads stale until its transcript proves activity."""
+    w = base_worker(
+        server='niteking',
+        projection={
+            'host': {'id': 'niteking'},
+            'provider': {'id': 'claude', 'model': None},
+            'outcome': 'in_progress',
+            'liveness': {'verdict': 'idle'},
+        },
+    )
+    w.update(kw)
+    return w
+
+
+def transcript_rpc(calls, messages):
+    """Fake rpc: worker-read returns one transcript page; every other call returns an empty result."""
+    def rpc(*a):
+        calls.append(a)
+        if a[:2] == ('orchestration', 'worker-read'):
+            return {'dispatchId': 'disp_fixture', 'transcript': {'messages': messages, 'nextCursor': None}}
+        return {}
+    return rpc
+
+
+def tool_message(timestamp_ms):
+    return {'id': 'm%d' % timestamp_ms, 'role': 'tool', 'timestamp': timestamp_ms,
+            'blocks': [{'type': 'tool-result', 'output': 'ok'}]}
+
+
+class RemoteWorkerStall(unittest.TestCase):
+    def test_active_remote_worker_is_not_flagged_or_stopped(self):
+        calls = []
+        w = remote_worker()
+        recent = [tool_message(int((T0 - 60) * 1000))]
+        state = mark_own({}, 'disp_fixture')
+        notices, bits = fw.worker_stall_pass(
+            stall_test_config(), state, T0, [w], {'term_fix': OLD_MS}, transcript_rpc(calls, recent))
+        self.assertEqual(notices, [])
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertIn('remote_stall_check=disp_fixture:active', bits)
+
+    def test_silent_remote_worker_is_flagged_once(self):
+        calls = []
+        w = remote_worker(dispatchId='disp_silent')
+        old = [tool_message(OLD_MS)]
+        state = {}
+        notices, bits = fw.worker_stall_pass(
+            stall_test_config(), state, T0, [w], {'term_fix': OLD_MS}, transcript_rpc(calls, old))
+        self.assertEqual(len(notices), 1)
+        self.assertIn('stall_report=disp_silent', bits)
+        self.assertIn('~/dotfiles/.agents/skills/orca-team/worker-watch.sh', notices[0])
+        again, _ = fw.worker_stall_pass(
+            stall_test_config(), state, T0 + 60, [w], {'term_fix': OLD_MS}, transcript_rpc(calls, old))
+        self.assertEqual(again, [])
+
+    def test_unreadable_remote_transcript_is_not_flagged(self):
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                raise fw.OrcaReadError('orca CLI failed')
+            return {}
+
+        notices, bits = fw.worker_stall_pass(
+            stall_test_config(), {}, T0, [remote_worker()], {'term_fix': OLD_MS}, rpc)
+        self.assertEqual(notices, [])
+        self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
+        self.assertIn('remote_stall_check=disp_fixture:unknown', bits)
