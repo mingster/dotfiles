@@ -50,14 +50,39 @@ export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
 override="" changed="" explicit_base="" main_sha="" check_result=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
+need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
+# lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
+# 5 seconds, the gap between mkdir and the pid write); the live pid is left in lock_holder. A stale lock is
+# renamed aside first, so of two takers only the rename winner proceeds.
+lock_acquire() {
+  local dir=$1 holder aside mtime
+  lock_holder=""
+  mkdir "$dir" 2>/dev/null && return 0
+  holder=$(cat "$dir/pid" 2>/dev/null || true)
+  if [[ "$holder" =~ ^[0-9]+$ ]]; then
+    if kill -0 "$holder" 2>/dev/null; then lock_holder=$holder; return 1; fi
+  else
+    mtime=$(stat -c %Y "$dir" 2>/dev/null || stat -f %m "$dir" 2>/dev/null || date +%s)
+    [ $(( $(date +%s) - mtime )) -ge 5 ] || return 1
+  fi
+  aside="$dir.stale.$$"
+  mv "$dir" "$aside" 2>/dev/null || return 1
+  if [ "$(cat "$aside/pid" 2>/dev/null || true)" != "$holder" ]; then
+    # Another taker replaced the stale lock between our read and the rename: put theirs back.
+    [ -e "$dir" ] || mv "$aside" "$dir" 2>/dev/null || true
+    return 1
+  fi
+  rm -rf "$aside"
+  mkdir "$dir" 2>/dev/null
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) repo="${2:-}"; shift 2 ;;
-    --pr) pr="${2:-}"; shift 2 ;;
-    --ref) ref="${2:-}"; shift 2 ;;
-    --base) explicit_base="${2:-}"; shift 2 ;;
-    --train-heads) train_heads="${2:-}"; shift 2 ;;
-    --config) override="${2:-}"; shift 2 ;;
+    --repo) [ $# -ge 2 ] || need_value "$1"; repo="${2:-}"; shift 2 ;;
+    --pr) [ $# -ge 2 ] || need_value "$1"; pr="${2:-}"; shift 2 ;;
+    --ref) [ $# -ge 2 ] || need_value "$1"; ref="${2:-}"; shift 2 ;;
+    --base) [ $# -ge 2 ] || need_value "$1"; explicit_base="${2:-}"; shift 2 ;;
+    --train-heads) [ $# -ge 2 ] || need_value "$1"; train_heads="${2:-}"; shift 2 ;;
+    --config) [ $# -ge 2 ] || need_value "$1"; override="${2:-}"; shift 2 ;;
     *) usage "unknown argument $1" ;;
   esac
 done
@@ -325,12 +350,9 @@ while :; do
   for i in $(seq 1 "$slots"); do
     candidate="$HOME/orca/workspaces/$name/_checks"; [ "$i" -eq 1 ] || candidate="$candidate-$i"
     lock="$candidate.lock"
-    if ! mkdir "$lock" 2>/dev/null; then
-      holder=$(cat "$lock/pid" 2>/dev/null || true)
-      if [[ "$holder" =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
-        busy="$busy $holder"; lock=""; continue
-      fi
-      rm -rf "$lock"; mkdir "$lock" || { lock=""; continue; }
+    if ! lock_acquire "$lock"; then
+      [ -z "$lock_holder" ] || busy="$busy $lock_holder"
+      lock=""; continue
     fi
     worktree="$candidate"; break
   done
@@ -487,18 +509,14 @@ db_wait_receipt() {
 # db_lock_acquire: one run at a time may use the remote database-step checkout, like the local _checks lock.
 # Waits up to HEAD_CHECKS_DB_WAIT_SECONDS (default HEAD_CHECKS_WAIT_SECONDS); returns 1 when it stays busy.
 db_lock_acquire() {
-  local key holder attempt=0 limit
+  local key attempt=0 limit
   db_remote_load # db_step_runner ran in a subshell, so load the host here for the lock key
   limit="${HEAD_CHECKS_DB_WAIT_SECONDS:-$wait_seconds}"
   [[ "$limit" =~ ^[0-9]+$ ]] || usage "HEAD_CHECKS_DB_WAIT_SECONDS must be a whole number"
   key=$(printf '%s_%s' "$db_remote_host" "$db_remote_dir" | tr -c 'A-Za-z0-9._\n' '_')
   while :; do
     db_lock="$HOME/orca/workspaces/$name/_db-$key.lock"
-    if mkdir "$db_lock" 2>/dev/null; then printf '%s\n' "$$" > "$db_lock/pid"; return 0; fi
-    holder=$(cat "$db_lock/pid" 2>/dev/null || true)
-    if [[ "$holder" =~ ^[0-9]+$ ]] && ! kill -0 "$holder" 2>/dev/null; then
-      rm -rf "$db_lock"; continue
-    fi
+    if lock_acquire "$db_lock"; then printf '%s\n' "$$" > "$db_lock/pid"; return 0; fi
     db_lock=""
     [ "$attempt" -lt $((limit * 2)) ] || return 1
     attempt=$((attempt+1)); sleep 0.5

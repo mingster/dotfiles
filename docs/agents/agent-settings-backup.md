@@ -18,7 +18,7 @@ Paths below are relative to HOME on both macOS and Linux unless indicated.
 | `.gemini/config/AGENTS.md`, `skills.json`, `hooks.json` | `setup-antigravity.sh` generates instructions/skills paths and merges hooks | Generated machine paths and runtime hooks; private restore or regeneration |
 | `.orca/presets.json` | `.orca/`; `setup-orca.sh` links presets to `~/dotfiles/.orca/presets.json` (backs up a differing file; `wrap-up.sh` and remote worker starts run it after updating `main`) | Custom presets, `settings*.json`, `config*.json` |
 | `support/orca/{settings*,config*,preferences*}.json` | No public app profile: app configuration can mix machine paths and private data | Individually reviewed, sanitized settings files |
-| `support/Claude/{claude_desktop_config,config}.json` | `setup-claude-desktop.sh` merges public `init/` defaults and preserves local values | Mixed Desktop preferences/MCP settings; sanitized private backup |
+| `support/Claude/{claude_desktop_config,config}.json` | `setup-claude-desktop.sh` merges public `init/` defaults and preserves local values (exits non-zero and writes nothing when the live file is not valid JSON) | Mixed Desktop preferences/MCP settings; sanitized private backup |
 | `support/Cursor/User/{settings,keybindings,environment}.json` | `ide/cursor/`; `setup-cursor.sh` links settings or renders a local overlay | Customized copies and local overlays |
 | `support/Antigravity IDE/User/{settings,keybindings}.json` | `ide/antigravity/`; `setup-antigravity.sh` links settings or renders a local overlay | Customized copies and local overlays |
 

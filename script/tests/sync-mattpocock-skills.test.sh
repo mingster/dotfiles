@@ -22,5 +22,15 @@ t "keeps CONTEXT naming" 'grep -q "CONTEXT.md" "$D/.agents/skills/domain-modelin
 t "never touches a local only skill" 'grep -q mine "$D/.agents/skills/mine/SKILL.md"'
 t "records the new sha" 'grep -q "^sha=$(git -C "$U" rev-parse HEAD)" "$D/.agents/skills/.mattpocock-upstream"'
 t "warns on a skill gone upstream" 'echo "$out" | grep -q "WARN gone"'
+
+# Empty stage: every listed skill gone upstream, run from inside the skills dir.
+printf 'sha=old\nskills=gone1 gone2\n' > "$D/.agents/skills/.mattpocock-upstream"
+mkdir -p "$D/.agents/skills/aaa-local"; printf 'keep\n' > "$D/.agents/skills/aaa-local/SKILL.md"
+before=$(cd "$D/.agents/skills" && find . -type f | sort | md5sum 2>/dev/null || true)
+out2=$(cd "$D/.agents/skills" && DOTFILES="$D" MP_REPO="$U" "$D/script/sync-mattpocock-skills.sh" 2>&1); code2=$?
+after=$(cd "$D/.agents/skills" && find . -type f | sort | md5sum 2>/dev/null || true)
+t "empty stage exits 1" '[ "$code2" = 1 ]'
+t "empty stage says so" 'echo "$out2" | grep -qi "stage is empty"'
+t "empty stage deletes no local skill" '[ "$before" = "$after" ] && [ -f "$D/.agents/skills/aaa-local/SKILL.md" ] && [ -f "$D/.agents/skills/tdd/SKILL.md" ]'
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

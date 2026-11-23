@@ -1,0 +1,3 @@
+- grok-trust.sh escapes quotes and backslashes in the folder path, so trusted_folders.toml stays valid (#1549).
+- remote-heavy.sh exits 64 with a usage line when a flag has no value (#1550).
+- session-sync.sh falls back to a 5 second fetch timeout when SESSION_SYNC_FETCH_TIMEOUT is not a whole number (#1551).

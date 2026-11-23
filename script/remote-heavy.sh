@@ -25,6 +25,10 @@ fetches=()
 into=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --fetch|--into|--host|--repo-dir|--dir|--sub|--weight|--memory-mb|--gate|--max-wait)
+      [ $# -ge 2 ] || { echo "remote-heavy: $1 needs a value" >&2; exit 64; } ;;
+  esac
+  case "$1" in
     --fetch) fetches+=("$2"); shift 2 ;;
     --into) into="$2"; shift 2 ;;
     --host) host="$2"; shift 2 ;;

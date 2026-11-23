@@ -9,7 +9,7 @@ target provider and model (exiting 3 if refused), then probes the required CLI o
 environment's login-shell PATH in an Orca terminal and refreshes `~/dotfiles` and the `~/.orca/presets.json`
 symlink (`script/setup-orca.sh`) on that host before dispatch. A missing CLI, failed probe, or
 unconfirmed exit refuses dispatch and names the required CLI. Install missing tools on that
-environment with `script/install-agent-clis.sh`; sign-in remains a user action. `script/usage-gate-hook.py`
+environment with `script/install-agent-clis.sh` (usage: `install-agent-clis.sh [-h|--help]`, any other argument exits 2 before installing); sign-in remains a user action. `script/usage-gate-hook.py`
 blocks direct `orca orchestration worker-start --on` invocations so remote starts always pass
 this preflight. The Cursor helper below includes the same usage gate and preset refresh.
 
@@ -21,14 +21,13 @@ checks `usage-gate.py`, and delegates to `start-cursor-worker.sh` or `start-remo
 It refuses a `--title` that is not `#<issue>|<role>` (a verifier uses its PR number), sets that title on the board card and the terminal, and refuses a fullstack-dev brief whose issue a merged PR already closed unless `--allow-delivered REASON` is given. It adds `Refs #<issue>` from the title when the brief has none, skips the Node and Bun install for a brief with a `Setup: none` line (also with `--on <host>`), and still runs the `worktree-setup.sh --git-only` fetch and `origin/main` fast-forward on the new worktree, local or remote, before the worker starts (a failed git-only step fails the start; on a remote host the step prints a `GIT_ONLY_RC=<n>` line that the start reads from the terminal, because a remote `terminal wait --for exit` times out on the interactive shell and reports exit code 0), and takes `ready-for-agent` off the issue of a worker it starts. A worker that vanishes at startup is started once more. An antigravity worker stuck on the sign-in screen about 60 seconds after start is stopped and the same brief restarts on claude sonnet. `script/lib/dotfiles-fresh.sh` fast-forwards a clean, behind `~/dotfiles` first (one warning line when it is dirty, diverged or offline), the same way `ship.sh`, `head-checks.sh` and `fleet-watch-loop.sh` do at start.
 
 The standard bootstrap runs `script/install-agent-clis.sh` after platform setup
-supplies Node/npm. It skips installed tools, removes vendor additions to tracked
+supplies Node/npm. It skips installed tools, does not install Cursor, only reports a missing `grok` (no installer is named here), removes vendor additions to tracked
 shell rc files while preserving prior local changes, and lists outside rc files
 the installers touched. Vendor CLIs under `arch/bin` are ignored to protect
 existing Linux bin-directory symlinks. New setups already copy helper scripts.
 
 `script/setup-check.sh` reports each provider CLI and sign-in file presence
-without reading credentials. Cursor uses `.cursor/auth.json` on macOS and
-`$XDG_CONFIG_HOME/cursor/auth.json` (default `~/.config`) on Linux. Antigravity
+without reading credentials. It checks the `claude`, `grok` and `agy` CLIs; Cursor is no longer checked. Antigravity
 uses the system keyring, so its sign-in file status is unavailable; see its
 [official authentication description](https://github.com/google-antigravity/antigravity-cli#authentication).
 File presence does not establish valid sign-in, and absent files can coexist
@@ -136,7 +135,7 @@ Once a card has been Done for 30 minutes, `script/board-clean.py` removes its wo
 
 | Tool | Role in coordinator and fleet operations |
 | --- | --- |
-| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. |
+| `script/elon-startup.sh` | Verifies coordinator identity and `.sync-ok` freshness in `agent-state`, runs `fleet-pull.sh`, and reports host health. Takes only `--no-pull`; `-h` and `--help` print the usage, any other argument exits 2 before any host contact. |
 | `script/new-coordinator.sh` | Sets up a new Mac as the coordinator from `agent-state` (`--dry-run` first). |
 | `script/take-over-coordinator.sh` | Manual coordinator failover and handback using `coordinator.conf` (`--yes`). |
 | `script/orca-reply.sh` | Replies to a worker's orchestration message and nudges its terminal so an idle session wakes up. |

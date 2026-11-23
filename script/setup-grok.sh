@@ -3,6 +3,12 @@
 # never changes a key the file already has. Safe to re-run.
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1568).
+if [ $# -gt 0 ]; then
+  echo "Usage: setup-grok.sh (takes no arguments)" >&2
+  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+fi
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 SRC="$DOTFILES/ide/grok/config.defaults.toml"
 DEST="${GROK_CONFIG:-$HOME/.grok/config.toml}"

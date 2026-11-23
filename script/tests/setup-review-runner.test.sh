@@ -45,9 +45,24 @@ hasnt() { grep -qF -- "$1" "$log" && echo 1 || echo 0; }
 plist_has() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist" >/dev/null 2>&1 && echo 0 || echo 1; }
 reset_plist() { rm -f "$plist"; /usr/libexec/PlistBuddy -c 'Add :Label string x' "$plist" >/dev/null; }
 
-# 1. missing args
-"$script" >/dev/null 2>&1; check "no args exits non zero" "$([ $? -ne 0 ] && echo 0 || echo 1)"
-"$script" "$repo" >/dev/null 2>&1; check "one arg exits non zero" "$([ $? -ne 0 ] && echo 0 || echo 1)"
+# 1. usage: no args, one arg, -h/--help and a non owner/repo first arg stop before any mkdir, gh or launchctl
+usage='Usage: setup-review-runner.sh <owner/repo> <runner name> [runner dir]'
+usage_case() { # <label> <expected rc> args...
+  local label=$1 want=$2; shift 2
+  : >"$log"; rm -rf "$HOME/actions-runner---help" "$HOME/actions-runner-widgets"
+  "$script" "$@" >"$tmp/out" 2>&1; local rc=$?
+  check "$label: exits $want" "$([ "$rc" = "$want" ] && echo 0 || echo 1)"
+  check "$label: prints the usage" "$(grep -qF "$usage" "$tmp/out"; echo $?)"
+  check "$label: no gh or launchctl call" "$([ -s "$log" ] && echo 1 || echo 0)"
+  check "$label: no runner dir made" "$([ -e "$HOME/actions-runner---help" ] || [ -e "$HOME/actions-runner-widgets" ] && echo 1 || echo 0)"
+}
+usage_case "no args" 2
+usage_case "one arg" 2 "$repo"
+usage_case "--help" 0 --help
+usage_case "-h" 0 -h
+usage_case "--help x" 0 --help x
+usage_case "first arg not owner/repo" 2 widgets "$name"
+usage_case "first arg with extra slash" 2 a/b/c "$name"
 
 # 2. existing .runner skips download and config; SessionCreate present is deleted
 dir=$tmp/runner-existing; mkdir -p "$dir"; echo cfg >"$dir/.runner"

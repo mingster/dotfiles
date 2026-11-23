@@ -24,9 +24,18 @@ set -euo pipefail
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 NOTES_DIR="$DOTFILES/.agents/claude/notes"
 
-if [ $# -lt 1 ] || [ -z "$1" ] || [[ "$1" == */* ]] || [[ "$1" == .* ]]; then
-    printf 'Usage: %s <topic> ["note text"]\n' "$(basename "$0")" >&2
-    printf '  topic: e.g. laravel, nextjs, docker (not empty, no /, not starting with .)\n' >&2
+usage() {
+    printf 'Usage: %s <topic> ["note text"]\n' "$(basename "$0")"
+    printf '  topic: e.g. laravel, nextjs, docker (not empty, no /, not starting with . or -)\n'
+}
+
+if [ $# -eq 1 ] && { [ "$1" = "-h" ] || [ "$1" = "--help" ]; }; then
+    usage
+    exit 0
+fi
+
+if [ $# -lt 1 ] || [ $# -gt 2 ] || [ -z "$1" ] || [[ "$1" == */* ]] || [[ "$1" == .* ]] || [[ "$1" == -* ]]; then
+    usage >&2
     exit 1
 fi
 

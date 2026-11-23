@@ -3,6 +3,13 @@
 # Uses --severity=error so info/style (e.g. SC2086 quoting) does not fail the run;
 # run `shellcheck -x <file>` without that flag for full diagnostics.
 set -euo pipefail
+
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: shellcheck-dotfiles.sh (takes no arguments)" >&2
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

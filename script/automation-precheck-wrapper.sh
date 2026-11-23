@@ -63,7 +63,7 @@ finish_trace() {
 
   local duration=$((SECONDS - started)) summary
   # The scheduled log path is argument 2; inner env may set WRAP_UP_SCHEDULED_LOG only for the child.
-  [ "$name" = wrap-up-scheduled ] && export WRAP_UP_SCHEDULED_LOG="$log"
+  case "$name" in wrap-up-scheduled|wrap-up-daily) export WRAP_UP_SCHEDULED_LOG="$log" ;; esac
   summary=$(
     AUTOMATION_NAME="$name" AUTOMATION_INNER_RC="$inner_rc" AUTOMATION_LOG="$log" AUTOMATION_RID="$rid" python3 - <<'PY'
 import os, re, sys
@@ -93,12 +93,12 @@ def last_wrapup_summary(path: str) -> str:
     for line in reversed(this_run(path)):
         if "phase=" in line:
             continue
-        if "wrap-up-scheduled" not in line:
+        if "wrap-up-scheduled" not in line and "wrap-up-daily" not in line:
             continue
-        return re.sub(r"^\S+\s+wrap-up-scheduled\s+\[\d+\]\s*", "", line).strip()
+        return re.sub(r"^\S+\s+wrap-up-(?:scheduled|daily)\s+\[\d+\]\s*", "", line).strip()
     return ""
 
-if name == "wrap-up-scheduled":
+if name in ("wrap-up-scheduled", "wrap-up-daily"):
     s = last_wrapup_summary(os.environ.get("WRAP_UP_SCHEDULED_LOG", "") or log_path)
     if s:
         sys.stdout.write(s[:240])

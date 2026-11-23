@@ -1,8 +1,15 @@
 #!/bin/bash
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1582).
+if [ $# -gt 0 ]; then
+  echo "Usage: install_vscode_extensions.sh (takes no arguments)" >&2
+  case "$*" in -h | --help) [ $# -eq 1 ] && exit 0 ;; esac
+  exit 2
+fi
+
 # execute command
 # -------------------
-# curl -s https://raw.githubusercontent.com/mingster/dotfiles/master/vscode/install-vscode-extensions.sh | /bin/bash
+# curl -s https://raw.githubusercontent.com/mingster/dotfiles/main/script/install_vscode_extensions.sh | /bin/bash
 
 # Visual Studio Code :: Package list
 # get this list by: code --list-extensions

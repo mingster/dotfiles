@@ -10,10 +10,10 @@ High-level architecture (big picture)
 - Platform folders: `mac/`, `arch/`, `debian/`, `rasp/`, `ms/` contain platform-specific installation and system setup scripts (naming pattern: `install_*.sh`, `uninstall_*.sh`, `system_setup.sh`).
 - Agent skills: `install.sh` and platform `system_setup` scripts create real **`~/.agents/skills`** and **`~/.claude/skills`** directories with individual links to tracked dotfiles skills. Skills are committed folders under `.agents/skills/`, shared across IDEs via `~/.agents` and `~/.claude/skills`; tool-owned folders and lock data are preserved. See `README.md`.
 - Claude Code (CLI + [Desktop](https://code.claude.com/download)): canonical tree is **`~/dotfiles/.agents/`** (shared **`skills/`**; Claude-only files under **`claude/`**). **`script/setup-claude-code.sh`** links **`~/.claude/`** (including **`~/.claude/skills`**). User **`settings.json`** should include **`"Skill"`** in **`permissions.allow`** so skills are usable. Do not commit secrets (see `.gitignore`).
-- Cursor: **`~/dotfiles/ide/cursor/rules`** holds the few generic global rules (project rules live in each repo); **`~/.cursor/rules`** symlinks there. **`script/link-cursor-user.sh`** symlinks **`ide/cursor/{settings.json,keybindings.json,environment.json}`** into the Cursor **User** directory. **`script/link-cursor-hooks.sh`** copies **`ide/cursor/hooks.json`** and links **`hooks/*.sh`** into **`~/.cursor/`** (PR changelog gate on `gh pr create`). **`cursor/mcp.json.example`** shows MCP shape; real **`mcp.json`** with keys stays local / gitignored.
+- Cursor: **`~/dotfiles/ide/cursor/rules`** holds the few generic global rules (project rules live in each repo); **`~/.cursor/rules`** symlinks there. **`script/link-cursor-user.sh`** symlinks **`ide/cursor/{settings.json,keybindings.json,environment.json}`** into the Cursor **User** directory. **`script/link-cursor-hooks.sh`** copies **`ide/cursor/hooks.json`** and links **`hooks/*.sh`** into **`~/.cursor/`** (PR changelog gate on `gh pr create`). **`ide/cursor/mcp.json.example`** shows MCP shape; real **`mcp.json`** with keys stays local / gitignored.
 - **`AGENTS.md`** at repo root summarizes paths and boundaries for agents working in this repo.
 - Config packages: `~/.config` managed via GNU `stow` using `mac/stowall` (run `mac/stowall` to stow everything in `.config`). **`mac/stowall`** uses **`$HOME/dotfiles`** (override with **`DOTFILES`**); align with the `~/dotfiles` symlink from `install.sh`.
-- Editor and tooling: `vscode/` stores VS Code profiles and an extension install script `vscode/install-vscode-extensions.sh` (use this file to update extension lists — avoid editing the binary-ish `vscode-settings.code-profile` unless necessary).
+- Editor and tooling: `ide/vscode/` stores VS Code settings and the exported `AzureDataStudio.code-profile`. The extension list lives in `script/install_vscode_extensions.sh` (use this file to update extension lists; do not edit the exported profile directly).
 
 Key workflows (how to run & validate changes)
 
@@ -21,20 +21,20 @@ Key workflows (how to run & validate changes)
 - Prepare macOS: `sh mac/osxprep.sh` then `sh mac/osx.sh` (carefully review `osx.sh` before running — it changes OS defaults).
 - Stow configs (linking into `$HOME`): from repo root run `mac/stowall` or `stow -n <package>` for a dry-run; use `stow -v` for verbose output.
 - ShellCheck: CI runs `script/shellcheck-dotfiles.sh` (error-severity only; covers install.sh, mac/stowall, the system_setup.sh files, script/*.sh and script/lib/*.sh). Run locally before pushing; use plain `shellcheck` on a file for full info-level hints.
-- VS Code extensions: update `vscode/install-vscode-extensions.sh` and run it (`code --install-extension ...`) to install from the canonical list.
+- VS Code extensions: update `script/install_vscode_extensions.sh` and run it (`code --install-extension ...`) to install from the canonical list.
 
 Project-specific conventions & patterns
 
 - Platform-first scripts: adding or modifying platform behavior should live under the matching platform folder (e.g., a mac-only change => `mac/`).
 - Install scripts check and install Homebrew when needed (pattern: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`). Follow that pattern for idempotent installs.
-- Avoid editing generated or exported artifacts: `vscode/vscode-settings.code-profile` is a generated profile; prefer editing the source script (`vscode/install-vscode-extensions.sh`) or the original user settings under `vscode/`.
+- Avoid editing generated or exported artifacts: `ide/vscode/AzureDataStudio.code-profile` is a generated profile; prefer editing the source script (`script/install_vscode_extensions.sh`) or the user settings under `ide/vscode/`.
 - Use `.stow-local-ignore` to exclude files/packages from stow; do not add secrets or machine-local files to the repo.
 
 Testing & verification notes
 
 - For config changes: test a dry-run with `stow -n` and then apply with `stow -R <package>` or use `mac/stowall`.
 - For install scripts: run locally on the same platform in a VM or throwaway machine. Scripts are shell-based — read them first and test incrementally.
-- For VS Code: run `vscode/install-vscode-extensions.sh` to validate extension changes; DO NOT edit `vscode-settings.code-profile` to change extension lists — it’s an export.
+- For VS Code: run `script/install_vscode_extensions.sh` to validate extension changes; DO NOT edit `ide/vscode/AzureDataStudio.code-profile` to change extension lists — it’s an export.
 
 Files to read first (essential reading order)
 
@@ -42,7 +42,7 @@ Files to read first (essential reading order)
 2. `install.sh` (symlinks, `.agents`, `script/setup-claude-code.sh`, Cursor; then OS-specific `system_setup` unless `DOTFILES_SKIP_SYSTEM_SETUP`)
 3. `mac/system_setup.sh`, `mac/osxprep.sh`, `mac/stowall` (mac-specific flows; `DOTFILES_BREW_UPGRADE=1` enables `brew upgrade` in `system_setup.sh`)
 4. `script/shellcheck-dotfiles.sh` (ShellCheck entrypoints used by CI: install, stowall, system_setup, script/*.sh, script/lib/*.sh)
-5. `vscode/install-vscode-extensions.sh` and `vscode/vscode-settings.code-profile` (extension and settings notes)
+5. `script/install_vscode_extensions.sh` and `ide/vscode/` (extension and settings notes)
 6. `.stow-local-ignore` and `.gitconfig` (linking and git configuration patterns)
 
 PR guidance for contributors/agents

@@ -4,6 +4,12 @@
 # absolute home path, which must stay out of this public repo.
 set -euo pipefail
 
+case "${1:-}" in
+  "") ;;
+  -h|--help) echo "Usage: link-cursor-hooks.sh   (takes no arguments)"; exit 0 ;;
+  *) echo "Usage: link-cursor-hooks.sh   (takes no arguments)" >&2; exit 2 ;;
+esac
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 SRC_DIR="$DOTFILES/ide/cursor"
 HOOKS_SRC="$SRC_DIR/hooks"

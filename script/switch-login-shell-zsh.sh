@@ -4,10 +4,18 @@
 # Usage: switch-login-shell-zsh.sh [--dotfiles DIR]
 set -euo pipefail
 
+usage() { echo "Usage: switch-login-shell-zsh.sh [--dotfiles DIR]"; }
 DOTFILES_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [ "${1:-}" = "--dotfiles" ]; then
-  DOTFILES_ROOT="$2"
-fi
+case "${1:-}" in
+  "") ;;
+  -h|--help) usage; exit 0 ;;
+  --dotfiles)
+    if [ $# -lt 2 ] || [ -z "$2" ]; then echo "switch-login-shell-zsh: --dotfiles needs a directory" >&2; exit 2; fi
+    [ $# -eq 2 ] || { usage >&2; exit 2; }
+    DOTFILES_ROOT="$2"
+    ;;
+  *) usage >&2; exit 2 ;;
+esac
 # shellcheck source=script/lib/dotfiles-source.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/dotfiles-source.sh"
 SHELLS_FILE="${SHELLS_FILE:-/etc/shells}"

@@ -2,6 +2,12 @@
 # Orca setup: ensure presets.json and agent hooks are configured
 set -euo pipefail
 
+# Takes no arguments: -h/--help print usage, anything else is refused before any change (#1568).
+if [ $# -gt 0 ]; then
+  echo "Usage: setup-orca.sh (takes no arguments)" >&2
+  case "$1" in -h | --help) exit 0 ;; *) exit 2 ;; esac
+fi
+
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 
 mkdir -p "$HOME/.orca"

@@ -81,5 +81,27 @@ git -C "$U" -c user.name=t -c user.email=t@t commit -qm elon
 out=$(sync)
 code=$?
 t "refuses to replace a local template skill" '[ "$code" != 0 ] && grep -q elon "$T/.agents/skills/elon/SKILL.md" && echo "$out" | grep -q "local template skill"'
+# An upstream skills/ folder with files only: no skill, no literal * directory, nothing written, exit 1.
+U2="$tmp/up2"
+D2="$tmp/dotfiles2"
+T2="$D2/templates/agent-team"
+mkdir -p "$U2/pstack/skills" "$D2/script" "$T2/.agents/skills/keep"
+printf 'readme\n' >"$U2/pstack/skills/README.md"
+printf 'file\n' >"$U2/pstack/file.txt"
+git -C "$U2" init -q
+git -C "$U2" add -A
+git -C "$U2" -c user.name=t -c user.email=t@t commit -qm init
+cp "$here/sync-pstack-template-skills.sh" "$D2/script/"
+printf 'kept\n' >"$T2/.agents/skills/keep/SKILL.md"
+printf 'sha=old\ntree=pstack pstack\nskills=keep\n' >"$D2/script/.pstack-template-upstream"
+git -C "$D2" init -q
+out=$(DOTFILES="$D2" PLUGINS_REPO="$U2" "$D2/script/sync-pstack-template-skills.sh" 2>&1)
+code=$?
+t "skills folder with no subfolder: exit 1 with a clear message" '[ "$code" = 1 ] && echo "$out" | grep -q "no upstream skill found"'
+t "skills folder with no subfolder: no * directory" '[ ! -e "$T2/.agents/skills/*" ]'
+t "skills folder with no subfolder: tree not copied" '[ ! -e "$T2/pstack" ]'
+t "skills folder with no subfolder: listed skill not pruned" 'grep -q kept "$T2/.agents/skills/keep/SKILL.md"'
+t "skills folder with no subfolder: state untouched" 'grep -qx "sha=old" "$D2/script/.pstack-template-upstream" && grep -qx "skills=keep" "$D2/script/.pstack-template-upstream"'
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

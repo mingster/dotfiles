@@ -21,7 +21,7 @@ node_ver=$(awk '$1=="nodejs" { print $2; exit }' "$tv" 2>/dev/null || true)
 
 asdf plugin list 2>/dev/null | grep -q '^nodejs$' || asdf plugin add nodejs https://github.com/asdf-vm/asdf-nodejs.git
 
-asdf list nodejs 2>/dev/null | grep -Fq "$node_ver" || asdf install nodejs "$node_ver"
+asdf list nodejs 2>/dev/null | tr -d ' *' | grep -qx -- "$node_ver" || asdf install nodejs "$node_ver"
 asdf set -u nodejs "$node_ver"
 
 asdf plugin update --all

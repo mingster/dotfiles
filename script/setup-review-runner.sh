@@ -5,6 +5,10 @@
 # A runner service gets SessionCreate, which starts a new security session where the login keychain is
 # locked: claude then says "Not logged in" although it works in a terminal. This script removes it.
 set -euo pipefail
+usage='Usage: setup-review-runner.sh <owner/repo> <runner name> [runner dir]'
+case "${1:-}" in -h | --help) echo "$usage"; exit 0 ;; esac
+case "${1:-}" in */*/* | */ | /* | '') echo "$usage" >&2; exit 2 ;; */*) ;; *) echo "$usage" >&2; exit 2 ;; esac
+[ $# -ge 2 ] && [ $# -le 3 ] || { echo "$usage" >&2; exit 2; }
 repo=$1 name=$2
 dir=${3:-$HOME/actions-runner-${repo#*/}}
 label=actions.runner.${repo/\//-}.$name

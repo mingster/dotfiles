@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 # Print the number of coding agent CLI sessions in a process snapshot.
+# Counts `claude` only when invoked bare (`claude ...`), so path qualified helpers such as
+# `/Users/u/.local/bin/claude --chrome-native-host` stay out of the count. `agy` and `grok`
+# count bare or by path. A match needs at least one argument. Cursor is not counted
+# since the owner replaced it with Grok (#1264, #1527).
 set -euo pipefail
 
+usage="Usage: $0 [--stdin]"
+case "$#:$*" in
+  0:|1:--stdin) ;;
+  1:-h|1:--help) echo "$usage" >&2; exit 0 ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac
+
 process_args() {
-  case "$#:$*" in
-    0:) ps -eo args ;;
-    1:--stdin) cat ;;
-    *) printf 'Usage: %s [--stdin]\n' "$0" >&2; return 2 ;;
-  esac
+  if [ "$#" -eq 0 ]; then ps -eo args; else cat; fi
 }
 
 process_args "$@" | awk '
-  ($1 == "claude" || $1 == "agy") && NF > 1 { count++; next }
   {
     executable = $1
     sub(/^.*\//, "", executable)
-    if (executable == "agy" && NF > 1) {
-      count++
-    } else if ($1 ~ /\/\.local\/bin\/cursor-agent$/) {
-      # The IDE helper path contains spaces and is not the executable token.
-      count++
+    if ((executable == "claude" && $1 == "claude") || executable == "agy" || executable == "grok") {
+      if (NF > 1) count++
     }
   }
   END { print count + 0 }

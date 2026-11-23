@@ -5,11 +5,14 @@
 # Never touches a dirty or diverged checkout or a worktree branch, and always exits 0.
 # Usage: session-sync.sh [<project dir>]
 #        session-sync.sh --dotfiles-only   (only ~/dotfiles, even from the dotfiles repo; no tool floor)
+# Exception to "always exits 0" (#1591): -h and --help print the usage line and exit 0 without fetching; any
+# other argument starting with - prints the usage line on stderr and exits 2.
 # Tests: SESSION_SYNC_PROBE (tool probe script), SESSION_SYNC_FETCH_TIMEOUT (seconds, default 5).
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
 fetch_timeout=${SESSION_SYNC_FETCH_TIMEOUT:-5}
+[[ "$fetch_timeout" =~ ^[1-9][0-9]*$ ]] || fetch_timeout=5
 export GIT_TERMINAL_PROMPT=0
 
 common_of() { git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null; }
@@ -78,6 +81,13 @@ check_floor() {
     esac
   done < <(jq -r '.tools // {} | to_entries[] | "\(.key) \(.value)"' "$floor" 2>/dev/null)
 }
+
+usage="Usage: session-sync.sh [<project dir>|--dotfiles-only]"
+case "${1:-}" in
+  -h|--help) echo "$usage"; exit 0 ;;
+  --dotfiles-only) ;;
+  -*) echo "$usage" >&2; exit 2 ;;
+esac
 
 dotfiles=${DOTFILES_DIR:-$HOME/dotfiles}
 if [ "${1:-}" = --dotfiles-only ]; then

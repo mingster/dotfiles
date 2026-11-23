@@ -4,12 +4,13 @@
 # With no files, checks every .md under README.md and docs/ that changed between base and head.
 set -euo pipefail
 
+need_value() { echo "doc-fact-check: $1 needs a value" >&2; exit 2; }
 repo="" base="" head=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo) repo=${2:-}; shift 2 ;;
-    --base) base=${2:-}; shift 2 ;;
-    --head) head=${2:-}; shift 2 ;;
+    --repo) [ $# -ge 2 ] || need_value "$1"; repo=${2:-}; shift 2 ;;
+    --base) [ $# -ge 2 ] || need_value "$1"; base=${2:-}; shift 2 ;;
+    --head) [ $# -ge 2 ] || need_value "$1"; head=${2:-}; shift 2 ;;
     -h|--help) echo "Usage: doc-fact-check.sh --repo <dir> --base <ref> --head <ref> [file...]" >&2; exit 0 ;;
     --) shift; break ;;
     *) break ;;
@@ -18,7 +19,7 @@ done
 files=("$@")
 
 die() { echo "doc-fact-check: $*" >&2; exit 1; }
-[ -n "$repo" ] && [ -d "$repo/.git" ] || die "--repo must be a git checkout"
+[ -n "$repo" ] && { [ -d "$repo/.git" ] || [ -f "$repo/.git" ]; } || die "--repo must be a git checkout"
 [ -n "$base" ] && [ -n "$head" ] || die "--base and --head are required"
 
 repo=$(cd "$repo" && pwd)

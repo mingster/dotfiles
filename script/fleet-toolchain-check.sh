@@ -3,7 +3,7 @@
 # when it is below the latest release. Peers follow the coordinator, never the fleet maximum.
 # Reuses .tool-versions via bootstrap-asdf-tools for node and python.
 # --apply upgrades Orca to the coordinator's version (latest on the coordinator) on a host with no live
-# claude, agent or agy process, because the upgrade restarts Orca; a busy host is reported as skipped.
+# claude, agent, agy or grok process, because the upgrade restarts Orca; a busy host is reported as skipped.
 # --apply also installs the coordinator's Node on a peer below it (bootstrap-asdf-tools --pin), whatever the peer's own pin file says.
 # --apply also runs `orca skills install --all` on each host, which installs and updates the bundled Orca skills.
 # Usage: fleet-toolchain-check.sh [--apply]
@@ -11,6 +11,9 @@
 # Config: FLEET_PULL_CONFIG or fleet-pull.config.json (same hosts as fleet-pull).
 # Tests: FLEET_ORCA_APP (Orca.app path), FLEET_TOOLCHAIN_RUN, FLEET_TOOLCHAIN_LATEST_{ORCA,BUN,NODE,PYTHON3}, FLEET_TOOLCHAIN_NODE_INDEX (path), FLEET_TOOLCHAIN_VERSIONS (json).
 set -u
+usage='Usage: fleet-toolchain-check.sh [--apply]'
+case "${1:-}" in -h | --help) [ $# -eq 1 ] && { echo "$usage"; exit 0; } ;; esac
+if [ $# -gt 1 ] || { [ $# -eq 1 ] && [ "$1" != --apply ]; }; then echo "$usage" >&2; exit 2; fi
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=script/lib/find-orca-dir.sh disable=SC1091
 . "$here/lib/find-orca-dir.sh"
@@ -42,7 +45,7 @@ command -v jq >/dev/null 2>&1 || { echo 'fleet-toolchain-check: jq required' >&2
 
 run="${FLEET_TOOLCHAIN_RUN:-ssh}"
 me=$(hostname -s)
-TOOLS="git gh jq python3 shellcheck bun node orca claude agent agy"
+TOOLS="git gh jq python3 shellcheck bun node orca claude agent agy grok"
 
 norm_ver() { printf '%s' "$1" | sed -E 's/^v//; s/^[[:space:]]+|[[:space:]]+$//g'; }
 older() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$1" ]; }
@@ -397,7 +400,7 @@ inside_orca() { # true when this script runs under an Orca process, which the up
 if [ -n '$orca_to' ]; then
   # Claude renames its process to its version, so match the first word of the command line too
   live=\$({ ps -A -o comm=; ps -A -o args= | awk '{ print \$1 }'; } 2>/dev/null | sed 's#.*/##' |
-    grep -xE 'claude|agent|agy' | sort -u | tr '\n' ' ')
+    grep -xE 'claude|agent|agy|grok' | sort -u | tr '\n' ' ')
   up=
   if [ -n "\$live" ]; then
     echo "__orca_skipped__ live agents: \${live% }"

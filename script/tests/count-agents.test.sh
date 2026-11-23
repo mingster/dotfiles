@@ -16,8 +16,7 @@ assert_count() {
 
 fixture=$(cat <<'PS'
     claude --dangerously-skip-permissions --model claude-sonnet-5-5 --effort medium
-    /Users/u/.local/bin/cursor-agent --use-system-ca ...
-    /Users/u/Library/Application Support/Cursor/User/globalStorage/anysphere.cursor-agent-worker/agent-cli/.local/bin/cursor-agent
+    /Users/u/.grok/bin/grok chat
     grep -c claude
 PS
 )
@@ -25,12 +24,36 @@ assert_count 'busy process fixture' 2 "$fixture"
 assert_count 'empty input' 0 ''
 assert_count 'Claude CLI' 1 'claude --dangerously-skip-permissions'
 assert_count 'Antigravity CLI' 1 'agy --dangerously-skip-permissions --model gemini-4-argon-medium'
-assert_count 'Cursor CLI' 1 '/Users/u/.local/bin/cursor-agent --use-system-ca'
-assert_count 'Cursor IDE helper' 0 '/Users/u/Library/Application Support/Cursor/User/globalStorage/anysphere.cursor-agent-worker/agent-cli/.local/bin/cursor-agent'
+assert_count 'Grok CLI bare' 1 'grok --yolo'
+assert_count 'Grok CLI by path' 1 '/Users/u/.grok/bin/grok chat'
+assert_count 'Grok mixed with Claude' 3 $'grok --yolo\n/Users/u/.grok/bin/grok chat\nclaude --x'
+assert_count 'grep and grok-trust are not Grok sessions' 0 $'grep grok\ngrok-trust.sh --check\n/Users/u/dotfiles/script/grok-trust.sh x'
+# Cursor was dropped from the count (#1527): the owner replaced it with Grok (#1264).
+assert_count 'Cursor CLI is not counted' 0 '/Users/u/.local/bin/cursor-agent --use-system-ca'
 assert_count 'other executables and embedded command text' 0 $'grep -c claude\n/bin/sh -c claude --no-daemon\n/usr/bin/cursor-agent\nclaude-helper --dangerously-skip-permissions'
-assert_count 'leading whitespace' 2 $'  claude --model example\n\t/usr/bin/other --no-daemon\n   /Users/u/.local/bin/cursor-agent'
+assert_count 'leading whitespace' 2 $'  claude --model example\n\t/usr/bin/other --no-daemon\n   /Users/u/.grok/bin/grok chat'
 assert_count 'app-server in session configuration' 1 'claude --no-daemon -c app-server'
+# Deliberate skips (#1557): a path qualified claude is a helper process, and a bare one needs arguments.
+assert_count 'path qualified Claude helper is not counted' 0 '/Users/u/.local/bin/claude --chrome-native-host'
+assert_count 'bare Claude without arguments is not counted' 0 'claude'
 # Deliberate refuse (#1074): Codex is not an agent session.
 assert_count 'Codex CLI is not counted' 0 'codex --full-auto'
+
+# Usage handling (#1590): nothing on stdout, so a caller never reads a count after a usage error.
+check_usage() {
+  local label=$1 want_ec=$2 out err ec=0; shift 2
+  out=$("$root/script/count-agents.sh" "$@" 2>"${TMPDIR:-/tmp}/count-agents.err.$$") || ec=$?
+  err=$(cat "${TMPDIR:-/tmp}/count-agents.err.$$"); rm -f "${TMPDIR:-/tmp}/count-agents.err.$$"
+  if [[ $ec != "$want_ec" || -n $out || $err != Usage:* ]]; then
+    printf 'FAIL: %s: ec=%s stdout=[%s] stderr=[%s]\n' "$label" "$ec" "$out" "$err" >&2
+    exit 1
+  fi
+  tests=$((tests + 1))
+}
+check_usage '--help' 0 --help
+check_usage '-h' 0 -h
+check_usage '--stdn typo' 2 --stdn
+check_usage 'extra argument' 2 --stdin extra
+check_usage 'bare unknown word' 2 bogus
 
 printf 'PASS: %s tests\n' "$tests"

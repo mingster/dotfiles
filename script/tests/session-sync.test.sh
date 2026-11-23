@@ -108,6 +108,14 @@ check "hanging fetch is reported" "$(grep -q 'session-sync: hang fetch failed, s
 check "floor warning prints when offline" "$(grep -q 'session-sync: claude 2.1.311 is below' <<<"$out"; echo $?)"
 check "exits 0 after a hanging fetch" "$ec"
 
+# A non-numeric timeout falls back to 5: normal sync, no bash error
+bad=$(make_behind bad)
+err=$(SESSION_SYNC_FETCH_TIMEOUT=abc bash "$here/session-sync.sh" "$bad" 2>&1 >/dev/null); ec=$?
+out=$(SESSION_SYNC_FETCH_TIMEOUT=abc run "$bad")
+check "non-numeric timeout prints no bash error" "$([ -z "$err" ] && echo 0 || echo 1)"
+check "non-numeric timeout still syncs" "$([ "$(head_of "$bad")" = "$(tip bad)" ] && echo 0 || echo 1)"
+check "exits 0 with non-numeric timeout" "$ec"
+
 # Not a git checkout at all: quiet and 0
 mkdir -p "$tmp/plain"
 out=$(run "$tmp/plain"); ec=$?
@@ -120,6 +128,25 @@ printf '#!/usr/bin/env bash\necho "stub session-sync $1"\n' >"$hook_home/dotfile
 out=$(cd "$proj" && HOME="$hook_home" CLAUDE_PROJECT_DIR="$proj" PATH=/usr/bin:/bin bash "$here/../templates/agent-team/.claude/bin/state-of-play.sh" 2>&1); ec=$?
 check "state-of-play runs session-sync for the project" "$(grep -qx "stub session-sync $proj" <<<"$out"; echo $?)"
 check "state-of-play still exits 0" "$ec"
+
+# Usage handling (#1591): --help and mistyped flags never reach git
+bin="$tmp/fetchbin"; mkdir -p "$bin"
+printf '#!/usr/bin/env bash\necho "$*" >> "%s/git-calls"\n' "$tmp" >"$bin/git"; chmod +x "$bin/git"
+for flag in --help -h; do
+  : >"$tmp/git-calls"
+  out=$(PATH="$bin:$PATH" bash "$here/session-sync.sh" "$flag" 2>"$tmp/err"); ec=$?
+  check "$flag exits 0" "$ec"
+  check "$flag prints Usage: on stdout" "$(grep -q '^Usage:' <<<"$out"; echo $?)"
+  check "$flag runs no git" "$([ ! -s "$tmp/git-calls" ]; echo $?)"
+done
+for flag in --bogus --dotfiles-onyl; do
+  : >"$tmp/git-calls"
+  out=$(PATH="$bin:$PATH" bash "$here/session-sync.sh" "$flag" 2>"$tmp/err"); ec=$?
+  check "$flag exits 2" "$([ "$ec" = 2 ] && echo 0 || echo 1)"
+  check "$flag prints Usage: on stderr" "$(grep -q '^Usage:' "$tmp/err"; echo $?)"
+  check "$flag prints nothing on stdout" "$([ -z "$out" ]; echo $?)"
+  check "$flag runs no git" "$([ ! -s "$tmp/git-calls" ]; echo $?)"
+done
 
 echo "session-sync: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
