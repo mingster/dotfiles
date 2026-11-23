@@ -236,7 +236,7 @@ scheduled_round() {
     free_before=$(free_kb)
     printf '%s free space before: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$(kb_gb "$free_before")" >> "$detail_file"
     # The strict child: no worktree with uncommitted work or an open PR goes, and nothing changed in the last 3 hours.
-    daily_env=("WRAP_UP_STRICT_KEEP=1" "WRAP_UP_RECENT_MIN=${WRAP_UP_DAILY_RECENT_MIN:-180}" "WRAP_UP_BUILD_CACHE_DIRS=${WRAP_UP_DAILY_BUILD_CACHE_DIRS:-.next node_modules/.cache}")
+    daily_env=("WRAP_UP_STRICT_KEEP=1" "WRAP_UP_LSOF_SNAPSHOT=1" "WRAP_UP_RECENT_MIN=${WRAP_UP_DAILY_RECENT_MIN:-180}" "WRAP_UP_BUILD_CACHE_DIRS=${WRAP_UP_DAILY_BUILD_CACHE_DIRS:-.next node_modules/.cache}")
     [ "${scheduled_dry:-0}" = 1 ] && repo_pipe=1
   fi
   guarded_round_rm f "$round_state/$round_name.terminals"
@@ -319,7 +319,7 @@ scheduled_round() {
   # so this round does not delete a card that just became Done. The clean pass then removes a card
   # that has been Done for 30 minutes, on the host named by its dispatch record. Each paired host is
   # reached with --environment; an unreachable host is skipped and tried again next round.
-  if [ "$round_kind" = scheduled ] && coordinator_runs_board_done; then
+  if coordinator_runs_board_done; then
     local board_mode step step_bin step_limit step_code
     board_mode=--apply
     [ "${scheduled_dry:-0}" = 1 ] && board_mode=--dry-run
@@ -1674,7 +1674,14 @@ linux_holder_check_available() {
 path_busy() {
   local holders status=0
   if command -v lsof >/dev/null 2>&1; then
-    if [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || status=$?
+    if [ -d "$1" ] && [ -n "${WRAP_UP_LSOF_SNAPSHOT:-}" ]; then
+      # One listing of every open file, matched by path prefix. lsof +D walks the whole tree, node_modules included, and took
+      # 9 to 13 s per project worktree on niteking, which is what ran the daily round out of time (#1533, #1535).
+      holders=$(lsof -nP -Fn 2>"$tmp/lsof-err" | WANT_A="$1" WANT_B=$(cd -P "$1" 2>/dev/null && pwd) awk '
+        BEGIN { a = ENVIRON["WANT_A"]; b = ENVIRON["WANT_B"] }
+        substr($0, 1, 1) == "n" { n = substr($0, 2)
+          if (n == a || index(n, a "/") == 1 || (b != "" && (n == b || index(n, b "/") == 1))) print "held" }') || status=$?
+    elif [ -d "$1" ]; then holders=$(lsof -t +D "$1" 2>"$tmp/lsof-err") || status=$?
     else holders=$(lsof -t -- "$1" 2>"$tmp/lsof-err") || status=$?
     fi
     if [ -n "$holders" ]; then busy='held open by a running process'; return 0; fi

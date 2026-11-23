@@ -2,6 +2,8 @@
 # The setup and link scripts that wire the live home refuse to run from a linked worktree (#1543).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=lib/asdf-pin.sh
+. "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 PASS=0
 FAIL=0
 check() {

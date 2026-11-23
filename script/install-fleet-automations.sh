@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Install Orca automations: fleet-watch (5 min), wrap-up-scheduled (10 min), wrap-up-daily (disk cleanup, 04:00),
-# sync drift (daily), team-audit-weekly and weekly-update (Monday). wrap-up-scheduled and wrap-up-daily are enabled on every Orca host;
-# the rest are enabled only on the coordinator in agent-state/coordinator.conf.
+# Install Orca automations: fleet-watch (5 min), wrap-up-daily (worktree and disk cleanup, once a day at 04:00),
+# sync drift (daily), team-audit-weekly and weekly-update (Monday). wrap-up-daily is enabled on every Orca host;
+# the rest are enabled only on the coordinator in agent-state/coordinator.conf. The old 10 minute wrap-up-scheduled
+# round is no longer installed, and --install removes it from a host that still has it (owner decision 2026-11-23, #1533).
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
 #
 # Usage: install-fleet-automations.sh --status
@@ -20,7 +21,7 @@ dry=0
 action=""
 
 usage() {
-  sed -n '2,9p' "$0"
+  sed -n '2,10p' "$0"
   printf '\n'
   printf '  --status     Print enabled/disabled for each fleet automation\n'
   printf '  --install    Create or update automations (idempotent by name)\n'
@@ -98,8 +99,6 @@ FLEET_AUTOMATIONS_TIMEZONE=${FLEET_AUTOMATIONS_TIMEZONE:-${TZ:-}}
 FLEET_AUTOMATIONS_PROVIDER=${FLEET_AUTOMATIONS_PROVIDER:-claude}
 FLEET_WATCH_PRECHECK_TIMEOUT=${FLEET_WATCH_PRECHECK_TIMEOUT:-280}
 WRAP_UP_SCHEDULED_REPO_LIMIT=${WRAP_UP_SCHEDULED_REPO_LIMIT:-300}
-WRAP_UP_PRECHECK_TIMEOUT=${WRAP_UP_PRECHECK_TIMEOUT:-600}
-WRAP_UP_SCHEDULED_LOG=${WRAP_UP_SCHEDULED_LOG:-$HOME/.orca/logs/wrap-up-scheduled.log}
 # Issue 855: failed rounds open an issue on the private fleet state repo. wrap-up.sh refuses a public one, since titles name hosts.
 WRAP_UP_ISSUE_REPO=${WRAP_UP_ISSUE_REPO:-mingster/agent-state}
 WRAP_UP_DAILY_LOG=${WRAP_UP_DAILY_LOG:-$HOME/.orca/logs/wrap-up-daily.log}
@@ -115,7 +114,7 @@ FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
 STAGING_DAILY_LOG=${STAGING_DAILY_LOG:-$HOME/.local/state/agent-team/staging-daily.log}
 STAGING_DAILY_PRECHECK_TIMEOUT=${STAGING_DAILY_PRECHECK_TIMEOUT:-300}
 FLEET_STAGING_DAILY_TIMEZONE=${FLEET_STAGING_DAILY_TIMEZONE:-Asia/Taipei}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-scheduled wrap-up-daily sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-daily sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
 
 precheck_path() {
   automation_tool_path
@@ -175,18 +174,6 @@ fleet_watch_precheck() {
   automation_wrap fleet-watch "$FLEET_WATCH_AUTOMATION_LOG" \
     env "FLEET_WATCH_LOG_PATH=$FLEET_WATCH_AUTOMATION_LOG" \
     python3 "$DOTFILES_DIR/script/fleet-watch.py" --config "$FLEET_WATCH_CONFIG" --state "$FLEET_WATCH_STATE"
-}
-
-wrap_up_precheck() {
-  local env_args=(
-    "WRAP_UP_SCHEDULED_LOG=$WRAP_UP_SCHEDULED_LOG"
-    "WRAP_UP_SCHEDULED_REPO_LIMIT=$WRAP_UP_SCHEDULED_REPO_LIMIT"
-    "WRAP_UP_PRECHECK_TIMEOUT=$WRAP_UP_PRECHECK_TIMEOUT"
-  )
-  [ -n "$WRAP_UP_ISSUE_REPO" ] && env_args+=("WRAP_UP_ISSUE_REPO=$WRAP_UP_ISSUE_REPO")
-  automation_wrap wrap-up-scheduled "$WRAP_UP_SCHEDULED_LOG" \
-    env "${env_args[@]}" \
-    bash "$DOTFILES_DIR/script/wrap-up.sh" --scheduled
 }
 
 wrap_up_daily_precheck() {
@@ -440,7 +427,8 @@ case "$action" in
     host_is_coordinator "$coord_want" && enabled=1
     repo_selector=$(dotfiles_repo_selector)
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
-    ensure_automation wrap-up-scheduled '*/10 * * * *' "$(wrap_up_precheck)" "$WRAP_UP_PRECHECK_TIMEOUT" 1
+    # Dropped 2026-11-23 (#1533): wrap-up runs once a day. Drop the old 10 minute entry when a host still has it.
+    automation_by_name wrap-up-scheduled >/dev/null 2>&1 && remove_by_name wrap-up-scheduled
     ensure_automation wrap-up-daily '0 4 * * *' "$(wrap_up_daily_precheck)" "$WRAP_UP_DAILY_PRECHECK_TIMEOUT" 1
     # The owner turns these three on by hand; the installer creates them disabled and keeps the owner's choice after that.
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" keep
@@ -455,5 +443,6 @@ case "$action" in
     for name in $FLEET_AUTOMATION_NAMES; do
       remove_by_name "$name"
     done
+    if automation_by_name wrap-up-scheduled >/dev/null 2>&1; then remove_by_name wrap-up-scheduled; fi
     ;;
 esac
