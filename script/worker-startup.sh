@@ -767,7 +767,8 @@ refuse_overlapping_issue() { # <spec_file> <title> <allow_reason>
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  ref=$(grep -m1 -oE '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed -E 's/^[A-Za-z]+:?[[:space:]]+//' || true)
+  case "$title" in "#"[0-9]*"|"*) [ -n "$ref" ] || { ref=${title#\#}; ref=\#${ref%%|*}; } ;; esac # the title names the issue (with_refs_line)
   [ -n "$ref" ] || return 0
   num=${ref##*#}
   repo=${ref%%#*}

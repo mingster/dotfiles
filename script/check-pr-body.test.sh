@@ -45,6 +45,11 @@ run --issue 5 "$TMP/good.md"
 run --issue 6 "$TMP/good.md"
 if [ "$rc" -eq 1 ] && grep -qF "Closes #6" <<<"$out"; then ok "--issue without its closing line is refused"; else bad "--issue 6 (rc=$rc, $out)"; fi
 
+run --issue '#6' "$TMP/good.md"
+[ "$rc" -eq 1 ] && ok "--issue '#6' is read as 6 and refused without its closing line" || bad "hash issue (rc=$rc, $out)"
+run --issue abc "$TMP/good.md"
+[ "$rc" -eq 2 ] && ok "a non numeric --issue is a usage error" || bad "abc (rc=$rc)"
+
 run "$TMP/missing.md"
 [ "$rc" -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (rc=$rc)"
 run

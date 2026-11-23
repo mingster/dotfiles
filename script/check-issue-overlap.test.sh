@@ -73,6 +73,21 @@ printf 'No allowed files here.\n' >"$FAKE/issue-14.md"
 run 14
 [ "$rc" -eq 0 ] && ok "an issue with no Allowed files cannot overlap" || bad "no allowed (rc=$rc, $out)"
 
+# multi-line "Allowed files:" list, and a bold section after it is not a path list
+echo '[]' >"$FAKE/prs.json"
+jq -n '[{number: 15, body: "Allowed files:\n- script/gamma.sh\n\n**Out of scope:** do not edit script/zeta.sh\n"}]' >"$FAKE/inflight.json"
+printf 'x\n\n## Allowed files\n- script/gamma.sh\n' >"$FAKE/issue-16.md"
+run 16
+[ "$rc" -eq 1 ] && grep -qF "#15" <<<"$out" && ok "a multi-line Allowed files: list is read" || bad "multi-line (rc=$rc, $out)"
+printf 'x\n\n## Allowed files\n- script/q.sh\n\n**Out of scope:** do not edit script/zeta.sh\n' >"$FAKE/issue-17.md"
+run 17
+[ "$rc" -eq 0 ] && ok "text under a bold section after Allowed files is not a path" || bad "bold section (rc=$rc, $out)"
+
+# the brief without Allowed files still checks the issue body
+printf 'Fix.\n\n## Out of scope\nnothing\n' >"$TMP/brief2.md"
+run --spec "$TMP/brief2.md" 16
+[ "$rc" -eq 1 ] && ok "--spec without Allowed files falls back to the issue body" || bad "spec fallback (rc=$rc, $out)"
+
 run
 [ "$rc" -eq 2 ] && ok "no arguments is a usage error" || bad "usage (rc=$rc)"
 

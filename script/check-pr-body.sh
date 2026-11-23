@@ -18,6 +18,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$file" ] && [ -f "$file" ] || usage
+issue=${issue#\#}
+case "$issue" in *[!0-9]*) usage ;; esac
 
 if reason=$(python3 "$here/pr-body-gate.py" ${issue:+--issue "$issue"} <"$file"); then
   exit 0

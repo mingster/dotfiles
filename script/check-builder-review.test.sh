@@ -49,6 +49,13 @@ Findings: none"
 run 7 "$HEAD"
 [ "$rc" -eq 0 ] && ok "PASS at the head passes" || bad "PASS at head (rc=$rc, $out)"
 
+pr_json "Review: PASS head=$HEAD model=sonnet" "Review: FAIL head=$HEAD model=sonnet"
+run 7 "$HEAD"
+[ "$rc" -ne 0 ] && ok "a later FAIL at the same head cancels an earlier PASS" || bad "later FAIL ignored"
+pr_json "Review: FAIL head=$HEAD model=sonnet" "Review: PASS head=$HEAD model=sonnet"
+run 7 "$HEAD"
+[ "$rc" -eq 0 ] && ok "a later PASS after a FAIL passes" || bad "later PASS (rc=$rc, $out)"
+
 pr_json "Review: PASS head=$HEAD model=sonnet"
 run 7 "${HEAD:0:12}"
 [ "$rc" -eq 0 ] && ok "a short sha prefix of the head passes" || bad "short sha (rc=$rc, $out)"

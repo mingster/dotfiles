@@ -42,7 +42,8 @@ fix="bash ~/dotfiles/script/pr-review.sh $pr $sha"
 
 # The sha must be the head or a prefix of it (7 or more characters); a PASS for any other head does not count.
 case "$head" in "$sha"*) [ "${#sha}" -ge 7 ] || head="" ;; *) head="" ;; esac
-if [ -n "$head" ] && jq -r '.comments[].body' <<<"$json" | grep -qE "^Review: PASS head=$head"; then
+# The newest "Review: PASS|FAIL head=<head>" line decides: a later FAIL at the same head cancels an earlier PASS.
+if [ -n "$head" ] && [ "$(jq -r '.comments[].body' <<<"$json" | grep -E "^Review: (PASS|FAIL) head=$head" | tail -1 | cut -d' ' -f2)" = PASS ]; then
   exit 0
 fi
 echo "check-builder-review: no 'Review: PASS head=$sha' comment on PR #$pr. Run the cold review yourself, then send worker_done:" >&2

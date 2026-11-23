@@ -25,8 +25,8 @@ allowed_files() { # reads a body on stdin
   awk '
     { sub(/\r$/, "") }
     /^## Allowed files/ { sec = 1; next }
-    /^## / { sec = 0 }
-    /^\*\*Allowed files:\*\*|^Allowed files:/ { line = $0; sub(/^\*\*Allowed files:\*\*|^Allowed files:/, "", line); print line; next }
+    /^\*\*Allowed files:\*\*|^Allowed files:/ { sec = 1; line = $0; sub(/^\*\*Allowed files:\*\*|^Allowed files:/, "", line); print line; next }
+    /^#+ / || /^\*\*[^*]+:\*\*/ { sec = 0 }
     sec { print }
   ' | tr '`",'"'"'' '    ' | tr -s '[:space:]' '\n' | sed -e 's/[.;:)]*$//' -e 's|^\./||' \
     | grep -E '/|\.[A-Za-z0-9]+$' | awk '!seen[$0]++' || true
@@ -39,11 +39,11 @@ covers() { # <a> <b>: same path, or one is a directory entry above the other
   return 1
 }
 
+# The brief may omit the issue's Allowed files, so use both.
+mine=$(gh issue view "$issue" ${r[@]+"${r[@]}"} --json body -q .body 2>/dev/null | allowed_files) || mine=""
 if [ -n "$spec" ]; then
   [ -f "$spec" ] || usage
-  mine=$(allowed_files <"$spec")
-else
-  mine=$(gh issue view "$issue" ${r[@]+"${r[@]}"} --json body -q .body 2>/dev/null | allowed_files) || mine=""
+  mine=$(printf '%s\n%s\n' "$mine" "$(allowed_files <"$spec")" | awk 'NF && !seen[$0]++')
 fi
 [ -n "$mine" ] || exit 0
 
