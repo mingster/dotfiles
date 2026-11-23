@@ -25,23 +25,36 @@ yay_installed()       { yay -Q "$1" >/dev/null 2>&1; }
 
 # ── Install Obsidian ──────────────────────────────────────────────────────────
 
+cleanup_obsidian_dmg() {
+    [ -z "${OBSIDIAN_MOUNT:-}" ] || hdiutil detach "$OBSIDIAN_MOUNT" -quiet || true
+    [ -z "${OBSIDIAN_WORK:-}" ] || rm -rf "$OBSIDIAN_WORK"
+}
+
 install_obsidian() {
     if is_mac; then
         if [ "$(uname -m)" = "x86_64" ]; then
             # Intel: download universal DMG from GitHub releases (no brew)
-            [ -d "/Applications/Obsidian.app" ] && return 0
+            local apps=${OBSIDIAN_APPLICATIONS_DIR:-/Applications}
+            [ -d "$apps/Obsidian.app" ] && return 0
             local url
             url=$(curl -fsSL "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest" \
                 | grep '"browser_download_url"' \
                 | grep '\.dmg"' \
                 | grep -v 'arm64' \
                 | sed 's/.*"\(https[^"]*\)".*/\1/' \
-                | head -1)
-            curl -fsSL "$url" -o /tmp/Obsidian.dmg
-            hdiutil attach /tmp/Obsidian.dmg -mountpoint /Volumes/Obsidian -nobrowse -quiet
-            cp -R "/Volumes/Obsidian/Obsidian.app" /Applications/
-            hdiutil detach /Volumes/Obsidian -quiet
-            rm -f /tmp/Obsidian.dmg
+                | head -1) || true
+            if [ -z "$url" ]; then
+                printf 'setup-obsidian: no Obsidian DMG URL in the latest release (API rate limit?)\n' >&2
+                return 1
+            fi
+            # The trap detaches the volume (when attached) and removes the temp dir, even when a step fails.
+            OBSIDIAN_WORK=$(mktemp -d)
+            OBSIDIAN_MOUNT=""
+            trap cleanup_obsidian_dmg EXIT
+            curl -fsSL "$url" -o "$OBSIDIAN_WORK/Obsidian.dmg"
+            hdiutil attach "$OBSIDIAN_WORK/Obsidian.dmg" -mountpoint "$OBSIDIAN_WORK/mnt" -nobrowse -quiet
+            OBSIDIAN_MOUNT="$OBSIDIAN_WORK/mnt"
+            cp -R "$OBSIDIAN_MOUNT/Obsidian.app" "$apps/"
         else
             # Apple Silicon: brew cask
             brew_cask_installed obsidian || brew install --cask obsidian

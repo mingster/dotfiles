@@ -319,6 +319,26 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/prepend-recent-change.ts` | Prepends dated change summaries to project changelog or recent-change files. |
 | `script/shellcheck-dotfiles.sh` | Runs `shellcheck --severity=error` on the repository's shell entrypoints. |
 
+### Gates, approvals, overlays and installers
+
+| Tool | Purpose |
+| --- | --- |
+| `script/check-project-names.sh` | The one checker for project, host and company names in this public repo. Run by the `commit-msg` hook, `checks-local.sh` (worker self-check) and `ship.sh`. It reads the private pattern file `~/.config/dotfiles/project-names.pattern` (`$XDG_CONFIG_HOME/dotfiles/project-names.pattern`); `NO_PROJECT_NAMES_FILE` points it at another file. A missing file fails, unless `--allow-missing` (hook and CI) prints `SKIPPED`. A failing PR: run `bash script/check-project-names.sh --show-match --changed origin/main --commits origin/main..HEAD` and reword each match. |
+| `script/check-dotfiles-fresh.sh` | Fails when `worker-startup.sh`, `ship.sh`, `head-checks.sh` or `fleet-watch-loop.sh` does not source `lib/dotfiles-fresh.sh`. Run by `checks-local.sh`. |
+| `script/approval-root-setup.sh` | Owner run, once per host, with sudo: creates the root owned approval folder and installs `approval-write.sh` with sudo asking every time. |
+| `script/approval-write.sh` | Writes one owner approval file as root, from the copy `approval-root-setup.sh` installs. Called through sudo by `bin/owner-approve.sh`. |
+| `script/approval-sign.sh` | Owner run: signs approvals and moves secrets into the Keychain behind Touch ID. Never run by a worker. |
+| `script/apply-local-overlay.py` | Prints a JSON file merged with an untracked local overlay (project names, hosts, paths). Called by `ship.sh`, `post-verdict.sh`, `template-sync-pr.sh` and `live-check-server.sh`. |
+| `script/apply-ide-overlay.py` | Prints an IDE settings file with list items (such as `cSpell.userWords`) added from an untracked overlay. Called by `setup-antigravity.sh` and `link-cursor-user.sh`. |
+| `script/receipt-state.py` | Finds the newest Checks, Review or Verdict comment at an exact head. Called by `fleet-watch.py` and `coordinator-publication.sh`. |
+| `script/worker-preamble.py` | Resolves the `poteto-mode`, `ORCA-ADAPTER` and role file paths for a worker brief. Called by `worker-startup.sh`, `fleet-watch.py` and `select-changed-script-tests.sh`. |
+| `script/agy-signin.py` | Matches the Antigravity sign-in screen and keeps the per host `agy-unavailable` mark. Called by `worker-startup.sh` and `fleet-watch.py`. |
+| `script/fleet-watch-record.py` | Records the Orca and `gh` replies that the fleet watch tests replay. Run by hand, `--dry` first. |
+| `script/install_asdf.sh`, `script/install_node.sh`, `script/install_java_dev.sh` | Install `asdf`, Node.js (version from `.tool-versions`) and Java through `asdf`. Called by the `system_setup.sh` of each platform and `weekly-update.sh` (Node). |
+| `script/install_aws_cli.sh`, `script/install_gcloud.sh`, `script/install_zed.sh` | Install the AWS CLI v2, the Google Cloud CLI and the Zed editor when missing. Called by the `system_setup.sh` of each platform. |
+
+`script/tests/script-docs-coverage.test.sh` fails when a `script/*.sh`, `*.py` or `*.ts` file is named in no doc. Add a row here for a new script, or list it in the test's exempt list.
+
 ### Orca-team pane and watch helpers (`.agents/skills/orca-team/`)
 
 | Tool | Purpose |

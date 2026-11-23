@@ -59,5 +59,46 @@ check cmp -s "$settings" "$tmp/first.json"
 DESC="existing vault content is not emptied"
 check test "$(cat "$vault/notes/a.md")" = "keep me"
 
+# Intel install: the DMG lives in a temp dir, the volume is detached when the copy fails, an empty URL stops early (#1598).
+istub="$tmp/intel-stub" ihome="$tmp/intel-home" apps="$tmp/apps" calls="$tmp/calls"
+mkdir -p "$istub" "$ihome" "$apps"
+cp "$stub"/* "$istub"/
+printf '#!/bin/sh\n[ "$1" = "-m" ] && echo x86_64 || echo Darwin\n' >"$istub/uname"
+cat >"$istub/curl" <<'STUB'
+#!/bin/sh
+echo "curl $*" >>"$CALLS"
+case "$*" in
+  *api.github.com*) [ -n "${EMPTY_URL:-}" ] || echo '"browser_download_url": "https://example.test/Obsidian.dmg"' ;;
+  *) while [ $# -gt 0 ]; do [ "$1" = -o ] && : >"$2"; shift; done ;;
+esac
+STUB
+cat >"$istub/hdiutil" <<'STUB'
+#!/bin/sh
+echo "hdiutil $*" >>"$CALLS"
+if [ "$1" = attach ]; then
+  while [ $# -gt 0 ]; do [ "$1" = -mountpoint ] && mkdir -p "$2/Obsidian.app"; shift; done
+fi
+exit 0
+STUB
+printf '#!/bin/sh\necho "cp $*" >>"$CALLS"\nexit 1\n' >"$istub/cp"
+chmod +x "$istub"/*
+irun() { : >"$calls"; env HOME="$ihome" PATH="$istub:$PATH" CALLS="$calls" OBSIDIAN_APPLICATIONS_DIR="$apps" "$@" bash "$script" >"$tmp/iout" 2>&1; }
+
+DESC="a failing copy stops the script"
+irun env; check test $? -ne 0
+DESC="a failing copy still detaches the volume it attached"
+check grep -q '^hdiutil detach' "$calls"
+DESC="the DMG is downloaded to a temp dir, not a fixed /tmp path"
+check bash -c "grep -q '^curl .* -o ' '$calls' && ! grep -q -- '-o /tmp/Obsidian.dmg' '$calls' && ! grep -q '/Volumes/Obsidian' '$calls'"
+DESC="the temp dir is gone after the failure"
+dmg=$(sed -n 's/^curl .* -o \(.*\)$/\1/p' "$calls" | head -1)
+check test -n "$dmg" -a ! -e "$dmg"
+
+DESC="an empty download URL stops with a setup-obsidian message"
+irun env EMPTY_URL=1; rc=$?
+check bash -c "[ $rc -ne 0 ] && grep -q '^setup-obsidian: .*URL' '$tmp/iout'"
+DESC="an empty download URL never reaches the download or hdiutil"
+check bash -c "! grep -q '^hdiutil' '$calls' && [ \$(grep -c '^curl' '$calls') -eq 1 ]"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

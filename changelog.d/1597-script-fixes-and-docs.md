@@ -1,0 +1,1 @@
+fix(scripts): `start-remote-worker.sh` names the flag on a missing value or a repeat, `setup-obsidian.sh` detaches and cleans up its DMG, `remote-heavy.sh` uses a private install log, and every script is named in a doc (#1597 #1598 #1599 #1600).
