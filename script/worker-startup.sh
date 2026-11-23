@@ -413,7 +413,7 @@ host_check() {
 
 # Finish lines every builder brief carries (#1675, #1676). A builder cannot report done without a cold review at its head.
 builder_review_line() {
-  printf -- '- Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so a builder is allowed to. FAIL: fix, push, rerun until PASS. The worker_done hook refuses a builder with no `Review: PASS head=<sha>` comment at the PR head.\n'
+  printf -- '- Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so a builder is allowed to. FAIL: fix, push, rerun until PASS.\n'
 }
 builder_sections_line() {
   printf -- '- PR body sections (checked by `bash ~/dotfiles/script/check-pr-body.sh <body file>` before the PR opens): the issue closing line, the `Builder:` line (agent and model), and `## Self-check` with the verify command and the tail of its output.\n'
