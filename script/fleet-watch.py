@@ -4185,6 +4185,89 @@ def build_triage_command(config, repo, agent, model):
     return [part for part in command if part]
 
 
+_SUPPLY_BRIEF = Path(__file__).resolve().parent.parent / 'docs/agents/supply-worker-brief.md'
+_SUPPLY_TITLE = '#0|architect-pm|supply'
+
+
+def build_supply_command(config, repos, agent, model):
+    """One supply worker for all watched repos, started in the first repo that has a local root (#1689)."""
+    scan = config['issue_scan']
+    root = next((r for r in (_issue_scan_repo_root(config, repo) for repo in repos) if r), None)
+    if not root:
+        return None
+    text = _SUPPLY_BRIEF.read_text(encoding='utf-8') + ''.join('- %s\n' % repo for repo in repos)
+    spec_path = _write_issue_scan_spec(_with_preamble(text, 'architect-pm'))
+    command = [
+        'bash', _issue_scan_startup_script(config),
+        '--run', scan['run'],
+        '--spec', spec_path,
+        '--title', _SUPPLY_TITLE,
+        '--agent', agent,
+        '--model', model,
+        '--name', 'supply-architect-pm',
+        '--repo', local_repo_selector(root),
+    ]
+    return [part for part in command if part]
+
+
+def work_order_supply_line(config, now, workers, supply):
+    """`work order: N of T live, supply S`, S the ready-for-agent count, or None without a work_order block (#1689)."""
+    order = work_order_settings(config, now)
+    if order is None:
+        return None
+    return 'work order: %d of %d live, supply %d' % (active_worker_count(workers), order[1], supply)
+
+
+def _architect_pm_making_work(workers):
+    """A live supply, triage or backlog sweep architect-pm: all of them carry the #0|architect-pm title."""
+    return any(
+        isinstance(w, dict) and str(w.get('_task_title') or '').startswith('#0|architect-pm') and worker_row_is_live(w)
+        for w in workers or []
+    )
+
+
+def work_order_try_supply(
+    config, state, now, repos, supply, host, admission, extra_starts, reserved, workers,
+    start_worker, pick_fn=None, persist_state=None,
+):
+    """Free seats under target_workers above the ready-for-agent supply: start one architect-pm to make work (#1689).
+
+    At most one runs: a live #0|architect-pm worker blocks it, and it starts at most once per
+    triage_interval_hours. `reserved` local seats stay free for the ready issues of this pass."""
+    order = work_order_settings(config, now)
+    if order is None:
+        return [], 0
+    free = order[1] - active_worker_count(workers) - extra_starts
+    if free <= supply:
+        return ['supply_enough=%d:%d' % (free, supply)], 0
+    if _architect_pm_making_work(workers):
+        return ['supply_skip_live'], 0
+    scan = config.get('issue_scan') or {}
+    interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
+    try:
+        if now - float(state.get('work_order_supply_at')) < interval:
+            return ['supply_skip_recent'], 0
+    except (TypeError, ValueError):
+        pass
+    if not admission.get('admitted') or not _issue_scan_has_slot(host, config, admission, extra_starts + reserved):
+        return ['supply_skip_no_seat'], 0
+    builder = (scan.get('agent') or 'claude', scan.get('model') or '')
+    chosen = choose_pick((pick_fn or pick_role)('architect-pm', avoid_family=_avoid_family(builder)), builder)
+    if not chosen:
+        return ['supply_pick_blocked'], 0
+    command = build_supply_command(config, repos, chosen[0], chosen[1])
+    if command is None:
+        return ['supply_skip_root'], 0
+    if start_worker(command) != 0:
+        count_failed()
+        return ['supply_fail'], 0
+    state['work_order_supply_at'] = now
+    if persist_state:
+        persist_state()
+    count_started()
+    return ['supply_start=%d:%d' % (free, supply)], 1
+
+
 def work_order_settings(config, now=None):
     """(min_active, target_workers) from the work_order block, or None when it is not configured (#1281).
 
@@ -7234,14 +7317,33 @@ def issue_scan_pass(
                 continue
             candidates.append((repo, row))
 
+    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count)
+    if supply_line:
+        notices.append(supply_line)
+
+    def try_supply(reserved):
+        if list_failed:
+            return 0
+        bits, used = work_order_try_supply(
+            config, state, now, repos, ready_queue_count, host, admission, extra_starts, reserved, workers,
+            start_worker, pick_fn, persist_state,
+        )
+        log_bits.extend(bits)
+        return used
+
     if not candidates and remote_hosts:
         log_bits.append('issue_scan_none')
         return notices, log_bits
     if not candidates:
-        triage_bits, triage_used = ([], 0) if list_failed else issue_scan_try_triage(
-            config, state, now, repos, host, admission, extra_starts, workers,
-            start_worker, list_backlog, pick_fn, persist_state, notices,
-        )
+        supply_used = try_supply(0)
+        extra_starts += supply_used
+        if supply_used:
+            triage_bits, triage_used = ['triage_skip_supply'], 0  # the supply brief triages too (#1689)
+        else:
+            triage_bits, triage_used = ([], 0) if list_failed else issue_scan_try_triage(
+                config, state, now, repos, host, admission, extra_starts, workers,
+                start_worker, list_backlog, pick_fn, persist_state, notices,
+            )
         log_bits.extend(triage_bits)
         no_work = None if list_failed else work_order_no_work_notice(config, state, now, workers, ready_queue_count)
         if no_work:
@@ -7261,6 +7363,8 @@ def issue_scan_pass(
         count_refused('host_cap')
         return notices, log_bits
 
+    if not remote_hosts:
+        extra_starts += try_supply(len(candidates))
     candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
     lookup = repo_id_lookup or default_repo_id_lookup
     # The workers inventory is a snapshot from before this pass, so count this pass's starts per host.
