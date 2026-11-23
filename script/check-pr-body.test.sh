@@ -50,6 +50,12 @@ run --issue '#6' "$TMP/good.md"
 run --issue abc "$TMP/good.md"
 [ "$rc" -eq 2 ] && ok "a non numeric --issue is a usage error" || bad "abc (rc=$rc)"
 
+# --title runs check-pr-body-issues.sh (#1688): a body that skips a title issue fails.
+run --title "fix: thing (#5)" "$TMP/good.md"
+[ "$rc" -eq 0 ] && ok "--title whose issue the body closes passes" || bad "title pass (rc=$rc, $out)"
+run --title "fix: thing (#5) (#7)" "$TMP/good.md"
+if [ "$rc" -eq 1 ] && grep -qF "#7" <<<"$out"; then ok "--title naming an issue the body skips is refused"; else bad "title skip (rc=$rc, $out)"; fi
+
 run "$TMP/missing.md"
 [ "$rc" -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (rc=$rc)"
 run
