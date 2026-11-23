@@ -1,0 +1,1 @@
+setup-obsidian, install_node, setup-agent-skills and check-agent-startup print usage for -h and --help and exit 2 on any other argument without running the job. The image pack and unpack scripts print usage for -h and --help.

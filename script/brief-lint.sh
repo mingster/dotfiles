@@ -12,20 +12,28 @@
 # --issue-body lints a draft issue body: the issue has no number yet, so Refs is not required (#1201).
 # A builder brief (any Type but verify) whose "Allowed files" names an owner gated path (script/lib/protected-paths.sh) gets a
 # "brief-lint: warning:" line. The exit code does not change (#1328).
-# Usage: brief-lint.sh [--issue-body] <file> [<target-repo-dir>]
+# Usage: brief-lint.sh [--issue-body] <file> [<target-repo-dir>]   (-h and --help print this line; an unreadable file exits 2)
 set -euo pipefail
 
 lint_rc=0
 lint_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+print_usage() { sed -n '/^# Usage:/{s/^# //p;q;}' "${BASH_SOURCE[0]}"; }
 need_refs=1
+case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 if [ "${1:-}" = --issue-body ]; then
   need_refs=0
   shift
 fi
 
 file="${1:-}"
-if [ -z "$file" ] || [ ! -f "$file" ] || [ ! -r "$file" ]; then
-  file=/dev/null
+case "$file" in -h|--help) print_usage; exit 0 ;; esac
+if [ -z "$file" ]; then
+  print_usage >&2
+  exit 2
+fi
+if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+  echo "brief-lint: cannot read $file" >&2
+  exit 2
 fi
 repo_dir="${2:-}"
 need_checks_local=1

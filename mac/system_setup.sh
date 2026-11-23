@@ -82,6 +82,10 @@ echo -e "\033[1;35m essential apps \033[0m"
 echo ""
 
 
+# One download folder for the x86_64 tarballs, removed on any exit (#1628).
+dl_dir=$(mktemp -d "${TMPDIR:-/tmp}/system_setup.XXXXXX")
+trap 'rm -rf "$dl_dir"' EXIT
+
 # Install essential binaries.
 
 ## mas — build via brew on arm64; download release pkg on x86_64
@@ -156,10 +160,9 @@ echo ""
 if [ "$(uname -m)" = "x86_64" ]; then
   if ! command -v nvim >/dev/null 2>&1; then
     NVIM_VERSION=$(curl -fsSL https://api.github.com/repos/neovim/neovim/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-    curl -fsSL "https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}/nvim-macos-x86_64.tar.gz" -o /tmp/nvim.tar.gz
-    tar -xzf /tmp/nvim.tar.gz -C /tmp
-    cp /tmp/nvim-macos-x86_64/bin/nvim /usr/local/bin/nvim
-    rm -rf /tmp/nvim.tar.gz /tmp/nvim-macos-x86_64
+    curl -fsSL "https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}/nvim-macos-x86_64.tar.gz" -o "$dl_dir/nvim.tar.gz"
+    tar -xzf "$dl_dir/nvim.tar.gz" -C "$dl_dir"
+    cp "$dl_dir/nvim-macos-x86_64/bin/nvim" /usr/local/bin/nvim
   fi
 else
   brew list nvim >/dev/null 2>&1 || brew install nvim
@@ -185,21 +188,18 @@ brew list tmux >/dev/null 2>&1 || brew install tmux  # https://www.joshmedeski.c
 if [ "$(uname -m)" = "x86_64" ]; then
   if ! command -v lf >/dev/null 2>&1; then
     LF_VERSION=$(curl -fsSL https://api.github.com/repos/gokcehan/lf/releases/latest | grep '"tag_name"' | sed 's/.*"r\([^"]*\)".*/\1/')
-    curl -fsSL "https://github.com/gokcehan/lf/releases/download/r${LF_VERSION}/lf-darwin-amd64.tar.gz" -o /tmp/lf.tar.gz
-    tar -xzf /tmp/lf.tar.gz -C /usr/local/bin lf
-    rm -f /tmp/lf.tar.gz
+    curl -fsSL "https://github.com/gokcehan/lf/releases/download/r${LF_VERSION}/lf-darwin-amd64.tar.gz" -o "$dl_dir/lf.tar.gz"
+    tar -xzf "$dl_dir/lf.tar.gz" -C /usr/local/bin lf
   fi
   if ! command -v fzf >/dev/null 2>&1; then
     FZF_VERSION=$(curl -fsSL https://api.github.com/repos/junegunn/fzf/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-    curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-darwin_amd64.tar.gz" -o /tmp/fzf.tar.gz
-    tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf
-    rm -f /tmp/fzf.tar.gz
+    curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-darwin_amd64.tar.gz" -o "$dl_dir/fzf.tar.gz"
+    tar -xzf "$dl_dir/fzf.tar.gz" -C /usr/local/bin fzf
   fi
   if ! command -v lazygit >/dev/null 2>&1; then
     LG_VERSION=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-    curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Darwin_x86_64.tar.gz" -o /tmp/lazygit.tar.gz
-    tar -xzf /tmp/lazygit.tar.gz -C /usr/local/bin lazygit
-    rm -f /tmp/lazygit.tar.gz
+    curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LG_VERSION}/lazygit_${LG_VERSION}_Darwin_x86_64.tar.gz" -o "$dl_dir/lazygit.tar.gz"
+    tar -xzf "$dl_dir/lazygit.tar.gz" -C /usr/local/bin lazygit
   fi
 else
   brew list lf      >/dev/null 2>&1 || brew install lf       # https://www.joshmedeski.com/posts/manage-files-with-lf/
@@ -256,10 +256,9 @@ echo ""
 if [ "$(uname -m)" = "x86_64" ]; then
   if ! command -v starship >/dev/null 2>&1; then
     STARSHIP_VERSION=$(curl -fsSL https://api.github.com/repos/starship/starship/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-    curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSHIP_VERSION}/starship-x86_64-apple-darwin.tar.gz" -o /tmp/starship.tar.gz
-    tar -xzf /tmp/starship.tar.gz -C /usr/local/bin starship
+    curl -fsSL "https://github.com/starship/starship/releases/download/v${STARSHIP_VERSION}/starship-x86_64-apple-darwin.tar.gz" -o "$dl_dir/starship.tar.gz"
+    tar -xzf "$dl_dir/starship.tar.gz" -C /usr/local/bin starship
     chmod +x /usr/local/bin/starship
-    rm -f /tmp/starship.tar.gz
   fi
 else
   brew list starship >/dev/null 2>&1 || brew install starship

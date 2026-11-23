@@ -2,9 +2,17 @@
 # weekly-skill-impact.sh: report-only skill upstream impact (never edits roles).
 #
 # Usage: WEEKLY_SKILL_IMPACT_SLICE=mattpocock|pstack ~/dotfiles/script/weekly-skill-impact.sh
+# (no arguments: -h and --help print this text and write nothing, any other argument exits 2)
 #
 # Writes docs/agents/drafts/weekly-skill-impact-<DATE_TAG>.md under DOTFILES.
 set -euo pipefail
+
+print_usage() { sed -n '/^# Usage:/,/^#$/{/^#$/d;s/^# \{0,1\}//;p;}' "${BASH_SOURCE[0]}"; }
+case "${1-}" in -h|--help) print_usage; exit 0 ;; esac
+if [ "$#" -ne 0 ]; then
+  print_usage >&2
+  exit 2
+fi
 
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 DOTFILES=$(cd "$DOTFILES" && pwd -P)
@@ -18,6 +26,11 @@ CITATION_ROOTS=(
   templates/agent-team/docs/agents/pstack-attribution.md
   .agents/claude/CLAUDE.md
 )
+
+case "$SLICE" in
+  mattpocock|pstack) ;;
+  *) echo "weekly-skill-impact: unknown slice $SLICE" >&2; exit 2 ;;
+esac
 
 mkdir -p "$(dirname "$OUT")"
 

@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Install Node.js via asdf (cross-platform). Version comes from repo .tool-versions.
+# Usage: install_node.sh   (no arguments; -h and --help print this line, any other argument exits 2)
+case "${1-}" in
+  -h|--help) echo "Usage: install_node.sh   (Install Node.js and bun via asdf; no arguments)"; exit 0 ;;
+esac
+if [ "$#" -ne 0 ]; then
+  echo "Usage: install_node.sh   (no arguments; got: $*)" >&2
+  exit 2
+fi
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

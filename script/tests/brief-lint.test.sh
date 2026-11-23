@@ -676,5 +676,23 @@ warn_case glob quiet '- *.md' "$tmp/globdir"
 out=$(bash "$lint" "$tmp/allowed-inline.md" 2>&1); ec=$?
 if [ "$ec" -eq 0 ] && [[ "$out" == *".claude/settings.json"* ]]; then ok; else bad "inline Allowed files line should warn ($ec, $out)"; fi
 
+# A bad path, no operand and -h/--help (#1627): the file is never read, so no "missing" lines are printed.
+out=$(bash "$lint" "$tmp/no-such-brief.md" 2>&1); ec=$?
+if [ "$ec" -eq 2 ] && [[ "$out" == *"brief-lint: cannot read $tmp/no-such-brief.md"* ]] && [[ "$out" != *missing* ]]; then ok; else bad "unreadable file should exit 2 without missing lines ($ec, $out)"; fi
+out=$(bash "$lint" --issue-body "$tmp/no-such-brief.md" 2>&1); ec=$?
+if [ "$ec" -eq 2 ] && [[ "$out" == *"cannot read"* ]] && [[ "$out" != *missing* ]]; then ok; else bad "--issue-body unreadable file should exit 2 ($ec, $out)"; fi
+mkdir -p "$tmp/adir"
+out=$(bash "$lint" "$tmp/adir" 2>&1); ec=$?
+if [ "$ec" -eq 2 ] && [[ "$out" == *"cannot read"* ]] && [[ "$out" != *missing* ]]; then ok; else bad "a directory should exit 2 ($ec, $out)"; fi
+out=$(bash "$lint" 2>&1); ec=$?
+if [ "$ec" -eq 2 ] && [[ "$out" == *"Usage: brief-lint.sh"* ]] && [[ "$out" != *missing* ]]; then ok; else bad "no operand should print usage and exit 2 ($ec, $out)"; fi
+for flag in -h --help; do
+  out=$(bash "$lint" "$flag" 2>&1); ec=$?
+  if [ "$ec" -eq 0 ] && [[ "$out" == *"Usage: brief-lint.sh"* ]] && [[ "$out" != *missing* ]]; then ok; else bad "$flag should print usage and exit 0 ($ec, $out)"; fi
+done
+write_full_brief "$tmp/still-ok.md"
+out=$(bash "$lint" "$tmp/still-ok.md" 2>&1); ec=$?
+if [ "$ec" -eq 0 ]; then ok; else bad "a readable full brief still passes ($ec, $out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
