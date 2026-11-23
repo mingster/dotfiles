@@ -52,6 +52,12 @@ export SELECT_SCRIPT_TESTS_JOBS=${SELECT_SCRIPT_TESTS_JOBS:-8}
 export SELECT_SCRIPT_TESTS_SERIAL=${SELECT_SCRIPT_TESTS_SERIAL:-'*wrap-up-scheduled-cleanup.test.sh'}
 # The longest tests start first; at the end of the queue wrap-up.test.sh alone added minutes.
 export SELECT_SCRIPT_TESTS_FIRST=${SELECT_SCRIPT_TESTS_FIRST:-'script/wrap-up.test.sh script/wrap-up-guards.test.sh script/tests/ship.test.sh script/tests/wrap-up-fleet-release.test.sh script/tests/wrap-up-after-merge.test.sh'}
+# On macOS the skip-listed tests tagged "rerun on macOS" run here, and a failure fails this script (#1414).
+# Entries tagged for another host stay skipped. CHECKS_LOCAL_OS overrides uname for the test.
+if [ "${CHECKS_LOCAL_OS:-$(uname -s)}" = Darwin ] && [ -f script/script-test-skip.list ]; then
+  grep -v 'rerun on macOS$' script/script-test-skip.list >"$HOME/script-test-skip.list" || true
+  export SELECT_SCRIPT_TESTS_SKIP="$HOME/script-test-skip.list"
+fi
 bash script/select-changed-script-tests.sh ${list_only[@]+"${list_only[@]}"} "${changed[@]+"${changed[@]}"}"
 [ "${#list_only[@]}" -eq 0 ] || { skipped_note; exit 0; }
 # Hook gate tests read brief-lint and the hook files. Run all of them when one of those changed.

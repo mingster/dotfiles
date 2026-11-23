@@ -57,4 +57,35 @@ if grep -q '^if hooks_changed ' "$src/script/checks-local.sh" && ! grep -B1 'uni
   echo "ok: checks-local gates the hook tests on hooks_changed"
 else echo "FAIL: checks-local does not gate the hook tests"; fail=1; fi
 
+# 1414. On Darwin the macOS-only skip-listed tests run; heavy-gate ones stay skipped until isolated. Elsewhere all stay skipped.
+r2="$tmp/repo2"
+cp -R "$r" "$r2"
+git -C "$r2" checkout -q topic
+printf '#!/usr/bin/env bash\n' >"$r2/script/tests/mac-only.test.sh"
+printf '#!/usr/bin/env bash\n' >"$r2/script/tests/lock-user.test.sh"
+cat >"$r2/script/script-test-skip.list" <<'LIST'
+# comment
+script/tests/mac-only.test.sh needs macOS hdiutil; rerun on macOS
+script/tests/lock-user.test.sh uses heavy-gate host lock; rerun on coordinator host
+LIST
+git -C "$r2" add -A
+git -C "$r2" -c user.email=t@t -c user.name=t commit -qm skip
+darwin=$(env -u SELECT_SCRIPT_TESTS_SKIP NO_PROJECT_NAMES_FILE="$tmp/some.pattern" CHECKS_LOCAL_OS=Darwin bash "$r2/script/checks-local.sh" --list-only --base main 2>&1)
+linux=$(env -u SELECT_SCRIPT_TESTS_SKIP NO_PROJECT_NAMES_FILE="$tmp/some.pattern" CHECKS_LOCAL_OS=Linux bash "$r2/script/checks-local.sh" --list-only --base main 2>&1)
+if grep -qxF 'Selected: script/tests/mac-only.test.sh' <<<"$darwin" && grep -qxF 'Skipped: script/tests/lock-user.test.sh' <<<"$darwin"; then
+  echo "ok: Darwin selects the macOS test and skips the unisolated heavy-gate test"
+else echo "FAIL: Darwin selection"; echo "$darwin"; fail=1; fi
+if grep -qxF 'Skipped: script/tests/mac-only.test.sh' <<<"$linux" && grep -qxF 'Skipped: script/tests/lock-user.test.sh' <<<"$linux"; then
+  echo "ok: non Darwin skips both"
+else echo "FAIL: non Darwin selection"; echo "$linux"; fail=1; fi
+
+# 1414. The three heavy-gate tests point HOME (and so the heavy-gate lock) at a temp dir before they touch anything.
+for t in heavy-gate fleet-watch-heavy-gate heavy-guard-hook; do
+  if grep -q '^HOME=$(mktemp -d)' "$src/script/tests/$t.test.sh"; then echo "ok: $t.test.sh uses a temp HOME"
+  else echo "FAIL: $t.test.sh does not set a temp HOME"; fail=1; fi
+done
+# Once isolated and passing, a heavy-gate test runs on macOS. heavy-gate.test.sh waits on #1665.
+if [ "$(grep -c '^script/tests/.*heavy.*rerun on macOS$' "$src/script/script-test-skip.list")" -eq 2 ]; then echo "ok: isolated heavy-gate tests tagged for macOS"
+else echo "FAIL: heavy-gate skip entries not tagged for macOS"; fail=1; fi
+
 [ "$fail" -eq 0 ]

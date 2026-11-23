@@ -3,6 +3,11 @@
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # Exercise the command boundary with isolated home directories and sensor readings.
 set -euo pipefail
+# The heavy-gate lock lives under $HOME/.cache/heavy-gate. A temp HOME keeps this test off the host's real lock (#1414).
+export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
+HOME=$(mktemp -d)
+export HOME
+trap 'rm -rf "$HOME"' EXIT
 python3 - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import contextlib, importlib.util, io, json, os, pathlib, select, shutil, signal, subprocess, sys, tempfile, time, unittest
 from unittest import mock
