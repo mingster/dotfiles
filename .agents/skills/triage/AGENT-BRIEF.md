@@ -72,6 +72,22 @@ Be specific about edge cases and error conditions.
 - Adjacent feature that might seem related but is separate
 ```
 
+## Rule or guide change
+
+For a rule or guide change, add this line to the brief:
+
+```
+Type: rule/guide change
+```
+
+Under Acceptance or Verify, name one search command. The builder and the verifier both run it. Fix every hit. A contradiction found later is a new issue.
+
+```
+- [ ] Builder and verifier both run `rg -n 'the old wording'`.
+```
+
+`rg`, `grep`, and `git grep` count. A second distinct command does not.
+
 ## Examples
 
 ### Good agent brief (bug)

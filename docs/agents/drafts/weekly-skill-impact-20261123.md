@@ -7,17 +7,15 @@ Report only. No role or team file edits by this script.
 ### Diff stat
 
 ```
- .agents/skills/.mattpocock-upstream                |  2 +-
- .../setup-matt-pocock-skills/triage-labels.md      | 82 +++-------------------
- .agents/skills/triage/AGENT-BRIEF.md               | 16 -----
- 3 files changed, 11 insertions(+), 89 deletions(-)
+ .agents/skills/.mattpocock-local.patch | 115 +++++++++++++++++++++++++++++++++
+ .agents/skills/.mattpocock-upstream    |   2 +-
+ 2 files changed, 116 insertions(+), 1 deletion(-)
 ```
 
 ### Changed paths
 
   - .agents/skills/.mattpocock-upstream
-  - .agents/skills/setup-matt-pocock-skills/triage-labels.md
-  - .agents/skills/triage/AGENT-BRIEF.md
+  - .agents/skills/.mattpocock-local.patch (adds the 20 label triage-labels.md and the AGENT-BRIEF.md rule/guide section, which upstream does not carry)
 
 ### Citation map
 
