@@ -1,0 +1,1 @@
+* `brief-lint.sh` test now pins that a brief missing several required parts (Verify and Out of scope) prints every missing part in one run and exits 1 once. The lint already behaved this way; this adds the regression test (#1686).
