@@ -1,0 +1,1 @@
+scripts: `fleet-watch-record.py`, `check-fleet-status.py` and `agy-signin.py` print usage on `-h` and `--help` and exit 0 on stdout; `fleet-watch-record.py` rejects an unknown argument with usage and exit 2 (#1671 #1672 #1673).

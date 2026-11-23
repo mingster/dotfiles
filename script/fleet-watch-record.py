@@ -388,6 +388,14 @@ def compare_shapes(directory, cleaned):
 
 
 def main(argv):
+    if any(arg in ('-h', '--help') for arg in argv):
+        print(__doc__.rstrip())
+        return 0
+    unknown = [arg for arg in argv if arg != '--dry']
+    if unknown:
+        print('fleet-watch-record: unknown argument %s' % unknown[0], file=sys.stderr)
+        print(__doc__.rstrip(), file=sys.stderr)
+        return 2
     dry = '--dry' in argv
     run = os.environ.get('FLEET_WATCH_RECORD_RUN', '').strip()
     if run == LIVE_RUN:
