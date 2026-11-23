@@ -118,7 +118,7 @@ A good run exits 1 ("Precheck exited with code 1"). A failed run exits 2 ("code 
 
 A run that shows "dispatching" in Orca is a precheck still running, not a stuck run. On the coordinator the wrap-up round gives `board-done` and `board-clean` each at most `WRAP_UP_SCHEDULED_BOARD_TIMEOUT` (120 s), never more than what is left of `WRAP_UP_PRECHECK_TIMEOUT` less the kill grace, and skips a step with `skip: <step> (round budget spent)` when under 10 s are left.
 
-Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unless overridden in `automations.env`.
+Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unless overridden in `automations.env`. The wrapper and the four prechecks (`automation-precheck-sync-drift.sh`, `-team-audit-weekly.sh`, `-weekly-update.sh`, `-staging-daily.sh`) print one usage line for `-h` or `--help` and exit 0 without running the job or writing its log. Any other argument exits 2 and runs nothing. No arguments is the scheduled run. Test: `bash script/tests/automation-precheck-args.test.sh`.
 
 ## Automation scan (scripts in agent team docs and orca-team)
 

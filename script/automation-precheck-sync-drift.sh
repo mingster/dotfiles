@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Append only agent-team.sh check output for fleet automations (read-only drift report).
 set -uo pipefail
+usage='Usage: automation-precheck-sync-drift.sh [-h|--help]'
+if [ $# -gt 0 ]; then
+  if [ $# -eq 1 ] && { [ "$1" = -h ] || [ "$1" = --help ]; }; then echo "$usage"; exit 0; fi
+  echo "$usage" >&2
+  exit 2
+fi
 DOTFILES="${DOTFILES:-$HOME/dotfiles}"
 CONF="${TEAM_AUDIT_CONF:-$DOTFILES/script/team-audit.local.conf}"
 log=${SYNC_DRIFT_LOG:-$HOME/.local/state/agent-team/sync-team-skills-drift.log}
