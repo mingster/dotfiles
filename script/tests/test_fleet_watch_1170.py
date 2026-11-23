@@ -55,6 +55,34 @@ class FencedStartHandoff(unittest.TestCase):
             self.assertTrue(str(notices[0]).startswith('handoff verifier %s#7' % REPO), notices)
             self.assertIn('--run run_live', str(notices[0]))
 
+    def _scan(self, result):
+        with tempfile.TemporaryDirectory() as root:
+            edits = []
+            _n, log = fw.issue_scan_pass(
+                scan_config(root), {'issue_scan_backlog_sweep_at': 1}, 1, [],
+                pr_fetch=lambda _repo: [],
+                list_issues=lambda _repo: [issue_row(5, '2026-01-01T00:00:00Z')],
+                gate_check=lambda _c: True,
+                admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
+                start_worker=lambda _c: result,
+                act=lambda argv: edits.append(argv),
+            )
+            return edits, log
+
+    def test_gate_refusals_defer_and_keep_ready_for_agent(self):
+        for reason in (
+            'refused: dotfiles issue 12 is ready and not started; start it first, or pass --skip-dotfiles-first REASON',
+            'refused: o/r#5 overlaps other work in flight; bundle it into one issue, or pass --allow-overlap REASON',
+        ):
+            edits, log = self._scan(fw.BabysitStartResult(1, reason))
+            self.assertFalse([e for e in edits if 'needs-triage' in e], edits)
+            self.assertTrue(any('issue_start_deferred=5' in b for b in log), log)
+
+    def test_real_start_failure_still_relabels_needs_triage(self):
+        edits, log = self._scan(fw.BabysitStartResult(1, 'brief is broken'))
+        self.assertTrue([e for e in edits if 'needs-triage' in e], edits)
+        self.assertTrue(any('issue_start_fail=5' in b for b in log), log)
+
     def test_other_failures_still_say_parked(self):
         notice = fw.park_notice('issue', 'o/r#5', 'some other error', ['bash', 'x'])
         self.assertTrue(str(notice).startswith('parked issue o/r#5'), notice)
