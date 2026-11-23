@@ -106,5 +106,19 @@ out=$(git -C "$t" commit -q --allow-empty -F "$tmp/blank" 2>&1); rc=$?
 [ "$rc" -ne 0 ] && grep -q "not a git trailer" <<<"$out" && ok "template hook rejects a blank line before a trailer" || bad "template hook" "rc=$rc $out"
 git -C "$t" commit -q --allow-empty -F "$tmp/good" && ok "template hook allows correct trailers" || bad "template hook good" "rejected"
 
+# #1637: --file reports a missing path as given, never a path rebuilt from a folder that does not exist
+for copy in "$chk" "$src/templates/agent-team/bin/check-commit-trailers.sh"; do
+  label=${copy#"$src/"}
+  for given in /nonexistent nodir/msg.txt "$tmp/nodir/msg.txt" "$tmp/missing-file"; do
+    out=$(cd "$tmp" && bash "$copy" --file "$given" 2>&1 >/dev/null); rc=$?
+    [ "$rc" -eq 2 ] && [ "$out" = "check-commit-trailers: no such file: $given" ] \
+      && ok "$label --file $given names the path as given" || bad "$label missing $given" "rc=$rc out=$out"
+  done
+  out=$(cd "$tmp" && bash "$copy" --file good 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && [ "$out" = "1 checked, 0 problems" ] && ok "$label relative --file still works" || bad "$label relative" "rc=$rc out=$out"
+  out=$(bash "$copy" --file "$tmp/good" 2>&1); rc=$?
+  [ "$rc" -eq 0 ] && ok "$label absolute --file still works" || bad "$label absolute" "rc=$rc out=$out"
+done
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
