@@ -118,7 +118,7 @@ Last 100 merged PRs per repo, so the window is wider than today.
 | build | 21.89 | 61.58 | 844.45 |
 | merge | 24.03 | 49.05 | 500.75 |
 
-Delivery: `median_ticket_start_to_merge_minutes=52.47` (was 81.05), `first_pass_checks_fail_rate=0.06` (was 0.03), `reopened_rate=0.02`.
+Delivery: `median_ticket_start_to_merge_minutes=52.47` (was 81.05), `first_pass_checks_fail_rate=0.06` (was 0.03), `reopened_or_hotfix_rate=0.02`.
 
 #### `<project-a>`
 
