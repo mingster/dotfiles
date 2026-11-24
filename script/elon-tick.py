@@ -10,6 +10,7 @@ FLEET_WATCH_STATE, else ~/.local/state/agent-team/fleet-watch.state.json (as ins
 repo. A check whose input cannot be read prints a NOT CHECKED action, never OK.
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -30,6 +31,7 @@ BLOCKED_HEADING_RE = re.compile(r'^#{1,6}\s*blocked by\b:?(.*)$', re.I)
 HEADING_RE = re.compile(r'^#{1,6}\s')
 WAITING_RE = re.compile(r'^\s*waiting on:\s*(.+?)(?:\s+since\s+(\d{4}-\d{2}-\d{2}))?\s*$', re.I | re.M)
 RECEIPT_RE = re.compile(r'^(Review|Verdict): (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40})\b')
+QA_ROLE_RE = re.compile(r'^\s*(?:Worker role|Role):\s*qa-sdet\b', re.I | re.M)
 
 
 class Unreadable(Exception):
@@ -85,7 +87,7 @@ def gather(args, config):
         except Unreadable as e:
             entry['prs'] = e
         try:
-            entry['issues'] = gh_list('issue', repo, 'number,title,body,labels', ISSUE_LIMIT)
+            entry['issues'] = gh_list('issue', repo, 'number,title,body,labels,createdAt', ISSUE_LIMIT)
         except Unreadable as e:
             entry['issues'] = e
         snap['repos'][repo] = entry
@@ -237,6 +239,14 @@ def pr_keys(pr):
     return keys
 
 
+def is_verifier(w, task):
+    """A qa-sdet worker: by its task title, a `Role: qa-sdet` brief line, or a verify-* worktree.
+    A finished worker's task may have left the dispatched list, so its brief can be empty."""
+    base = str(w.get('workspace') or '').rstrip('/').rsplit('/', 1)[-1]
+    return ('qa-sdet' in (task.get('title') or '') or bool(QA_ROLE_RE.search(task.get('spec') or ''))
+            or base.startswith('verify-'))
+
+
 def owners(repo, pr, workers_rows, task_map, live):
     """Dispatch ids of workers that own this PR (verifiers do not own one)."""
     name = repo.split('/')[-1]
@@ -245,7 +255,7 @@ def owners(repo, pr, workers_rows, task_map, live):
         if '_unreadable_host' in w or worker_live(w) != live:
             continue
         task = task_map.get(w.get('taskId')) or {}
-        if 'qa-sdet' in (task.get('title') or ''):
+        if is_verifier(w, task):
             continue
         wrepo, nums = worker_numbers(w, task)
         if wrepo and wrepo != name:
@@ -342,6 +352,8 @@ def check_m2(snap):
         if err:
             out += not_checked('M2', err)
             continue
+        if owners(repo, pr, snap['workers'], snap['tasks'], live=True):
+            continue
         for dispatch in owners(repo, pr, snap['workers'], snap['tasks'], live=False):
             out.append('[M2] do not release %s yet: it owns open PR %s#%d; hand the PR to a live owner first'
                        % (dispatch, repo, pr['number']))
@@ -434,6 +446,114 @@ def check_m7(snap):
     return out
 
 
+def fleet_watch():
+    """fleet-watch.py as a module, so the queue key and eligibility are the ones it starts issues with (#1791)."""
+    try:
+        spec = importlib.util.spec_from_file_location('fleet_watch', HERE / 'fleet-watch.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception as e:  # any import failure means the queue cannot be read
+        raise Unreadable('fleet-watch.py: %s' % e) from e
+
+
+def open_pr_keys(snap, repo):
+    entry = snap['repos'].get(repo) or {}
+    return set().union(*[pr_keys(pr) for pr in entry.get('prs') or []]) if not isinstance(entry.get('prs'), Unreadable) else set()
+
+
+def live_numbers(snap):
+    """(repo name, number) pairs live workers are on."""
+    pairs = set()
+    for w in snap['workers']:
+        if '_unreadable_host' in w or not worker_live(w):
+            continue
+        wrepo, nums = worker_numbers(w, snap['tasks'].get(w.get('taskId')) or {})
+        pairs |= {(wrepo, n) for n in nums}
+    return pairs
+
+
+def ready_queue(snap):
+    """(repo, issue) fleet-watch would start, in its queue order: eligible, no open blocker, no open PR, no live
+    worker. Raises Unreadable when a list or fleet-watch.py cannot be read."""
+    fw = fleet_watch()
+    busy = live_numbers(snap)
+    rows = []
+    for repo, entry in snap['repos'].items():
+        opened = open_numbers(snap, repo)
+        if opened is None:
+            raise Unreadable('%s issue or PR list unreadable' % repo)
+        name = repo.split('/')[-1]
+        prs = open_pr_keys(snap, repo)
+        for issue in entry['issues']:
+            n = issue['number']
+            if (not fw.issue_scan_eligible(issue) or n in prs or (name, n) in busy or ('', n) in busy
+                    or any((not r or r == repo) and int(b) in opened for r, b in blockers(issue.get('body')))):
+                continue
+            rows.append((repo, issue))
+    return sorted(rows, key=lambda pair: fw.issue_scan_queue_key(*pair))
+
+
+def next_issue_text(snap, queue=None):
+    try:
+        queue = ready_queue(snap) if queue is None else queue
+    except Unreadable as e:
+        return 'next issue NOT CHECKED: %s' % e
+    if not queue:
+        return 'no ready issue in the queue'
+    repo, issue = queue[0]
+    return 'next by the fleet-watch queue key: %s#%d; fleet-watch starts it, never hand pick one' % (repo, issue['number'])
+
+
+def worker_role(task):
+    """The role a worker runs: the last `|` part of its task title, else the first word of its brief's role line."""
+    title = task.get('title') or ''
+    if '|' in title:
+        return title.rsplit('|', 1)[-1].strip()
+    m = re.search(r'^\s*(?:Worker role|Role):\s*([\w-]+)', task.get('spec') or '', re.M)
+    return m.group(1) if m else ''
+
+
+def check_m8(snap):
+    """M8: a live worker on a ready issue that fleet-watch did not start (team.md: a ready issue is never hand dispatched).
+    Both start paths take ready-for-agent off, so a ready issue is one labeled ready-for-agent or status:進行中 with no
+    open PR, whose route role matches the worker's. Started by fleet-watch means its dispatch is in own_dispatches."""
+    for key in ('workers', 'tasks', 'state'):
+        if isinstance(snap[key], Unreadable):
+            return not_checked('M8', snap[key])
+    own = snap['state'].get('own_dispatches') or {}
+    try:
+        fw = fleet_watch()
+    except Unreadable as e:
+        return not_checked('M8', e)
+    hits = []
+    for repo, entry in snap['repos'].items():
+        if isinstance(entry['issues'], Unreadable) or isinstance(entry['prs'], Unreadable):
+            continue  # M1 and M4 already print NOT CHECKED for this repo
+        name = repo.split('/')[-1]
+        prs = open_pr_keys(snap, repo)
+        ready = {i['number']: i for i in entry['issues']
+                 if label_names(i) & {'ready-for-agent', 'status:進行中'} and i['number'] not in prs}
+        for w in snap['workers']:
+            if '_unreadable_host' in w or not worker_live(w) or w['dispatchId'] in own or w.get('follow_up_of_dispatch_id'):
+                continue
+            task = snap['tasks'].get(w.get('taskId')) or {}
+            if is_verifier(w, task) or re.search(r'^\s*Type:\s*(?:rework|verify)\b', task.get('spec') or '', re.M):
+                continue
+            wrepo, nums = worker_numbers(w, task)
+            if wrepo and wrepo != name:
+                continue
+            role = worker_role(task).removesuffix('-small')
+            for n in sorted(nums & set(ready)):
+                route = (fw.issue_scan_route(ready[n]) or ('fullstack-dev',))[0].removesuffix('-small')
+                if not role or role == route:
+                    hits.append('[M8] %s runs ready issue %s#%d, which fleet-watch did not start; a ready issue is '
+                                'never hand dispatched (team.md); log it in elon-mistakes.md' % (w['dispatchId'], repo, n))
+    if hits:
+        hits.append('[M8] %s' % next_issue_text(snap))
+    return hits
+
+
 def check_loop(snap):
     """W1: the fleet-watch loop runs."""
     return [] if snap['loop'] else ['[W1] fleet-watch-loop is not running; start it from this terminal (coordinator-operations.md)']
@@ -458,20 +578,17 @@ def check_supply(snap):
     if isinstance(snap['workers'], Unreadable):
         return not_checked('W3', snap['workers'])
     live = sum(1 for w in snap['workers'] if '_unreadable_host' not in w and worker_live(w))
-    ready = 0
-    for repo, entry in snap['repos'].items():
-        if isinstance(entry['issues'], Unreadable):
-            return not_checked('W3', entry['issues'])
-        opened = open_numbers(snap, repo) or set()
-        for issue in entry['issues']:
-            if 'ready-for-agent' in label_names(issue) and not any(
-                    (not r or r == repo) and int(n) in opened for r, n in blockers(issue.get('body'))):
-                ready += 1
     if not isinstance(target, int) or live >= target:
         return []
+    if isinstance(snap['tasks'], Unreadable):
+        return not_checked('W3', snap['tasks'])
+    try:
+        ready = ready_queue(snap)
+    except Unreadable as e:
+        return not_checked('W3', e)
     if ready:
-        return ['[W3] %d of %d workers live and %d ready-for-agent issue(s); start up to %d'
-                % (live, target, ready, min(ready, target - live))]
+        return ['[W3] %d of %d workers live and %d ready issue(s); check fleet-watch is starting them (%s)'
+                % (live, target, len(ready), next_issue_text(snap, ready))]
     return ['[W3] %d of %d workers live and no ready-for-agent issue; start architect-pm supply' % (live, target)]
 
 
@@ -510,7 +627,7 @@ def check_asks(snap):
 
 
 CHECKS = (check_loop, check_m6, check_watch, check_asks, check_m1, check_m2, check_m7, check_m5,
-          check_m4, check_m3, check_supply, check_queues)
+          check_m4, check_m8, check_m3, check_supply, check_queues)
 
 
 def main(argv):

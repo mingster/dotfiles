@@ -15,9 +15,10 @@ Each row is a mistake the coordinator made in a real Run, and the check in `~/do
 | M5 | A brief named a closed issue on its Refs line or a closed PR on its Role line. | Stop the worker and resend a fixed brief. |
 | M6 | The inbox waiter (`orchestration check --run <run> --wait`) was not running, so worker mail went unread. | Arm the waiter. |
 | M7 | A Review or Verdict FAIL at a PR's head went unanswered, including a Review FAIL beside a Verdict PASS. | Send the defect to the owner dispatch, or dispatch an owner. |
+| M8 | The coordinator hand started ready issues (#10070, #10061, #1791 and others), although a ready issue is never hand dispatched and fleet-watch owns the queue order (`team.md`, Labels). | Log it here and pick no issue by hand. The line names the next ready issue by the fleet-watch queue key (`issue_scan_queue_key`, #1791). Flagged: a live worker that is not a verifier, rework or follow up, on an issue labeled `ready-for-agent` or `status:進行中` with no open PR, whose dispatch is not in fleet-watch's `own_dispatches`. Both start paths take `ready-for-agent` off, so the in progress label stands in for it. A start the coordinator ran from a fleet-watch `handoff` notice is not recorded there, so check the notice before logging. |
 | W1 | The fleet-watch loop was down. | Start it from the coordinator terminal. |
 | W2 | A worker was stalled, idle or on a prompt (`worker-watch.sh`). | Act on it per pstack Orchestrate. |
-| W3 | Fewer live workers than `work_order.target_workers`. | Start ready issues, or architect-pm supply when none are ready. |
+| W3 | Fewer live workers than `work_order.target_workers`. | Check that fleet-watch is starting the ready issues (the line names the next by its queue key), or start architect-pm supply when none are ready. |
 | W4 | `needs-triage` and `ready-for-human` issues waited unseen. | Triage them, or batch them to the owner. |
 | W5 | A worker question or escalation went unanswered for 15 minutes. | Answer it. |
 

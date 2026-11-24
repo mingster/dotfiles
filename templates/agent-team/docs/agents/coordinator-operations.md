@@ -42,7 +42,7 @@ The waiter script and its output live in `~/.local/state/agent-team/` (`elon-wai
 
 Run on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed only after it fires; re-arm an empty timeout wake once, then the next wake is whatever fleet-watch or a worker sends.
 
-- First, run `bash ~/dotfiles/script/elon-tick.sh --run <run_id>` and act on each ACTION line this wake. `NOT CHECKED` means that check could not read its input, so look by hand. Every new coordinator mistake adds a row to `~/dotfiles/templates/agent-team/docs/agents/elon-mistakes.md` and a check to `elon-tick.sh` in the same PR.
+- First, run `bash ~/dotfiles/script/elon-tick.sh --run <run_id>` and act on each ACTION line this wake. `NOT CHECKED` means that check could not read its input, so look by hand. A ready issue is fleet-watch's to start: the tick names the next one by the fleet-watch queue key, so never pick one by hand. Every new coordinator mistake adds a row to `~/dotfiles/templates/agent-team/docs/agents/elon-mistakes.md` and a check to `elon-tick.sh` in the same PR.
 - After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`; exit 1 (failed, or not accepted in 2 minutes) means restart once from the same brief. Do not open worker panes.
 - `usage-gate.py show`, `worker-list` on your run, the `ready-for-agent` count, open PRs per project, and the release-manager screen.
 - **GitHub budget:** 5000 REST calls an hour for the whole fleet. Before any `gh` call, read `gh api rate_limit --jq .resources.core.remaining`; below 500, use local git, `.orca` state and files only, and start no regression round or status post until it recovers. A script reading commit statuses fetches each sha once per process.

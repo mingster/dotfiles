@@ -76,6 +76,17 @@ worker() {
     "$2" "$1" "${3:-/x/workspaces/proj/issue-40}"
 }
 
+# workers "<dispatch> <task> <outcome> <workspace>"...: a worker-list reply with one live row per argument.
+workers() {
+  local rows='' sep='' d t o ws
+  for row in "$@"; do
+    read -r d t o ws <<<"$row"
+    rows+="$sep{\"dispatchId\":\"$d\",\"taskId\":\"$t\",\"state\":\"ready\",\"outcome\":\"$o\",\"liveness\":\"live\",\"terminalState\":\"active\",\"workspace\":\"$ws\"}"
+    sep=,
+  done
+  printf '{"ok":true,"result":{"workers":[%s]}}' "$rows"
+}
+
 tick() {
   set +e
   out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_LOOP_STATUS="test -e $FX/loop" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
@@ -175,6 +186,41 @@ reset; rm "$FX/workers-local-active.json"
 worker live succeeded | sed 's/"terminalState":"active"/"terminalState":"retained"/' > "$FX/workers-local-retained.json"
 expect 'M2 retained done worker' '[M2] do not release ctx_a yet: it owns open PR o/proj#50'
 
+# M2 stays quiet once the PR has a new live owner: the finished ctx_a may be released.
+reset; workers "ctx_a t1 succeeded /x/workspaces/proj/issue-40" "ctx_b t1 in_progress /x/workspaces/proj/issue-40-b" \
+  > "$FX/workers-local-active.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M2 a PR with a new live owner is not flagged'
+tests=$((tests + 1))
+
+# A verifier (verify-* worktree) is not an owner: alone it leaves the PR orphaned, and done it is not M2.
+reset; workers "ctx_v t1 in_progress /x/workspaces/proj/verify-40" > "$FX/workers-local-active.json"
+expect 'M1 a live verifier is not an owner' '[M1] ORPHAN PR o/proj#50'
+reset; workers "ctx_a t1 in_progress /x/workspaces/proj/issue-40" "ctx_v t1 succeeded /x/workspaces/proj/verify-40" \
+  > "$FX/workers-local-active.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M2 a finished verifier is not an owner'
+tests=$((tests + 1))
+
+# M8: ctx_h runs ready issue #44 and fleet-watch did not start it. The next issue is the P0 #46 before the older P2 #45.
+m8() {
+  workers "ctx_a t1 in_progress /x/workspaces/proj/issue-40" "ctx_h t2 in_progress /x/workspaces/proj/issue-44" \
+    > "$FX/workers-local-active.json"
+  echo '{"ok":true,"result":{"tasks":[{"id":"t1","status":"dispatched","title":"#40|fullstack-dev"},{"id":"t2","status":"dispatched","title":"#44|fullstack-dev"}]}}' \
+    > "$FX/tasks.json"
+  local acc='## Acceptance\n- [ ] done'
+  printf '[{"number":40,"title":"bug","body":"","labels":[]},
+    {"number":44,"title":"a","body":"%s","labels":[{"name":"status:進行中"}],"createdAt":"2026-11-01T00:00:00Z"},
+    {"number":45,"title":"b","body":"%s","labels":[{"name":"ready-for-agent"},{"name":"P2"}],"createdAt":"2026-11-02T00:00:00Z"},
+    {"number":46,"title":"c","body":"%s","labels":[{"name":"ready-for-agent"},{"name":"P0"}],"createdAt":"2026-11-03T00:00:00Z"}]' \
+    "$acc" "$acc" "$acc" > "$FX/gh-issue-o_proj.json"
+}
+reset; m8
+expect 'M8 hand started ready issue' '[M8] ctx_h runs ready issue o/proj#44, which fleet-watch did not start'
+[[ $out == *'[M8] next by the fleet-watch queue key: o/proj#46;'* ]] || fail 'M8 prints the next issue by the queue key'
+
+reset; m8; printf '{"open_asks":{},"own_dispatches":{"ctx_h":{"kind":"issue"}}}' > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M8 a worker fleet-watch started is not flagged'
+tests=$((tests + 1))
+
 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa old=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 # pr50 <comment body>...: PR o/proj#50 at $head with these comments, oldest first.
 pr50() {
@@ -235,9 +281,9 @@ printf '#!/usr/bin/env bash\necho "support-mailbox: no credential" >&2\nexit 1\n
 expect 'M3 mailbox unreadable' '[M3] NOT CHECKED: o/proj#40 mailbox: support-mailbox: no credential'
 
 reset; sed -i.bak 's/"target_workers":1/"target_workers":3/' "$FX/config.json"
-echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":44,"title":"b","body":"","labels":[{"name":"ready-for-agent"}]}]' \
+echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":44,"title":"b","body":"## Acceptance\n- x","labels":[{"name":"ready-for-agent"}]}]' \
   > "$FX/gh-issue-o_proj.json"
-expect 'W3 under target with supply' '[W3] 1 of 3 workers live and 1 ready-for-agent issue(s); start up to 1'
+expect 'W3 under target with supply' '[W3] 1 of 3 workers live and 1 ready issue(s); check fleet-watch is starting them (next by the fleet-watch queue key: o/proj#44;'
 
 reset; echo '[{"number":40,"title":"bug","body":"","labels":[{"name":"needs-triage"}]}]' > "$FX/gh-issue-o_proj.json"
 expect 'W4 triage queue' '[W4] o/proj has 1 needs-triage issue(s)'
