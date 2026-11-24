@@ -75,7 +75,7 @@ if [ -d "$TEAM_CLAUDE/hooks" ]; then
   [ ! -L "${HOME}/.claude/hooks" ] || rm -f "${HOME}/.claude/hooks"
   mkdir -p "${HOME}/.claude/hooks"
   # session-start.md is a rendered copy owned by `agent-team.sh machine`; do not link it here.
-  for hook in guard-bash.py strikes.py worker-budget.py; do
+  for hook in guard-bash.py strikes.py rule-checks.py worker-budget.py; do
     [ -e "$TEAM_CLAUDE/hooks/$hook" ] || continue
     ln -sfn "$TEAM_CLAUDE/hooks/$hook" "${HOME}/.claude/hooks/$hook"
   done
