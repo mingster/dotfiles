@@ -103,6 +103,19 @@ class UnansweredAsk(unittest.TestCase):
         messages = [reply('msg_r1', 'd1')] + messages
         self.assertEqual(fw.unanswered_ask_notices(state, NOW + 2000, messages, workers), [])
 
+    def test_reply_id_threaded_to_the_ask_clears_it(self):
+        # Shape of `orca orchestration reply --id msg_q1`: 'Re: Question', thread id is the ask id,
+        # sent to the asker's own handle rather than dispatch:<id>.
+        state, workers = {}, [live_worker('d1')]
+        messages = [ask('msg_q1', 'd1', 'question')]
+        threaded = {'id': 'msg_r2', 'type': 'status', 'from': 'term_coordinator', 'to': 'dispatch:other',
+                    'subject': 'Re: Question', 'threadId': 'msg_q1', 'handled': False}
+        messages = [threaded] + messages
+        fw.unanswered_ask_notices(state, NOW, messages, workers)
+        self.assertEqual(fw.unanswered_ask_notices(state, NOW + 2000, messages, workers), [])
+        self.assertTrue(state['open_asks']['msg_q1']['answered'])
+        self.assertEqual(fw.waiting_on_coordinator(state, workers), set())
+
     def test_gone_worker_is_not_raised(self):
         state = {}
         messages = [ask('msg_q1', 'd1')]

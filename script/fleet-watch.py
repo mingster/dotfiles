@@ -2481,12 +2481,20 @@ def _reply_ids(messages, dispatch, handle):
             and m.get('type') not in ASK_TYPES}
 
 
+def _threaded_reply(messages, ask_id):
+    """True when a non-ask message threads to the ask: `orca orchestration reply --id` sends 'Re: Question'
+    with its thread id set to the ask id, whatever its recipient handle (#1814)."""
+    return any(isinstance(m, dict) and m.get('id') != ask_id and m.get('type') not in ASK_TYPES
+               and ask_id in (m.get('threadId'), m.get('thread_id')) for m in messages)
+
+
 def unanswered_ask_notices(state, now, messages, workers):
     """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
     within 15 minutes (#1781). The inbox `handled` flag is ignored: it can be set without a reply.
 
     Messages carry no timestamp, so the age runs from the pass that first saw the ask. A reply is a later
-    non-ask message sent to the worker's dispatch or terminal, one not already in the inbox when the ask was first seen."""
+    non-ask message sent to the worker's dispatch or terminal, one not already in the inbox when the ask was first seen,
+    or any non-ask message whose thread id is the ask id (what `orca orchestration reply --id` sends)."""
     live = {w['dispatchId']: w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
     book = state.setdefault('open_asks', {})
     seen = set()
@@ -2503,7 +2511,7 @@ def unanswered_ask_notices(state, now, messages, workers):
         handle = worker_terminal_handle(live[dispatch]) or m.get('from') or ''
         replies = _reply_ids(messages, dispatch, handle)
         row = book.setdefault(mid, {'at': now, 'dispatch': dispatch, 'before': sorted(replies)})
-        if replies - set(row['before']):
+        if replies - set(row['before']) or _threaded_reply(messages, mid):
             row['answered'] = True
         if row.get('answered') or row.get('notified') or now - row['at'] < ASK_REPLY_SECONDS:
             continue
