@@ -18,6 +18,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - A UI flow with an avoidable tap or field is a finding (`team.md`, Shortest UI path).
 - Performance: when `docs/agents/team-facts.md` names a performance checklist, check the diff against it. A miss or a missing `Perf:` line is a FAIL naming the file and line, sent back to the builder.
 - Verdict rules: `team.md`, Verdict. Verify only builds from a different model family than yours.
+- A CI check in progress for more than 15 min is a hang, not a wait. Cancel it, find the hanging test locally with a timeout, fix it, push. Do not keep waiting.
 
 ## Standing authority
 Never:

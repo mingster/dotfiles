@@ -24,6 +24,7 @@ Run `orca worktree set --worktree active --workspace-status in-review` before `w
 Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
 Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item. Run `bash ~/dotfiles/script/check-pr-body.sh <body file>` before the PR opens: it names any missing section.
 Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so you may. FAIL: fix, push, rerun until PASS. The `worker_done` hook refuses a builder with no `Review: PASS head=<sha>` comment at the PR head (`script/check-builder-review.sh`).
+- A CI check in progress for more than 15 min is a hang, not a wait. Cancel it, find the hanging test locally with a timeout, fix it, push. Do not keep waiting.
 
 ## Standing authority
 Never:

@@ -14,6 +14,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Playbooks
 - pstack `shipping` (verify before anything lands), `runtime-forensics` for a failed deploy and `worktree-cleanup`, with the overlays in `orca-adapter/playbooks/`. Deploy commands stay in `docs/agents/deploy-facts.md`.
 - Work notes: `~/dotfiles/templates/agent-team/docs/agents/release-manager-work.md`.
+- A CI check in progress for more than 15 min is a hang, not a wait. Cancel it, find the hanging test locally with a timeout, fix it, push. Do not keep waiting.
 
 ## Standing authority
 - Schema changes stay backward compatible. Production always backs up first (`RESTORE VERIFYONLY` before any SQL), and a failed backup stops the deploy. Verify the once-only ledger, the approval file's integrity (record its content hash before the first step and report it), and host SHA plus HTTP and mobile evidence.
