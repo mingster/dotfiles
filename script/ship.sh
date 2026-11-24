@@ -144,12 +144,15 @@ post_merge_schema_hook() { # <pr> <merge sha> <head sha> <changed files json>
   [ -n "$cmd" ] || return 0
   globs=$(sed -n 's/^#[[:space:]]*schema-paths:[[:space:]]*//p' <<<"$conf" | head -1)
   [ -n "$globs" ] || return 0
+  # No file name expansion: a glob must match the changed path, not the files on this disk.
+  set -f
   while IFS= read -r path; do
     for glob in $globs; do
       # shellcheck disable=SC2254
       case "$path" in $glob) hit=$path; break 2 ;; esac
     done
   done < <(jq -r '.[]' <<<"$changed")
+  set +f
   [ -n "$hit" ] || return 0
   limit=${SHIP_POST_MERGE_TIMEOUT:-900}
   [[ "$limit" =~ ^[0-9]+$ ]] || limit=900

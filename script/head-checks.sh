@@ -609,7 +609,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       fi
     fi
   fi
-  if [ "$gate_tool" = shared-db ] && [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ] && [ "$gate_fixer" -eq 0 ]; then
+  if [ "$gate_tool" = shared-db ] && [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ]; then
     db_preflight_done=1
     printf 'Command: %s\n' "$db_preflight" >> "$log"
     started=$SECONDS; pre_status=0
@@ -724,13 +724,16 @@ $pre_out") || gate_issue=""
         exit 1
       fi
       # A gate tool that fails with a usage or internal error was not judging the code: file the red gate and stop (#1746).
-      if [ -n "$gate_tool" ] && [ "$gate_tool" != shared-db ] && gate_internal_error "$status" "$output"; then
+      internal_tool=$gate_tool
+      # On the database host, remote-heavy's own usage error (64) is the tool failing, not the step's tests.
+      [ "$gate_tool" != shared-db ] || { [ ${#db_prefix[@]} -gt 0 ] && [ "$status" -eq 64 ] && internal_tool=remote-heavy || internal_tool=""; }
+      if [ -n "$internal_tool" ] && { [ "$internal_tool" = "$gate_tool" ] || [ "$internal_tool" = remote-heavy ]; } && gate_internal_error "$status" "$output"; then
         check_result=INFRA
         gate_issue=""
-        [ -z "$gate_repo" ] || gate_issue=$(red_gate_file "$gate_repo" "$gate_tool" "Command: $expanded
+        [ -z "$gate_repo" ] || gate_issue=$(red_gate_file "$gate_repo" "$internal_tool" "Command: $expanded
 Exit: $status
 $(tail -40 "$output")") || gate_issue=""
-        printf 'Result: infra: gate tool %s failed with exit %s, not a test failure (%s); remaining checks stopped\nDuration: %ss\n' "$gate_tool" "$status" \
+        printf 'Result: infra: gate tool %s failed with exit %s, not a test failure (%s); remaining checks stopped\nDuration: %ss\n' "$internal_tool" "$status" \
           "$(gate_issue_note "$gate_issue")" "$((SECONDS - started))" >> "$log"
         rm -f "$output"
         exit 1

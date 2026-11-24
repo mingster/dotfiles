@@ -97,6 +97,10 @@ else check "an open red gate blocks the next run with blocked by red gate #n" ba
 git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m topic
 git -C "$repo" push -q origin HEAD:refs/heads/topic
 head=$(git -C "$repo" rev-parse HEAD); printf '%s' "$head" > "$STUB/head"; printf '%s' "$base" > "$STUB/base"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/preflight.sh"
+git -C "$repo" add -A >/dev/null; git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm "fix preflight"
+git -C "$repo" push -q -f origin HEAD:refs/heads/topic
+head=$(git -C "$repo" rev-parse HEAD); printf '%s' "$head" > "$STUB/head"
 printf 'Fixes red gate: #77\n' > "$STUB/pr-body"
 rm -f "$STUB/created" "$STUB/commented"
 env HEAD_CHECKS_DB_PROBE=true HEAD_CHECKS_WAIT_SECONDS=0 HEAD_CHECKS_PR_HEAD_WAIT_SECONDS=2 bash "$runner" --repo "$repo" --pr 5 >"$tmp/out" 2>&1; rc=$?
@@ -119,6 +123,18 @@ if [ "$first" = 77 ] && [ "$second" = 77 ] && [ "$(grep -c '^issue create' "$STU
   && grep -q '^issue comment 77' "$STUB/commented" && ! grep -q 'secret' "$STUB/created"; then
   check "a second failure updates the open issue and the database URL is scrubbed" ok
 else check "a second failure updates the open issue and the database URL is scrubbed" bad; fi
+
+# 3c. A fixer PR still runs the preflight: while it is still broken the PR fails and the open issue gets the comment.
+printf '#!/usr/bin/env bash\nexit 5\n' > "$repo/bin/preflight.sh"
+git -C "$repo" add -A >/dev/null; git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm "still broken"
+git -C "$repo" push -q -f origin HEAD:refs/heads/topic
+printf '%s' "$(git -C "$repo" rev-parse HEAD)" > "$STUB/head"
+printf 'Fixes red gate: #77\n' > "$STUB/pr-body"
+rm -f "$STUB/created" "$STUB/commented"
+env HEAD_CHECKS_DB_PROBE=true HEAD_CHECKS_WAIT_SECONDS=0 HEAD_CHECKS_PR_HEAD_WAIT_SECONDS=2 bash "$runner" --repo "$repo" --pr 5 >"$tmp/out" 2>&1; rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'infra: shared database behind main' "$tmp/out" && [ ! -f "$STUB/created" ] && grep -q '^issue comment 77' "$STUB/commented"; then
+  check "a fixer PR still runs the preflight and a failure updates the open issue" ok
+else check "a fixer PR still runs the preflight and a failure updates the open issue" bad; fi
 
 # 4. A passing preflight lets the database step run, and no issue is filed.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/preflight.sh"

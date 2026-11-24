@@ -1472,7 +1472,10 @@ pm_case() { # <pr> <changed path> [fails]
   mf_self_review "$n" "$h"; set_checks "$n" "$green_checks"; post_verdict "$n" PASS "$h"
   run_ship --repo example/repo --pr "$n"
 }
+# A file already on this disk that matches the glob must not hide the merged path.
+mkdir -p "$MF_REPO/db/schema"; echo local > "$MF_REPO/db/schema/local.sql"
 pm_case 1501 db/schema/001_init.sql
+rm -rf "$MF_REPO/db"
 if [ "$SHIP_RC" -eq 0 ] && grep -q "^1501 [0-9a-f]\{40\}$" "$pm_dir/hook-calls" 2>/dev/null \
   && grep -qx 'post-merge schema: ok (applied 3 migrations)' <<<"$SHIP_OUT"; then
   ok "a merge touching a watched schema path runs the hook and prints one result line"
