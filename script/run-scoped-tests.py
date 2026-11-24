@@ -19,6 +19,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 
 SOURCE_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs')
 PLACEHOLDER_DATABASE = 'postgresql://test:test@localhost:5432/test'
@@ -306,5 +307,22 @@ def main():
         return error.returncode
 
 
+def gate_main():
+    """main(), but a usage error or an internal crash says `infra:` so head-checks files `red gate: run-scoped-tests`.
+
+    A test failure is the runner's own exit status and never says it (#1746)."""
+    try:
+        return main()
+    except SystemExit as error:
+        if error.code == 2:
+            print('infra: run-scoped-tests: usage error (exit 2), the gate did not run the tests', file=sys.stderr)
+        raise
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        print('infra: run-scoped-tests: internal error, the gate did not run the tests', file=sys.stderr)
+        return 70
+
+
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(gate_main())

@@ -1,0 +1,1 @@
+A gate that breaks on its own (an `infra:` line from run-scoped-tests, remote-heavy or the test database preflight) now files one deduped P1 issue `red gate: <tool>` through the new `script/red-gate.py`. head-checks names it in the receipt (`blocked by red gate #<n>`), fleet-watch starts its fixer ahead of other issues and does not rerun the PRs that wait on it until it closes.

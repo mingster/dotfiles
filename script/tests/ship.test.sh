@@ -1446,16 +1446,18 @@ if [ -f "$pm_dir/hook-silent" ]; then exit "\$(cat "$pm_dir/hook-silent")"; fi
 if [ -f "$pm_dir/hook-fails" ]; then echo "shard unreachable" >&2; exit 4; fi
 echo "applied 3 migrations"
 EOF
-cat > "$pm_dir/gh" <<EOF
+real_gh=$(command -v gh); mkdir -p "$pm_dir/bin"
+cat > "$pm_dir/bin/gh" <<EOF
 #!/usr/bin/env bash
+[ "\$1" = issue ] || exec "$real_gh" "\$@"
 case "\$1 \$2" in
   'issue list') cat "$pm_dir/issues.json" ;;
-  'issue create') echo "\$*" >> "$pm_dir/created"; echo '[{"number":91,"title":"red gate: shared-db"}]' > "$pm_dir/issues.json"; echo https://github.com/example/repo/issues/91 ;;
+  'issue create') echo "\$*" >> "$pm_dir/created"; echo '[{"number":91,"title":"red gate: test-database"}]' > "$pm_dir/issues.json"; echo https://github.com/example/repo/issues/91 ;;
   'issue comment') echo "\$*" >> "$pm_dir/commented" ;;
 esac
 EOF
-chmod +x "$pm_dir/hook.sh" "$pm_dir/gh"
-export SHIP_TEST_HOOK="$pm_dir/hook.sh" RED_GATE_GH="$pm_dir/gh"
+chmod +x "$pm_dir/hook.sh" "$pm_dir/bin/gh"
+export SHIP_TEST_HOOK="$pm_dir/hook.sh" PATH="$pm_dir/bin:$PATH"
 "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
 mkdir -p "$MF_REPO/.agents"
 printf '# post-merge-schema: bash "$SHIP_TEST_HOOK"\n# schema-paths: db/schema/* prisma/schema.prisma\ntrue\n' > "$MF_REPO/.agents/head-checks.conf"
@@ -1490,7 +1492,7 @@ else bad "a merge touching no watched path does not run the hook" "rc=$SHIP_RC o
 pm_case 1503 prisma/schema.prisma fails
 if [ "$SHIP_RC" -eq 0 ] && [ "$(jq -r .state "$MF_GH_DIR/pr-1503.json")" = MERGED ] \
   && grep -q 'post-merge schema: FAILED exit 4, the merge stands, red gate #91' <<<"$SHIP_OUT" \
-  && grep -q -- '--title red gate: shared-db' "$pm_dir/created" && grep -q -- '--label P1' "$pm_dir/created"; then
+  && grep -q -- '--title red gate: test-database' "$pm_dir/created" && grep -q -- '--label P1' "$pm_dir/created"; then
   ok "a failing hook keeps the merge, exits 0 and files one red gate issue"
 else bad "a failing hook keeps the merge, exits 0 and files one red gate issue" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 # The open issue is reused, not filed twice.
@@ -1515,8 +1517,7 @@ else bad "a silent failing hook files the red gate instead of aborting ship" "rc
 rm -f "$pm_dir/hook-silent"
 "$MF_REAL_GIT" -C "$MF_REPO" config --unset url."$MF_ORIGIN".insteadOf
 "$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "$MF_ORIGIN"
-unset SHIP_TEST_HOOK RED_GATE_GH
-
+unset SHIP_TEST_HOOK; PATH=${PATH#"$pm_dir/bin:"}
 # #1325: an unreachable dotfiles remote adds nothing to ship output.
 run_ship --repo example/repo --pr 1
 if grep -q 'session-sync:' <<<"$SHIP_OUT"; then bad "ship output is free of session-sync notices" "$SHIP_OUT"; else ok "ship output is free of session-sync notices"; fi

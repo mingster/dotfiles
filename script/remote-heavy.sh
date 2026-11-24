@@ -7,7 +7,7 @@
 #   -h and --help print this text.
 #
 # Sends HEAD (as a git bundle over ssh) to the remote checkout as refs/heavy/<sha> (never to origin), checks it out
-# detached in the remote worktree, reinstalls packages (with the project's postinstall) when the lockfile changed or node_modules is missing, and runs
+# detached in the remote worktree, reinstalls packages (with the project's postinstall) and regenerates the Prisma client when the lockfile or prisma/schema.prisma (under --sub) changed or node_modules is missing, and runs
 # the command under the remote heavy-gate. Exit status is the command's. A missing
 # --dir is created as a detached worktree of --repo-dir.
 # The caller declares the job's memory with --memory-mb or HEAVY_GATE_MEMORY_MB (the flag wins);
@@ -21,6 +21,8 @@
 set -euo pipefail
 print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
+# A usage error (exit 64) means the gate did not run the command: head-checks files `red gate: remote-heavy` (#1746).
+trap '[ "$?" -ne 64 ] || echo "infra: remote-heavy: usage error (exit 64), the gate did not run the command" >&2' EXIT
 
 # shellcheck disable=SC2016 # expanded on the remote host
 host="" repo_dir="" dir="" sub=. weight=1 memory="${HEAVY_GATE_MEMORY_MB:-}" gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh' max_wait=""
@@ -102,16 +104,27 @@ cd "$dir"
 git checkout -q --detach "$sha"
 cd "./$sub"
 stamp=.remote-heavy-lock-sha
+hash_of() { { sha256sum 2>/dev/null || shasum -a 256; } < "$1" | cut -d' ' -f1; }
 if [ -f bun.lock ]; then
-  lock_sum=$({ sha256sum 2>/dev/null || shasum -a 256; } < bun.lock | cut -d' ' -f1)
-  # A stamp without node_modules (or a changed lockfile) means the install is stale. The install runs the
+  lock_sum=$(hash_of bun.lock)
+  # The stamp is the lockfile hash plus the Prisma schema hash, so a schema only change regenerates the client.
+  schema_sum=none
+  [ ! -f prisma/schema.prisma ] || schema_sum=$(hash_of prisma/schema.prisma)
+  want="$lock_sum:$schema_sum"
+  # A stamp without node_modules (or a changed lockfile or schema) means the install is stale. The install runs the
   # project's own postinstall (the generated database client lives under node_modules).
-  if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null)" != "$lock_sum" ]; then
+  if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
     rm -f "$stamp"
     DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
       bun install --frozen-lockfile >"$install_log" 2>&1 \
       || { tail -20 "$install_log" >&2; rm -f "$install_log"; exit 1; }
-    echo "$lock_sum" > "$stamp"
+    # An install with an unchanged lockfile may skip postinstall, so regenerate the client explicitly.
+    if [ "$schema_sum" != none ]; then
+      DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:x@127.0.0.1:5432/placeholder}" \
+        bunx prisma generate >"$install_log" 2>&1 \
+        || { tail -20 "$install_log" >&2; rm -f "$install_log"; exit 1; }
+    fi
+    echo "$want" > "$stamp"
   fi
 fi
 [ -f next-env.d.ts ] || [ ! -f next.config.ts ] || bunx next typegen >/dev/null 2>&1 || true

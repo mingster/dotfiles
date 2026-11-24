@@ -9,12 +9,9 @@
 #   -h, --help     print this Usage block
 # Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
 # host has no reachable local Postgres (pg_isready finds no server; having the client tools is not enough). Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
-# for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
+# for a script that calls createdb itself. A line `# app-dir: web` in the checks file names the app sub directory (lockfile, prisma/) the database host installs and regenerates in. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 # Optional preflight (#1745): a "# db-preflight: <command>" line runs once before the first database step. A non-zero exit
-# stops the run with "infra: shared database behind main, not this PR" and files or updates the issue "red gate: shared-db".
-# Red gates (#1746): a run-scoped-tests, remote-heavy or head-checks step that exits 2 or 64, or prints a Python traceback,
-# files or updates "red gate: <tool>". While that issue is open, a step that needs the tool stops with
-# "blocked by red gate #<n>" instead of retrying it, unless the PR body says "Fixes red gate: #<n>".
+# ends the run as INFRA with "infra: shared database behind main, not this PR", which files "red gate: test-database" (#1746).
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Step output is arbitrary bytes. BSD sed aborts with "illegal byte sequence" when the locale cannot read them (#1633).
@@ -26,8 +23,6 @@ for arg in "$@"; do
 done
 # shellcheck source=lib/dotfiles-fresh.sh
 . "$script_dir/lib/dotfiles-fresh.sh"
-# shellcheck source=lib/red-gate.sh
-. "$script_dir/lib/red-gate.sh"
 is_tsc_step() {
   case "$1" in
     *head-checks-tsc*|*tsc\ *|*tsc.js*) return 0 ;;
@@ -69,7 +64,7 @@ orphan_check_worktree() {
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
-override="" changed="" explicit_base="" main_sha="" check_result=""
+override="" changed="" explicit_base="" main_sha="" check_result="" gate_tool="" gate_text=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
 # lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
@@ -141,8 +136,14 @@ finish() {
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
   printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
+  # A broken gate gets one deduped `red gate: <tool>` issue; the receipt names it so the PR waits on it (#1746).
+  gate_issue=""
+  if [ "$result" = INFRA ] && [ -n "$gate_tool" ] && [ -n "$pr" ] && [ "${HEAD_CHECKS_RED_GATE:-1}" != 0 ]; then
+    gate_issue=$(cd "$repo" && printf '%s\n' "$gate_text" | python3 "$script_dir/red-gate.py" file --tool "$gate_tool" 2>/dev/null) || gate_issue=""
+  fi
   {
     printf 'Checks: %s head=%s%s%s\n\n' "$result" "$sha" "${main_sha:+ main=$main_sha}" "${train_heads:+ train-heads=$train_heads}"
+    [ -z "$gate_issue" ] || printf 'blocked by red gate #%s (%s)\n\n' "$gate_issue" "$gate_tool"
     if [ -n "$changed" ]; then
       unchecked_paths=$(logsed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
       [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
@@ -172,7 +173,7 @@ if len(text)>cap:
     failure_duration={i:d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None}
     failure_durations=list(failure_duration.values())
     execution=[i for i,l in enumerate(lines) if l.startswith(("Tests executed: ","Load errors: "))]
-    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
+    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: ","blocked by red gate "))]
     results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
     nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
     cut=lambda l: l if len(l)<=300 else l[:300]+"[... line cut]"
@@ -482,6 +483,16 @@ if re.search(r"^bun test v", text, re.M):
     print(f"Tests executed: {executed}\nLoad errors: {errors}")
 PYTEST
 }
+# failing_tests <step output>: the names of failing tests (bun prints "(fail) name"), up to 30, so a long passing log cannot hide them.
+failing_tests() {
+  python3 - "$1" <<'PYFAIL'
+import re, sys
+text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1], errors="replace").read())
+names = list(dict.fromkeys(m for m in re.findall(r"^\(fail\) (.*)$", text, re.M)))[:30]
+if names:
+    print("Failing tests:\n" + "\n".join(names))
+PYFAIL
+}
 # True when a bun test run printed load errors and zero failing tests.
 load_errors_only() {
   python3 - "$1" <<'PYLOAD'
@@ -509,6 +520,13 @@ db_remote_load() {
   db_remote_repo_dir=$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")
   db_remote_dir=$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")
 }
+# db_app_dir: the app sub directory (where bun.lock lives) from a "# app-dir: <dir>" line in the checks file; "." without one.
+db_app_dir() {
+  local dir
+  dir=$(sed -n 's/^#[[:space:]]*app-dir:[[:space:]]*\([A-Za-z0-9._\/-]*\)[[:space:]]*$/\1/p' "$config" | head -1)
+  case "$dir" in ''|/*|*..*) dir=. ;; esac
+  printf '%s' "$dir"
+}
 # db_step_runner <expanded command>: prints the remote-heavy argv tokens, one per line, when the step must go to the
 # database host; prints nothing when it runs here. Returns 1 (a host fault) when it can run nowhere.
 db_step_runner() {
@@ -521,7 +539,7 @@ db_step_runner() {
   if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
     return 1
   fi
-  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --max-wait "${HEAD_CHECKS_DB_GATE_WAIT_SECONDS:-600}" --
+  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --sub "$(db_app_dir)" --max-wait "${HEAD_CHECKS_DB_GATE_WAIT_SECONDS:-600}" --
 }
 # db_wait_receipt <step output>: the remote heavy-gate's wait for admission, so the audit can split wait from run time.
 db_wait_receipt() {
@@ -545,31 +563,10 @@ db_lock_acquire() {
     attempt=$((attempt+1)); sleep 0.5
   done
 }
-# Red gates (#1745, #1746). gate_tool_of names the shared tool a step depends on, empty for a plain step.
-gate_tool_of() {
-  if [[ "$1" =~ $db_marker_re || "$1" =~ $db_step_re ]]; then echo shared-db; return 0; fi
-  case "$1" in
-    *run-scoped-tests*) echo run-scoped-tests ;;
-    *remote-heavy*) echo remote-heavy ;;
-    *head-checks.sh*) echo head-checks ;;
-  esac
-}
-# gate_fixer_for <issue>: 0 when this PR is the fix, so the broken gate it repairs must not block it.
-gate_fixer_for() {
-  [ -n "$pr" ] || return 1
-  (cd "$repo" && red_gate_gh pr view "$pr" --json body --jq .body 2>/dev/null) | grep -qiE "^Fixes red gate: #$1([^0-9]|$)"
-}
-# gate_internal_error <status> <output file>: a usage or internal error of the tool, not a test failure.
-gate_internal_error() {
-  [ "$1" -eq 2 ] || [ "$1" -eq 64 ] || grep -q '^Traceback (most recent call last):' "$2"
-}
-# gate_issue_note <issue number or empty>: the receipt words for the filed issue.
-gate_issue_note() { if [ -n "$1" ]; then printf 'red gate #%s' "$1"; else printf 'red gate issue not filed'; fi; }
-gate_repo=$(red_gate_repo "$repo")
-db_preflight=$(sed -n 's/^#[[:space:]]*db-preflight:[[:space:]]*//p' "$config" | head -1)
-db_preflight_done=0
 # An asdf shim looks for .tool-versions under the caller's HOME and exits 126 when a test sets its own, so steps get
 # the real python3 and node directories first. Resolved once, from the worktree; without asdf the PATH is unchanged.
+db_preflight=$(sed -n 's/^#[[:space:]]*db-preflight:[[:space:]]*//p' "$config" | head -1)
+db_preflight_done=0
 step_path="$PATH"
 for tool in python3 node; do
   real=$(cd "$worktree" && asdf which "$tool" 2>/dev/null) && [ -x "$real" ] && step_path="$(dirname "$real"):$step_path"
@@ -595,41 +592,25 @@ while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
   count=$((count+1))
   expanded=${command//\{files\}/$files}
-  printf '\nCommand: %s\n' "$expanded" >> "$log"
-  gate_tool=$(gate_tool_of "$expanded"); gate_fixer=0
-  if [ -n "$gate_tool" ] && [ -n "$gate_repo" ]; then
-    gate_issue=$(red_gate_find "$gate_repo" "$gate_tool")
-    if [ -n "$gate_issue" ]; then
-      if gate_fixer_for "$gate_issue"; then
-        gate_fixer=1
-      else
-        check_result=INFRA
-        printf 'Result: blocked by red gate #%s (%s); not this PR. The gate is not retried; rerun Checks when the issue closes.\nDuration: 0s\n' "$gate_issue" "$gate_tool" >> "$log"
-        exit 1
-      fi
-    fi
-  fi
-  if [ "$gate_tool" = shared-db ] && [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ]; then
+  # The project's database preflight runs once, before the first database step, under its own Command line, so a failure
+  # names the preflight and a later database failure names the database step. A failure is the shared database, not this
+  # PR: the `infra:` line makes the run INFRA and files the red gate through #1746's path.
+  if [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ] && [[ "$expanded" =~ $db_marker_re || "$expanded" =~ $db_step_re ]]; then
     db_preflight_done=1
     printf '\nCommand: %s\n' "$db_preflight" >> "$log"
     started=$SECONDS; pre_status=0
     pre_out=$(cd "$worktree" && env -i PATH="$step_path" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" "$bash_bin" -euo pipefail -c "$db_preflight" 2>&1) || pre_status=$?
     if [ "$pre_status" -ne 0 ]; then
       check_result=INFRA
-      pre_note="infra: shared database behind main, not this PR"
-      gate_issue=""
-      [ -z "$gate_repo" ] || gate_issue=$(red_gate_file "$gate_repo" shared-db "$pre_note
-Command: $db_preflight
-Exit: $pre_status
-$pre_out") || gate_issue=""
-      printf '%s\n' "$pre_out" | tail -20 >> "$log"
-      printf 'Result: %s (preflight exit %s; %s); remaining checks stopped\nDuration: %ss\n' "$pre_note" "$pre_status" \
-        "$(gate_issue_note "$gate_issue")" "$((SECONDS - started))" >> "$log"
+      gate_text=$(printf 'infra: shared database behind main, not this PR\n%s\n' "$pre_out" | tail -40)
+      gate_tool=$(printf '%s\n' "$gate_text" | python3 "$script_dir/red-gate.py" infra-tool) || gate_tool=""
+      printf '%s\n' "$gate_text" >> "$log"
+      printf 'Result: preflight exit %s; remaining checks stopped\nDuration: %ss\n' "$pre_status" "$((SECONDS - started))" >> "$log"
       exit 1
     fi
     printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
-    printf '\nCommand: %s\n' "$expanded" >> "$log"
   fi
+  printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_CACHE_DIR="$tsc_cache_dir")
   run=(env -i PATH="$step_path" HOME="$HOME" "${step_env[@]}" "$bash_bin" -euo pipefail -c "$expanded")
@@ -648,7 +629,10 @@ $pre_out") || gate_issue=""
       [ -n "${token:-}" ] && db_prefix+=("$token")
     done <<<"$db_out"
     # The database host has its own PATH and HOME; this host's would break the step there.
-    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
+    # remote-heavy.sh leaves the command in the app sub directory; checks lines are written for the checkout root.
+    remote_cmd=$expanded
+    [ "$(db_app_dir)" = . ] || remote_cmd=$'cd "$(git rev-parse --show-toplevel)"\n'$expanded
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$remote_cmd" )
     if [ ${#db_prefix[@]} -gt 0 ] && ! db_lock_acquire; then
       check_result=INFRA
       printf 'Result: host busy; another run holds the database host checkout (%s) and the wait ran out, so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: 0s\n' "$db_remote_host" >> "$log"
@@ -691,6 +675,7 @@ $pre_out") || gate_issue=""
       logsed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
+      failing_tests "$output" >> "$log"
       if [ ${#db_prefix[@]} -gt 0 ]; then
         db_wait_receipt "$output" >> "$log"
         # Exit 75 is the remote heavy-gate giving up on admission: the step never ran.
@@ -702,6 +687,17 @@ $pre_out") || gate_issue=""
           exit 1
         fi
       fi
+      # A gate tool that says `infra: <tool>: <reason>` (or the database preflight's `infra: <reason>`) broke
+      # on its own: not a verdict on the code, and every worker meets it until one fixer repairs it.
+      if gate_tool=$(python3 "$script_dir/red-gate.py" infra-tool --output-file "$output"); then
+        gate_text=$(tail -40 "$output")
+        check_result=INFRA
+        printf 'Result: gate broken; %s reported an infra failure (exit %s), the code was not judged. A red gate issue holds this PR until the gate is fixed.\nDuration: %ss\n' "$gate_tool" "$status" "$((SECONDS - started))" >> "$log"
+        [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+        rm -f "$output"
+        exit 1
+      fi
+      gate_tool=""
       if [ "$status" -eq 137 ] && is_tsc_step "$expanded"; then
         if [ "$tsc_attempt" -eq 1 ]; then
           printf 'Result: exit 137; retryable infra failure (tsc killed by OS, the code was not judged); retrying once when load drops\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
@@ -721,21 +717,6 @@ $pre_out") || gate_issue=""
         check_result=INFRA
         printf 'Result: host fault; the step on the database host ran no tests or hit load errors (exit %s) and no test failed, so the host checkout is broken or in use (missing install or generated files), not the code. Not a pass; fix the host and rerun Checks.\nDuration: %ss\n' "$status" "$((SECONDS - started))" >> "$log"
         [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
-        rm -f "$output"
-        exit 1
-      fi
-      # A gate tool that fails with a usage or internal error was not judging the code: file the red gate and stop (#1746).
-      internal_tool=$gate_tool
-      # On the database host, remote-heavy's own usage error (64) is the tool failing, not the step's tests.
-      [ "$gate_tool" != shared-db ] || { [ ${#db_prefix[@]} -gt 0 ] && [ "$status" -eq 64 ] && internal_tool=remote-heavy || internal_tool=""; }
-      if [ -n "$internal_tool" ] && { [ "$internal_tool" = "$gate_tool" ] || [ "$internal_tool" = remote-heavy ]; } && gate_internal_error "$status" "$output"; then
-        check_result=INFRA
-        gate_issue=""
-        [ -z "$gate_repo" ] || gate_issue=$(red_gate_file "$gate_repo" "$internal_tool" "Command: $expanded
-Exit: $status
-$(tail -40 "$output")") || gate_issue=""
-        printf 'Result: infra: gate tool %s failed with exit %s, not a test failure (%s); remaining checks stopped\nDuration: %ss\n' "$internal_tool" "$status" \
-          "$(gate_issue_note "$gate_issue")" "$((SECONDS - started))" >> "$log"
         rm -f "$output"
         exit 1
       fi

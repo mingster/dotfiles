@@ -83,8 +83,6 @@ board_environment_for_branch() { # <branch>
 . "$ship_dir/lib/protected-paths.sh"
 # shellcheck disable=SC1091
 . "$ship_dir/lib/board-status.sh"
-# shellcheck source=lib/red-gate.sh
-. "$ship_dir/lib/red-gate.sh"
 
 # After a dotfiles merge, pull latest dotfiles to every fleet host (#1173). Runs detached, so the merge never waits
 # on it and a failure never reaches ship's exit code. One block per run lands in the log fleet-watch reads:
@@ -136,9 +134,9 @@ template_sync_after_merge() { # <pr> <merge sha>
 # .agents/head-checks.conf at the PR head names it: "# post-merge-schema: <command>" and "# schema-paths: <glob> ..."
 # (space separated, bash globs on repo relative paths). It runs in this checkout with SHIP_PR and SHIP_MERGE_SHA set,
 # cut off after SHIP_POST_MERGE_TIMEOUT seconds (default 900). One result line goes to the ship output. A failure files
-# or updates the "red gate: shared-db" issue and never undoes the merge or changes ship's exit code.
+# or updates the "red gate: test-database" issue and never undoes the merge or changes ship's exit code.
 post_merge_schema_hook() { # <pr> <merge sha> <head sha> <changed files json>
-  local pr_n=$1 sha=$2 head_sha=$3 changed=$4 conf cmd globs path glob hit="" tmp rc=0 limit pid dog gate_repo issue last
+  local pr_n=$1 sha=$2 head_sha=$3 changed=$4 conf cmd globs path glob hit="" tmp rc=0 limit pid dog issue last
   conf=$(git -C "$top" show "$head_sha:.agents/head-checks.conf" 2>/dev/null || cat "$top/.agents/head-checks.conf" 2>/dev/null || true)
   cmd=$(sed -n 's/^#[[:space:]]*post-merge-schema:[[:space:]]*//p' <<<"$conf" | head -1)
   [ -n "$cmd" ] || return 0
@@ -168,18 +166,13 @@ post_merge_schema_hook() { # <pr> <merge sha> <head sha> <changed files json>
   if [ "$rc" -eq 0 ]; then
     echo "post-merge schema: ok (${last:-no output})"
   else
-    gate_repo=$(red_gate_repo "$top")
-    issue=""
-    [ -z "$gate_repo" ] || issue=$(red_gate_file "$gate_repo" shared-db "Post-merge schema hook failed after PR $pr_n merged as $sha.
-Command: $cmd
-Exit: $rc
-$(tail -40 "$tmp")") || issue=""
+    issue=$({ printf 'Post-merge schema hook failed after PR %s merged as %s.\nCommand: %s\nExit: %s\n' "$pr_n" "$sha" "$cmd" "$rc"; tail -40 "$tmp"; } \
+      | python3 "$ship_dir/red-gate.py" file --tool test-database --repo "$repo" 2>/dev/null) || issue=""
     [ -z "$issue" ] || issue="red gate #$issue"
     echo "post-merge schema: FAILED exit $rc, the merge stands, ${issue:-no red gate issue filed}"
   fi
   rm -f "$tmp"
 }
-
 repo="" pr="" dry_run=false mechanical=false verdict_from="" ship_environment=""
 sync_dir=""
 trap '[ -z "$sync_dir" ] || rm -rf "$sync_dir"' EXIT

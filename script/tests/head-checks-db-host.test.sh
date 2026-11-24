@@ -245,5 +245,23 @@ else
   check "a busy remote checkout reports host busy, not FAIL" bad
 fi
 
+# The receipt names failing tests past the 20 line tail, and the app sub dir comes from the checks file (#1725).
+cat > "$tmp/remote-heavy-names.sh" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$REMOTE_LOG.argv"
+printf 'bun test v1.3.0\n\033[31m(fail)\033[0m clerk question > finds one [1.00ms]\n(fail) clerk question > saves [2.00ms]\n'
+for i in $(seq 1 40); do printf 'noise %s\n' "$i"; done
+printf ' 4 pass\n 2 fail\n'
+exit 1
+EOF2
+chmod +x "$tmp/remote-heavy-names.sh"
+printf '# app-dir: web\nbun test # db\n' > "$repo/.agents/head-checks.conf"
+git -C "$repo" add -A >/dev/null
+git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -qm names
+run_hc LEAD_MERGE_REMOTE_HOST=db-host-849 LEAD_MERGE_REMOTE_REPO_DIR=/srv/repo LEAD_MERGE_REMOTE_DIR=/srv/checks HEAD_CHECKS_REMOTE_HEAVY="$tmp/remote-heavy-names.sh"; rc=$?
+if [ "$rc" -ne 0 ] && grep -q '^Failing tests:' "$tmp/out" && grep -q 'clerk question > finds one' "$tmp/out"; then check "the receipt lists failing test names past the 20 line tail" ok; else check "the receipt lists failing test names past the 20 line tail" bad; fi
+if grep -qx -- '--sub' "$tmp/remote.log.argv" && grep -qx 'web' "$tmp/remote.log.argv"; then check "the db step passes the app dir from the checks file" ok; else check "the db step passes the app dir from the checks file" bad; fi
+if grep -q 'git rev-parse --show-toplevel' "$tmp/remote.log.argv"; then check "the remote command runs from the checkout root, not the app dir" ok; else check "the remote command runs from the checkout root, not the app dir" bad; fi
+
 echo "head-checks-db-host: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
