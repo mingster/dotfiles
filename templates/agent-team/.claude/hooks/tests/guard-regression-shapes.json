@@ -742,5 +742,21 @@
  {
   "name": "issue1795-008",
   "command": "S=deploy\nbash bin/${S}-raw.sh"
+ },
+ {
+  "name": "issue1795-009",
+  "command": "P=bin; for f in $P/*; do bash $P/deploy-raw.sh; done"
+ },
+ {
+  "name": "issue1795-010",
+  "command": "S=deploy; for f in *; do bash bin/$S-raw.sh; done"
+ },
+ {
+  "name": "issue1795-011",
+  "command": "P=bin; >/dev/null bash $P/deploy-raw.sh"
+ },
+ {
+  "name": "issue1795-012",
+  "command": "P=bin; bash >/dev/null $P/deploy-raw.sh"
  }
 ]
