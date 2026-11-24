@@ -150,6 +150,12 @@ map_file() {
   local path=$1 base py
   MAPPING_ACTIVE=1
   PATH_MAP_HITS=0
+  # Runs beside the path cases below, so a template doc or settings change is checked whatever else it touches.
+  case "$path" in
+    templates/agent-team/*|.agents/claude/settings.json)
+      add_if_exists "script/tests/template-doc-claims.test.sh"
+      ;;
+  esac
   case "$path" in
     script/script-test-skip.list)
       ;;

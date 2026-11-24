@@ -1,0 +1,1 @@
+template-doc-claims: the test now runs on any change under `templates/agent-team/` or to `.agents/claude/settings.json`, and it also checks `bash bin/*.sh` references in the template docs, not only `python3 bin/*.py` (#1715).
