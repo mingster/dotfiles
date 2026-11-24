@@ -274,7 +274,7 @@ case11_table_driven_mapped_paths() {
   out=$(list_selector_output templates/agent-team/changelog.d/README.md templates/agent-team/bin/changelog-compile.sh)
   grep -Fq 'Fallback:' <<<"$out" && fail "case11 agent-team pair must not fallback"
   count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -eq 9 ] || fail "case11 agent-team pair want Script tests: 9 got ${count:-0}"
+  [ "${count:-0}" -eq 10 ] || fail "case11 agent-team pair want Script tests: 10 got ${count:-0}"
 
   out=$(list_selector_output script/unmapped-helper.sh)
   grep -Fq 'Fallback: script/unmapped-helper.sh -> full suite' <<<"$out" \
@@ -544,3 +544,18 @@ case27_start_remote_worker_selects_its_test() {
 }
 
 case27_start_remote_worker_selects_its_test
+
+# #1652 follow-up: template docs and the Claude settings they describe select the doc-claims test, with no fallback.
+case28_template_doc_claims_selected() {
+  local out path
+  for path in templates/agent-team/docs/agents/engineering-integration.md templates/agent-team/.claude/model-routing.md .agents/claude/settings.json; do
+    out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP=/dev/null \
+      bash "$root/script/select-changed-script-tests.sh" --list-only "$path" 2>&1)
+    grep -Fxq 'Selected: script/tests/template-doc-claims.test.sh' <<<"$out" \
+      || fail "case28 $path must select template-doc-claims.test.sh: $out"
+    grep -Fq 'Fallback:' <<<"$out" && fail "case28 $path must not fall back to the full suite: $out"
+  done
+  ok "case28 template docs and agent-team settings select template-doc-claims"
+}
+
+case28_template_doc_claims_selected
