@@ -2194,7 +2194,7 @@ printf '%s\n' "$*" >>"$GH_STUB_LOG"
 [ "${GH_STUB_FAIL:-}" != 1 ] || exit 1
 case "$1 $2" in
   "issue list") printf '%s\n' "$GH_STUB_ISSUES" ;;
-  "issue view") printf '%s\n' "${GH_STUB_VIEW:-0}" ;;
+  "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1; printf '%s\n' "${GH_STUB_VIEW:-0}" ;;
   "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
 esac
 EOS
@@ -2216,6 +2216,8 @@ GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#79
 [ "$route_ec" = 0 ] && ok || bad "no ready dotfiles issue should let the start go on (ec=$route_ec) $(cat "$tmp/route.err")"
 GH_STUB_VIEW=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a P0 or bug project issue starts before a waiting dotfiles P2 (ec=$route_ec) $(cat "$tmp/route.err")"
+GH_STUB_VIEW_FAIL=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a failed gh issue view must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
 GH_STUB_VIEW=1 GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P0"}]}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "a waiting dotfiles P0 still goes before a project P0 (ec=$route_ec)"
 printf 'Refs acme/dots#9\n\n# fullstack-dev - issue 9\n\n%s\n' "$spec_saved" >"$spec_file"

@@ -973,7 +973,8 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   # A P0 or bug issue in any repo starts before the rest; a waiting dotfiles P0 or bug issue still goes first (#1791).
   urgent_waiting=$(printf '%s' "$ready_json" | jq -r --argjson cant "$cant_start" '[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | (($l | index("P0") != null) or ($l | index("bug") != null)) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not))] | length' 2>/dev/null) || urgent_waiting=1
   if [ "${urgent_waiting:-1}" = 0 ]; then
-    ref_urgent=$(gh issue view "${ref##*#}" --repo "$repo" --json labels --jq '[.labels[].name] | map(select(. == "P0" or . == "bug")) | length' 2>/dev/null) || ref_urgent=0
+    # A red main or red gate fixer goes first too. A failed gh call lets the start go on.
+    ref_urgent=$(gh issue view "${ref##*#}" --repo "$repo" --json labels,title --jq '([.labels[].name] | map(select(. == "P0" or . == "bug")) | length) + (if (.title | startswith("main red: ") or startswith("red gate: ")) then 1 else 0 end)' 2>/dev/null) || return 0
     [ "${ref_urgent:-0}" = 0 ] || return 0
   fi
   if [ -n "$skip" ]; then

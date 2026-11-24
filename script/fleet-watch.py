@@ -9403,9 +9403,15 @@ def main():
         return 0
 
     if args.next_issue:
-        config = json.loads(args.config.read_text()) if args.config and args.config.exists() else {}
+        if args.config is not None:
+            cfg_path = args.config
+        else:
+            cfg_path = Path(os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json'))
+        config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        config, _adopted = resolve_pass_config(config, cfg_path)
         scan = config.get('issue_scan') or {}
-        found = next_ready_issue(scan.get('repos') or [], fetch_ready_issues)
+        repos = scan.get('repos') or repos_from_roots(scan.get('repo_roots') or config.get('repo_roots'))[0]
+        found = next_ready_issue(repos, fetch_ready_issues)
         if found is None:
             print('none')
             return 1

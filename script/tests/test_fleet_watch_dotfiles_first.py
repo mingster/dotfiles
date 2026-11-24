@@ -50,7 +50,7 @@ class DotfilesFirst(unittest.TestCase):
         self.assertIsNone(fw.next_ready_issue(['x/y'], lambda r: []))
 
     def test_name_must_match_whole_repo_name(self):
-        self.assertEqual(fw.issue_scan_queue_key('owner/my-dotfiles', row(1, ()))[0], 1)
+        self.assertEqual(fw.issue_scan_queue_key('owner/my-dotfiles', row(1, ()))[2], 1)
 
 
 if __name__ == '__main__':
