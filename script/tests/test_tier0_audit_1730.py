@@ -2,6 +2,8 @@
 import importlib.util
 import os
 import random
+import re
+import subprocess
 import tempfile
 import time
 import unittest
@@ -100,6 +102,54 @@ class AuditPass(unittest.TestCase):
         self.assertEqual(fw.verifier_title_prs(worker), [])
         self.assertFalse(fw._worker_titled_verifier(worker))
         self.assertIsNone(fw.live_verifier_worker({'number': 7, 'headRefName': 'b7'}, [worker]))
+
+    def test_title_passes_worker_startup_title_form(self):
+        # worker-startup.sh require_title_form: "#<issue>|<role>"
+        with tempfile.TemporaryDirectory() as root:
+            starts, _lines, _bits = self.run_pass({}, [merged(7, TEST_FILES)], root, os.path.join(root, 'a.tsv'))
+        title = starts[0][starts[0].index('--title') + 1]
+        self.assertRegex(title, r'^#[0-9]+\|[a-z][a-z-]*(\|.+)?$')
+
+    def test_brief_passes_brief_lint_with_and_without_checks_local(self):
+        lint = HERE.parent / 'brief-lint.sh'
+        for has_script in (True, False):
+            with tempfile.TemporaryDirectory() as root:
+                if has_script:
+                    (Path(root) / 'script').mkdir()
+                    (Path(root) / 'script' / 'checks-local.sh').write_text('#!/bin/sh\n')
+                spec_path = fw.build_tier0_audit_spec(REPO, merged(7, TEST_FILES), root)
+                result = subprocess.run(['bash', str(lint), spec_path], capture_output=True, text=True, cwd=root)
+                self.assertEqual(result.returncode, 0, 'checks-local=%s: %s%s' % (has_script, result.stdout, result.stderr))
+
+    def test_a_pass_that_started_nothing_is_retried_and_keeps_what_started(self):
+        prs = [merged(n, TEST_FILES) for n in range(1, 4)]
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'a.tsv')
+            state = {}
+            outcomes = [fw.BabysitStartResult(0), fw.BabysitStartResult(1, 'host cap'), fw.BabysitStartResult(1, 'host cap')]
+            sent = []
+
+            def start(command):
+                sent.append(command)
+                return outcomes.pop(0) if outcomes else fw.BabysitStartResult(0)
+
+            kw = dict(merged_fetch=lambda _r, _n: prs, start_worker=start, pick=PICK, rng=random.Random(2), log_file=log)
+            fw.tier0_audit_pass(config(root), state, NOW, [], **kw)
+            self.assertNotIn(REPO, state['tier0_audit'])  # two starts failed, so the week stays open
+            first = [c[c.index('--name') + 1] for c in sent]
+            fw.tier0_audit_pass(config(root), state, NOW + 600, [], **kw)
+            self.assertEqual(state['tier0_audit'][REPO], '2023-W46')
+            names = [c[c.index('--name') + 1] for c in sent]
+            self.assertEqual(len(set(names)), 3, names)  # each PR started once in total
+            self.assertEqual(len(first), 3)
+
+    def test_all_picks_failing_to_start_does_not_mark_the_week_done(self):
+        with tempfile.TemporaryDirectory() as root:
+            state = {}
+            fw.tier0_audit_pass(config(root), state, NOW, [], merged_fetch=lambda _r, _n: [merged(1, TEST_FILES)],
+                                start_worker=lambda _c: fw.BabysitStartResult(1, 'no seat'), pick=PICK,
+                                log_file=os.path.join(root, 'a.tsv'))
+            self.assertNotIn(REPO, state['tier0_audit'])
 
     def test_brief_is_an_audit_not_a_merge_or_a_verdict(self):
         spec_path = fw.build_tier0_audit_spec(REPO, merged(7, TEST_FILES))

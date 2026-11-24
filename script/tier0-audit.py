@@ -28,7 +28,7 @@ def log_path():
 def pick(prs, tier_of, count=COUNT, rng=None):
     """Up to `count` random tier 0 PRs, in PR number order."""
     eligible = [p for p in prs if isinstance(p, dict) and tier_of(p) == 0]
-    chosen = (rng or random).sample(eligible, min(count, len(eligible)))
+    chosen = (rng or random).sample(eligible, max(0, min(count, len(eligible))))
     return sorted(chosen, key=lambda p: p.get('number') or 0)
 
 

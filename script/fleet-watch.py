@@ -5977,7 +5977,7 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standi
         return _write_issue_scan_spec(_with_preamble(text, 'fullstack-dev'))
 
 
-def build_tier0_audit_spec(repo, pr_row):
+def build_tier0_audit_spec(repo, pr_row, root=None):
     number = pr_row['number']
     sha = (pr_row.get('mergeCommit') or {}).get('oid') or ''
     text = (
@@ -5993,10 +5993,12 @@ def build_tier0_audit_spec(repo, pr_row):
         '## Out of scope\n'
         'Merging, reverting, editing code, a Verdict. A FAIL goes to the weekly report and the coordinator files the follow up.\n\n'
         '## Verify\n'
-        'The test command for the files this PR changed, run at the merge commit.\n\n'
+        'GitHub Checks are green at merge commit %s. Run the tests this PR changed at that commit.\n'
+        '%s\n\n'
         '## Finish\n'
         'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-    ) % (repo, number, number, sha, number, repo, sha, sha, sha, number)
+    ) % (repo, number, number, sha, number, repo, sha, sha, sha, number, sha,
+         checks_local_verify_text(root, 'bash script/checks-local.sh 2>&1 | tail -40'))
     return _write_issue_scan_spec(_with_preamble(text, 'qa-sdet'))
 
 
@@ -6019,7 +6021,8 @@ def tier0_audit_pass(config, state, now, workers, merged_fetch=None, start_worke
                      persist_state=None, log_file=None):
     """Once a week per repo: pick 5 random tier 0 PRs merged in the past week and start one audit verifier for each (#1730).
 
-    The worker title and name avoid the verifier patterns, so a pass that finds the PR merged never releases it."""
+    The worker title (`#<pr>|tier-audit`) and name avoid the verifier patterns, so a pass that finds the PR merged never releases it.
+    A week with a pick that did not start is retried next pass: only the PRs already started are kept."""
     lines, log_bits = [], []
     if (config.get('babysit') or {}).get('tier0_audit') is False:
         return lines, log_bits
@@ -6039,7 +6042,10 @@ def tier0_audit_pass(config, state, now, workers, merged_fetch=None, start_worke
         if prs is None:
             log_bits.append('tier0_audit_fetch_fail=%s' % repo)
             continue
-        picks = audit.pick(prs, pr_tier, rng=rng)
+        record = (state.setdefault('tier0_audit_started', {}).get(repo) or {})
+        have = list(record.get('prs') or []) if record.get('week') == week else []
+        remaining = [p for p in prs if isinstance(p, dict) and p.get('number') not in have]
+        picks = audit.pick(remaining, pr_tier, count=audit.COUNT - len(have), rng=rng)
         started = []
         for pr_row in picks:
             builder = builder_pair(pr_row, workers)
@@ -6052,8 +6058,8 @@ def tier0_audit_pass(config, state, now, workers, merged_fetch=None, start_worke
             agent, model, _tag = chosen
             command = [
                 'bash', startup, '--run', run_id,
-                '--spec', build_tier0_audit_spec(repo, pr_row),
-                '--title', 'tier0-audit|%s' % pr_row['number'], '--agent', agent, '--model', model,
+                '--spec', build_tier0_audit_spec(repo, pr_row, root),
+                '--title', '#%s|tier-audit' % pr_row['number'], '--agent', agent, '--model', model,
                 '--name', 'audit-%s' % pr_row['number'], '--repo', local_repo_selector(root),
             ]
             code, reason = start_result_parts(start_worker(command))
@@ -6062,7 +6068,10 @@ def tier0_audit_pass(config, state, now, workers, merged_fetch=None, start_worke
                 continue
             started.append(pr_row)
             lines.append('tier0-audit %s#%s started agent=%s model=%s' % (repo, pr_row['number'], agent, model))
-        done[repo] = week
+        have += [p['number'] for p in started]
+        state['tier0_audit_started'][repo] = {'week': week, 'prs': have}
+        if len(started) == len(picks):
+            done[repo] = week
         audit.append_log(log_file or audit.log_path(), week, repo, started, now=now)
         log_bits.append('tier0_audit=%s:%d/%d' % (repo, len(started), len(picks)))
         if persist_state:
