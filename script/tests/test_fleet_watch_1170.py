@@ -3,10 +3,14 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 import test_fleet_watch_park as park  # noqa: E402
 from test_fleet_watch_park import HEAD, REPO, issue_row, scan_config  # noqa: E402
@@ -18,6 +22,12 @@ FENCED = fw.BabysitStartResult(
 
 
 class FencedStartHandoff(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_issue_start_is_handed_to_the_coordinator_with_the_ready_command(self):
         with tempfile.TemporaryDirectory() as root:
             state = {'issue_scan_backlog_sweep_at': 1}

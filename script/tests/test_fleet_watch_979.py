@@ -5,10 +5,14 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 REPO = 'owner/app'
 NOW = 1_700_000_000.0
@@ -60,6 +64,12 @@ def arg(cmd, flag):
 
 
 class IssueScanRemoteHosts(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_local_full_places_on_first_admitting_remote_with_its_repo_id(self):
         _, log, starts, calls = run_pass(
             {'local': FULL, 'hostC': FREE, 'hostB': FREE},
@@ -102,6 +112,12 @@ def repo_row(rid, path, key):
 
 
 class RepoIdLookup(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_matches_git_remote_when_the_path_differs_per_host(self):
         # hostB has app at /Users/u/app, coord at /Users/u/GitHub/app
         repos = {'repos': [
@@ -122,6 +138,12 @@ class RepoIdLookup(unittest.TestCase):
 
 
 class AdoptedConfigKeepsHosts(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_coordinator_config_without_host_caps_inherits_them_from_the_stub(self):
         import json, os, tempfile
         stub_caps = {'coord': 5, 'hostA': 4, 'hostB': 5, 'hostC': 4}
@@ -209,6 +231,12 @@ def scan_on(config):
 
 
 class StubKeysFillThePass(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_coordinator_file_fills_missing_keys_from_the_stub(self):
         with fleet_home(STUB_KEYS, ELON_RUNS) as (_stub, elon, log):
             config, adopted = fw.resolve_pass_config(json.loads(elon.read_text()), str(elon))
@@ -252,6 +280,12 @@ class StubKeysFillThePass(unittest.TestCase):
 
 
 class LocalOrcaRepoIdMapsTheHost(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def mapped_config(self):
         return {
             'local_host': 'coord',

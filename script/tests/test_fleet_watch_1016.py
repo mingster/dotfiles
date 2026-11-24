@@ -8,6 +8,9 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 REPO = 'owner/app'
 NOW = 1_700_000_000.0
@@ -73,6 +76,12 @@ def scan_config(caps, root='/tmp/app'):
 
 
 class HeadOfLineLint(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_lint_failure_drops_ready_and_starts_the_next_issue(self):
         state = {'issue_scan_backlog_sweep_at': NOW}
         bad = issue(1, ['ready-for-agent', 'P0'], '## Acceptance criteria\n- prove it')
@@ -108,6 +117,12 @@ class HeadOfLineLint(unittest.TestCase):
 
 
 class RemotePlacementWhenLocalIsFull(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_occupied_local_starts_on_the_admitted_remote(self):
         state = {'issue_scan_backlog_sweep_at': NOW}
         starts = []
@@ -137,6 +152,12 @@ class RemotePlacementWhenLocalIsFull(unittest.TestCase):
 
 
 class ShipWhileLocalIsFull(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_unknown_mergeable_is_ready(self):
         row = ready_pr(3, HEAD, 'UNKNOWN')
         self.assertEqual(fw.classify_open_pr(row), 'ready')
@@ -176,6 +197,12 @@ class ShipWhileLocalIsFull(unittest.TestCase):
 
 
 class ConflictReworkRounds(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_conflict_only_rework_does_not_count_a_round(self):
         conflict_head = 'c' * 40
         fail_head = 'f' * 40
@@ -216,6 +243,12 @@ class EnvironmentHostIds(unittest.TestCase):
     projection.host {kind: remote, id: <environment id>}. A missing host is
     the local seat. The real worker-list row is in the pull request, not here.
     """
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
 
     def config(self):
         return {
@@ -279,6 +312,12 @@ class EnvironmentHostIds(unittest.TestCase):
 
 
 class GreenSuccessRelease(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def worker(self, root, dispatch='ctx_done', number=3):
         return {
             'dispatchId': dispatch,
@@ -348,6 +387,12 @@ class GreenSuccessRelease(unittest.TestCase):
 
 
 class QuietFailedDigest(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_skips_alerted_released_and_settled_failures(self):
         config = {
             'host_caps': {},
@@ -396,6 +441,12 @@ if __name__ == '__main__':
 
 
 class LintStuckIssue(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_second_lint_failure_relabels_to_needs_triage(self):
         state = {'issue_scan_backlog_sweep_at': NOW}
         bad = issue(1, ['ready-for-agent'], '## Acceptance criteria\n- prove it')

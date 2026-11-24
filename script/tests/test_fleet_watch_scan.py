@@ -6,10 +6,14 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 REPO = 'owner/app'
 OTHER_REPO = 'owner/other'
@@ -63,6 +67,12 @@ def author_worker(number, branch, worktree='/tmp/wt', dispatch='ctx_author'):
 
 
 class IssueEligibility(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_ready_label_and_acceptance_required(self):
         good = issue(1, ['ready-for-agent'], '## Acceptance criteria\n- x')
         self.assertTrue(fw.issue_scan_eligible(good))
@@ -81,6 +91,12 @@ class IssueEligibility(unittest.TestCase):
 
 
 class FetchReadyIssues(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_command_requests_blocked_by_not_is_blocked(self):
         calls = []
 
@@ -108,6 +124,12 @@ class FetchReadyIssues(unittest.TestCase):
 
 
 class ReceiptAtHead(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_checks_fail_then_pass_with_main(self):
         head = '0' * 40
         main = '1' * 40
@@ -146,6 +168,12 @@ class ReceiptAtHead(unittest.TestCase):
 
 
 class ReviewAtHead(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_later_pass_verdict_cancels_rework(self):
         head = 'e' * 40
         row = pr(3, head=head, comments=[
@@ -199,6 +227,12 @@ class ReviewAtHead(unittest.TestCase):
 
 
 class FetchPrsFields(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_json_includes_head_ref_and_labels(self):
         calls = []
 
@@ -219,6 +253,12 @@ class FetchPrsFields(unittest.TestCase):
 
 
 class BuildReworkCommand(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     CONFIG = {
         'issue_scan': {
             'enabled': True,
@@ -251,6 +291,12 @@ class BuildReworkCommand(unittest.TestCase):
 
 class ReworkBriefKeepsFailure(unittest.TestCase):
     """#1684: a long Verdict FAIL or Checks FAIL keeps its failure section and step name in the brief."""
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     CONFIG = BuildReworkCommand.CONFIG
     HEAD = 'b' * 40
 
@@ -292,6 +338,12 @@ class ReworkBriefKeepsFailure(unittest.TestCase):
 
 
 class IssueScanOrder(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_p0_before_p1_before_oldest(self):
         rows = [
             issue(3, ['ready-for-agent', 'P1'], '## Acceptance criteria\n- x', created='2026-01-03T00:00:00Z'),
@@ -304,6 +356,12 @@ class IssueScanOrder(unittest.TestCase):
 
 
 class IssueScanPass(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     CONFIG = {
         'issue_scan': {
             'enabled': True,
