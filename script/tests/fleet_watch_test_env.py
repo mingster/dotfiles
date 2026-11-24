@@ -1,7 +1,55 @@
 """Shared test env for fleet-watch main(); keeps pass logs off the real default path."""
 import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
+# gh verbs that change GitHub state. A test that reaches one of them through a real gh fails.
+GH_WRITE_VERBS = frozenset({
+    ('issue', 'create'), ('issue', 'edit'), ('issue', 'close'), ('issue', 'reopen'), ('issue', 'comment'),
+    ('pr', 'create'), ('pr', 'edit'), ('pr', 'merge'), ('pr', 'comment'), ('pr', 'review'),
+    ('pr', 'close'), ('pr', 'ready'), ('run', 'rerun'), ('run', 'cancel'),
+    ('release', 'create'), ('label', 'create'),
+})
+
+_GH_STUB = """#!/bin/sh
+echo "$1 $2" >> "$GH_STUB_LOG"
+case "$1 $2" in
+  %s)
+    echo "gh stub: write refused in tests" >&2
+    exit 97 ;;
+esac
+echo "gh stub: no network in tests" >&2
+exit 1
+"""
+
+
+def guard_gh_writes(test):
+    """For one test: put a gh stub first on PATH. It logs each call, refuses GH_WRITE_VERBS with exit 97,
+    and fails any read. The test fails at cleanup when a write verb was logged."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    bin_dir = Path(tmp.name) / 'bin'
+    bin_dir.mkdir()
+    patterns = '|'.join('"%s %s"' % verb for verb in sorted(GH_WRITE_VERBS))
+    gh = bin_dir / 'gh'
+    gh.write_text(_GH_STUB % patterns)
+    gh.chmod(0o755)
+    log = Path(tmp.name) / 'gh-calls.log'
+    log.touch()
+    patcher = patch.dict(os.environ, {
+        'PATH': '%s%s%s' % (bin_dir, os.pathsep, os.environ.get('PATH', '')),
+        'GH_STUB_LOG': str(log),
+    })
+    patcher.start()
+    test.addCleanup(patcher.stop)
+
+    def assert_no_writes():
+        calls = [tuple(line.split()[:2]) for line in log.read_text().splitlines() if line.strip()]
+        writes = ['gh %s' % ' '.join(call) for call in calls if call in GH_WRITE_VERBS]
+        test.assertEqual(writes, [], 'test reached a real gh write')
+
+    test.addCleanup(assert_no_writes)
 
 
 def isolated_main_env(tmp_dir):

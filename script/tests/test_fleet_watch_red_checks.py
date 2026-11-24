@@ -5,6 +5,7 @@ script/tests/fixtures/fleet-watch/ when #990 has recorded that call.
 """
 import importlib.util
 import json
+import subprocess
 import time
 import unittest
 from pathlib import Path
@@ -12,6 +13,10 @@ from pathlib import Path
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 REPO = 'mingster/dotfiles'
 HEAD = 'a' * 40
@@ -96,6 +101,7 @@ class RedCheckLadder(unittest.TestCase):
     def setUp(self):
         self.commands = []
         self.code = 0
+        fleet_env.guard_gh_writes(self)
 
     def act(self, command):
         self.commands.append(command)
@@ -214,11 +220,23 @@ class RedCheckLadder(unittest.TestCase):
             'conclusion': 'failure',
             'url': 'https://example.test/runs/7',
         }
-        first = fw.main_red_notices(self.CONFIG, state, NOW, fetch=fetch_red)
+        find_calls = []
+
+        def find_existing(repo, title):
+            find_calls.append((repo, title))
+            return 42
+
+        create_calls = []
+        fakes = dict(fetch=fetch_red, find_issue=find_existing,
+                     create_issue=lambda *args: create_calls.append(args))
+        first = fw.main_red_notices(self.CONFIG, state, NOW, **fakes)
         self.assertEqual(len(first), 1)
         self.assertIsInstance(first[0], fw.Urgent)
         self.assertIn('https://example.test/runs/7', first[0])
-        self.assertEqual(fw.main_red_notices(self.CONFIG, state, NOW, fetch=fetch_red), [])
+        self.assertIn('fixer issue #42', first[0])
+        self.assertEqual(len(find_calls), 1)
+        self.assertEqual(create_calls, [])
+        self.assertEqual(fw.main_red_notices(self.CONFIG, state, NOW, **fakes), [])
         workflow_notices = self.workflow(state, run_row(7, head='e' * 40))
         self.assertNotIn('failed twice', ' '.join(workflow_notices))
         self.assertNotIn(['issue', 'create'], self.verbs())
@@ -242,6 +260,37 @@ class RedCheckLadder(unittest.TestCase):
         )
         self.assertNotIn(['issue', 'create'], self.verbs())
         self.assertFalse(any('failed twice on' in str(notice) for notice in notices))
+
+
+class GhWriteGuardTrips(unittest.TestCase):
+    """The gh guard fails a test that writes to GitHub and lets a read through."""
+
+    def run_case(self, body):
+        class Probe(unittest.TestCase):
+            def runTest(self):
+                fleet_env.guard_gh_writes(self)
+                body(self)
+
+        result = unittest.TestResult()
+        Probe().run(result)
+        return result
+
+    def test_real_gh_issue_create_fails_the_test(self):
+        def write(_test):
+            subprocess.run(['gh', 'issue', 'create', '--repo', REPO, '--title', 't', '--body', 'b'],
+                           capture_output=True, text=True)
+
+        result = self.run_case(write)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.failures), 1)
+        self.assertIn('gh issue create', result.failures[0][1])
+
+    def test_gh_read_passes_the_guard(self):
+        def read(_test):
+            subprocess.run(['gh', 'issue', 'list', '--repo', REPO], capture_output=True, text=True)
+
+        result = self.run_case(read)
+        self.assertEqual(result.errors + result.failures, [])
 
 
 if __name__ == '__main__':
