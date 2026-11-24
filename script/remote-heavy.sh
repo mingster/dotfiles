@@ -21,6 +21,8 @@
 set -euo pipefail
 print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
+# A usage error (exit 64) means the gate did not run the command: head-checks files `red gate: remote-heavy` (#1746).
+trap '[ "$?" -ne 64 ] || echo "infra: remote-heavy: usage error (exit 64), the gate did not run the command" >&2' EXIT
 
 # shellcheck disable=SC2016 # expanded on the remote host
 host="" repo_dir="" dir="" sub=. weight=1 memory="${HEAVY_GATE_MEMORY_MB:-}" gate='${DOTFILES_DIR:-$HOME/dotfiles}/script/heavy-gate.sh' max_wait=""

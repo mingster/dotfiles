@@ -3321,8 +3321,8 @@ def issue_scan_sort_key(issue):
 def issue_scan_queue_key(repo, issue):
     """Owner rule 2026-11-20: every dotfiles issue goes before any other repo's, then the sort key."""
     dotfiles_first = 0 if str(repo).rsplit('/', 1)[-1] == 'dotfiles' else 1
-    # A red main fix goes before everything else, in any repo (#1677).
-    main_red_first = 0 if str(issue.get('title') or '').startswith(MAIN_RED_TITLE_PREFIX) else 1
+    # A red main fix and a red gate fix go before everything else, in any repo (#1677, #1746).
+    main_red_first = 0 if str(issue.get('title') or '').startswith((MAIN_RED_TITLE_PREFIX, RED_GATE_TITLE_PREFIX)) else 1
     return (main_red_first, dotfiles_first) + issue_scan_sort_key(issue)
 
 
@@ -3412,14 +3412,48 @@ HEAD_CHECKS_INFRA_RERUNS = 2
 
 
 def checks_infra_runs(pr):
-    """How many Checks: INFRA receipts sit at this PR's head. Each is one finished run."""
+    """How many Checks: INFRA receipts sit at this PR's head. Each is one finished run.
+
+    A receipt that names a red gate does not count: the wait on the gate must not use up the reruns (#1746)."""
     head = pr.get('headRefOid') or ''
     count = 0
     for comment in pr.get('comments') or []:
         match = rs.HEAD_RECEIPT_RE.match(_receipt_first_line(comment.get('body')))
         if match and match.group('label') == 'Checks' and match.group('status') == 'INFRA' and match.group('head') == head:
-            count += 1
+            if not _RED_GATE_HOLD_RE.search(comment.get('body') or ''):
+                count += 1
     return count
+
+
+_RED_GATE_HOLD_RE = re.compile(r'^blocked by red gate #(\d+)\b', re.M)
+
+
+def red_gate_hold(pr, open_gates):
+    """Number of the red gate issue the newest Checks INFRA receipt at this head names, while it is open.
+
+    open_gates(repo-less) is called only when a receipt names one. None means run head checks as usual (#1746)."""
+    head = pr.get('headRefOid') or ''
+    comment = newest_checks_comment(pr.get('comments'), head)
+    if not comment:
+        return None
+    match = rs.HEAD_RECEIPT_RE.match(_receipt_first_line(comment.get('body')))
+    if not match or match.group('status') != 'INFRA':
+        return None
+    named = _RED_GATE_HOLD_RE.search(comment.get('body') or '')
+    if not named:
+        return None
+    number = int(named.group(1))
+    gates = open_gates()
+    # gh failed (None): keep waiting, the next pass asks again. A rerun would hit the broken gate.
+    if gates is None:
+        return number
+    return number if number in gates else None
+
+
+def fetch_red_gate_numbers(repo, run=subprocess.run):
+    """Open red gate issue numbers of a repo, or None when gh fails."""
+    gates = _sibling('red_gate', 'red-gate.py').open_gates(repo, run)
+    return None if gates is None else set(gates)
 
 
 def head_checks_infra_cap(config):
@@ -7134,7 +7168,7 @@ def issue_scan_pass(
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
-    babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None,
+    babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None, red_gates=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
@@ -7222,6 +7256,11 @@ def issue_scan_pass(
                 and not review_failed_at_head(pr_row)
                 and not pr_checks_all_success(pr_row)
             )
+            if needs_head_checks:
+                held = red_gate_hold(pr_row, lambda repo=repo: (red_gates or fetch_red_gate_numbers)(repo))
+                if held:
+                    needs_head_checks = False
+                    log_bits.append('head_checks_red_gate=%s#%d' % (head[:8], held))
             if needs_head_checks and checks_infra_runs(pr_row) > head_checks_infra_cap(config):
                 needs_head_checks = False
                 capped = state.setdefault('head_checks_infra_capped', {}).setdefault(repo, {})
@@ -7664,6 +7703,7 @@ def workflow_notices(config, state, now, fetch=None, act=None):
 
 
 MAIN_RED_TITLE_PREFIX = 'main red: '
+RED_GATE_TITLE_PREFIX = 'red gate: '  # red-gate.py files these; the issue scan starts their fixer first (#1746)
 
 
 def main_red_failing_step(repo, run_id, run=subprocess.run):

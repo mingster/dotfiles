@@ -135,6 +135,30 @@ class ScopedTests(unittest.TestCase):
                 self.assertIn('directory guard:', result.stderr)
                 self.assertFalse((self.repo / 'web/selected.json').exists())
 
+    def test_usage_error_says_infra_but_a_test_failure_does_not(self):
+        """#1746: head-checks files `red gate: run-scoped-tests` from the infra line, never for a failing test."""
+        usage = self.run_helper('--directory-guard', '', 'guards/copy.test.ts')
+        self.assertEqual(usage.returncode, 2, usage.stderr)
+        self.assertIn('infra: run-scoped-tests: usage error', usage.stderr)
+        self.write('web/src/lib/send.server.ts', 'export const send = 1;')
+        failing = subprocess.run([sys.executable, str(HELPER), '--root', 'web', '--runner', f'{sys.executable} -c "raise SystemExit(1)"',
+                                  'web/src/lib/send.server.ts'], cwd=self.repo, text=True, capture_output=True)
+        self.assertEqual(failing.returncode, 1, failing.stderr)
+        self.assertNotIn('infra:', failing.stderr + failing.stdout)
+
+    def test_internal_error_says_infra_and_exits_70(self):
+        env = dict(os.environ, PYTHONPATH=str(self.repo))
+        broken = self.repo / 'broken.py'
+        broken.write_text(
+            'import importlib.util, sys\n'
+            f'spec = importlib.util.spec_from_file_location("rst", {str(HELPER)!r})\n'
+            'm = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)\n'
+            'm.main = lambda: 1 / 0\n'
+            'sys.exit(m.gate_main())\n')
+        result = subprocess.run([sys.executable, str(broken)], cwd=self.repo, env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 70, result.stderr)
+        self.assertIn('infra: run-scoped-tests: internal error', result.stderr)
+
     def test_directory_guard_rejects_e2e_and_database_specs(self):
         for guard in ['e2e/copy.spec.ts', 'guards/copy.db.spec.ts']:
             with self.subTest(guard=guard):
