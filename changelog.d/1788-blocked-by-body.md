@@ -1,0 +1,1 @@
+- fleet-watch: a ready-for-agent issue whose body says `Blocked by #n` (or lists it under `## Blocked by`) is not started while #n is open. It is picked up once #n closes, with no label change.
