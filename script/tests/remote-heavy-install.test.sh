@@ -83,6 +83,14 @@ if [ "$(count "$INSTALL_LOG")" = 1 ] && [ "$(count "$GEN_LOG")" = 1 ]; then chec
 printf 'model A {}\nmodel B {}\n' > "$tmp/lane-s/web/prisma/schema.prisma"
 run_sub
 if [ "$(count "$GEN_LOG")" = 2 ] && grep -q generate "$GEN_LOG"; then check "a schema only change regenerates the client" ok; else check "a schema only change regenerates the client" bad; fi
+# A failing generate after a successful install fails the run and keeps the new schema out of the stamp (#1725).
+printf 'model C {}\n' > "$tmp/lane-s/web/prisma/schema.prisma"
+new_sum=$({ sha256sum 2>/dev/null || shasum -a 256; } < "$tmp/lane-s/web/prisma/schema.prisma" | cut -d' ' -f1)
+printf '#!/bin/sh\necho "$@" >> "$GEN_LOG"\necho "prisma generate: boom-line"\nexit 1\n' > "$tmp/bin/bunx"
+run_sub; rc=$?
+if [ "$rc" -ne 0 ]; then check "a failing prisma generate exits non zero" ok; else check "a failing prisma generate exits non zero" bad; fi
+if grep -q 'prisma generate: boom-line' "$tmp/out"; then check "a failing prisma generate prints its log line" ok; else check "a failing prisma generate prints its log line" bad; fi
+if ! grep -qs ":$new_sum" "$tmp/lane-s/web/.remote-heavy-lock-sha"; then check "a failing prisma generate does not stamp the new schema hash" ok; else check "a failing prisma generate does not stamp the new schema hash" bad; fi
 
 echo "remote-heavy-install: $pass passed, $fail failed"
 [ "$fail" -eq 0  ]
