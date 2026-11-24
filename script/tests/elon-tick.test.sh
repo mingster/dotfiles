@@ -32,6 +32,7 @@ case "$1 $2" in
     [[ " $* " =~ \ --on\ ([^ ]+) ]] && host=${BASH_REMATCH[1]}
     [[ " $* " =~ \ --terminal-state\ ([^ ]+) ]] && state=${BASH_REMATCH[1]}
     f="$FX/workers-$host-$state.json"
+    [[ " $* " =~ \ --cursor\ ([^ ]+) ]] && f="$FX/workers-$host-$state-${BASH_REMATCH[1]}.json"
     [[ -e "$FX/workers-$host.fail" ]] && exit 1
     if [[ -e "$f" ]]; then cat "$f"; else echo '{"ok":true,"result":{"workers":[]}}'; fi ;;
   *) echo "MUTATE orca $*" >> "$FX/calls"; exit 9 ;;
@@ -54,12 +55,13 @@ reset() {
   cat > "$FX/config.json" <<EOF
 {"pr_watch":{"repos":["o/proj","o/dot"]},"repo_roots":{"o/proj":"$FX/root"},"work_order":{"target_workers":1}}
 EOF
-  echo '{"open_asks":{}}' > "$FX/state.json"
+  mkdir -p "$FX/home/.local/state/agent-team"
+  echo '{"open_asks":{}}' > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
   echo '{"ok":true,"result":{"environments":[]}}' > "$FX/envs.json"
   echo '{"ok":true,"result":{"tasks":[{"id":"t1","status":"dispatched","title":"#40|fullstack-dev"}]}}' > "$FX/tasks.json"
   echo '{"ok":true,"result":{"tasks":[{"id":"t1","task_title":"#40|fullstack-dev","spec":"Refs o/proj#40\nRole: fullstack-dev"}]}}' > "$FX/tasks-full.json"
   worker live in_progress > "$FX/workers-local-active.json"
-  echo '[{"number":50,"title":"fix 40","body":"Closes #40","headRefName":"mingster/issue-40","comments":[{"body":"Review: PASS at abc"}]}]' \
+  echo '[{"number":50,"title":"fix 40","body":"Closes #40","headRefName":"mingster/issue-40","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","comments":[{"body":"Review: PASS head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]' \
     > "$FX/gh-pr-o_proj.json"
   echo '[{"number":40,"title":"bug","body":"","labels":[]}]' > "$FX/gh-issue-o_proj.json"
   touch "$FX/loop" "$FX/waiter"
@@ -76,8 +78,8 @@ worker() {
 
 tick() {
   set +e
-  out=$(PATH="$work/bin:$PATH" ELON_TICK_LOOP_STATUS="test -e $FX/loop" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
-    bash "$root/script/elon-tick.sh" --run run_t --config "$FX/config.json" --state "$FX/state.json" 2>&1)
+  out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_LOOP_STATUS="test -e $FX/loop" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
+    bash "$root/script/elon-tick.sh" --run run_t --config "$FX/config.json" 2>&1)
   rc=$?
   set -e
 }
@@ -117,10 +119,10 @@ expect 'M6 no waiter' '[M6] no inbox waiter for run_t'
 reset; printf '#!/usr/bin/env bash\necho "ctx_a term_a IDLE > "\nexit 4\n' > "$FX/ww.sh"
 expect 'W2 idle worker' '[W2] worker ctx_a is IDLE'
 
-reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 3600)) > "$FX/state.json"
+reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 3600)) > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
 expect 'W5 unanswered ask' '[W5] unanswered ask msg_1 from ctx_a for 60 minutes'
 
-reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 60)) > "$FX/state.json"
+reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 60)) > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
 tick; [[ $out == "OK nothing to do" ]] || fail 'W5 a fresh ask is not an action'
 tests=$((tests + 1))
 
@@ -155,12 +157,46 @@ tests=$((tests + 1))
 reset; printf '#!/usr/bin/env bash\necho "ctx_a term_a UNKNOWN_COVERAGE"\nexit 4\n' > "$FX/ww.sh"
 expect 'W2 unreadable screen' '[W2] NOT CHECKED: worker ctx_a screen unreadable'
 
+# A worker on an unverifiable host link, or in a retained terminal still in progress, is live (as in fleet-watch.py).
+reset; worker unverifiable in_progress > "$FX/workers-local-active.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M1 unverifiable owner is live'
+tests=$((tests + 1))
+
+# worker-list pages: the owner on page 2 is found.
+reset; printf '{"ok":true,"result":{"workers":[],"nextCursor":"c1"}}' > "$FX/workers-local-active.json"
+worker live in_progress > "$FX/workers-local-active-c1.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M1 owner on the second worker-list page'
+tests=$((tests + 1))
+
 reset; worker live succeeded > "$FX/workers-local-active.json"
 expect 'M2 done worker owns open PR' '[M2] do not release ctx_a yet: it owns open PR o/proj#50'
 
-reset; echo '[{"number":50,"title":"fix 40","body":"Closes #40","headRefName":"mingster/issue-40","comments":[{"body":"Review: PASS at abc"},{"body":"Verdict: FAIL at abc\nmissing test"}]}]' \
-  > "$FX/gh-pr-o_proj.json"
-expect 'M7 Verdict FAIL' '[M7] o/proj#50 latest receipt is "Verdict: FAIL at abc"; send the defect to ctx_a'
+reset; rm "$FX/workers-local-active.json"
+worker live succeeded | sed 's/"terminalState":"active"/"terminalState":"retained"/' > "$FX/workers-local-retained.json"
+expect 'M2 retained done worker' '[M2] do not release ctx_a yet: it owns open PR o/proj#50'
+
+head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa old=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+# pr50 <comment body>...: PR o/proj#50 at $head with these comments, oldest first.
+pr50() {
+  local c='' sep='' b
+  for b in "$@"; do c+="$sep{\"body\":\"$b\"}"; sep=,; done
+  printf '[{"number":50,"title":"fix 40","body":"Closes #40","headRefName":"mingster/issue-40","headRefOid":"%s","comments":[%s]}]' \
+    "$head" "$c" > "$FX/gh-pr-o_proj.json"
+}
+
+reset; pr50 "Review: PASS head=$head" "Verdict: FAIL head=$head\\nmissing test"
+expect 'M7 Verdict FAIL' "[M7] o/proj#50 latest receipt is \"Verdict: FAIL head=$head\"; send the defect to ctx_a"
+
+reset; pr50 "Review: FAIL head=$head" "Verdict: PASS head=$head"
+expect 'M7 Review FAIL beside a Verdict PASS' "[M7] o/proj#50 latest receipt is \"Review: FAIL head=$head\""
+
+reset; pr50 "Verdict: FAIL head=$old" "Review: PASS head=$head"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M7 a FAIL at an older head is not current'
+tests=$((tests + 1))
+
+reset; pr50 "Review: FAIL head=$head" "Review: PASS head=$head"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M7 a newer PASS of the same kind replaces the FAIL'
+tests=$((tests + 1))
 
 reset; echo '{"ok":true,"result":{"tasks":[{"id":"t1","spec":"Refs o/proj#40\nRole: fullstack-dev, rework PR 41"}]}}' > "$FX/tasks-full.json"
 expect 'M5 closed PR in Role line' '[M5] brief of ctx_a names #41, which is closed or missing'
@@ -170,16 +206,29 @@ expect 'M5 closed Refs issue' '[M5] brief of ctx_a names #39, which is closed or
 
 reset; echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":42,"title":"b","body":"Blocked by #40","labels":[{"name":"ready-for-agent"}]}]' \
   > "$FX/gh-issue-o_proj.json"
-expect 'M4 ready but blocked' '[M4] o/proj#42 is ready-for-agent but blocked by open #40; relabel it blocked'
+expect 'M4 ready but blocked' '[M4] o/proj#42 is ready-for-agent but waits on open #40; do not start it until they close'
 
 reset; echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":43,"title":"b","body":"## Blocked by\n- #7","labels":[{"name":"blocked"}]}]' \
   > "$FX/gh-issue-o_proj.json"
 expect 'M4 blocked with closed blockers' '[M4] o/proj#43 is labeled blocked but every blocker closed; relabel it ready-for-agent'
 
+# A range ("#38 through #41") covers the open #40 between its ends.
+reset; echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":43,"title":"b","body":"- Blocked by: #38 through #41.","labels":[{"name":"blocked"}]}]' \
+  > "$FX/gh-issue-o_proj.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M4 a blocker range holds an open issue'
+tests=$((tests + 1))
+
 reset; echo '[{"number":40,"title":"bug","body":"Waiting on: vendor@example.com since 2026-11-20","labels":[]}]' > "$FX/gh-issue-o_proj.json"
-printf '#!/usr/bin/env bash\necho "mailbox $*" >> "$FX/calls"\necho "2026-11-21 vendor@example.com Re: review"\n' > "$FX/root/.claude/bin/support-mailbox.sh"
-expect 'M3 vendor mail' '[M3] o/proj#40 waits on a vendor and the mailbox has 1 match(es): 2026-11-21 vendor@example.com Re: review'
+# The real search prints `uid | date | from | subject | read` rows, then a `support-mailbox: N mail(s) shown` line.
+printf '#!/usr/bin/env bash\necho "mailbox $*" >> "$FX/calls"\necho "7 | Fri, 21 Nov 2026 | vendor@example.com | Re: review | unread"\necho "support-mailbox: 1 mail(s) shown from INBOX."\n' \
+  > "$FX/root/.claude/bin/support-mailbox.sh"
+expect 'M3 vendor mail' '[M3] o/proj#40 waits on a vendor and the mailbox has 1 match(es): 7 | Fri, 21 Nov 2026 | vendor@example.com | Re: review | unread'
 grep -q '^mailbox search --from vendor@example.com --limit 10 --since 2026-11-20$' "$FX/calls" || fail 'M3 mailbox args'
+
+reset; echo '[{"number":40,"title":"bug","body":"Waiting on: vendor@example.com since 2026-11-20","labels":[]}]' > "$FX/gh-issue-o_proj.json"
+printf '#!/usr/bin/env bash\necho "support-mailbox: 0 mail(s) shown from INBOX."\n' > "$FX/root/.claude/bin/support-mailbox.sh"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M3 no mail is not an action'
+tests=$((tests + 1))
 
 reset; echo '[{"number":40,"title":"bug","body":"Waiting on: vendor@example.com since 2026-11-20","labels":[]}]' > "$FX/gh-issue-o_proj.json"
 printf '#!/usr/bin/env bash\necho "support-mailbox: no credential" >&2\nexit 1\n' > "$FX/root/.claude/bin/support-mailbox.sh"
@@ -211,7 +260,7 @@ ids=$(grep -oE '^\| [MW][0-9]+ \|' "$root/docs/agents/elon-mistakes.md" | tr -d 
 [[ -n $ids ]] || fail 'elon-mistakes.md has no check rows'
 for id in $ids; do
   grep -q "'\[$id\]" "$root/script/elon-tick.py" || fail "row $id has no check in elon-tick.py"
-  grep -q "'\[$id\]" "$0" || fail "row $id has no case in this test"
+  grep -qE "[\"']\[$id\]" "$0" || fail "row $id has no case in this test"
 done
 for id in $(grep -oE "'\[[MW][0-9]+\]" "$root/script/elon-tick.py" | tr -d "'[]" | sort -u); do
   grep -q "^| $id |" "$root/docs/agents/elon-mistakes.md" || fail "check $id has no row in elon-mistakes.md"

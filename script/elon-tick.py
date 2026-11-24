@@ -6,7 +6,7 @@ Usage: elon-tick.sh --run <run_id> [--config <fleet-watch json>] [--state <fleet
 
 Config is the private fleet-watch config (FLEET_WATCH_CONFIG, default ~/.claude/state/fleet-watch-elon.json):
 repos from pr_watch.repos, checkouts from repo_roots, target_workers from work_order. State defaults to
-FLEET_WATCH_STATE, else the config path with .state.json. GitHub: one `gh pr list` and one `gh issue list` per
+FLEET_WATCH_STATE, else ~/.local/state/agent-team/fleet-watch.state.json (as install-fleet-automations.sh). GitHub: one `gh pr list` and one `gh issue list` per
 repo. A check whose input cannot be read prints a NOT CHECKED action, never OK.
 """
 import argparse
@@ -29,7 +29,7 @@ BLOCKED_LINE_RE = re.compile(r'^\s*(?:[-*]\s+)?blocked by\b:?(?!\s+red gate\b)(.
 BLOCKED_HEADING_RE = re.compile(r'^#{1,6}\s*blocked by\b:?(.*)$', re.I)
 HEADING_RE = re.compile(r'^#{1,6}\s')
 WAITING_RE = re.compile(r'^\s*waiting on:\s*(.+?)(?:\s+since\s+(\d{4}-\d{2}-\d{2}))?\s*$', re.I | re.M)
-RECEIPT_RE = re.compile(r'^(Review|Verdict):\s+(PASS\+NOTES|PASS|FAIL)\b')
+RECEIPT_RE = re.compile(r'^(Review|Verdict): (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40})\b')
 
 
 class Unreadable(Exception):
@@ -81,7 +81,7 @@ def gather(args, config):
     for repo in repos:
         entry = {}
         try:
-            entry['prs'] = gh_list('pr', repo, 'number,title,body,headRefName,isDraft,labels,comments', PR_LIMIT)
+            entry['prs'] = gh_list('pr', repo, 'number,title,body,headRefName,headRefOid,labels,comments', PR_LIMIT)
         except Unreadable as e:
             entry['prs'] = e
         try:
@@ -134,16 +134,28 @@ def workers(run):
             if host:
                 cmd += ['--on', host]
             try:
-                result = orca(*cmd)
+                page = list_pages(cmd)
             except Unreadable:
                 if host is None:
                     raise
                 rows.append({'_unreadable_host': host})
                 break
-            for w in result.get('workers') or []:
-                if isinstance(w, dict) and w.get('dispatchId'):
-                    rows.append(dict(w, _host=host or 'coordinator'))
+            rows += [dict(w, _host=host or 'coordinator') for w in page]
     return rows
+
+
+def list_pages(cmd):
+    """Every worker row of a worker-list, following nextCursor."""
+    rows, cursor, seen = [], None, set()
+    while True:
+        result = orca(*(cmd + (['--cursor', cursor] if cursor else [])))
+        rows += [w for w in result.get('workers') or [] if isinstance(w, dict) and w.get('dispatchId')]
+        cursor = result.get('nextCursor')
+        if not cursor:
+            return rows
+        if cursor in seen:
+            raise Unreadable('worker-list cursor repeated')
+        seen.add(cursor)
 
 
 def loop_status():
@@ -173,7 +185,7 @@ def mailbox(root, sender, since):
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0 or 'no credential' in out.stderr:
         return Unreadable((out.stderr.strip() or 'exit %d' % out.returncode)[:200])
-    return [line for line in out.stdout.splitlines() if line.strip()]
+    return [line for line in out.stdout.splitlines() if line.strip() and not line.startswith('support-mailbox:')]
 
 
 # ---- model ----------------------------------------------------------------------------------------------------
@@ -183,9 +195,11 @@ def label_names(row):
 
 
 def worker_live(w):
-    if w.get('outcome') not in (None, 'in_progress'):
-        return False
-    return w.get('terminalState') == 'active' and w.get('liveness') != 'exited'
+    """As fleet-watch.py worker_row_is_live for concise rows, and the outcome is still in progress."""
+    return (w.get('outcome') in (None, 'in_progress')
+            and w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+            and 'released' not in (w.get('stage'), w.get('terminalState'))
+            and w.get('liveness') != 'exited')
 
 
 def brief_refs(spec):
@@ -241,22 +255,35 @@ def owners(repo, pr, workers_rows, task_map, live):
     return found
 
 
+RANGE_RE = re.compile(r'#(\d+)\s+(?:through|to|-|\u2013)\s+#(\d+)\b', re.I)
+
+
+def line_refs(line):
+    """Refs on one line; "#a through #b" also covers every number between (up to 200)."""
+    refs = REF_RE.findall(line)
+    for a, b in RANGE_RE.findall(line):
+        lo, hi = int(a), int(b)
+        if 0 < hi - lo <= 200:
+            refs += [('', str(n)) for n in range(lo + 1, hi)]
+    return refs
+
+
 def blockers(body):
     refs, under = [], False
     for line in (body or '').splitlines():
         heading = BLOCKED_HEADING_RE.match(line)
         if heading:
             under = True
-            refs += REF_RE.findall(heading.group(1))
+            refs += line_refs(heading.group(1))
             continue
         if HEADING_RE.match(line):
             under = False
             continue
         m = BLOCKED_LINE_RE.match(line)
         if m:
-            refs += REF_RE.findall(m.group(1))
+            refs += line_refs(m.group(1))
         elif under:
-            refs += REF_RE.findall(line)
+            refs += line_refs(line)
     return refs
 
 
@@ -349,7 +376,7 @@ def check_m4(snap):
             labels = label_names(issue)
             still = sorted(n for n in local if n in opened)
             if 'ready-for-agent' in labels and still:
-                out.append('[M4] %s#%d is ready-for-agent but blocked by open #%s; relabel it blocked'
+                out.append('[M4] %s#%d is ready-for-agent but waits on open #%s; do not start it until they close'
                            % (repo, issue['number'], ', #'.join(map(str, still))))
             elif 'blocked' in labels and not still:
                 out.append('[M4] %s#%d is labeled blocked but every blocker closed; relabel it ready-for-agent'
@@ -385,23 +412,25 @@ def check_m6(snap):
 
 
 def check_m7(snap):
-    """M7: the newest Review or Verdict line on each open PR; FAIL names the owner to tell."""
+    """M7: the newest Review and the newest Verdict at the PR's head; a FAIL in either names the owner to tell."""
     out = []
     workers_ok = not isinstance(snap['workers'], Unreadable) and not isinstance(snap['tasks'], Unreadable)
     for repo, pr, err in each_pr(snap, 'M7'):
         if err:
             out += not_checked('M7', err)
             continue
-        latest = None
+        latest = {}
         for c in pr.get('comments') or []:
-            first = (c.get('body') or '').split('\n', 1)[0].strip()
-            if RECEIPT_RE.match(first):
-                latest = first
-        if not latest or RECEIPT_RE.match(latest).group(2) != 'FAIL':
-            continue
-        who = owners(repo, pr, snap['workers'], snap['tasks'], live=True) if workers_ok else []
-        tell = 'send the defect to %s' % ', '.join(who) if who else 'no live owner: dispatch one with the defect'
-        out.append('[M7] %s#%d latest receipt is "%s"; %s' % (repo, pr['number'], latest[:80], tell))
+            m = RECEIPT_RE.match((c.get('body') or '').split('\n', 1)[0].strip())
+            if m and m.group(3) == pr.get('headRefOid'):
+                latest[m.group(1)] = m
+        for kind in ('Review', 'Verdict'):
+            m = latest.get(kind)
+            if not m or m.group(2) != 'FAIL':
+                continue
+            who = owners(repo, pr, snap['workers'], snap['tasks'], live=True) if workers_ok else []
+            tell = 'send the defect to %s' % ', '.join(who) if who else 'no live owner: dispatch one with the defect'
+            out.append('[M7] %s#%d latest receipt is "%s"; %s' % (repo, pr['number'], m.group(0), tell))
     return out
 
 
@@ -492,7 +521,7 @@ def main(argv):
     p.add_argument('--state', default=os.environ.get('FLEET_WATCH_STATE'))
     args = p.parse_args(argv)
     if not args.state:
-        args.state = re.sub(r'\.json$', '', args.config) + '.state.json'
+        args.state = str(Path.home() / '.local/state/agent-team/fleet-watch.state.json')
     try:
         config = read_json(args.config)
     except Unreadable as e:
