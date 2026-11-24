@@ -1,9 +1,8 @@
-"""#1730: the weekly audit picks 5 random tier 0 PRs merged in the past week, starts a verifier for each, and the report lists results."""
+"""#1730: the weekly audit picks 5 random tier 0 PRs merged in the past week, files one issue for them, and the report lists results."""
 import importlib.util
 import os
 import random
 import re
-import subprocess
 import tempfile
 import time
 import unittest
@@ -56,117 +55,139 @@ class Pick(unittest.TestCase):
 
 
 class AuditPass(unittest.TestCase):
-    def run_pass(self, state, prs, root, log, **kw):
-        starts = []
+    def run_pass(self, state, prs, log, existing=False, created=None, **kw):
+        """Run the pass with fake gh. `created` collects (repo, title, body); the issue number is 99 unless `create` is given."""
+        created = [] if created is None else created
 
-        def start(command):
-            starts.append(command)
-            return fw.BabysitStartResult(0)
+        def create(repo, title, body):
+            created.append((repo, title, body))
+            return 99
 
         lines, bits = fw.tier0_audit_pass(
-            config(root), state, kw.pop('now', NOW), [], merged_fetch=lambda _repo, _now: prs, start_worker=start,
-            pick=PICK, rng=random.Random(3), log_file=log, **kw)
-        return starts, lines, bits
+            config('/tmp/app'), state, kw.pop('now', NOW), merged_fetch=lambda _repo, _now: prs,
+            find_issue=kw.pop('find_issue', lambda _repo, _title: 7 if existing else None),
+            create_issue=kw.pop('create_issue', create), rng=random.Random(3), log_file=log, **kw)
+        return created, lines, bits
 
-    def test_starts_one_audit_per_picked_pr_and_logs_them(self):
+    def test_files_one_issue_for_five_tier_0_prs_and_logs_them(self):
         prs = [merged(n, TEST_FILES) for n in range(1, 9)] + [merged(50, CODE)]
         with tempfile.TemporaryDirectory() as root:
             log = os.path.join(root, 'audit.tsv')
-            starts, lines, _bits = self.run_pass({}, prs, root, log)
-            self.assertEqual(len(starts), 5, lines)
+            created, lines, _bits = self.run_pass({}, prs, log)
             rows = Path(log).read_text().splitlines()
-            self.assertEqual(len(rows), 5)
-            self.assertTrue(all(r.split('\t')[1] == REPO for r in rows))
-            self.assertNotIn('#50', ' '.join(lines))
+        self.assertEqual(len(created), 1, lines)
+        self.assertEqual(created[0][:2], (REPO, 'tier 0 audit 2023-W46'))
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(r.split('\t')[1] == REPO for r in rows))
+        self.assertNotIn('#50', created[0][2])
+        self.assertEqual(len(re.findall(r'^- #\d+ ', created[0][2], re.M)), 5)
+
+    def test_issue_is_labelled_ready_for_agent(self):
+        seen = []
+        fw.main_red_create_issue(REPO, 't', 'b', run=lambda cmd, **_k: (seen.append(cmd), type('R', (), {'stdout': 'https://x/issues/5\n'})())[1],
+                                 labels=('ready-for-agent',))
+        self.assertEqual([seen[0][i + 1] for i, a in enumerate(seen[0]) if a == '--label'], ['ready-for-agent'])
+
+    def test_picks_are_deduped_against_earlier_weeks(self):
+        prs = [merged(n, TEST_FILES) for n in range(1, 9)]
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'audit.tsv')
+            state = {}
+            first, _l, _b = self.run_pass(state, prs, log)
+            second, _l, _b = self.run_pass(state, prs, log, now=NOW + 8 * 86400)
+        listed = lambda body: {int(n) for n in re.findall(r'^- #(\d+) ', body, re.M)}  # noqa: E731
+        self.assertEqual(len(listed(first[0][2])), 5)
+        self.assertEqual(len(listed(second[0][2])), 3)  # only the 3 never listed
+        self.assertFalse(listed(first[0][2]) & listed(second[0][2]))
+        self.assertEqual(second[0][1], 'tier 0 audit 2023-W47')
+
+    def test_another_repos_log_rows_do_not_block_a_pr(self):
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'audit.tsv')
+            ta.append_log(log, '2023-W40', 'other/repo', [merged(1, TEST_FILES)], now=NOW)
+            created, _l, _b = self.run_pass({}, [merged(1, TEST_FILES)], log)
+        self.assertEqual(len(created), 1)
 
     def test_runs_once_per_week(self):
         prs = [merged(n, TEST_FILES) for n in range(1, 9)]
         with tempfile.TemporaryDirectory() as root:
             log = os.path.join(root, 'audit.tsv')
             state = {}
-            first, _l, _b = self.run_pass(state, prs, root, log)
-            again, _l, _b = self.run_pass(state, prs, root, log, now=NOW + 86400)
-            next_week, _l, _b = self.run_pass(state, prs, root, log, now=NOW + 8 * 86400)
-        self.assertEqual((len(first), len(again), len(next_week)), (5, 0, 5))
+            self.run_pass(state, prs, log)
+            again, _l, _b = self.run_pass(state, prs, log, now=NOW + 86400)
+        self.assertEqual(again, [])
 
-    def test_audit_worker_is_never_taken_for_a_verifier_of_the_merged_pr(self):
-        prs = [merged(7, TEST_FILES)]
+    def test_an_existing_issue_with_the_title_files_nothing_and_logs_nothing(self):
+        asked = []
         with tempfile.TemporaryDirectory() as root:
-            starts, _lines, _bits = self.run_pass({}, prs, root, os.path.join(root, 'a.tsv'))
-        command = starts[0]
-        title = command[command.index('--title') + 1]
-        name = command[command.index('--name') + 1]
-        worker = {'dispatchId': 'ctx_a', '_task_title': title, 'name': name, 'workerState': 'ready',
-                  'dispatchStatus': 'dispatched', 'terminalState': 'active',
-                  'projection': {'workspace': {'id': 'wt::/tmp/audit-7'}, 'liveness': {'verdict': 'live'}}}
-        self.assertEqual(fw.verifier_title_prs(worker), [])
-        self.assertFalse(fw._worker_titled_verifier(worker))
-        self.assertIsNone(fw.live_verifier_worker({'number': 7, 'headRefName': 'b7'}, [worker]))
+            log = os.path.join(root, 'audit.tsv')
+            created, lines, _bits = self.run_pass(
+                {}, [merged(1, TEST_FILES)], log, existing=True,
+                find_issue=lambda repo, title: (asked.append((repo, title)), 7)[1])
+            self.assertFalse(Path(log).exists())
+        self.assertEqual(created, [])
+        self.assertEqual(asked, [(REPO, 'tier 0 audit 2023-W46')])
+        self.assertIn('issue-exists', ' '.join(lines))
 
-    def test_title_passes_worker_startup_title_form(self):
-        # worker-startup.sh require_title_form: "#<issue>|<role>"
+    def test_the_existing_issue_lookup_includes_closed_issues(self):
+        seen = []
+        fw.main_red_find_issue(REPO, 't', run=lambda cmd, **_k: (seen.append(cmd), type('R', (), {'stdout': '[]'})())[1], state='all')
+        self.assertEqual(seen[0][seen[0].index('--state') + 1], 'all')
+
+    def test_no_tier_0_pr_files_nothing(self):
         with tempfile.TemporaryDirectory() as root:
-            starts, _lines, _bits = self.run_pass({}, [merged(7, TEST_FILES)], root, os.path.join(root, 'a.tsv'))
-        title = starts[0][starts[0].index('--title') + 1]
-        self.assertRegex(title, r'^#[0-9]+\|[a-z][a-z-]*(\|.+)?$')
+            log = os.path.join(root, 'audit.tsv')
+            created, lines, _bits = self.run_pass({}, [merged(9, CODE)], log)
+            self.assertFalse(Path(log).exists())
+        self.assertEqual(created, [])
+        self.assertIn('no-tier-0-pr', ' '.join(lines))
 
-    def test_brief_passes_brief_lint_with_and_without_checks_local(self):
-        lint = HERE.parent / 'brief-lint.sh'
-        for has_script in (True, False):
-            with tempfile.TemporaryDirectory() as root:
-                if has_script:
-                    (Path(root) / 'script').mkdir()
-                    (Path(root) / 'script' / 'checks-local.sh').write_text('#!/bin/sh\n')
-                spec_path = fw.build_tier0_audit_spec(REPO, merged(7, TEST_FILES), root)
-                result = subprocess.run(['bash', str(lint), spec_path], capture_output=True, text=True, cwd=root)
-                self.assertEqual(result.returncode, 0, 'checks-local=%s: %s%s' % (has_script, result.stdout, result.stderr))
-
-    def test_a_pass_that_started_nothing_is_retried_and_keeps_what_started(self):
-        prs = [merged(n, TEST_FILES) for n in range(1, 4)]
+    def test_no_merged_pr_at_all_files_nothing(self):
         with tempfile.TemporaryDirectory() as root:
-            log = os.path.join(root, 'a.tsv')
+            created, _l, _b = self.run_pass({}, [], os.path.join(root, 'audit.tsv'))
+        self.assertEqual(created, [])
+
+    def test_issue_body_lists_each_pr_with_its_merge_commit_and_an_acceptance_for_the_verifier(self):
+        prs = [merged(7, TEST_FILES), merged(12, TEST_FILES)]
+        body = fw.tier0_audit_issue_body(prs)
+        for pr in prs:
+            self.assertIn('- #%d `%s`' % (pr['number'], pr['mergeCommit']['oid']), body)
+        self.assertIn('## Acceptance', body)
+        self.assertIn('Audit: PASS merged=<merge commit>', body)
+        self.assertIn('Audit: FAIL merged=<merge commit>', body)
+        self.assertIn('Never a `Verdict:` line', body)
+        self.assertIn('## Out of scope', body)
+
+    def test_a_failed_issue_create_does_not_mark_the_week_done_or_log_the_prs(self):
+        prs = [merged(1, TEST_FILES)]
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'audit.tsv')
             state = {}
-            outcomes = [fw.BabysitStartResult(0), fw.BabysitStartResult(1, 'host cap'), fw.BabysitStartResult(1, 'host cap')]
-            sent = []
-
-            def start(command):
-                sent.append(command)
-                return outcomes.pop(0) if outcomes else fw.BabysitStartResult(0)
-
-            kw = dict(merged_fetch=lambda _r, _n: prs, start_worker=start, pick=PICK, rng=random.Random(2), log_file=log)
-            fw.tier0_audit_pass(config(root), state, NOW, [], **kw)
-            self.assertNotIn(REPO, state['tier0_audit'])  # two starts failed, so the week stays open
-            first = [c[c.index('--name') + 1] for c in sent]
-            fw.tier0_audit_pass(config(root), state, NOW + 600, [], **kw)
-            self.assertEqual(state['tier0_audit'][REPO], '2023-W46')
-            names = [c[c.index('--name') + 1] for c in sent]
-            self.assertEqual(len(set(names)), 3, names)  # each PR started once in total
-            self.assertEqual(len(first), 3)
-
-    def test_all_picks_failing_to_start_does_not_mark_the_week_done(self):
-        with tempfile.TemporaryDirectory() as root:
-            state = {}
-            fw.tier0_audit_pass(config(root), state, NOW, [], merged_fetch=lambda _r, _n: [merged(1, TEST_FILES)],
-                                start_worker=lambda _c: fw.BabysitStartResult(1, 'no seat'), pick=PICK,
-                                log_file=os.path.join(root, 'a.tsv'))
+            _c, lines, bits = self.run_pass(state, prs, log, create_issue=lambda *_a: None)
+            self.assertFalse(Path(log).exists())
             self.assertNotIn(REPO, state['tier0_audit'])
-
-    def test_brief_is_an_audit_not_a_merge_or_a_verdict(self):
-        spec_path = fw.build_tier0_audit_spec(REPO, merged(7, TEST_FILES))
-        text = Path(spec_path).read_text()
-        self.assertIn('Audit: PASS merged=', text)
-        self.assertIn('Never post a "Verdict:" line', text)
-        self.assertNotIn('--ship', text)
-        self.assertNotIn('open PR', text)
+            retried, _l, _b = self.run_pass(state, prs, log, now=NOW + 600)  # the next pass tries again
+        self.assertIn('tier0_audit_issue_fail=%s' % REPO, bits)
+        self.assertEqual(len(retried), 1)
+        self.assertEqual(state['tier0_audit'][REPO], '2023-W46')
 
     def test_fetch_failure_does_not_mark_the_week_done(self):
         with tempfile.TemporaryDirectory() as root:
             state = {}
-            lines, bits = fw.tier0_audit_pass(config(root), state, NOW, [], merged_fetch=lambda _r, _n: None,
-                                              start_worker=lambda _c: fw.BabysitStartResult(0), pick=PICK,
+            lines, bits = fw.tier0_audit_pass(config('/tmp/app'), state, NOW, merged_fetch=lambda _r, _n: None,
+                                              find_issue=lambda *_a: None, create_issue=lambda *_a: 1,
                                               log_file=os.path.join(root, 'a.tsv'))
         self.assertEqual(state.get('tier0_audit'), {})
         self.assertIn('tier0_audit_fetch_fail=%s' % REPO, bits)
+
+    def test_a_skipped_run_does_not_mark_the_week_done(self):
+        # babysit.tier0_audit false: the pass does nothing, so the week is not recorded
+        cfg = config('/tmp/app')
+        cfg['babysit']['tier0_audit'] = False
+        state = {}
+        lines, bits = fw.tier0_audit_pass(cfg, state, NOW, merged_fetch=lambda *_a: self.fail('fetched'),
+                                          find_issue=lambda *_a: None, create_issue=lambda *_a: 1)
+        self.assertEqual((lines, bits, state), ([], [], {}))
 
 
 class Report(unittest.TestCase):

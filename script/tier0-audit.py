@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Weekly audit of tier 0 pull requests (#1730): pick 5 random merged ones, then report what the audits found.
 
-fleet-watch calls pick() and append_log() once a week and starts one verifier per picked PR. Each verifier posts a
+fleet-watch calls pick() and append_log() once a week and files one issue listing the picked PRs. The qa-sdet who takes it posts a
 comment whose first line is `Audit: PASS merged=<sha>` or `Audit: FAIL merged=<sha>` (never a `Verdict:` line).
 Usage: tier0-audit.py report --repo <owner/name> [--log FILE] [--days 14]
 """

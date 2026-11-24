@@ -5977,29 +5977,27 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standi
         return _write_issue_scan_spec(_with_preamble(text, 'fullstack-dev'))
 
 
-def build_tier0_audit_spec(repo, pr_row, root=None):
-    number = pr_row['number']
-    sha = (pr_row.get('mergeCommit') or {}).get('oid') or ''
-    text = (
-        'Refs %s#%s\n\n'
-        'Role: qa-sdet. Audit merged PR #%s. It was tier 0 (test files and docs only), so it merged on Review PASS and green Checks '
-        'with no verifier. Merge commit %s. Read the diff (gh pr diff %s --repo %s), check out the merge commit in your worktree, '
-        'run the tests the PR added or changed, and judge whether they prove real behavior (no tautology, nothing skipped) '
-        'and whether changed docs match the code. Post one comment on the PR whose first line is exactly '
-        '"Audit: PASS merged=%s" or "Audit: FAIL merged=%s", then the findings and the exact command you ran. '
-        'Never post a "Verdict:" line.\n\n'
+def tier0_audit_title(week):
+    return 'tier 0 audit %s' % week
+
+
+def tier0_audit_issue_body(prs):
+    """Issue body for a qa-sdet verifier: the picked PRs, and one Audit comment per PR."""
+    rows = '\n'.join(
+        '- #%s `%s`' % (p['number'], (p.get('mergeCommit') or {}).get('oid') or 'unknown') for p in prs)
+    return (
+        'These tier 0 PRs (test files and docs only) merged on Review PASS and green Checks with no verifier. '
+        'Audit each one after the fact. Merge commits:\n\n%s\n\n'
         '## Acceptance\n'
-        '- [ ] an Audit comment for merge commit %s is posted on PR #%s\n\n'
+        '- [ ] For each PR above, read the diff (`gh pr diff <n>`), check out its merge commit, and run the tests it added or changed.\n'
+        '- [ ] Each PR gets one comment whose first line is exactly `Audit: PASS merged=<merge commit>` or '
+        '`Audit: FAIL merged=<merge commit>`, then the findings and the exact command run. Never a `Verdict:` line.\n'
+        '- [ ] PASS only when the tests prove real behavior (no tautology, nothing skipped) and changed docs match the code.\n\n'
         '## Out of scope\n'
-        'Merging, reverting, editing code, a Verdict. A FAIL goes to the weekly report and the coordinator files the follow up.\n\n'
+        'Merging, reverting, editing code. A FAIL goes to the weekly report and the coordinator files the follow up.\n\n'
         '## Verify\n'
-        'GitHub Checks are green at merge commit %s. Run the tests this PR changed at that commit.\n'
-        '%s\n\n'
-        '## Finish\n'
-        'Self-review, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-    ) % (repo, number, number, sha, number, repo, sha, sha, sha, number, sha,
-         checks_local_verify_text(root, 'bash script/checks-local.sh 2>&1 | tail -40'))
-    return _write_issue_scan_spec(_with_preamble(text, 'qa-sdet'))
+        '`python3 script/tier0-audit.py report --repo <owner/name>` lists each PR above as PASS or FAIL.\n'
+    ) % rows
 
 
 def fetch_merged_prs(repo, now, days=7, run=None):
@@ -6017,63 +6015,52 @@ def fetch_merged_prs(repo, now, days=7, run=None):
         return None
 
 
-def tier0_audit_pass(config, state, now, workers, merged_fetch=None, start_worker=None, pick=None, rng=None,
+def tier0_audit_pass(config, state, now, merged_fetch=None, find_issue=None, create_issue=None, rng=None,
                      persist_state=None, log_file=None):
-    """Once a week per repo: pick 5 random tier 0 PRs merged in the past week and start one audit verifier for each (#1730).
+    """Once a week per repo: file one issue listing 5 random tier 0 PRs merged in the past week (#1730).
 
-    The worker title (`#<pr>|tier-audit`) and name avoid the verifier patterns, so a pass that finds the PR merged never releases it.
-    A week with a pick that did not start is retried next pass: only the PRs already started are kept."""
+    The PRs are new to the log (tier0-audit.tsv). No worker starts here: a qa-sdet picks the issue up like any other.
+    A week is marked done only after the issue exists or when there is nothing to audit; a failed fetch, lookup,
+    create or log write leaves it open for the next pass."""
     lines, log_bits = [], []
     if (config.get('babysit') or {}).get('tier0_audit') is False:
         return lines, log_bits
     audit = _sibling('tier0_audit', 'tier0-audit.py')
-    startup, run_id, from_terminal, roots = babysit_settings(config)
-    if not run_id or not from_terminal:
-        return lines, log_bits
     week = time.strftime('%G-W%V', time.gmtime(now))
+    title = tier0_audit_title(week)
     done = state.setdefault('tier0_audit', {})
-    start_worker = with_coordinator_handle(config, start_worker or default_babysit_start)
-    pick = pick or pick_role
+    find_issue = find_issue or (lambda repo, name: main_red_find_issue(repo, name, state='all'))
+    create_issue = create_issue or (lambda repo, name, body: main_red_create_issue(repo, name, body, labels=('ready-for-agent',)))
+    path = log_file or audit.log_path()
     for repo in babysit_repos(config):
-        root = roots.get(repo)
-        if done.get(repo) == week or not isinstance(root, str) or not root:
+        if done.get(repo) == week:
+            continue
+        if find_issue(repo, title):
+            done[repo] = week
+            lines.append('tier0-audit %s skip issue-exists' % repo)
             continue
         prs = (merged_fetch or fetch_merged_prs)(repo, now)
         if prs is None:
             log_bits.append('tier0_audit_fetch_fail=%s' % repo)
             continue
-        record = (state.setdefault('tier0_audit_started', {}).get(repo) or {})
-        have = list(record.get('prs') or []) if record.get('week') == week else []
-        remaining = [p for p in prs if isinstance(p, dict) and p.get('number') not in have]
-        picks = audit.pick(remaining, pr_tier, count=audit.COUNT - len(have), rng=rng)
-        started = []
-        for pr_row in picks:
-            builder = builder_pair(pr_row, workers)
-            avoid_fam = _avoid_family(builder) if builder else None
-            picked = pick('qa-sdet', avoid_family=avoid_fam) if avoid_fam else pick('qa-sdet')
-            chosen = choose_pick(picked, avoid=builder)
-            if not chosen:
-                lines.append('tier0-audit %s#%s skip no-pick' % (repo, pr_row['number']))
-                continue
-            agent, model, _tag = chosen
-            command = [
-                'bash', startup, '--run', run_id,
-                '--spec', build_tier0_audit_spec(repo, pr_row, root),
-                '--title', '#%s|tier-audit' % pr_row['number'], '--agent', agent, '--model', model,
-                '--name', 'audit-%s' % pr_row['number'], '--repo', local_repo_selector(root),
-            ]
-            code, reason = start_result_parts(start_worker(command))
-            if code != 0:
-                lines.append('tier0-audit %s#%s skip start-failed %s' % (repo, pr_row['number'], reason))
-                continue
-            started.append(pr_row)
-            lines.append('tier0-audit %s#%s started agent=%s model=%s' % (repo, pr_row['number'], agent, model))
-        have += [p['number'] for p in started]
-        state['tier0_audit_started'][repo] = {'week': week, 'prs': have}
-        if len(started) == len(picks):
+        seen = {pr for _w, pr, _s in audit.read_log(path, repo, 0)}
+        picks = audit.pick([p for p in prs if isinstance(p, dict) and p.get('number') not in seen], pr_tier, rng=rng)
+        if not picks:
             done[repo] = week
-        audit.append_log(log_file or audit.log_path(), week, repo, started, now=now)
-        log_bits.append('tier0_audit=%s:%d/%d' % (repo, len(started), len(picks)))
+            lines.append('tier0-audit %s skip no-tier-0-pr' % repo)
+            continue
+        number = create_issue(repo, title, tier0_audit_issue_body(picks))
+        if not number:
+            lines.append('tier0-audit %s skip issue-not-created' % repo)
+            log_bits.append('tier0_audit_issue_fail=%s' % repo)
+            continue
+        done[repo] = week
+        lines.append('tier0-audit %s issue #%s PRs %s' % (repo, number, ','.join('#%s' % p['number'] for p in picks)))
+        log_bits.append('tier0_audit=%s:%d' % (repo, len(picks)))
+        try:
+            audit.append_log(path, week, repo, picks, now=now)
+        except OSError as error:
+            lines.append('tier0-audit %s WARN log not written: %s' % (repo, error))
         if persist_state:
             persist_state()
     return lines, log_bits
@@ -7853,10 +7840,10 @@ def main_red_failing_step(repo, run_id, run=subprocess.run):
     return ''
 
 
-def main_red_find_issue(repo, title, run=subprocess.run):
-    """Number of an open issue with this exact title, else None."""
+def main_red_find_issue(repo, title, run=subprocess.run, state='open'):
+    """Number of an issue (open by default) with this exact title, else None."""
     try:
-        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--search',
+        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', state, '--search',
                    '"%s" in:title' % title, '--json', 'number,title', '--limit', '20'],
                   capture_output=True, text=True, timeout=30, check=True)
         for row in json.loads(out.stdout):
@@ -7867,11 +7854,11 @@ def main_red_find_issue(repo, title, run=subprocess.run):
     return None
 
 
-def main_red_create_issue(repo, title, body, run=subprocess.run):
+def main_red_create_issue(repo, title, body, run=subprocess.run, labels=('P1', 'ready-for-agent')):
     """Number of the new issue, None when gh fails."""
     try:
         out = run(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', body,
-                   '--label', 'P1', '--label', 'ready-for-agent'],
+                   *[arg for label in labels for arg in ('--label', label)]],
                   capture_output=True, text=True, timeout=30, check=True)
         return int(out.stdout.strip().rsplit('/', 1)[-1])
     except (subprocess.SubprocessError, OSError, ValueError):
@@ -9116,7 +9103,7 @@ def main():
         print(line)
     notices += babysit_notices
     try:
-        audit_lines, audit_log = tier0_audit_pass(config, state, now, workers, persist_state=persist_scan_state)
+        audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
         for line in audit_lines:
             print(line)
         babysit_log = list(babysit_log) + audit_log
