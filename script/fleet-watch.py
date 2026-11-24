@@ -5981,7 +5981,21 @@ def tier0_audit_title(week):
     return 'tier 0 audit %s' % week
 
 
-def tier0_audit_issue_body(prs):
+def tier0_audit_find_issue(repo, title, run=subprocess.run):
+    """Number of an issue (open or closed) with this exact title, 0 when there is none, None when gh fails."""
+    try:
+        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'all', '--search',
+                   '"%s" in:title' % title, '--json', 'number,title', '--limit', '20'],
+                  capture_output=True, text=True, timeout=30, check=True)
+        for row in json.loads(out.stdout):
+            if row.get('title') == title:
+                return row.get('number') or 0
+        return 0
+    except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
+        return None
+
+
+def tier0_audit_issue_body(prs, repo):
     """Issue body for a qa-sdet verifier: the picked PRs, and one Audit comment per PR."""
     rows = '\n'.join(
         '- #%s `%s`' % (p['number'], (p.get('mergeCommit') or {}).get('oid') or 'unknown') for p in prs)
@@ -5996,8 +6010,8 @@ def tier0_audit_issue_body(prs):
         '## Out of scope\n'
         'Merging, reverting, editing code. A FAIL goes to the weekly report and the coordinator files the follow up.\n\n'
         '## Verify\n'
-        '`python3 script/tier0-audit.py report --repo <owner/name>` lists each PR above as PASS or FAIL.\n'
-    ) % rows
+        '`python3 ~/dotfiles/script/tier0-audit.py report --repo %s` lists each PR above as PASS or FAIL.\n'
+    ) % (rows, repo)
 
 
 def fetch_merged_prs(repo, now, days=7, run=None):
@@ -6020,8 +6034,9 @@ def tier0_audit_pass(config, state, now, merged_fetch=None, find_issue=None, cre
     """Once a week per repo: file one issue listing 5 random tier 0 PRs merged in the past week (#1730).
 
     The PRs are new to the log (tier0-audit.tsv). No worker starts here: a qa-sdet picks the issue up like any other.
+    The log rows are written before the issue and cut again when the issue is not created, so a row never lacks its issue.
     A week is marked done only after the issue exists or when there is nothing to audit; a failed fetch, lookup,
-    create or log write leaves it open for the next pass."""
+    log write or create leaves it open for the next pass."""
     lines, log_bits = [], []
     if (config.get('babysit') or {}).get('tier0_audit') is False:
         return lines, log_bits
@@ -6029,13 +6044,18 @@ def tier0_audit_pass(config, state, now, merged_fetch=None, find_issue=None, cre
     week = time.strftime('%G-W%V', time.gmtime(now))
     title = tier0_audit_title(week)
     done = state.setdefault('tier0_audit', {})
-    find_issue = find_issue or (lambda repo, name: main_red_find_issue(repo, name, state='all'))
-    create_issue = create_issue or (lambda repo, name, body: main_red_create_issue(repo, name, body, labels=('ready-for-agent',)))
+    find_issue = find_issue or tier0_audit_find_issue
+    create_issue = create_issue or (lambda repo, name, body: main_red_create_issue(repo, name, body, labels=('ready-for-agent', 'role:qa')))
     path = log_file or audit.log_path()
     for repo in babysit_repos(config):
         if done.get(repo) == week:
             continue
-        if find_issue(repo, title):
+        found = find_issue(repo, title)
+        if found is None:
+            lines.append('tier0-audit %s skip issue-lookup-failed' % repo)
+            log_bits.append('tier0_audit_lookup_fail=%s' % repo)
+            continue
+        if found:
             done[repo] = week
             lines.append('tier0-audit %s skip issue-exists' % repo)
             continue
@@ -6049,18 +6069,25 @@ def tier0_audit_pass(config, state, now, merged_fetch=None, find_issue=None, cre
             done[repo] = week
             lines.append('tier0-audit %s skip no-tier-0-pr' % repo)
             continue
-        number = create_issue(repo, title, tier0_audit_issue_body(picks))
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        try:
+            audit.append_log(path, week, repo, picks, now=now)
+        except OSError as error:
+            lines.append('tier0-audit %s skip log-not-written: %s' % (repo, error))
+            log_bits.append('tier0_audit_log_fail=%s' % repo)
+            continue
+        number = create_issue(repo, title, tier0_audit_issue_body(picks, repo))
         if not number:
+            try:
+                os.truncate(path, size)
+            except OSError:
+                pass
             lines.append('tier0-audit %s skip issue-not-created' % repo)
             log_bits.append('tier0_audit_issue_fail=%s' % repo)
             continue
         done[repo] = week
         lines.append('tier0-audit %s issue #%s PRs %s' % (repo, number, ','.join('#%s' % p['number'] for p in picks)))
         log_bits.append('tier0_audit=%s:%d' % (repo, len(picks)))
-        try:
-            audit.append_log(path, week, repo, picks, now=now)
-        except OSError as error:
-            lines.append('tier0-audit %s WARN log not written: %s' % (repo, error))
         if persist_state:
             persist_state()
     return lines, log_bits
@@ -7840,10 +7867,10 @@ def main_red_failing_step(repo, run_id, run=subprocess.run):
     return ''
 
 
-def main_red_find_issue(repo, title, run=subprocess.run, state='open'):
-    """Number of an issue (open by default) with this exact title, else None."""
+def main_red_find_issue(repo, title, run=subprocess.run):
+    """Number of an open issue with this exact title, else None."""
     try:
-        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', state, '--search',
+        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--search',
                    '"%s" in:title' % title, '--json', 'number,title', '--limit', '20'],
                   capture_output=True, text=True, timeout=30, check=True)
         for row in json.loads(out.stdout):

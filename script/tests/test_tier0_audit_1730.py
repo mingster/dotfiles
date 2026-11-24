@@ -3,6 +3,7 @@ import importlib.util
 import os
 import random
 import re
+import subprocess
 import tempfile
 import time
 import unittest
@@ -65,7 +66,7 @@ class AuditPass(unittest.TestCase):
 
         lines, bits = fw.tier0_audit_pass(
             config('/tmp/app'), state, kw.pop('now', NOW), merged_fetch=lambda _repo, _now: prs,
-            find_issue=kw.pop('find_issue', lambda _repo, _title: 7 if existing else None),
+            find_issue=kw.pop('find_issue', lambda _repo, _title: 7 if existing else 0),
             create_issue=kw.pop('create_issue', create), rng=random.Random(3), log_file=log, **kw)
         return created, lines, bits
 
@@ -82,11 +83,26 @@ class AuditPass(unittest.TestCase):
         self.assertNotIn('#50', created[0][2])
         self.assertEqual(len(re.findall(r'^- #\d+ ', created[0][2], re.M)), 5)
 
-    def test_issue_is_labelled_ready_for_agent(self):
+
+    def test_default_create_is_labelled_ready_for_agent_and_routed_to_qa(self):
         seen = []
-        fw.main_red_create_issue(REPO, 't', 'b', run=lambda cmd, **_k: (seen.append(cmd), type('R', (), {'stdout': 'https://x/issues/5\n'})())[1],
-                                 labels=('ready-for-agent',))
-        self.assertEqual([seen[0][i + 1] for i, a in enumerate(seen[0]) if a == '--label'], ['ready-for-agent'])
+
+        def gh(cmd, **_kw):
+            seen.append(cmd)
+            return type('R', (), {'stdout': 'https://x/issues/5\n'})()
+
+        real = fw.main_red_create_issue
+        fw.main_red_create_issue = lambda repo, t, body, run=None, labels=None: real(repo, t, body, run=gh, labels=labels)
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                fw.tier0_audit_pass(config('/tmp/app'), {}, NOW, merged_fetch=lambda *_a: [merged(1, TEST_FILES)],
+                                    find_issue=lambda *_a: 0, log_file=os.path.join(root, 'a.tsv'))
+        finally:
+            fw.main_red_create_issue = real
+        self.assertIn('role:qa', seen[0])
+        self.assertIn('ready-for-agent', seen[0])
+        labels = [seen[0][i + 1] for i, a in enumerate(seen[0]) if a == '--label']
+        self.assertEqual(fw.issue_scan_route({'labels': [{'name': n} for n in labels]})[0], 'qa-sdet')
 
     def test_picks_are_deduped_against_earlier_weeks(self):
         prs = [merged(n, TEST_FILES) for n in range(1, 9)]
@@ -129,10 +145,36 @@ class AuditPass(unittest.TestCase):
         self.assertEqual(asked, [(REPO, 'tier 0 audit 2023-W46')])
         self.assertIn('issue-exists', ' '.join(lines))
 
-    def test_the_existing_issue_lookup_includes_closed_issues(self):
+    def test_the_issue_lookup_includes_closed_issues_and_tells_an_error_from_no_issue(self):
         seen = []
-        fw.main_red_find_issue(REPO, 't', run=lambda cmd, **_k: (seen.append(cmd), type('R', (), {'stdout': '[]'})())[1], state='all')
+        ok = lambda out: (lambda cmd, **_k: (seen.append(cmd), type('R', (), {'stdout': out})())[1])  # noqa: E731
+        self.assertEqual(fw.tier0_audit_find_issue(REPO, 't', run=ok('[]')), 0)
         self.assertEqual(seen[0][seen[0].index('--state') + 1], 'all')
+        self.assertEqual(fw.tier0_audit_find_issue(REPO, 't', run=ok('[{"number": 4, "title": "t"}]')), 4)
+
+        def boom(*_a, **_k):
+            raise subprocess.SubprocessError('502')
+        self.assertIsNone(fw.tier0_audit_find_issue(REPO, 't', run=boom))
+
+    def test_a_failed_issue_lookup_files_nothing_and_leaves_the_week_open(self):
+        state = {}
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'audit.tsv')
+            created, lines, bits = self.run_pass(state, [merged(1, TEST_FILES)], log, find_issue=lambda *_a: None)
+            self.assertFalse(Path(log).exists())
+        self.assertEqual(created, [])
+        self.assertNotIn(REPO, state['tier0_audit'])
+        self.assertIn('tier0_audit_lookup_fail=%s' % REPO, bits)
+
+    def test_a_failed_log_write_files_no_issue_and_leaves_the_week_open(self):
+        state = {}
+        with tempfile.TemporaryDirectory() as root:
+            log = os.path.join(root, 'audit.tsv')
+            os.mkdir(log)  # opening a directory for append raises OSError
+            created, _l, bits = self.run_pass(state, [merged(1, TEST_FILES)], log)
+        self.assertEqual(created, [])
+        self.assertNotIn(REPO, state['tier0_audit'])
+        self.assertIn('tier0_audit_log_fail=%s' % REPO, bits)
 
     def test_no_tier_0_pr_files_nothing(self):
         with tempfile.TemporaryDirectory() as root:
@@ -149,7 +191,7 @@ class AuditPass(unittest.TestCase):
 
     def test_issue_body_lists_each_pr_with_its_merge_commit_and_an_acceptance_for_the_verifier(self):
         prs = [merged(7, TEST_FILES), merged(12, TEST_FILES)]
-        body = fw.tier0_audit_issue_body(prs)
+        body = fw.tier0_audit_issue_body(prs, REPO)
         for pr in prs:
             self.assertIn('- #%d `%s`' % (pr['number'], pr['mergeCommit']['oid']), body)
         self.assertIn('## Acceptance', body)
@@ -157,6 +199,8 @@ class AuditPass(unittest.TestCase):
         self.assertIn('Audit: FAIL merged=<merge commit>', body)
         self.assertIn('Never a `Verdict:` line', body)
         self.assertIn('## Out of scope', body)
+        self.assertIn('python3 ~/dotfiles/script/tier0-audit.py report --repo %s' % REPO, body)
+        self.assertNotIn('<owner/name>', body)
 
     def test_a_failed_issue_create_does_not_mark_the_week_done_or_log_the_prs(self):
         prs = [merged(1, TEST_FILES)]
@@ -164,7 +208,7 @@ class AuditPass(unittest.TestCase):
             log = os.path.join(root, 'audit.tsv')
             state = {}
             _c, lines, bits = self.run_pass(state, prs, log, create_issue=lambda *_a: None)
-            self.assertFalse(Path(log).exists())
+            self.assertEqual(Path(log).read_text(), '')  # no row without its issue
             self.assertNotIn(REPO, state['tier0_audit'])
             retried, _l, _b = self.run_pass(state, prs, log, now=NOW + 600)  # the next pass tries again
         self.assertIn('tier0_audit_issue_fail=%s' % REPO, bits)
@@ -175,7 +219,7 @@ class AuditPass(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             state = {}
             lines, bits = fw.tier0_audit_pass(config('/tmp/app'), state, NOW, merged_fetch=lambda _r, _n: None,
-                                              find_issue=lambda *_a: None, create_issue=lambda *_a: 1,
+                                              find_issue=lambda *_a: 0, create_issue=lambda *_a: 1,
                                               log_file=os.path.join(root, 'a.tsv'))
         self.assertEqual(state.get('tier0_audit'), {})
         self.assertIn('tier0_audit_fetch_fail=%s' % REPO, bits)
@@ -186,7 +230,7 @@ class AuditPass(unittest.TestCase):
         cfg['babysit']['tier0_audit'] = False
         state = {}
         lines, bits = fw.tier0_audit_pass(cfg, state, NOW, merged_fetch=lambda *_a: self.fail('fetched'),
-                                          find_issue=lambda *_a: None, create_issue=lambda *_a: 1)
+                                          find_issue=lambda *_a: 0, create_issue=lambda *_a: 1)
         self.assertEqual((lines, bits, state), ([], [], {}))
 
 
