@@ -1,0 +1,1 @@
+worker-placement: a `browser_hosts` list in the fleet config keeps release-manager and qa-sdet starts on hosts where the Playwright browser launches. `worker-startup.sh --on` a host outside it exits 4 naming `browser_hosts` unless `--force-host REASON`. No key means no change (#1756).

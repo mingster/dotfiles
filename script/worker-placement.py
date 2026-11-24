@@ -27,6 +27,9 @@ LOAD_LINE = re.compile(
     r'^(?P<host>[A-Za-z0-9._-]+)\s+.*\bcores=(?P<cores>[0-9]+).*'
     r'\bload=(?P<load>[0-9]+(?:\.[0-9]+)?)(?:\s+(?P<load5>[0-9]+(?:\.[0-9]+)?))?',
 )
+ROLE_STAMP = re.compile(r'^Worker role:\s*([a-z0-9-]+)\s*$', re.MULTILINE)
+# Roles whose gate runs Playwright browser tests: a deploy and a verifier (qa-sdet).
+BROWSER_TEST_ROLES = frozenset({'release-manager', 'qa-sdet'})
 UNREACHABLE = re.compile(r'\bunreachable\b', re.IGNORECASE)
 
 
@@ -158,6 +161,25 @@ def task_kind(spec_path: Path | None) -> str:
     except OSError:
         return 'code'
     return 'browser' if BROWSER_ROLE_LINE.search(text) else 'code'
+
+
+def needs_browser_host(spec_path: Path | None) -> bool:
+    """True when the brief's `Worker role:` stamp is a role whose gate runs browser tests."""
+    if spec_path is None or not spec_path.is_file():
+        return False
+    try:
+        match = ROLE_STAMP.search(spec_path.read_text(encoding='utf-8', errors='replace'))
+    except OSError:
+        return False
+    return bool(match) and match.group(1) in BROWSER_TEST_ROLES
+
+
+def browser_hosts(config: dict) -> set[str] | None:
+    """Lowercase browser_hosts of the fleet config, or None when the key is absent (no rule)."""
+    hosts = config.get('browser_hosts')
+    if not isinstance(hosts, list):
+        return None
+    return {str(h).lower() for h in hosts}
 
 
 def ceiling_for(host: str, config: dict) -> float | None:
@@ -459,6 +481,11 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     if not order:
         return {'ok': False, 'reason': 'no worker_placement order or host_caps in fleet config'}
     hosts = eligible_hosts(order, config, kind, roles)
+    browser = browser_hosts(config) if needs_browser_host(spec_path) else None
+    if browser is not None:
+        hosts = [h for h in hosts if h.lower() in browser]
+        if not hosts:
+            return {'ok': False, 'reason': 'no eligible fleet host is listed under browser_hosts'}
     if not hosts:
         return {'ok': False, 'reason': 'no eligible fleet hosts for this task'}
     try:
@@ -545,6 +572,9 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
 
 def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: str | None = None) -> dict:
     """Judge a host the caller already chose (--on). Same load rule as pick_host."""
+    browser = browser_hosts(config) if needs_browser_host(spec_path) else None
+    if browser is not None and host.lower() not in browser:
+        return {'ok': False, 'host': host, 'reason': 'not listed under browser_hosts, a browser test gate cannot run there'}
     known = {h.lower(): h for h in (config.get('host_caps') or {})}
     name = known.get(host.lower())
     if name is not None and host_caps_of(config).get(name, 0) <= 0:
