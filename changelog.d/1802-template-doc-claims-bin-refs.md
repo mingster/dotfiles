@@ -1,0 +1,1 @@
+* `script/tests/template-doc-claims.test.sh` now checks every `bin/*.py` and `bin/*.sh` mention in `templates/agent-team/docs`, not only the ones run with `bash` or `python3`. A bare mention must exist in `bin/`, `script/` or the template. The three project-owned deploy scripts (`owner-approve.sh`, `apply-production-sql.sh`, `set-production-secret.sh`) are exempt (#1802).

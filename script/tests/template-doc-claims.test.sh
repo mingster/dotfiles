@@ -12,14 +12,18 @@ fi
 grep -F '`strikes.py` and `worker-budget.py` in `$HOME/.claude/hooks`' "$docs/agents/team.md" | grep -q 'Strikes'
 echo 'PASS: Strikes row names the hooks in $HOME/.claude/hooks'
 
-# Every bin/*.py or bin/*.sh a template doc runs must exist in bin/, script/ or the template.
+# Every bin/*.py or bin/*.sh a template doc mentions, bare or run with bash or python3, must exist in
+# bin/, script/ or the template. The three deploy scripts below are project-owned, so they are exempt.
 missing=0
 while IFS= read -r ref; do
   name=${ref##*/}
+  case "$name" in
+    owner-approve.sh|apply-production-sql.sh|set-production-secret.sh) continue ;;
+  esac
   if [ -z "$(find "$ROOT/bin" "$ROOT/script" "$ROOT/templates/agent-team" -name "$name" -print -quit)" ]; then
     echo "FAIL: docs name $ref but no $name exists"; missing=1
   fi
-done < <(grep -rhoE '(python3|bash) bin/[A-Za-z0-9._-]+\.(py|sh)' "$docs" | awk '{print $2}' | sort -u)
+done < <(grep -rhoE 'bin/[A-Za-z0-9._-]+\.(py|sh)' "$docs" | sort -u)
 [ "$missing" -eq 0 ]
 if grep -n 'check-intent-roots' "$docs/agents/engineering-integration.md"; then
   echo 'FAIL: engineering-integration.md claims a missing intent root check'; exit 1
