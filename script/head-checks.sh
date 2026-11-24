@@ -611,7 +611,7 @@ while IFS= read -r command || [ -n "$command" ]; do
   fi
   if [ "$gate_tool" = shared-db ] && [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ]; then
     db_preflight_done=1
-    printf 'Command: %s\n' "$db_preflight" >> "$log"
+    printf '\nCommand: %s\n' "$db_preflight" >> "$log"
     started=$SECONDS; pre_status=0
     pre_out=$(cd "$worktree" && env -i PATH="$step_path" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" "$bash_bin" -euo pipefail -c "$db_preflight" 2>&1) || pre_status=$?
     if [ "$pre_status" -ne 0 ]; then
@@ -628,6 +628,7 @@ $pre_out") || gate_issue=""
       exit 1
     fi
     printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+    printf '\nCommand: %s\n' "$expanded" >> "$log"
   fi
   output=$(mktemp); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_CACHE_DIR="$tsc_cache_dir")

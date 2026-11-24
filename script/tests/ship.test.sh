@@ -1442,6 +1442,7 @@ pm_dir="$MF_DIR/post-merge"; mkdir -p "$pm_dir"
 cat > "$pm_dir/hook.sh" <<EOF
 #!/usr/bin/env bash
 echo "\$SHIP_PR \$SHIP_MERGE_SHA" >> "$pm_dir/hook-calls"
+if [ -f "$pm_dir/hook-silent" ]; then exit "\$(cat "$pm_dir/hook-silent")"; fi
 if [ -f "$pm_dir/hook-fails" ]; then echo "shard unreachable" >&2; exit 4; fi
 echo "applied 3 migrations"
 EOF
@@ -1500,6 +1501,18 @@ run_ship --repo example/repo --pr 1504
 if [ "$SHIP_RC" -eq 0 ] && [ ! -f "$pm_dir/created" ] && grep -q '^issue comment 91' "$pm_dir/commented" && grep -q 'red gate #91' <<<"$SHIP_OUT"; then
   ok "a second hook failure comments on the open issue"
 else bad "a second hook failure comments on the open issue" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+# A hook that prints nothing must not abort ship under set -e (grep -v finds no line).
+echo 0 > "$pm_dir/hook-silent"
+pm_case 1505 db/schema/003.sql
+if [ "$SHIP_RC" -eq 0 ] && grep -qx 'post-merge schema: ok (no output)' <<<"$SHIP_OUT"; then
+  ok "a silent successful hook still prints its result line"
+else bad "a silent successful hook still prints its result line" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+echo 7 > "$pm_dir/hook-silent"
+pm_case 1506 db/schema/004.sql
+if [ "$SHIP_RC" -eq 0 ] && grep -q 'post-merge schema: FAILED exit 7, the merge stands, red gate #91' <<<"$SHIP_OUT"; then
+  ok "a silent failing hook files the red gate instead of aborting ship"
+else bad "a silent failing hook files the red gate instead of aborting ship" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+rm -f "$pm_dir/hook-silent"
 "$MF_REAL_GIT" -C "$MF_REPO" config --unset url."$MF_ORIGIN".insteadOf
 "$MF_REAL_GIT" -C "$MF_REPO" remote set-url origin "$MF_ORIGIN"
 unset SHIP_TEST_HOOK RED_GATE_GH

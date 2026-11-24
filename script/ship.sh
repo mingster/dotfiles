@@ -164,7 +164,7 @@ post_merge_schema_hook() { # <pr> <merge sha> <head sha> <changed files json>
   wait "$pid" || rc=$?
   kill "$dog" 2>/dev/null || true
   [ "$rc" -lt 128 ] || rc=124
-  last=$(grep -v '^[[:space:]]*$' "$tmp" | tail -1 | cut -c1-200)
+  last=$(grep -v '^[[:space:]]*$' "$tmp" | tail -1 | cut -c1-200) || true
   if [ "$rc" -eq 0 ]; then
     echo "post-merge schema: ok (${last:-no output})"
   else

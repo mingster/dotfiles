@@ -146,6 +146,18 @@ if [ "$rc" -eq 0 ] && [ -f "$HOME/db-step-ran" ] && [ ! -f "$STUB/created" ]; th
   check "a passing preflight runs the database step and files nothing" ok
 else check "a passing preflight runs the database step and files nothing" bad; fi
 
+# 4b. A passing preflight leaves the database step under its own Command line, so a failing database step is named, not the preflight.
+printf '#!/usr/bin/env bash\necho boom >&2\nexit 1\n' > "$repo/bin/db-step.sh"
+commit_conf '# db-preflight: bash bin/preflight.sh
+bash bin/db-step.sh # db'
+reset_stub
+run_hc; rc=$?
+last_cmd=$(grep '^Command: ' "$tmp/out" | tail -1)
+if [ "$rc" -ne 0 ] && [ "$last_cmd" = 'Command: bash bin/db-step.sh # db' ] && grep -q '^Command: bash bin/preflight.sh$' "$tmp/out"; then
+  check "a failing database step after a passing preflight is logged under its own Command line" ok
+else check "a failing database step after a passing preflight is logged under its own Command line" bad; echo "$last_cmd"; fi
+printf '#!/usr/bin/env bash\necho ran >> "$HOME/db-step-ran"\n' > "$repo/bin/db-step.sh"
+
 # 5. No preflight line, no change: the database step just runs.
 commit_conf 'bash bin/db-step.sh # db'
 reset_stub; rm -f "$HOME/db-step-ran"
