@@ -24,16 +24,16 @@ def row(number, labels=('ready-for-agent',)):
     return out
 
 
-def run_pass(issues, state, start=0, workers=(), prs=(), claimed=(), now=1):
+def run_pass(issues, state, start=0, workers=(), prs=(), claimed=(), now=1, act_code=0):
     starts, edits = [], []
     with patch.object(fw, 'rpc', side_effect=fake_rpc):
         notices, bits = fw.issue_scan_pass(
             scan_config('/work/app'), state, now, list(workers),
-            pr_fetch=lambda _r: list(prs), list_issues=lambda _r: list(issues),
+            pr_fetch=lambda _r: None if prs is None else list(prs), list_issues=lambda _r: list(issues),
             list_claimed=lambda _r: [{'number': n} for n in claimed],
             gate_check=lambda _c: True, admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
             start_worker=lambda command: starts.append(command) or start,
-            act=lambda command: edits.append(command) or 0,
+            act=lambda command: edits.append(command) or act_code,
         )
     return starts, edits, bits, notices
 
@@ -110,6 +110,31 @@ class StartedRestart(unittest.TestCase):
         self.assertEqual(state['issue_scan_started'][REPO], [])
         starts2, *_ = run_pass([row(5)], state, now=2)
         self.assertEqual(len(starts2), 1)
+
+    def test_unreadable_pr_list_blocks_both_restarts(self):
+        state = base_state(issue_scan_started={REPO: [5]})
+        starts, edits, bits, _n = run_pass([row(5)], state, prs=None)
+        self.assertEqual(starts, [])
+        self.assertIn('issue_restart_skipped=5:pr_list', bits)
+        _s, edits, bits, _n = run_pass([], state, claimed=[5], prs=None)
+        self.assertEqual(edits, [])
+        self.assertIn('issue_restart_skipped=5:pr_list', bits)
+        self.assertEqual(state['issue_scan_started'][REPO], [5])
+
+    def test_failed_relabel_keeps_the_issue_in_started(self):
+        state = base_state(issue_scan_started={REPO: [5]})
+        _s, _e, bits, _n = run_pass([], state, claimed=[5], act_code=1)
+        self.assertEqual(state['issue_scan_started'][REPO], [5])
+        self.assertNotIn('issue_restart=5:orphaned', bits)
+
+    def test_blocked_started_issue_is_not_restarted(self):
+        state = base_state(issue_scan_started={REPO: [5]})
+        with patch.object(fw, 'issue_open_blockers', return_value=([(REPO, 3)], [])):
+            starts, _e, bits, notices = run_pass([row(5)], state)
+        self.assertEqual(starts, [])
+        self.assertNotIn('issue_restart=5:ready', bits)
+        self.assertFalse(any('restarted' in str(n) for n in notices), notices)
+        self.assertEqual(state['issue_scan_started'][REPO], [5])
 
     def test_orphan_with_open_pr_or_not_started_is_left_alone(self):
         state = base_state(issue_scan_started={REPO: [5]})

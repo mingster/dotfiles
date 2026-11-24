@@ -8092,10 +8092,13 @@ def _issue_scan_pass(
             if open_pr_for_issue(listed[repo], row['number']):
                 log_bits.append('issue_open_pr=%d' % row['number'])
                 continue
-            if row['number'] in started.get(repo, []):
-                if not started_is_stale(repo, row['number']):
-                    continue
-                restart_started(repo, row['number'], 'ready')
+            restart = row['number'] in started.get(repo, [])
+            if restart and listed[repo] is None:
+                # An unreadable PR list could hide the PR this start opened, so it still blocks.
+                log_bits.append('issue_restart_skipped=%d:pr_list' % row['number'])
+                continue
+            if restart and not started_is_stale(repo, row['number']):
+                continue
             open_blockers, unknown_blockers = issue_open_blockers(row, repo, issue_state, blocker_states)
             if open_blockers or unknown_blockers:
                 # Not ready work, so it does not count as supply either (#1788).
@@ -8111,6 +8114,8 @@ def _issue_scan_pass(
             if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
                 log_bits.append('issue_parked=%d' % row['number'])
                 continue
+            if restart:
+                restart_started(repo, row['number'], 'ready')
             candidates.append((repo, row))
         listed_numbers = {r['number'] for r in issues}
         if started.get(repo):
@@ -8122,12 +8127,16 @@ def _issue_scan_pass(
                     continue
                 if repo not in listed:
                     listed[repo] = pr_fetch(repo)
+                if listed[repo] is None:
+                    log_bits.append('issue_restart_skipped=%d:pr_list' % number)
+                    continue
                 if open_pr_for_issue(listed[repo], number):
                     continue
                 # The claim took ready-for-agent off, so put it back: the next pass lists and starts the issue (#1811).
-                act(['gh', 'issue', 'edit', str(number), '--repo', repo,
-                     '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL])
-                restart_started(repo, number, 'orphaned')
+                # A failed edit keeps the issue in started, so a later pass tries again.
+                if act(['gh', 'issue', 'edit', str(number), '--repo', repo,
+                        '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
+                    restart_started(repo, number, 'orphaned')
 
     supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission, waiting_on_coordinator(state, workers))
     if supply_line:
