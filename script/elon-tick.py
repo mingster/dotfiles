@@ -188,14 +188,23 @@ def worker_live(w):
     return w.get('terminalState') == 'active' and w.get('liveness') != 'exited'
 
 
+def brief_refs(spec):
+    """(repo or '', number) refs a brief is about: its first Refs line and the PRs on its Role line.
+    Later Refs lines name parents (an epic, a spec issue) that many briefs share, so they are left out."""
+    refs, seen_refs = [], False
+    for line in (spec or '').splitlines():
+        if re.match(r'^\s*Refs\b', line) and not seen_refs:
+            seen_refs = True
+            refs += REF_RE.findall(line)
+        elif re.match(r'^\s*Role\b', line):
+            refs += REF_RE.findall(line) + [('', n) for n in re.findall(r'\bPRs?\s+(\d+)\b', line)]
+    return refs
+
+
 def worker_numbers(w, task):
-    """(repo name or '', numbers) a worker is on: its task title, the Refs and Role lines of its brief, its worktree."""
-    text = [task.get('title') or '']
-    for line in (task.get('spec') or '').splitlines():
-        if re.match(r'^\s*(Refs|Role)\b', line):
-            text.append(line)
-    nums = {int(n) for _, n in REF_RE.findall('\n'.join(text))}
-    nums |= {int(n) for n in re.findall(r'\bPRs?\s+(\d+)\b', '\n'.join(text))}
+    """(repo name or '', numbers) a worker is on: its task title, brief_refs of its brief, its worktree."""
+    nums = {int(n) for _, n in REF_RE.findall(task.get('title') or '')}
+    nums |= {int(n) for _, n in brief_refs(task.get('spec'))}
     ws = str(w.get('workspace') or '')
     base = ws.rstrip('/').rsplit('/', 1)[-1]
     m = re.search(r'(\d+)$', base)
@@ -356,14 +365,7 @@ def check_m5(snap):
     for w in snap['workers']:
         if '_unreadable_host' in w or not worker_live(w):
             continue
-        spec = (snap['tasks'].get(w.get('taskId')) or {}).get('spec') or ''
-        refs = []
-        for line in spec.splitlines():
-            if re.match(r'^\s*Refs\b', line):
-                refs += REF_RE.findall(line)
-            elif re.match(r'^\s*Role\b', line):
-                refs += REF_RE.findall(line) + [('', n) for n in re.findall(r'\bPRs?\s+(\d+)\b', line)]
-        for repo, num in refs:
+        for repo, num in brief_refs((snap['tasks'].get(w.get('taskId')) or {}).get('spec')):
             pool = [repo] if repo else list(snap['repos'])
             known = [open_numbers(snap, r) for r in pool if r in snap['repos']]
             if not known or any(k is None for k in known):
@@ -412,8 +414,13 @@ def check_watch(snap):
     """W2: worker-watch.sh flags no stalled, idle or blocked worker."""
     if isinstance(snap['watch'], Unreadable):
         return not_checked('W2', snap['watch'])
-    return ['[W2] worker %s is %s; act on it per pstack Orchestrate' % (d, v[:160])
-            for d, _, v in snap['watch'] if not v.startswith('OK')]
+    out = []
+    for d, _, v in snap['watch']:
+        if v.startswith('UNKNOWN_COVERAGE'):
+            out += not_checked('W2', 'worker %s screen unreadable' % d)
+        elif not v.startswith('OK'):
+            out.append('[W2] worker %s is %s; act on it per pstack Orchestrate' % (d, v[:160]))
+    return out
 
 
 def check_supply(snap):

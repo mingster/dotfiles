@@ -139,6 +139,22 @@ reset; touch "$FX/workers-h1.fail"
 echo '{"ok":true,"result":{"environments":[{"id":"e1","name":"h1"}]}}' > "$FX/envs.json"
 expect 'M1 unreadable host' '[M1] NOT CHECKED: host h1 worker list unreadable'
 
+# A shared parent on a second Refs line (an epic) does not make a worker the owner of every PR under it.
+reset; worker live in_progress /x/workspaces/proj/issue-41 > "$FX/workers-local-active.json"
+echo '{"ok":true,"result":{"tasks":[{"id":"t1","title":"#41|fullstack-dev"}]}}' > "$FX/tasks.json"
+echo '{"ok":true,"result":{"tasks":[{"id":"t1","spec":"Refs o/proj#41\nRefs #40\nRole: fullstack-dev"}]}}' > "$FX/tasks-full.json"
+echo '[{"number":50,"title":"fix 45","body":"Refs #40","headRefName":"mingster/issue-45","comments":[]},{"number":41,"title":"x","body":"","headRefName":"b","comments":[]}]' \
+  > "$FX/gh-pr-o_proj.json"
+expect 'M1 epic Refs is not ownership' '[M1] ORPHAN PR o/proj#50'
+
+# M5 reads the task's own Refs line only; a closed epic on a later Refs line is not a defect.
+reset; echo '{"ok":true,"result":{"tasks":[{"id":"t1","spec":"Refs o/proj#40\nRefs #5, #6\nRole: fullstack-dev"}]}}' > "$FX/tasks-full.json"
+tick; [[ $out == "OK nothing to do" ]] || fail 'M5 later Refs line is not checked'
+tests=$((tests + 1))
+
+reset; printf '#!/usr/bin/env bash\necho "ctx_a term_a UNKNOWN_COVERAGE"\nexit 4\n' > "$FX/ww.sh"
+expect 'W2 unreadable screen' '[W2] NOT CHECKED: worker ctx_a screen unreadable'
+
 reset; worker live succeeded > "$FX/workers-local-active.json"
 expect 'M2 done worker owns open PR' '[M2] do not release ctx_a yet: it owns open PR o/proj#50'
 
