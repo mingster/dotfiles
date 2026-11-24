@@ -1,0 +1,1 @@
+- The synced `mattpocock-skills` plugin can be turned off: `.agents/skills/tdd` now holds the upstream red green loop (vendored by `sync-mattpocock-skills.sh`), and the pstack TDD Bug Fix skill is `tdd-bugfix` (new `rename=` key in `.pstack-template-upstream`). Refs #1793.

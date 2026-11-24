@@ -86,7 +86,7 @@ backed by skills vendored from [mattpocock/skills](https://github.com/mattpocock
 | Grill | `grill-with-docs` (wraps `grilling` + `domain-modeling`) |
 | Spec | `to-spec` |
 | Tickets | `to-tickets` |
-| Implement | `tdd` (from pstack, in `templates/agent-team/.agents/skills/`) or `implement` for a ticket; `implement-spec` is not vendored |
+| Implement | `tdd` (the red green loop, vendored from Matt Pocock) or `implement` for a ticket; `tdd-bugfix` (pstack, in `templates/agent-team/.agents/skills/`) for a bug with a cheap test; `implement-spec` is not vendored |
 | Review | `code-review` |
 
 Which team role runs which skill for each stage and recurring job: `docs/agents/sdlc-skill-map.md`.

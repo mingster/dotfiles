@@ -8,6 +8,8 @@
 #   tree=<upstream dir> <template dir>   every file of the dir: skills/* into .agents/skills/<name>,
 #                                        the rest into templates/agent-team/<template dir>
 #   skill=<upstream skill dir>           one skill into .agents/skills/<basename>
+#   rename=<upstream name> <local name>  a vendored skill lands under another name (its name: line and every
+#                                        /name, **name**, `name` and name/SKILL.md in the copied Markdown follow)
 # Written by the script: sha= and skills= (the vendored skill names, used to prune skills gone upstream).
 # Copies are exact (rsync --delete), so local files never live in a vendored directory. An upstream
 # skill that shares a name with a Tier 1 skill in .agents/skills replaces it: the Tier 1 copy is deleted
@@ -39,6 +41,7 @@ die() { echo "sync-pstack-template-skills: $*" >&2; exit "${2:-1}"; }
 [ -f "$STATE" ] || die "missing $STATE" 2
 trees=$(sed -n 's/^tree=//p' "$STATE")
 skill_dirs=$(sed -n 's/^skill=//p' "$STATE")
+renames=$(sed -n 's/^rename=//p' "$STATE")
 old_names=$(sed -n 's/^skills=//p' "$STATE")
 [ -n "$trees$skill_dirs" ] || die "state has no tree= or skill= entry" 2
 
@@ -46,6 +49,24 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 git clone -q --depth 1 "$PLUGINS_REPO" "$tmp/up" || exit 1
 new=$(git -C "$tmp/up" rev-parse HEAD)
+
+# Renames edit the throwaway clone, so the copy, the dry run and the clash checks all see the local name.
+while read -r old_name new_name; do
+  [ -n "$old_name" ] || continue
+  [ -n "$new_name" ] || die "rename=$old_name has no local name" 2
+  while IFS= read -r d; do
+    [ ! -e "$(dirname "$d")/$new_name" ] || die "rename=$old_name: $new_name already exists upstream"
+    mv "$d" "$(dirname "$d")/$new_name"
+    sed -i.bak "s/^name: $old_name\$/name: $new_name/" "$(dirname "$d")/$new_name/SKILL.md"
+    rm -f "$(dirname "$d")/$new_name/SKILL.md.bak"
+  done < <(find "$tmp/up" -not -path '*/.git/*' -path '*/skills/*' -type d -name "$old_name")
+  find "$tmp/up" -name '*.md' -not -path '*/.git/*' -print0 | xargs -0 sed -i.bak -E \
+    -e "s#/$old_name/SKILL\\.md#/$new_name/SKILL.md#g" \
+    -e "s#/$old_name([^A-Za-z0-9_/-]|\$)#/$new_name\\1#g" \
+    -e "s#\\*\\*$old_name\\*\\*#**$new_name**#g" \
+    -e "s#\`$old_name\`#\`$new_name\`#g"
+  find "$tmp/up" -name '*.md.bak' -not -path '*/.git/*' -delete
+done <<<"$renames"
 
 # Collect <name> <source dir> pairs and <source> <dest> tree pairs before touching anything.
 : >"$tmp/skills"
