@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 def _load_receipt_state():
     path = Path(__file__).resolve().parent / 'receipt-state.py'
@@ -7716,6 +7717,14 @@ def main_red_issue_body(run_id, url, step):
     ) % (run_id, url, step or 'unknown (read the run log)', run_id)
 
 
+def main_red_url_is_github(url):
+    """True only for a run URL on github.com. Anything else is fixture or foreign data, never filed (#1737)."""
+    try:
+        return (urllib.parse.urlparse(str(url or '')).hostname or '').lower() == 'github.com'
+    except ValueError:
+        return False
+
+
 def main_red_notices(config, state, now, fetch=None, find_issue=None, create_issue=None, failing_step=None):
     """Tell the coordinator once per run id when the latest Checks run on main is not success.
 
@@ -7739,7 +7748,7 @@ def main_red_notices(config, state, now, fetch=None, find_issue=None, create_iss
             filed.pop(repo, None)
             continue
         number = None
-        if filed.get(repo) != run_id:
+        if filed.get(repo) != run_id and main_red_url_is_github(run.get('url')):
             title = '%s%s' % (MAIN_RED_TITLE_PREFIX, run_id)
             number = find_issue(repo, title)
             if number is None:

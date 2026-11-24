@@ -218,7 +218,7 @@ class RedCheckLadder(unittest.TestCase):
         fetch_red = lambda repo: {
             'databaseId': 7,
             'conclusion': 'failure',
-            'url': 'https://example.test/runs/7',
+            'url': 'https://github.com/owner/repo/actions/runs/7',
         }
         find_calls = []
 
@@ -232,7 +232,7 @@ class RedCheckLadder(unittest.TestCase):
         first = fw.main_red_notices(self.CONFIG, state, NOW, **fakes)
         self.assertEqual(len(first), 1)
         self.assertIsInstance(first[0], fw.Urgent)
-        self.assertIn('https://example.test/runs/7', first[0])
+        self.assertIn('https://github.com/owner/repo/actions/runs/7', first[0])
         self.assertIn('fixer issue #42', first[0])
         self.assertEqual(len(find_calls), 1)
         self.assertEqual(create_calls, [])
