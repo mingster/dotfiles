@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Exit zero only when Orca positively lists no terminal in this worktree."""
+"""Exit zero only when Orca positively lists no terminal in this worktree.
+
+usage: worktree-idle.py <worktree-path>
+"""
 import json
 import os
 from pathlib import Path
@@ -23,12 +26,20 @@ def idle(path, receipt):
     return True
 
 
+USAGE = 'usage: worktree-idle.py <worktree-path>'
+
 if __name__ == '__main__':
+    if sys.argv[1:] in (['-h'], ['--help']):
+        print(USAGE)
+        sys.exit(0)
+    if len(sys.argv) != 2:
+        print(USAGE, file=sys.stderr)
+        sys.exit(2)
     try:
         command = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca'))
         output = subprocess.run(command + ['terminal', 'list', '--limit', '500', '--json'], capture_output=True, text=True, check=True, timeout=10)
         safe = idle(sys.argv[1], json.loads(output.stdout))
-    except (ValueError, OSError, subprocess.SubprocessError, IndexError):
+    except (ValueError, OSError, subprocess.SubprocessError):
         safe = False
     if not safe:
         print('worktree-idle: retaining worktree; terminal inventory is live or unverifiable', file=sys.stderr)

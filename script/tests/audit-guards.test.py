@@ -106,6 +106,19 @@ class Guards(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn('retaining', result.stderr)
 
+    def test_help_prints_usage_and_exits_zero(self):
+        for flag in ['-h', '--help']:
+            result = subprocess.run([sys.executable, str(ROOT / 'worktree-idle.py'), flag], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('usage: worktree-idle.py', result.stdout)
+            self.assertNotIn('retaining', result.stderr)
+
+    def test_missing_path_prints_usage_and_exits_two(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'worktree-idle.py')], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('usage: worktree-idle.py', result.stderr)
+        self.assertNotIn('retaining', result.stderr)
+
     def test_browser_suite_is_reported_unchecked_on_missing_browser(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
