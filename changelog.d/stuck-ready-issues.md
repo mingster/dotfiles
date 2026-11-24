@@ -1,0 +1,1 @@
+- team.md: the coordinator starts stuck ready-for-agent issues during every issue scan, fixing missing brief sections itself.
