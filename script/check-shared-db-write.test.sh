@@ -7,16 +7,30 @@ printf 'shared: ^app_dev(_s[0-9]+)?$\nverifier: app_verifier_\n' >"$tmp/pattern"
 export SHARED_DB_PATTERN_FILE="$tmp/pattern"
 trap 'rm -rf "$tmp"' EXIT
 pass=0 fail=0
+# Two checkouts: merged (HEAD equals origin/main) and unmerged (one commit ahead of origin/main).
+git init -q --bare -b main "$tmp/origin.git"
+git clone -q "$tmp/origin.git" "$tmp/merged" 2>/dev/null
+git -C "$tmp/merged" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+git -C "$tmp/merged" push -q origin HEAD:main 2>/dev/null
+git -C "$tmp/merged" fetch -q origin
+git clone -q "$tmp/origin.git" "$tmp/unmerged" 2>/dev/null
+git -C "$tmp/unmerged" -c user.email=t@t -c user.name=t commit -q --allow-empty -m ahead
+cwd=$tmp/merged
 ok() { echo "ok   $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1: $2"; fail=$((fail + 1)); }
 
 # run <role|-> <env DATABASE_URL|-> <command>: feeds a PreToolUse payload; sets out and rc.
 run() {
   local role=$1 dburl=$2 cmd=$3 transcript=$tmp/t.jsonl
-  if [ "$role" = - ]; then text="hello"; else text="Worker role: $role
+  if [ "$role" = - ]; then text="hello"
+  elif [ -n "${ORCA_PREAMBLE:-}" ]; then text="You are working inside Orca, a multi-agent IDE.
+=== TASK ===
+Worker role: $role
+do work"
+  else text="Worker role: $role
 do work"; fi
   jq -nc --arg t "$text" '{type:"user",message:{role:"user",content:[{type:"text",text:$t}]}}' >"$transcript"
-  payload=$(jq -nc --arg c "$cmd" --arg t "$transcript" '{tool_name:"Bash",tool_input:{command:$c},transcript_path:$t}')
+  payload=$(jq -nc --arg c "$cmd" --arg t "$transcript" --arg d "$cwd" '{tool_name:"Bash",tool_input:{command:$c},transcript_path:$t,cwd:$d}')
   if [ "$dburl" = - ]; then
     out=$(printf '%s' "$payload" | env -u DATABASE_URL -u DIRECT_URL python3 "$here/check-shared-db-write.py" 2>"$tmp/err"); rc=$?
   else
@@ -55,6 +69,18 @@ allowed "similar name app_dev_old" builder - 'psql -d app_dev_old -c "DROP TABLE
 allowed "unrelated prisma generate" builder 'postgres://h/app_dev' 'npx prisma generate'
 allowed "migrate with no dev target" builder 'postgres://h/other_db' 'npx prisma migrate dev'
 allowed "release-manager role" release-manager - 'DATABASE_URL=postgres://h/app_dev_s1 npx prisma migrate deploy'
+rm_cmd='DATABASE_URL=postgres://h/app_dev_s1 npx prisma migrate deploy'
+ORCA_PREAMBLE=1 allowed "release-manager role after the Orca preamble" release-manager - "$rm_cmd"
+ORCA_PREAMBLE=1 blocked "builder role after the Orca preamble" builder - "$rm_cmd"
+cwd=$tmp/unmerged
+blocked "release-manager on an unmerged branch" release-manager - "$rm_cmd"
+ORCA_PREAMBLE=1 blocked "release-manager on an unmerged branch after the preamble" release-manager - "$rm_cmd"
+cwd=$tmp
+blocked "release-manager outside a git checkout" release-manager - "$rm_cmd"
+cwd=$tmp/merged
+allowed "message body naming dbpush" builder 'postgres://h/app_dev' 'orca orchestration send --type status --subject "sync" --body "run dbpush then prisma migrate deploy on app_dev_s1"'
+allowed "message body with --body=" builder 'postgres://h/app_dev' "orca orchestration send --body='psql app_dev -c DROP TABLE t'"
+blocked "dbpush after a message in one command" builder 'postgres://h/app_dev' 'orca orchestration send --body "hi" && bun run dbpush'
 allowed "bootstrap-regression-shard.ts" builder - 'bun bin/bootstrap-regression-shard.ts --db app_dev_s1 && psql app_dev_s1 -c "CREATE TABLE t (i int)"'
 allowed "non Bash tool" builder - 'ls'
 payload='{"tool_name":"Read","tool_input":{"file_path":"/x"}}'

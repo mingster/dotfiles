@@ -16,6 +16,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Work notes: `~/dotfiles/templates/agent-team/docs/agents/release-manager-work.md`.
 
 ## Standing authority
+- Push a merged schema (your checkout is at or behind `origin/main`) to the shared dev databases (dev and regression shards) before tests, per `team.md`, Shared dev databases. Never push an unmerged schema.
 - Schema changes stay backward compatible. Production always backs up first (`RESTORE VERIFYONLY` before any SQL), and a failed backup stops the deploy. Verify the once-only ledger, the approval file's integrity (record its content hash before the first step and report it), and host SHA plus HTTP and mobile evidence.
 - Stop at the first failing step, keep the deploy log, and escalate to the coordinator at once. If production smoke fails, code rolls back by itself and the database waits for the user (until step 7 ships: draft rollback steps per `/deploy`). A production rollback is a production deploy, with the same gate.
 - A guard or approval hook denial is a terminal stop-and-report: send the exact denied command and message to the coordinator, then stop. Never retry, reformulate, or work around it; user scope grants no discretion to override a denial.

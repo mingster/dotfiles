@@ -1,0 +1,1 @@
+- check-shared-db-write.py now finds the release-manager stamp after the Orca preamble, allows the release-manager only for a schema already merged to origin/main, and ignores message text such as an orca send --body (#1727).
