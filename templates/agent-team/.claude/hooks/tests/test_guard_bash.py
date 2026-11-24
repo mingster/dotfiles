@@ -2012,6 +2012,13 @@ class LiteralVariables(GuardTest):
             f"for s in {SECRETS}/x.json; do echo $USER; done",
             "for s in probe-secrets; do .claude/bin/$s.sh; done",
             "S=probe-secrets; .claude/bin/$S.sh",
+            "P=bin; for f in $P/*; do bash $P/deploy-raw.sh; done",
+            "S=deploy; for f in *; do bash bin/$S-raw.sh; done",
+            'D=~""; mkdir -p $D; cat $D/../*/*/x.json',
+            'for d in ~""; do mkdir -p $d; cat $d/../*/*/x.json; done',
+            "P=bin; >/dev/null bash $P/deploy-raw.sh",
+            "P=bin; bash >/dev/null $P/deploy-raw.sh",
+            'H=blue; [ "0, H = prod" -eq 0 ]; ssh $H rm -rf /x',
         ):
             with self.subTest(command=command):
                 self.assertDenied(command)

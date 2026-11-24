@@ -4158,6 +4158,11 @@ def _lv_statements(tokens):
     return out
 
 
+def _lv_tilde(source):
+    """The shell expands ~ only when no quote sits in the tilde prefix: the word is ~ or starts with ~/."""
+    return source == "~" or source.startswith("~/")
+
+
 def _lv_check(command, stmts, values, names):
     """Each statement runs a command whose final word is not banned, and no word names a bound variable."""
     for _, toks in stmts:
@@ -4165,6 +4170,9 @@ def _lv_check(command, stmts, values, names):
         cmd = next((t for n, t in enumerate(toks) if t[0] == "word" and not target[n]
                     and not _LV_ASSIGN.match(t[3])), None)
         if cmd is None or (toks[-1][0] == "redir" and "&" not in toks[-1][3]):
+            raise _LvNo()
+        first_redir = next((n for n, t in enumerate(toks) if t[0] == "redir"), len(toks))
+        if any(t[0] == "word" and not target[n] for n, t in enumerate(toks) if n > first_redir):
             raise _LvNo()
         for tok in toks:
             if tok[0] != "word":
@@ -4174,6 +4182,9 @@ def _lv_check(command, stmts, values, names):
                 raise _LvNo()
             for text in (tok[3], seen or ""):
                 if text in names or any(re.search(_LV_WRITE.replace("%s", re.escape(n)), text) for n in names):
+                    raise _LvNo()
+                if re.search(r"=|\+\+|--", text) and any(
+                        re.search(r"(?<![A-Za-z0-9_${])%s(?![A-Za-z0-9_])" % re.escape(n), text) for n in names):
                     raise _LvNo()
 
 
@@ -4192,7 +4203,7 @@ def resolve_literal_variables(command):
             break
         _lv_bind(m.group(1), bound)
         start = toks[0][1] + m.end()
-        value = _lv_plain(_lv_value(command, start, toks[0][2], {}), command[start:start + 1] == "~")
+        value = _lv_plain(_lv_value(command, start, toks[0][2], {}), _lv_tilde(command[start:toks[0][2]]))
         if value is None:
             raise _LvNo()
         bound[m.group(1)] = value
@@ -4215,7 +4226,7 @@ def resolve_literal_variables(command):
             raise _LvNo()
         loop_name = head[1][3]
         _lv_bind(loop_name, bound)
-        words = [_lv_plain(_lv_value(command, t[1], t[2], bound), t[3][:1] == "~") for t in head[3:]]
+        words = [_lv_plain(_lv_value(command, t[1], t[2], bound), _lv_tilde(t[3])) for t in head[3:]]
         texts_end = head[-1][2]
     names = set(bound) | ({loop_name} if loop_name else set())
     _lv_check(command, flat, bound, names)
@@ -4240,9 +4251,12 @@ def resolve_literal_variables(command):
         out.append(command[pos:end])
         return "".join(out)
 
-    if loop_name is None or None in words:
+    if loop_name is None:
         return [render(0, len(command), bound)]
     body_start, body_end = body[0][1][0][1], body[-1][1][-1][2]
+    if None in words:
+        # Body without do/done, the loop variable left as written for the checks that read variables.
+        return [render(0, texts_end, bound) + "\n" + render(body_start, body_end, bound)]
     # The header stays as its own line, so a loop word the body never uses is still judged as text.
     return [render(0, texts_end, bound) + "\n" + render(body_start, body_end, dict(bound, **{loop_name: w}))
             for w in words]
