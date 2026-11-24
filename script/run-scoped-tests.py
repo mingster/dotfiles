@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 
 SOURCE_SUFFIXES = ('.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs')
@@ -183,6 +184,41 @@ def run_command(command, cwd=Path('.')):
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def has_python_tests(directory):
+    return any(directory.glob('test_*.py')) or any(directory.glob('*_test.py'))
+
+
+def find_bash5():
+    for candidate in [shutil.which('bash'), '/opt/homebrew/bin/bash', '/usr/local/bin/bash']:
+        if candidate and os.path.exists(candidate) and subprocess.run([candidate, '-c', '((BASH_VERSINFO[0] >= 5))']).returncode == 0:
+            return candidate
+    return None
+
+
+def missing_tool(script, bash5):
+    text = script.read_text(errors='replace')
+    if re.search(r'\bflock\b', text) and not shutil.which('flock'):
+        return 'flock'
+    if not bash5 and re.search(r'BASH_VERSINFO|bash (?:>= ?)?5', text):
+        return 'bash 5'
+    return None
+
+
+def run_shell_tests(directory):
+    bash5 = find_bash5()
+    for script in sorted(directory.glob('*.test.sh')):
+        missing = missing_tool(script, bash5)
+        if missing:
+            print('SKIPPED:', script, f'(needs {missing}, not on this host; rerun on a host that has it)', flush=True)
+            continue
+        command = [bash5 or 'bash', str(script)]
+        print('Component check:', shlex.join(command), flush=True)
+        result = subprocess.run(command)
+        if result.returncode:
+            return result.returncode
+    return 0
+
+
 def component_checks(root, phase, files):
     paths = [Path(name) for name in files]
     existing = [path for path in paths if path.is_file()]
@@ -218,7 +254,14 @@ def component_checks(root, phase, files):
             if path.suffix == '.py':
                 directories.update(directory for directory in (path.parent / 'tests', path.parent.parent / 'tests') if directory.is_dir())
         for directory in sorted(directories):
-            run_command(['python3', '-m', 'pytest', str(directory)])
+            if has_python_tests(directory):
+                # Exit 5 means pytest collected nothing, which is not a failure.
+                print('Component check: python3 -m pytest', directory, flush=True)
+                if subprocess.run(['python3', '-m', 'pytest', str(directory)]).returncode not in (0, 5):
+                    return 1
+            result = run_shell_tests(directory)
+            if result:
+                return result
         if root == Path('web'):
             bin_files = [str(path) for path in paths if path.parent == Path('bin') and path.suffix == '.ts']
             if bin_files:

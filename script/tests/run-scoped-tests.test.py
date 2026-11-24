@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -256,6 +257,25 @@ class ScopedTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('pytest', (self.repo/'calls').read_text())
         self.assertIn('projb_op/bin/tests', (self.repo/'calls').read_text())
+
+    def test_shell_only_tests_dir_does_not_run_pytest_and_skips_missing_tools(self):
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/needs-flock.test.sh', '#!/usr/bin/env bash\nflock -n 9\nexit 1\n')
+        self.write('projb_op/bin/tests/ok.test.sh', '#!/usr/bin/env bash\nexit 0\n')
+        result = self.components('tests', 'projb_op/bin/task.py')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.repo / 'calls'
+        self.assertNotIn('pytest', calls.read_text() if calls.exists() else '')
+        self.assertIn('ok.test.sh', result.stdout)
+        if not shutil.which('flock'):
+            self.assertIn('SKIPPED:', result.stdout)
+            self.assertIn('needs-flock.test.sh', result.stdout)
+
+    def test_failing_shell_test_still_fails(self):
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/bad.test.sh', '#!/usr/bin/env bash\nexit 3\n')
+        result = self.components('tests', 'projb_op/bin/task.py')
+        self.assertEqual(result.returncode, 3)
 
     def test_workflow_yaml_is_parsed(self):
         self.write('.github/workflows/build.yml', 'name: Build')

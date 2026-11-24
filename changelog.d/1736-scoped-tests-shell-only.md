@@ -1,0 +1,1 @@
+Fixed: `run-scoped-tests.py` runs pytest only in tests directories that hold Python tests, and reports a `*.test.sh` that needs a tool the host lacks (flock, bash 5) as SKIPPED instead of failing head-checks.
