@@ -20,7 +20,9 @@ role pushing a merged schema. The role is the brief's stamp `Worker role: releas
 first user message or on the line right after Orca's `=== TASK ===` marker (Orca puts a preamble before the brief).
 Merged means the checkout's HEAD is an ancestor of origin/main (or equal); an unmerged branch is refused for every
 role. Text inside `--body`, `--subject`, `--question` or `--spec` values (an `orca orchestration send` message) is not
-part of the command. Unexpected input exits 0: a gate, not a crash.
+part of the command, and neither is the body of a quoted heredoc (<<'TAG') fed to a text sink: cat > f, cat >> f,
+tee f with no pipe after it, git commit -F -, gh ... --body-file - or -F -. A body fed to bash, psql or anything else
+still counts, and so does an unquoted heredoc (the shell expands it). Unexpected input exits 0: a gate, not a crash.
 """
 import json
 import os
@@ -39,6 +41,13 @@ BOOTSTRAP = "bootstrap-regression-shard.ts"
 ENV_NAMES = ("DATABASE_URL", "DIRECT_URL")
 STAMP = re.compile(r"Worker role: ([a-z0-9-]+)")
 TEXT_FLAGS = ("--body", "--subject", "--question", "--spec")
+HEREDOC = re.compile(r"<<(-?)\s*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2")
+SEGMENT_SPLIT = re.compile(r"&&|\|\||;|\|")
+TEXT_SINK = re.compile(
+    r"(?:\bcat\s+>>?\s*\S+"
+    r"|\btee(?:\s+-a)?\s+\S+"
+    r"|\bgit\s+commit\b.*\s-F\s+-"
+    r"|\bgh\s.*(?:--body-file|-F)[=\s]+-)\s*")
 
 
 def pattern_path():
@@ -64,6 +73,29 @@ def refusal(db, verifier):
             f"Use a verifier temp database instead: `createdb {v}`, point DATABASE_URL at it "
             f"(`postgres://.../{v}`), run the migration or `prisma db push` there, then `dropdb {v}`. "
             "A regression shard comes from `bin/bootstrap-regression-shard.ts`. See deploy-facts.md, Verifier schema.")
+
+
+def strip_text_heredocs(cmd):
+    """The command without the bodies of quoted heredocs fed to a text sink (cat > f, tee f, git commit -F -,
+    gh --body-file -). A body fed to bash, psql or anything else stays, and so does an unquoted heredoc."""
+    lines = cmd.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        m = HEREDOC.search(line)
+        if not m:
+            continue
+        consumer = SEGMENT_SPLIT.split(line[:m.start()])[-1]
+        sink = TEXT_SINK.fullmatch(consumer.strip()) or TEXT_SINK.search(consumer.strip())
+        if not sink or re.search(r"\|(?!\|)", line[m.end():]):
+            continue
+        end = next((j for j in range(i, len(lines))
+                    if (lines[j].lstrip("\t") if m.group(1) else lines[j]) == m.group(3)), None)
+        if end is not None:
+            i = end
+    return "\n".join(out)
 
 
 def strip_message_text(cmd):
@@ -165,7 +197,7 @@ def check(cmd, role="", config=None, cwd=None):
     config = config or load_config()
     if not config or not isinstance(cmd, str) or BOOTSTRAP in cmd:
         return ""
-    cmd = strip_message_text(cmd)
+    cmd = strip_message_text(strip_text_heredocs(cmd))
     if not is_ddl(cmd):
         return ""
     db = shared_target(cmd, *config)

@@ -81,6 +81,42 @@ cwd=$tmp/merged
 allowed "message body naming dbpush" builder 'postgres://h/app_dev' 'orca orchestration send --type status --subject "sync" --body "run dbpush then prisma migrate deploy on app_dev_s1"'
 allowed "message body with --body=" builder 'postgres://h/app_dev' "orca orchestration send --body='psql app_dev -c DROP TABLE t'"
 blocked "dbpush after a message in one command" builder 'postgres://h/app_dev' 'orca orchestration send --body "hi" && bun run dbpush'
+# Quoted heredoc bodies fed to a text sink are text (#1796); bodies fed to a shell or psql still count.
+allowed "cat heredoc note naming dbpush and a shared db" builder - "cat > /tmp/m.md <<'EOF'
+Never \`dbpush\` a schema from an unmerged branch to a shared app_dev_s1 database
+EOF"
+allowed "cat append heredoc with DDL text" builder - "cat >> /tmp/m.md <<\"EOF\"
+psql app_dev -c 'DROP TABLE t'
+EOF"
+allowed "tee heredoc note" builder - "tee /tmp/m.md <<'EOF'
+run bun run dbpush on app_dev
+EOF"
+allowed "git commit -F - heredoc" builder - "git commit -F - <<'EOF'
+fix: dbpush app_dev_s1 note
+EOF"
+allowed "gh --body-file - heredoc" builder - "gh issue create --body-file - <<'EOF'
+psql app_dev -c 'ALTER TABLE x ADD y int'
+EOF"
+blocked "psql heredoc DDL on shared db" builder - "psql postgres://h/app_dev_s1 <<'SQL'
+ALTER TABLE x ADD y int;
+SQL"
+blocked "psql heredoc DDL on shared db from env" builder 'postgres://h/app_dev' "psql \"\$DATABASE_URL\" <<'SQL'
+ALTER TABLE x ADD y int;
+SQL"
+blocked "ssh prisma db push on shared db" builder 'postgres://h/app_dev_s1' "ssh host 'cd app && bunx prisma db push'"
+blocked "bash heredoc running dbpush" builder 'postgres://h/app_dev' "bash <<'EOF'
+bun run dbpush
+EOF"
+blocked "unquoted cat heredoc is expanded by the shell" builder 'postgres://h/app_dev' "cat > /tmp/m.md <<EOF
+\$(bun run dbpush)
+EOF"
+blocked "tee piped to a shell keeps the body" builder 'postgres://h/app_dev' "tee /tmp/m.sh <<'EOF' | bash
+bun run dbpush
+EOF"
+blocked "dbpush after a text heredoc" builder 'postgres://h/app_dev' "cat > /tmp/m.md <<'EOF'
+note
+EOF
+bun run dbpush"
 allowed "bootstrap-regression-shard.ts" builder - 'bun bin/bootstrap-regression-shard.ts --db app_dev_s1 && psql app_dev_s1 -c "CREATE TABLE t (i int)"'
 allowed "non Bash tool" builder - 'ls'
 payload='{"tool_name":"Read","tool_input":{"file_path":"/x"}}'
