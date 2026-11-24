@@ -123,6 +123,57 @@ class BlockedByBodyIsWaitedOn(unittest.TestCase):
         self.assertIn('supply_start=1:0', log)
 
 
+class SkippedIssuesAreNotSupply(unittest.TestCase):
+    """#1816: ready issues the pass will not start (started, open PR, parked, live worker) are not supply."""
+
+    CONFIG = dict(CONFIG, work_order={'min_active': 0, 'target_workers': 4})
+
+    def scan(self, rows, prs=(), state=None, workers=None):
+        starts = []
+        state = state if state is not None else {}
+        state.setdefault('issue_scan_backlog_sweep_at', NOW)
+        _, log = fw.issue_scan_pass(
+            self.CONFIG, state, NOW, workers or [],
+            list_issues=lambda repo: rows if repo == REPO else [], pr_fetch=lambda _repo: list(prs),
+            gate_check=lambda _cfg: True,
+            admit_fn=lambda _host, _cfg, _workers: {'admitted': True, 'occupied': 0},
+            start_worker=lambda command: starts.append(command) or 0,
+            start_detached=lambda command, extra_env=None: starts.append(command) or 0,
+            issue_state=lambda _repo, _number: 'CLOSED',
+            inventory_ok=True, persist_state=lambda: None,
+            pick_fn=lambda role, **_kw: {'selected': {'provider': 'claude', 'model': 'opus'}},
+        )
+        return starts, ','.join(log)
+
+    def test_started_issue_is_not_supply(self):
+        state = {'issue_scan_started': {REPO: [1]}, 'issue_scan_started_at': {REPO: {'1': NOW}}}
+        starts, log = self.scan([issue(1, ['ready-for-agent'], BRIEF)], state=state)
+        self.assertIn('supply_start=4:0', log)
+        self.assertEqual(len(starts), 1)
+
+    def test_open_pr_issue_is_not_supply(self):
+        pr = {'number': 50, 'state': 'OPEN', 'body': 'Closes #1', 'headRefName': 'x', 'isDraft': False}
+        starts, log = self.scan([issue(1, ['ready-for-agent'], BRIEF)], prs=[pr])
+        self.assertIn('supply_start=4:0', log)
+
+    def test_parked_issue_is_not_supply(self):
+        row = issue(1, ['ready-for-agent'], BRIEF)
+        key = fw.park_id('issue', REPO, 1, row.get('updatedAt') or '')
+        starts, log = self.scan([row], state={'parked': {key: {}}})
+        self.assertIn('issue_parked=1', log)
+        self.assertIn('supply_start=4:0', log)
+
+    def test_live_worker_issue_is_not_supply(self):
+        worker = {'_task_title': '#1|fullstack-dev', 'status': 'working'}
+        starts, log = self.scan([issue(1, ['ready-for-agent'], BRIEF)], workers=[worker])
+        self.assertIn('issue_live=1', log)
+        self.assertRegex(log, r'supply_start=\d+:0')
+
+    def test_startable_issue_still_counts_as_supply(self):
+        starts, log = self.scan([issue(1, ['ready-for-agent'], BRIEF)])
+        self.assertIn('supply_start=4:1', log)
+
+
 class NoFalseBlocks(unittest.TestCase):
     def test_issue_without_blocked_by_text_is_started_and_never_looked_up(self):
         h = Harness([issue(10079, ['ready-for-agent'], BRIEF)])

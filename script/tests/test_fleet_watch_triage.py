@@ -241,7 +241,7 @@ class SupplyWorker(unittest.TestCase):
 
     def test_enough_supply_starts_none(self):
         issues = [row(n) for n in range(1, 4)]
-        supply, _triage, bits, _state, _n = self.supply(issues, workers=TriageWorker.live(self, 7))
+        supply, _triage, bits, _state, _n = self.supply(issues, workers=TriageWorker.live(self, 7, title='#99|fullstack-dev'))
         self.assertEqual(supply, [])
         self.assertIn('supply_enough=3:3', bits)
 
@@ -254,7 +254,7 @@ class SupplyWorker(unittest.TestCase):
         self.assertFalse([n for n in notices if 'supply' in n])
 
     def test_digest_line_each_pass(self):
-        _s, _t, _bits, _state, notices = self.supply([row(1)], workers=TriageWorker.live(self, 4))
+        _s, _t, _bits, _state, notices = self.supply([row(1)], workers=TriageWorker.live(self, 4, title='#99|fullstack-dev'))
         self.assertRegex(' '.join(notices), r'work order: 4 live \(4 working, 0 waiting on coordinator\), supply 1, \S+ load \d+\.\d\d cap 4')
         _s, _t, _bits, _state, notices = self.supply([], workers=TriageWorker.live(self, 10))
         self.assertRegex(' '.join(notices), r'work order: 10 live \(10 working, 0 waiting on coordinator\), supply 0, \S+ load \d+\.\d\d cap 4')
