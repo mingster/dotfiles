@@ -1,0 +1,1 @@
+Tier 0 PRs (test files and docs only, 150 lines or fewer) ship on Review PASS plus green Checks with no verifier. Tier 1 PRs (50 code lines or fewer, no UI file) get their verifier first and outside the per pass cap. A weekly audit verifies 5 random tier 0 PRs after merge (one week trial, #1730).
