@@ -3473,6 +3473,69 @@ def issue_scan_blocked(issue):
     return False
 
 
+# `Blocked by #n` or `Blocked by owner/repo#n` on its own line (bullets allowed), or under a `## Blocked by` heading (#1788).
+# `Blocked by red gate #n` is the red-gate hold, handled elsewhere.
+_BLOCKED_BY_LINE_RE = re.compile(r'^\s*(?:[-*]\s+)?blocked by\b:?(?!\s+red gate\b)(.*)$', re.I)
+_BLOCKED_BY_HEADING_RE = re.compile(r'^#{1,6}\s*blocked by\b:?(.*)$', re.I)
+_ANY_HEADING_RE = re.compile(r'^#{1,6}\s')
+_ISSUE_REF_RE = re.compile(r'(?:([\w.-]+/[\w.-]+))?#(\d+)\b')
+
+
+def issue_blocker_refs(issue, repo):
+    """(repo, number) for each issue the body says this one is blocked by, in body order, without repeats."""
+    refs = []
+    in_section = False
+    for line in (issue.get('body') or '').splitlines():
+        if _ANY_HEADING_RE.match(line.strip()):
+            heading = _BLOCKED_BY_HEADING_RE.match(line.strip())
+            in_section = heading is not None
+            if not heading:
+                continue
+            text = heading.group(1)
+        else:
+            line_match = _BLOCKED_BY_LINE_RE.match(line)
+            if line_match:
+                text = line_match.group(1)
+            elif in_section:
+                text = line
+            else:
+                continue
+        for match in _ISSUE_REF_RE.finditer(text):
+            ref = (match.group(1) or repo, int(match.group(2)))
+            if ref != (repo, int(issue.get('number') or 0)) and ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def _blocker_label(ref, repo):
+    ref_repo, number = ref
+    return '#%d' % number if ref_repo == repo else '%s#%d' % (ref_repo, number)
+
+
+def issue_open_blockers(issue, repo, issue_state, cache):
+    """(open, unknown) blockers of an issue. unknown are refs whose state gh could not read (None). Cache is per pass."""
+    open_refs, unknown = [], []
+    for ref in issue_blocker_refs(issue, repo):
+        if ref not in cache:
+            cache[ref] = issue_state(*ref)
+        if cache[ref] is None:
+            unknown.append(ref)
+        elif cache[ref] == 'OPEN':
+            open_refs.append(ref)
+    return open_refs, unknown
+
+
+def fetch_issue_state(repo, number, run=subprocess.run):
+    """OPEN or CLOSED for an issue, or None when gh fails or answers something else."""
+    try:
+        proc = run(['gh', 'issue', 'view', str(number), '--repo', repo, '--json', 'state', '--jq', '.state'],
+                   capture_output=True, text=True, timeout=30, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    state = proc.stdout.strip().upper() if proc.returncode == 0 else ''
+    return state if state in ('OPEN', 'CLOSED') else None
+
+
 ISSUE_HOLD_LABELS = frozenset((
     'blocked', 'owner', 'deferred', 'tracking', 'needs-triage', 'needs-elon', 'needs-redesign',
 ))
@@ -7571,6 +7634,7 @@ def issue_scan_pass(
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
     babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None, red_gates=None,
+    issue_state=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
@@ -7830,6 +7894,9 @@ def issue_scan_pass(
 
     if list_issues is None:
         list_issues = fetch_ready_issues
+    if issue_state is None:
+        issue_state = fetch_issue_state
+    blocker_states = {}
 
     started = state.setdefault('issue_scan_started', {})
     issue_pending = state.setdefault('issue_scan_pending', {})
@@ -7862,6 +7929,17 @@ def issue_scan_pass(
                 listed[repo] = pr_fetch(repo)
             if open_pr_for_issue(listed[repo], row['number']):
                 log_bits.append('issue_open_pr=%d' % row['number'])
+                continue
+            open_blockers, unknown_blockers = issue_open_blockers(row, repo, issue_state, blocker_states)
+            if open_blockers or unknown_blockers:
+                # Not ready work, so it does not count as supply either (#1788).
+                ready_queue_count -= 1
+                if open_blockers:
+                    log_bits.append('issue_blocked=%d:by=%s' % (
+                        row['number'], ','.join(_blocker_label(ref, repo) for ref in open_blockers)))
+                if unknown_blockers:
+                    log_bits.append('issue_blocker_unknown=%d:by=%s' % (
+                        row['number'], ','.join(_blocker_label(ref, repo) for ref in unknown_blockers)))
                 continue
             updated = row.get('updatedAt') or ''
             if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
