@@ -21,7 +21,7 @@ if command -v gh >/dev/null 2>&1; then
   dog=$!
   wait "$issue_pid"; issue_rc=$?
   wait "$pr_pid"; pr_rc=$?
-  kill "$dog" 2>/dev/null
+  kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null
   show() { # <name> <exit code>: the output, or a note when gh failed or was stopped
     if [ "$2" -eq 0 ]; then cat "$d/$1"; elif [ "$2" -eq 143 ]; then echo "  (gh timed out)"; else echo "  (gh unavailable)"; fi
   }
