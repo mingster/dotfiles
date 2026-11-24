@@ -4214,19 +4214,39 @@ _TRIAGE_BRIEF = Path(__file__).resolve().parent.parent / 'templates/agent-team/d
 
 
 def fetch_triage_backlog(repo, run=subprocess.run):
-    """Count of open needs-triage and ready-for-human issues, or None when gh fails."""
-    seen = set()
+    """Open needs-triage and ready-for-human issues as {number: updatedAt}, or None when gh fails."""
+    seen = {}
     for label in _TRIAGE_LABELS:
         command = [
             'gh', 'issue', 'list', '--repo', repo, '--label', label, '--state', 'open',
-            '--limit', '100', '--json', 'number',
+            '--limit', '100', '--json', 'number,updatedAt',
         ]
         try:
             output = run(command, capture_output=True, text=True, timeout=30, check=True)
-            seen.update(row['number'] for row in json.loads(output.stdout))
+            seen.update((row['number'], row.get('updatedAt') or '') for row in json.loads(output.stdout))
         except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError):
             return None
-    return len(seen)
+    return seen
+
+
+def triage_backlog_unchanged(backlog, last):
+    """True when the backlog is the one the last triage start saw: same numbers, none updated since (#1723).
+
+    A bare count (no per issue times) or no earlier snapshot cannot prove it, so triage may start."""
+    if not isinstance(backlog, dict) or not isinstance(last, dict):
+        return False
+    try:
+        started = float(last['at'])
+        seen = {int(n) for n in last['issues']}
+        if seen != {int(n) for n in backlog}:
+            return False
+        for stamp in backlog.values():
+            when = datetime.datetime.fromisoformat(str(stamp).replace('Z', '+00:00')).timestamp()
+            if when > started:
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
 
 
 def build_triage_command(config, repo, agent, model):
@@ -4423,6 +4443,7 @@ def issue_scan_try_triage(
     keeping = work_order_keeps_target(config, now)
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     last_starts = state.setdefault('issue_scan_triage_at', {})
+    last_seen = state.setdefault('issue_scan_triage_seen', {})
     used = 0
     for repo in repos:
         if not _issue_scan_has_slot(host, config, admission, extra_starts + used):
@@ -4442,6 +4463,9 @@ def issue_scan_try_triage(
         if not backlog:
             log_bits.append('triage_skip_no_backlog')
             continue
+        if triage_backlog_unchanged(backlog, last_seen.get(repo)):
+            log_bits.append('triage_skip_unchanged')
+            continue
         builder = (scan.get('agent') or 'claude', scan.get('model') or '')
         chosen = choose_pick((pick_fn or pick_role)('architect-pm', avoid_family=_avoid_family(builder)), builder)
         if not chosen:
@@ -4456,8 +4480,10 @@ def issue_scan_try_triage(
             continue
         if start_worker(command) == 0:
             last_starts[repo] = now
+            if isinstance(backlog, dict):
+                last_seen[repo] = {'at': now, 'issues': sorted(backlog)}
             used += 1
-            log_bits.append('triage_start=%d' % backlog)
+            log_bits.append('triage_start=%d' % (len(backlog) if isinstance(backlog, dict) else backlog))
             if urgent and not keeping and notices is not None:
                 notices.append('work order: %d active, grill backlog' % active)
             count_started()
