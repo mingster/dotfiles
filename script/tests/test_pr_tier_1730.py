@@ -45,7 +45,13 @@ class Tier0(unittest.TestCase):
 
     def test_a_rename_out_of_a_protected_path_is_tier_2(self):
         self.assertEqual(tier(f('docs/x.md', 1, 1, previous_filename='script/ship.sh')), 2)
-        self.assertEqual(tier(f('docs/x.md', 1, 1, previous_filename='docs/y.md')), 1)
+        self.assertEqual(tier(f('script/tests/test_x.py', 1, 1, previous_filename='.claude/hooks/guard.py')), 2)
+
+    def test_a_rename_between_docs_or_tests_is_tier_0(self):
+        self.assertEqual(tier(f('docs/x.md', 1, 1, previous_filename='docs/y.md')), 0)
+        self.assertEqual(tier(f('script/tests/test_new.py', 5, 0, previous_filename='script/tests/test_old.py')), 0)
+        self.assertEqual(tier(f('script/tests/test_new.py', 100, 50, previous_filename='script/tests/test_old.py')), 0)
+        self.assertEqual(tier(f('script/tests/test_new.py', 100, 51, previous_filename='script/tests/test_old.py')), 2)
 
     def test_fails_closed(self):
         self.assertEqual(tier(), 2)
@@ -70,6 +76,11 @@ class Tier1(unittest.TestCase):
 
     def test_oversize_tier_0_candidate_with_a_helper_is_tier_1_when_small(self):
         self.assertEqual(tier(f('script/tests/lib/x.sh', 10), f('script/tests/test_a.py', 10)), 1)
+
+    def test_a_rename_from_code_or_a_helper_into_a_test_or_doc_is_not_tier_0(self):
+        self.assertEqual(tier(f('script/tests/test_x.py', 5, 0, previous_filename='script/x.py')), 1)
+        self.assertEqual(tier(f('docs/x.md', 5, 0, previous_filename='script/tests/lib/helper.sh')), 1)
+        self.assertEqual(tier(f('script/tests/test_x.py', 30, 21, previous_filename='script/x.py')), 2)
 
 
 class Protected(unittest.TestCase):

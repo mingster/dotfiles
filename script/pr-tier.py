@@ -105,7 +105,7 @@ def classify(files):
                 return 2, 'protected path %s' % p
     total = sum(lines for _p, _o, lines in rows)
     if total <= TIER0_MAX_LINES and all(
-        not prev and (is_doc(path) or is_test(path)) for path, prev, _l in rows
+        (is_doc(path) or is_test(path)) and (not prev or is_doc(prev) or is_test(prev)) for path, prev, _l in rows
     ):
         return 0, '%d lines, tests and docs only' % total
     code = sum(lines for path, _o, lines in rows if not is_doc(path))
