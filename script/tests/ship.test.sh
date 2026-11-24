@@ -1431,6 +1431,24 @@ else
   bad "an older answering Verdict superseded by a plain Verdict does not cover the FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# One Does not hold line answers only the FAIL it follows (#1770).
+h1778=$(code_head 1778 feat-two-fails-one-reason)
+gh pr comment 1778 --repo example/repo --body "Review: FAIL head=$h1778 model=gemini" >/dev/null
+gh pr comment 1778 --repo example/repo --body "Review: FAIL head=$h1778 model=opus" >/dev/null
+gh pr comment 1778 --repo example/repo --body "Verdict: PASS head=$h1778 verifier=ctx_verifier author=ctx_author agent=claude model=opus
+
+> Review: FAIL head=$h1778 model=gemini
+Does not hold: covered by the cart test.
+> Review: FAIL head=$h1778 model=opus" >/dev/null
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1778
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1778:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "one Does not hold line does not answer a second quoted Review FAIL"
+else
+  bad "one Does not hold line does not answer a second quoted Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # Private name check runs only on a public repo (visibility read from GitHub).
 name_scope_case() { # <pr> <repo> <visibility|fails> <expect ship|refuse> <label>
   local n=$1 r=$2 vis=$3 expect=$4 label=$5 h

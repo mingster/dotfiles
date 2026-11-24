@@ -423,7 +423,7 @@ load_newest_verdict() {
 # Every Review: FAIL at the merge head must be covered (#1770). A FAIL is covered by a later cold Review: PASS
 # from the model that posted it, by a Countersign (all FAILs), or, in the verdict lane, when the newest Verdict
 # comment is a PASS or PASS+NOTES at the head, posted after that FAIL, that quotes the FAIL's first line as
-# "> <line>" and has a "Does not hold: <reason>" line. The newest Verdict already passed the gates of its lane.
+# "> <line>" with a "Does not hold: <reason>" line right after the quote. The newest Verdict already passed the gates of its lane.
 # Another model's PASS does not cover a FAIL. An edited or minimized PASS or Verdict does not count. An edited FAIL
 # still blocks. Comments are oldest first.
 review_fail_blocks_merge() {
@@ -443,15 +443,17 @@ review_fail_blocks_merge() {
         | select(.r == "FAIL" or .cold)
       ] as $rows
     | ([ $cs[] | (.body | split("\n")) as $ls
-         | select($ls[0] | test("^Verdict: (PASS\\+NOTES|PASS|FAIL) head=[0-9a-f]{40} verifier=[a-zA-Z0-9_-]+ author=[a-zA-Z0-9_-]+"))
-         | . + {ls: $ls} ] | last) as $v
+         | ($ls[0] | capture("^Verdict: (?<res>PASS\\+NOTES|PASS|FAIL) head=[0-9a-f]{40} verifier=[a-zA-Z0-9_-]+ author=[a-zA-Z0-9_-]+( agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+)?$")?) as $m
+         | select($m != null and (.flagged | not or $m.res == "FAIL"))
+         | . + {ls: $ls}] | last) as $v
     | ($v != null and $lane == "verdict" and ($v.flagged | not)
-        and ($v.ls[0] | test("^Verdict: (PASS\\+NOTES|PASS) head=" + $h + " "))
-        and any($v.ls[]; test("^Does not hold: [^ ]"))) as $verdict_answers
+        and ($v.ls[0] | test("^Verdict: (PASS\\+NOTES|PASS) head=" + $h + " "))) as $verdict_answers
     | [ $rows[] | select(.r == "FAIL") as $f
         | select(
             (any($rows[]; .idx > $f.idx and .r == "PASS" and .m != "" and .m == $f.m) | not)
-            and (($verdict_answers and $v.idx > $f.idx and (($v.ls | index("> " + $f.line)) != null)) | not)
+            and (($verdict_answers and $v.idx > $f.idx
+                  and (($v.ls | index("> " + $f.line)) as $k
+                       | $k != null and (($v.ls[$k + 1] // "") | test("^Does not hold: [^ ]")))) | not)
           ) ] | if length == 0 then "" else "Review: FAIL" end
   ' <<<"$info") || refuse "cannot read Review comments on PR $pr"
   [ -n "$uncovered" ] || return 0
