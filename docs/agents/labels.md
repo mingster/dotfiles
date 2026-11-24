@@ -31,7 +31,7 @@ An open issue without a hold label carries `needs-triage` or `ready-for-agent`, 
 
 ## Priority (4)
 
-Every `ready-for-agent` issue carries one of these. fleet-watch ranks them in `issue_scan_priority` in `script/fleet-watch.py`. No P label ranks as `P2`.
+Every `ready-for-agent` issue carries one of these. fleet-watch ranks them in `issue_scan_priority` in `script/fleet-watch.py`. No P label ranks as `P2`. A `bug` label ranks as `P0`.
 
 | Label | Meaning | Set by and when | What happens next |
 | ----- | ------- | --------------- | ----------------- |
@@ -91,9 +91,9 @@ Three labels show the state on the board in plain words. They are views of the s
 
 ## Start order
 
-Every dotfiles issue starts before any other repo's. Two places enforce it:
+Every dotfiles issue starts before any other repo's, except that `P0` and `bug` issues and red main or red gate fixers in any repo start first. Two places enforce it:
 
-- fleet-watch orders its issue scan (`issue_scan_queue_key` in `script/fleet-watch.py`): every dotfiles issue before any other repo's, then priority (`P0` first, no P label counts as `P2`), then size (`size:S`, no size label, `size:L`), then oldest first, then lowest number.
+- fleet-watch orders its issue scan (`issue_scan_queue_key` in `script/fleet-watch.py`): a red main or red gate fix, then `P0` or `bug` issues in any repo, then the rest, dotfiles first in each group, then priority (`P0` first, no P label counts as `P2`), then size (`size:S`, no size label, `size:L`), then oldest first, then lowest number.
 - The coordinator's hand dispatch path enforces it too. A hand start claims its issue (`ready-for-agent` off, `status:進行中` on) before the worker starts. A brief that says `Refs: #n` with no repo claims in the repo of the start (its `--repo` or worktree), not in the directory the script runs from. `script/worker-startup.sh` (`refuse_before_dotfiles`) refuses a builder start whose brief `Refs` another repo while a dotfiles issue is `ready-for-agent` with no hold label and not in flight. Rework briefs, verify briefs, non-builder roles and a brief with no explicit repo are not refused. A start takes the free seat, so a ready dotfiles issue plus a start request is the whole seat test. A dotfiles issue that cannot start does not hold the other repos back (#1778): when fleet-watch refused it on placement or a host cap in the last 15 minutes it is in `dotfiles_deferred` in the fleet-watch state file (`FLEET_WATCH_STATE`), and `refuse_before_dotfiles` does not count it as waiting. It counts again once a pass starts it or the record is older than 15 minutes. `--skip-dotfiles-first REASON` overrides it and logs the reason. A failed `gh` call lets the start go on with a warning. `script/tests/worker-startup.test.sh` covers it.
 
 An unlabeled or `needs-triage` dotfiles issue is not ready, so the gate above is what keeps it from being invisible: it gets labeled at the next start and architect-pm triages it first (`templates/agent-team/.claude/agents/elon.md`, Musts).

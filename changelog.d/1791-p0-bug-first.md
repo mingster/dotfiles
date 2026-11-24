@@ -1,0 +1,1 @@
+- fleet-watch and worker-startup start P0 and `bug` issues in any repo first, then dotfiles first, then P, size and age. `fleet-watch.py --next-issue` prints the next ready issue (#1791).

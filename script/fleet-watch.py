@@ -3569,8 +3569,10 @@ def open_pr_for_issue(prs, number):
 
 
 def issue_scan_priority(issue):
-    """P0 to P3 as 0 to 3. No P label ranks as P2."""
+    """P0 to P3 as 0 to 3. A `bug` label ranks as P0 (owner 2026-11-25, #1791). No P label ranks as P2."""
     labels = _issue_label_names(issue)
+    if 'bug' in labels:
+        return 0
     for rank, name in enumerate(('P0', 'P1', 'P2', 'P3')):
         if name in labels:
             return rank
@@ -3591,11 +3593,20 @@ def issue_scan_sort_key(issue):
 
 
 def issue_scan_queue_key(repo, issue):
-    """Owner rule 2026-11-20: every dotfiles issue goes before any other repo's, then the sort key."""
+    """Queue order: red main or red gate fix, then P0 or `bug` in any repo, then the rest, dotfiles first in each group, then the sort key.
+
+    Owner rules 2026-11-20 (dotfiles first) and 2026-11-25 (P0 and bug first, #1791)."""
     dotfiles_first = 0 if str(repo).rsplit('/', 1)[-1] == 'dotfiles' else 1
     # A red main fix and a red gate fix go before everything else, in any repo (#1677, #1746).
     main_red_first = 0 if str(issue.get('title') or '').startswith((MAIN_RED_TITLE_PREFIX, RED_GATE_TITLE_PREFIX)) else 1
-    return (main_red_first, dotfiles_first) + issue_scan_sort_key(issue)
+    urgent_first = 0 if issue_scan_priority(issue) == 0 else 1
+    return (main_red_first, urgent_first, dotfiles_first) + issue_scan_sort_key(issue)
+
+
+def next_ready_issue(repos, list_issues):
+    """(repo, issue) an eligible ready issue first in queue order across ``repos``, or None. Same key as the issue scan."""
+    pairs = [(repo, row) for repo in repos for row in (list_issues(repo) or []) if issue_scan_eligible(row)]
+    return min(pairs, key=lambda pair: issue_scan_queue_key(*pair)) if pairs else None
 
 
 # role label -> (worker title role, usage-gate preset role). No role label means fullstack-dev.
@@ -9383,11 +9394,28 @@ def main():
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
     parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
+    parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
     parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
 
     if args.trial_summary:
         print(trial_summary(read_trial_rows()))
+        return 0
+
+    if args.next_issue:
+        if args.config is not None:
+            cfg_path = args.config
+        else:
+            cfg_path = Path(os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json'))
+        config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        config, _adopted = resolve_pass_config(config, cfg_path)
+        scan = config.get('issue_scan') or {}
+        repos = scan.get('repos') or repos_from_roots(scan.get('repo_roots') or config.get('repo_roots'))[0]
+        found = next_ready_issue(repos, fetch_ready_issues)
+        if found is None:
+            print('none')
+            return 1
+        print('%s#%s %s' % (found[0], found[1].get('number'), found[1].get('title') or ''))
         return 0
 
     if args.admit or args.admit_local or args.seats:
