@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -228,14 +229,21 @@ class ScopedTests(unittest.TestCase):
         selected = json.loads((self.repo / 'web/selected.json').read_text())
         self.assertEqual(selected, ['./src/app/api/e2e/route/__tests__/route.test.ts'])
 
-    def components(self, phase, *files):
+    def components(self, phase, *files, only_tools_path=False, extra_env=None):
         tools = self.repo / 'tools'
         tools.mkdir(exist_ok=True)
         for tool in ['bun', 'bunx', 'python3']:
             target = tools / tool
             target.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\nwith open(os.environ["CALLS"], "a") as f: f.write(json.dumps([pathlib.Path(sys.argv[0]).name, os.getcwd(), sys.argv[1:]])+"\\n")\nif pathlib.Path(sys.argv[0]).name == "python3" and "py_compile" in sys.argv: sys.exit(subprocess.run([' + repr(sys.executable) + ']+sys.argv[1:]).returncode)\n')
             target.chmod(0o755)
-        return subprocess.run([sys.executable, str(HELPER), '--root', 'web', '--runner', 'bun test --isolate', '--components', phase, *files], cwd=self.repo, env=dict(os.environ, PATH=str(tools)+os.pathsep+os.environ['PATH'], CALLS=str(self.repo/'calls')), text=True, capture_output=True)
+        path = str(tools) if only_tools_path else str(tools)+os.pathsep+os.environ['PATH']
+        env = dict(os.environ, PATH=path, CALLS=str(self.repo/'calls'), **(extra_env or {}))
+        return subprocess.run([sys.executable, str(HELPER), '--root', 'web', '--runner', 'bun test --isolate', '--components', phase, *files], cwd=self.repo, env=env, text=True, capture_output=True)
+
+    def link_tool(self, name):
+        tools = self.repo / 'tools'
+        tools.mkdir(exist_ok=True)
+        (tools / name).symlink_to(shutil.which(name))
 
     def test_unknown_components_are_reported_and_do_not_block(self):
         result = self.components('lint', 'jellyfin/Thing.cs', 'roku/main.brs', 'streaminator/a.cpp')
@@ -256,6 +264,37 @@ class ScopedTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('pytest', (self.repo/'calls').read_text())
         self.assertIn('projb_op/bin/tests', (self.repo/'calls').read_text())
+
+    def test_shell_only_tests_dir_does_not_run_pytest_and_skips_missing_tools(self):
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/needs-flock.test.sh', '#!/usr/bin/env bash\nflock -n 9\nexit 1\n')
+        self.write('projb_op/bin/tests/ok.test.sh', '#!/usr/bin/env bash\nexit 0\n')
+        self.link_tool('bash')
+        # PATH holds only the shims and bash, so flock is missing whatever the host has.
+        result = self.components('tests', 'projb_op/bin/task.py', only_tools_path=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.repo / 'calls'
+        self.assertNotIn('pytest', calls.read_text() if calls.exists() else '')
+        self.assertIn('ok.test.sh', result.stdout)
+        self.assertIn('SKIPPED: projb_op/bin/tests/needs-flock.test.sh (needs flock', result.stdout)
+
+    def test_shell_test_needing_bash5_is_skipped_when_only_old_bash_exists(self):
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/needs5.test.sh', '#!/usr/bin/env bash\n(( BASH_VERSINFO[0] >= 5 )) || exit 1\n')
+        old = self.repo / 'tools' / 'bash'
+        old.parent.mkdir(exist_ok=True)
+        old.write_text('#!/bin/sh\nexit 1\n')  # a bash that is not version 5
+        old.chmod(0o755)
+        result = self.components('tests', 'projb_op/bin/task.py', only_tools_path=True,
+                                 extra_env={'SCOPED_TESTS_BASH_CANDIDATES': '/nonexistent/bash'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('SKIPPED: projb_op/bin/tests/needs5.test.sh (needs bash 5', result.stdout)
+
+    def test_failing_shell_test_still_fails(self):
+        self.write('projb_op/bin/task.py', 'x = 1')
+        self.write('projb_op/bin/tests/bad.test.sh', '#!/usr/bin/env bash\nexit 3\n')
+        result = self.components('tests', 'projb_op/bin/task.py')
+        self.assertEqual(result.returncode, 3)
 
     def test_workflow_yaml_is_parsed(self):
         self.write('.github/workflows/build.yml', 'name: Build')
