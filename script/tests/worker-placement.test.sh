@@ -449,4 +449,50 @@ WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-1411.json" FLEET_WATCH_CONFIG="$tmp/cl
 [ "$(jq -r '[.starts[].id] | join(",")' "$tmp/recent-1411.json")" = c_other ] \
   || fail "unrecord --claim must drop that claim only: $(cat "$tmp/recent-1411.json")"
 
+# #1756: a release-manager or qa-sdet start never lands outside browser_hosts. No key means no rule.
+cat >"$tmp/load-bh.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-plain cores=8 load=0.1 1.0 1.0\n'
+printf 'host-browser cores=8 load=3.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-bh.sh"
+bh_cfg() { # <extra json key or empty> <file>
+  cat >"$2" <<EOS
+{
+  $1
+  "host_caps": {"host-plain": 4, "host-browser": 4},
+  "host_load_ceilings": {"host-plain": 12, "host-browser": 12},
+  "worker_placement": {"order": ["host-plain", "host-browser"], "repos": {}}
+}
+EOS
+}
+bh_cfg '"browser_hosts": ["Host-Browser"],' "$tmp/bh.json"
+bh_cfg '' "$tmp/bh-none.json"
+bh_cfg '"browser_hosts": ["host-gone"],' "$tmp/bh-nomatch.json"
+for role in release-manager qa-sdet fullstack-dev; do printf 'Worker role: %s\n\nbrief\n' "$role" >"$tmp/spec-$role.md"; done
+bh_pick() { # <config> <role>
+  FLEET_LOAD_SCRIPT="$tmp/load-bh.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" pick --json --spec "$tmp/spec-$2.md" 2>/dev/null
+}
+for role in release-manager qa-sdet; do
+  out=$(bh_pick "$tmp/bh.json" "$role") || fail "$role pick with browser_hosts failed: $out"
+  [ "$(jq -r '.host' <<<"$out")" = host-browser ] || fail "$role must skip the host outside browser_hosts: $out"
+done
+out=$(bh_pick "$tmp/bh.json" fullstack-dev) || fail "fullstack-dev pick failed: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-plain ] || fail "a role with no browser gate keeps normal placement: $out"
+out=$(bh_pick "$tmp/bh-nomatch.json" release-manager || true)
+grep -Fq 'browser_hosts' <<<"$out" || fail "no browser host must name browser_hosts: $out"
+out=$(bh_pick "$tmp/bh-none.json" release-manager) || fail "no browser_hosts key must change nothing: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-plain ] || fail "no browser_hosts key must keep normal placement: $out"
+# check-host (--on): a non-browser host is refused naming browser_hosts; absent key accepts.
+bh_check() { # <config> <host> <role>
+  FLEET_LOAD_SCRIPT="$tmp/load-bh.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" check-host --host "$2" --spec "$tmp/spec-$3.md" 2>/dev/null
+}
+for role in release-manager qa-sdet; do
+  ec=0; out=$(bh_check "$tmp/bh.json" host-plain "$role") || ec=$?
+  [ "$ec" = 1 ] && grep -Fq 'browser_hosts' <<<"$out" || fail "$role --on a non-browser host must be refused naming browser_hosts (ec=$ec): $out"
+  bh_check "$tmp/bh.json" host-browser "$role" >/dev/null || fail "$role --on a browser host must pass"
+done
+bh_check "$tmp/bh.json" host-plain fullstack-dev >/dev/null || fail "fullstack-dev --on any host must pass"
+bh_check "$tmp/bh-none.json" host-plain release-manager >/dev/null || fail "no browser_hosts key must accept any host"
+
 echo "worker-placement.test.sh passed"

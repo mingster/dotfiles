@@ -2020,8 +2020,8 @@ forced_start() { # <load script> <--on host> [extra args...] -> sets forced_ec, 
   env -u BASH_ENV \
     PATH="$run_path" ORCA_CLI_COMMAND="$orca_remote_stub" ORCA_STUB_LOG="$tmp/orca-forced.log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
-    FLEET_WATCH_CONFIG="$tmp/fleet-placement.json" FLEET_LOAD_SCRIPT="$load" \
-    bash --noprofile --norc "$script" --run run_forced --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+    FLEET_WATCH_CONFIG="${forced_cfg:-$tmp/fleet-placement.json}" FLEET_LOAD_SCRIPT="$load" \
+    bash --noprofile --norc "$script" --run run_forced --spec "$spec_file" --title "${forced_title:-#1|fullstack-dev}" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord --on "$on" --name n_forced --repo "path:$rem_app" "$@" 2>"$tmp/forced.err"
   forced_ec=$?
   set -e
@@ -2036,6 +2036,24 @@ forced_start "$tmp/load-forced-ok.sh" host-overflow
 forced_start "$tmp/load-forced-hot.sh" host-overflow --force-host "owner asked for this host"
 [ "$forced_ec" = 0 ] && ok || bad "--force-host passes over the limit ($forced_ec) $(cat "$tmp/forced.err")"
 grep -q 'force-host: owner asked for this host' "$tmp/forced.err" && ok || bad "--force-host logs the reason ($(cat "$tmp/forced.err"))"
+
+# #1756: a release-manager or qa-sdet --on a host outside browser_hosts exits 4 naming browser_hosts; --force-host overrides.
+jq '. + {browser_hosts: ["host-primary"]}' "$tmp/fleet-placement.json" >"$tmp/fleet-placement-browser.json"
+for bh_title in '#1|release-manager' '#1|qa-sdet'; do
+  : >"$tmp/orca-forced.log"
+  forced_title=$bh_title forced_cfg="$tmp/fleet-placement-browser.json" forced_start "$tmp/load-forced-ok.sh" host-overflow
+  [ "$forced_ec" = 4 ] && ok || bad "$bh_title --on a non-browser host exits 4 ($forced_ec) $(cat "$tmp/forced.err")"
+  grep -q 'browser_hosts' "$tmp/forced.err" && ok || bad "$bh_title refusal names browser_hosts ($(cat "$tmp/forced.err"))"
+  grep -q 'orchestration worker-start' "$tmp/orca-forced.log" && bad "$bh_title refused start must not reach worker-start" || ok
+  forced_title=$bh_title forced_cfg="$tmp/fleet-placement-browser.json" forced_start "$tmp/load-forced-ok.sh" host-overflow --force-host "browser installed by hand"
+  [ "$forced_ec" = 0 ] && ok || bad "$bh_title --force-host overrides browser_hosts ($forced_ec) $(cat "$tmp/forced.err")"
+  # No browser_hosts key: unchanged.
+  forced_title=$bh_title forced_start "$tmp/load-forced-ok.sh" host-overflow
+  [ "$forced_ec" = 0 ] && ok || bad "$bh_title with no browser_hosts key is unchanged ($forced_ec) $(cat "$tmp/forced.err")"
+done
+# A role with no browser gate is not held to browser_hosts.
+forced_title='#1|fullstack-dev' forced_cfg="$tmp/fleet-placement-browser.json" forced_start "$tmp/load-forced-ok.sh" host-overflow
+[ "$forced_ec" = 0 ] && ok || bad "fullstack-dev is not held to browser_hosts ($forced_ec) $(cat "$tmp/forced.err")"
 
 forced_start "$tmp/load-forced-ok.sh" thishost
 [ "$forced_ec" = 4 ] && ok || bad "coordinator host without a reason exits 4 even under load limit ($forced_ec)"
