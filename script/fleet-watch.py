@@ -3229,6 +3229,112 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
     return notices, log_bits
 
 
+SIGNAL_LIMIT_DEFAULT = 15 * 60
+
+
+def signal_limit_seconds(config):
+    """Seconds a CI run may be in progress, or a worker may sit with no push and no output, before it is flagged."""
+    cfg = (config or {}).get('worker_signals') or {}
+    try:
+        return max(60, int(cfg.get('limit_seconds', SIGNAL_LIMIT_DEFAULT)))
+    except (TypeError, ValueError):
+        return SIGNAL_LIMIT_DEFAULT
+
+
+def fetch_branch_runs(repo, branch):
+    """Newest runs on one branch (any status), or None when gh fails."""
+    command = ['gh', 'run', 'list', '--repo', repo, '--branch', branch, '--limit', '10',
+               '--json', 'databaseId,workflowName,status,createdAt,startedAt,headSha']
+    try:
+        output = subprocess.run(command, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def _iso_epoch(token):
+    try:
+        return calendar.timegm(time.strptime(token, '%Y-%m-%dT%H:%M:%SZ'))
+    except (TypeError, ValueError):
+        return None
+
+
+def worker_signal_pass(config, state, now, workers, term_times, terminal_branches=None, runs_fn=None,
+                       repo_of=None, inventory_ok=True, terminal_list_ok=True):
+    """One escalation per worker and signal (#1741). The signal fires again only after it has cleared.
+
+    ci: a run on the worker's branch has been in progress longer than the limit (check it, it may be slow or hung).
+    idle: no new push (newest run head) and no new terminal output for the limit.
+    """
+    notices, log_bits = [], []
+    if not inventory_ok or not terminal_list_ok:
+        return notices, log_bits
+    limit = signal_limit_seconds(config)
+    runs_fn = runs_fn or fetch_branch_runs
+    bucket = state.setdefault('worker_signals', {})
+    live = set()
+    for w in workers:
+        did = w.get('dispatchId')
+        if not isinstance(did, str) or not did or not worker_row_is_live(w):
+            continue
+        term = worker_terminal_handle(w)
+        last_out = _normalize_terminal_time_ms(term_times.get(term)) if term else None
+        branch = worker_branch_name(w) or (terminal_branches or {}).get(term) or ''
+        repo = repo_of(w) if repo_of else repo_for_worker(w, config)
+        if not (last_out is not None or (branch and repo)):
+            continue
+        live.add(did)
+        rec = bucket.setdefault(did, {'fired': {}})
+        fired = rec.setdefault('fired', {})
+        runs = runs_fn(repo, branch) if (branch and repo) else None
+        if runs:
+            head = runs[0].get('headSha') or ''
+            if head and head != rec.get('head'):
+                if rec.get('head') is not None:
+                    rec['head_at'] = now  # a changed head is a push; the first read is only a baseline
+                rec['head'] = head
+        rec.setdefault('head_at', now)
+        label = 'worker %s' % did
+        pr = worker_pr_number(w)
+        if pr:
+            label += ' (PR #%d)' % pr
+        slow = None
+        for run in runs or ():
+            if run.get('status') != 'in_progress':
+                continue
+            began = _iso_epoch(run.get('startedAt') or run.get('createdAt'))
+            if began is not None and now - began > limit and (slow is None or began < slow[0]):
+                slow = (began, run)
+        if slow:
+            if not fired.get('ci'):
+                fired['ci'] = True
+                age = int((now - slow[0]) // 60)
+                notices.append(Urgent(
+                    '%s: signal ci. Run %s (%s) has been in_progress for %d min, more than %d min. '
+                    'Check it: read the job step log. Steps still advancing means slow, wait up to 45 min. '
+                    'No step for 15 min or past 45 min means a hang.'
+                    % (label, slow[1].get('databaseId'), slow[1].get('workflowName') or 'checks', age, limit // 60)))
+                log_bits.append('signal_ci=%s' % did)
+        elif runs is not None:
+            fired.pop('ci', None)  # a failed gh read leaves the flag alone
+        newest = max(last_out, rec['head_at']) if last_out is not None else None
+        if newest is None:
+            pass  # output time unknown: never claim silence
+        elif now - newest > limit:
+            if not fired.get('idle'):
+                fired['idle'] = True
+                notices.append(Urgent(
+                    '%s: signal idle. No new push and no new terminal output for %d min, more than %d min.'
+                    % (label, int((now - newest) // 60), limit // 60)))
+                log_bits.append('signal_idle=%s' % did)
+        else:
+            fired.pop('idle', None)
+    for did in list(bucket):
+        if did not in live:
+            bucket.pop(did, None)
+    return notices, log_bits
+
+
 _ISSUE_ACCEPTANCE_RE = re.compile(
     r'^(?:## (?:[0-9]+[.)] +)?(?:Acceptance(?: criteria)?|Done check)\b|\*\*Acceptance(?: criteria)?:\*\*)',
     re.I | re.M)
@@ -8956,6 +9062,10 @@ def main():
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
         inventory_ok=inventory_ok)
     notices += stall_extra
+    signal_extra, signal_log = worker_signal_pass(
+        config, state, now, workers, term_times, terminal_branches=term_branches,
+        inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok)
+    notices += signal_extra
     nudge_log = []
     if inventory_ok and terminal_list_ok:
         try:
@@ -8983,6 +9093,8 @@ def main():
         parts.extend(wrap_log)
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
+    if signal_log:
+        parts.append('signal ' + ','.join(signal_log))
     if nudge_log:
         parts.append('nudge ' + ','.join(nudge_log))
     if babysit_log:
