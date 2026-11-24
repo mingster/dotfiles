@@ -3681,6 +3681,15 @@ def rework_needed_at_head(pr, workflow_watch_state=None, repo='', repo_root=None
     )
 
 
+def pr_tier(pr_row):
+    """0, 1 or 2 from the PR's changed files and line counts (script/pr-tier.py, #1730)."""
+    try:
+        files = pr_row.get('files')
+        return _sibling('pr_tier', 'pr-tier.py').classify(files if isinstance(files, list) else None)[0]
+    except Exception:
+        return 2
+
+
 def classify_open_pr(pr_row, workflow_watch_state=None, repo='', repo_root=None):
     if pr_row.get('state') != 'OPEN' or pr_row.get('isDraft'):
         return 'waiting'
@@ -3691,7 +3700,9 @@ def classify_open_pr(pr_row, workflow_watch_state=None, repo='', repo_root=None)
     if (pr_row.get('mergeable') != 'CONFLICTING'
             and pr_row.get('mergeStateStatus') not in ('DIRTY', 'CONFLICTING')
             and pr_checks_all_success(pr_row)
-            and pr_verdict_valid_for_head(pr_row, repo_root=repo_root)):
+            and (pr_verdict_valid_for_head(pr_row, repo_root=repo_root)
+                 # Tier 0 (tests and docs only, #1730) ships on Review PASS at the head, with no Verdict.
+                 or (pr_tier(pr_row) == 0 and review_passed_at_head(pr_row)))):
         return 'ready'
     return 'waiting'
 
@@ -5974,6 +5985,122 @@ def build_babysit_spec(repo, pr_row, kind, builder, root, verdict_tag='', standi
         return _write_issue_scan_spec(_with_preamble(text, 'fullstack-dev'))
 
 
+def tier0_audit_title(week):
+    return 'tier 0 audit %s' % week
+
+
+def tier0_audit_find_issue(repo, title, run=subprocess.run):
+    """Number of an issue (open or closed) with this exact title, 0 when there is none, None when gh fails."""
+    try:
+        out = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'all', '--search',
+                   '"%s" in:title' % title, '--json', 'number,title', '--limit', '20'],
+                  capture_output=True, text=True, timeout=30, check=True)
+        for row in json.loads(out.stdout):
+            if row.get('title') == title:
+                return row.get('number') or 0
+        return 0
+    except (subprocess.SubprocessError, OSError, ValueError, AttributeError):
+        return None
+
+
+def tier0_audit_issue_body(prs, repo):
+    """Issue body for a qa-sdet verifier: the picked PRs, and one Audit comment per PR."""
+    rows = '\n'.join(
+        '- #%s `%s`' % (p['number'], (p.get('mergeCommit') or {}).get('oid') or 'unknown') for p in prs)
+    return (
+        'These tier 0 PRs (test files and docs only) merged on Review PASS and green Checks with no verifier. '
+        'Audit each one after the fact. Merge commits:\n\n%s\n\n'
+        '## Acceptance\n'
+        '- [ ] For each PR above, read the diff (`gh pr diff <n>`), check out its merge commit, and run the tests it added or changed.\n'
+        '- [ ] Each PR gets one comment whose first line is exactly `Audit: PASS merged=<merge commit>` or '
+        '`Audit: FAIL merged=<merge commit>`, then the findings and the exact command run. Never a `Verdict:` line.\n'
+        '- [ ] PASS only when the tests prove real behavior (no tautology, nothing skipped) and changed docs match the code.\n\n'
+        '## Out of scope\n'
+        'Merging, reverting, editing code. A FAIL goes to the weekly report and the coordinator files the follow up.\n\n'
+        '## Verify\n'
+        '`python3 ~/dotfiles/script/tier0-audit.py report --repo %s` lists each PR above as PASS or FAIL.\n'
+    ) % (rows, repo)
+
+
+def fetch_merged_prs(repo, now, days=7, run=None):
+    """PRs merged in the last `days` days, or None when gh fails."""
+    if run is None:
+        run = subprocess.run
+    since = time.strftime('%Y-%m-%d', time.gmtime(now - days * 86400))
+    command = [
+        'gh', 'pr', 'list', '--repo', repo, '--state', 'merged', '--search', 'merged:>=%s' % since, '--limit', '100',
+        '--json', 'number,title,body,headRefName,files,mergedAt,mergeCommit',
+    ]
+    try:
+        return json.loads(run(command, capture_output=True, text=True, timeout=30, check=True).stdout)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return None
+
+
+def tier0_audit_pass(config, state, now, merged_fetch=None, find_issue=None, create_issue=None, rng=None,
+                     persist_state=None, log_file=None):
+    """Once a week per repo: file one issue listing 5 random tier 0 PRs merged in the past week (#1730).
+
+    The PRs are new to the log (tier0-audit.tsv). No worker starts here: a qa-sdet picks the issue up like any other.
+    The log rows are written before the issue and cut again when the issue is not created, so a row never lacks its issue.
+    A week is marked done only after the issue exists or when there is nothing to audit; a failed fetch, lookup,
+    log write or create leaves it open for the next pass."""
+    lines, log_bits = [], []
+    if (config.get('babysit') or {}).get('tier0_audit') is False:
+        return lines, log_bits
+    audit = _sibling('tier0_audit', 'tier0-audit.py')
+    week = time.strftime('%G-W%V', time.gmtime(now))
+    title = tier0_audit_title(week)
+    done = state.setdefault('tier0_audit', {})
+    find_issue = find_issue or tier0_audit_find_issue
+    create_issue = create_issue or (lambda repo, name, body: main_red_create_issue(repo, name, body, labels=('ready-for-agent', 'role:qa')))
+    path = log_file or audit.log_path()
+    for repo in babysit_repos(config):
+        if done.get(repo) == week:
+            continue
+        found = find_issue(repo, title)
+        if found is None:
+            lines.append('tier0-audit %s skip issue-lookup-failed' % repo)
+            log_bits.append('tier0_audit_lookup_fail=%s' % repo)
+            continue
+        if found:
+            done[repo] = week
+            lines.append('tier0-audit %s skip issue-exists' % repo)
+            continue
+        prs = (merged_fetch or fetch_merged_prs)(repo, now)
+        if prs is None:
+            log_bits.append('tier0_audit_fetch_fail=%s' % repo)
+            continue
+        seen = {pr for _w, pr, _s in audit.read_log(path, repo, 0)}
+        picks = audit.pick([p for p in prs if isinstance(p, dict) and p.get('number') not in seen], pr_tier, rng=rng)
+        if not picks:
+            done[repo] = week
+            lines.append('tier0-audit %s skip no-tier-0-pr' % repo)
+            continue
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        try:
+            audit.append_log(path, week, repo, picks, now=now)
+        except OSError as error:
+            lines.append('tier0-audit %s skip log-not-written: %s' % (repo, error))
+            log_bits.append('tier0_audit_log_fail=%s' % repo)
+            continue
+        number = create_issue(repo, title, tier0_audit_issue_body(picks, repo))
+        if not number:
+            try:
+                os.truncate(path, size)
+            except OSError:
+                pass
+            lines.append('tier0-audit %s skip issue-not-created' % repo)
+            log_bits.append('tier0_audit_issue_fail=%s' % repo)
+            continue
+        done[repo] = week
+        lines.append('tier0-audit %s issue #%s PRs %s' % (repo, number, ','.join('#%s' % p['number'] for p in picks)))
+        log_bits.append('tier0_audit=%s:%d' % (repo, len(picks)))
+        if persist_state:
+            persist_state()
+    return lines, log_bits
+
+
 class BabysitStartResult(int):
     """A start exit code that also carries the failing command's last stderr line and dispatch id."""
 
@@ -6748,6 +6875,20 @@ def _standing_wake(io, terminal, host, pre_last):
     return False
 
 
+def tier0_ship_pending(config, state, repo, pr_row):
+    """True when a tier 0 PR with Review PASS at its head waits for the auto-ship, so no verifier starts.
+
+    Once the auto-ship has tried this head and the PR is still open, or when fleet-watch does not auto-ship
+    this repo, the old rule applies and a verifier starts."""
+    head = pr_row.get('headRefOid') or ''
+    if pr_tier(pr_row) != 0 or not review_passed_at_head(pr_row):
+        return False
+    scan = config.get('issue_scan') or {}
+    if not scan.get('enabled') or repo not in (scan.get('pr_repos') or scan.get('repos') or []):
+        return False
+    return not ((state.get('issue_scan_ship') or {}).get(repo) or {}).get(head)
+
+
 def review_to_verifier_s(pr_row, head, now):
     """Seconds from the newest Review: PASS at this head to now, or None when no such comment is dated (#1321)."""
     stamps = []
@@ -6925,7 +7066,8 @@ def babysit_pass(
             for pr_row in closed_rows:
                 if isinstance(pr_row, dict) and _babysit_closed(pr_row):
                     note_closed(pr_row)
-    rows.sort(key=lambda item: (item[0], item[1]))
+    # Tier 1 verifiers start before the rest (#1730).
+    rows.sort(key=lambda item: (0 if pr_tier(item[3]) == 1 else 1, item[0], item[1]))
 
     standing_cfg = standing_settings(config)
     if standing_io is None:
@@ -7009,6 +7151,9 @@ def babysit_pass(
         )
         if (status == 'SUCCESS' and not verdict_posted_for_head(pr_row) and not needs_fix
                 and review_gate_open(pr_row, repo)):
+            if tier0_ship_pending(config, state, repo, pr_row):
+                lines.append(_babysit_line(repo, number, head, 'skip', 'tier0-ship'))
+                continue
             kind, role = 'verifier', 'qa-sdet'
         elif needs_fix:
             if release_idle_rework_verifier(
@@ -7050,7 +7195,9 @@ def babysit_pass(
         if park_is_active(state, park_key, config):
             lines.append(_babysit_line(repo, number, head, 'skip', 'parked'))
             continue
-        if started >= cap:
+        # A tier 1 verifier is outside the per pass cap (#1730).
+        step = 0 if kind == 'verifier' and pr_tier(pr_row) == 1 else 1
+        if started >= cap and step:
             lines.append(_babysit_line(repo, number, head, 'skip', 'cap'))
             log_bits.append('cap')
             count_refused('host_cap')
@@ -7078,7 +7225,7 @@ def babysit_pass(
         action = 'verifier' if kind == 'verifier' else 'fixer'
         if dry_run:
             lines.append(_babysit_line(repo, number, head, action, detail))
-            started += 1
+            started += step
             continue
         if kind == 'verifier':
             # The pass list can be minutes old and may be cached, so read the open list again just before the start (#1706).
@@ -7096,7 +7243,7 @@ def babysit_pass(
             )
             if routed in ('assigned', 'started'):
                 babysit_mark(state, repo, number, head, action)
-                started += 1 if routed == 'started' else 0
+                started += step if routed == 'started' else 0
                 count_started()
                 lines.append(_babysit_line(repo, number, head, action, detail + ' standing=' + routed))
                 log_bits.append('standing_%s=%s' % (routed, number))
@@ -7142,7 +7289,7 @@ def babysit_pass(
                 }
                 trial_event('start', 'fresh', now=now, dispatch_id=did, repo=repo, pr=number, head=head,
                             headroom_pct='' if headroom is None else headroom)
-        started += 1
+        started += step
         count_started()
         gap = review_to_verifier_s(pr_row, head, now) if action == 'verifier' else None
         lines.append(_babysit_line(repo, number, head, action, detail if gap is None else '%s review_to_verifier_s=%d' % (detail, gap)))
@@ -7738,11 +7885,11 @@ def main_red_find_issue(repo, title, run=subprocess.run):
     return None
 
 
-def main_red_create_issue(repo, title, body, run=subprocess.run):
+def main_red_create_issue(repo, title, body, run=subprocess.run, labels=('P1', 'ready-for-agent')):
     """Number of the new issue, None when gh fails."""
     try:
         out = run(['gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', body,
-                   '--label', 'P1', '--label', 'ready-for-agent'],
+                   *[arg for label in labels for arg in ('--label', label)]],
                   capture_output=True, text=True, timeout=30, check=True)
         return int(out.stdout.strip().rsplit('/', 1)[-1])
     except (subprocess.SubprocessError, OSError, ValueError):
@@ -8986,6 +9133,13 @@ def main():
     for line in babysit_lines:
         print(line)
     notices += babysit_notices
+    try:
+        audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
+        for line in audit_lines:
+            print(line)
+        babysit_log = list(babysit_log) + audit_log
+    except Exception as error:
+        print('fleet-watch: tier 0 audit skipped: %s' % (repr(error),), file=sys.stderr)
     scan_extra, scan_log = issue_scan_pass(
         config, state, now, workers,
         pr_fetch=fetch_once,
