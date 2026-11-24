@@ -80,8 +80,8 @@ class FillTarget(Base):
 
     def test_no_gap_line_when_every_ready_issue_starts(self):
         cfg = config(host_caps={'local': 20})
-        notices, log, starts = self.scan(cfg, {'issue_scan_backlog_sweep_at': NOW}, {APP: [ready(1), ready(2)]}, workers=live(5))
-        self.assertEqual(len(starts), 2)
+        notices, log, _starts = self.scan(cfg, {'issue_scan_backlog_sweep_at': NOW}, {APP: [ready(1), ready(2)]}, workers=live(5))
+        self.assertEqual([b for b in log if b.startswith('issue_start=')], ['issue_start=1', 'issue_start=2'])
         self.assertFalse([n for n in notices if str(n).startswith('fill gap:')])
 
     def test_no_gap_line_without_a_work_order_block(self):
