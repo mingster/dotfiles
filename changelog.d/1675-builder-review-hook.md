@@ -1,0 +1,1 @@
+- worker-budget hook refuses a builder's worker_done without `Review: PASS head=<sha>`; role files and the Issue budget line name the step (#1675).

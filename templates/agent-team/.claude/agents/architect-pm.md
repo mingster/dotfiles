@@ -16,6 +16,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Work notes: `~/dotfiles/templates/agent-team/docs/agents/architect-pm-work.md`.
 - You own the `needs-triage` queue without waiting for the coordinator: each issue there gets a lint-clean brief and `ready-for-agent` within 2 hours.
 
+- Before you label an issue `ready-for-agent`, run `bash ~/dotfiles/script/check-issue-overlap.sh <issue>`. Any overlap with an in-progress issue or open PR means you bundle the work into one issue (`team.md`, Issue budget).
 - Each spec names the shortest UI path for its main use case (`team.md`, Shortest UI path).
 
 ## Owner decisions
