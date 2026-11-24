@@ -964,12 +964,18 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   command -v gh >/dev/null 2>&1 || return 0
   # A dotfiles issue fleet-watch could not start in its last 15 minutes (placement, host cap) cannot go first, so it does not
   # hold back other repos (#1778). fleet-watch records it in its state file under dotfiles_deferred.
-  local state_file=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json} cant_start='[]'
+  local state_file=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json} cant_start='[]' ready_json urgent_waiting ref_urgent
   cant_start=$(jq -c --argjson now "$(date +%s)" '(.dotfiles_deferred // {}) | with_entries(select(.value > $now - 900)) | keys' "$state_file" 2>/dev/null) || cant_start='[]'
   [ -n "$cant_start" ] || cant_start='[]'
-  waiting=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels 2>/dev/null \
-    | jq -r --argjson cant "$cant_start" '[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | "#\(.number)"] | join(", ")' 2>/dev/null) || waiting=
+  ready_json=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels 2>/dev/null) || ready_json=
+  waiting=$(printf '%s' "$ready_json" | jq -r --argjson cant "$cant_start" '[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | "#\(.number)"] | join(", ")' 2>/dev/null) || waiting=
   [ -n "$waiting" ] || return 0
+  # A P0 or bug issue in any repo starts before the rest; a waiting dotfiles P0 or bug issue still goes first (#1791).
+  urgent_waiting=$(printf '%s' "$ready_json" | jq -r --argjson cant "$cant_start" '[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | (($l | index("P0") != null) or ($l | index("bug") != null)) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not))] | length' 2>/dev/null) || urgent_waiting=1
+  if [ "${urgent_waiting:-1}" = 0 ]; then
+    ref_urgent=$(gh issue view "${ref##*#}" --repo "$repo" --json labels --jq '[.labels[].name] | map(select(. == "P0" or . == "bug")) | length' 2>/dev/null) || ref_urgent=0
+    [ "${ref_urgent:-0}" = 0 ] || return 0
+  fi
   if [ -n "$skip" ]; then
     echo "worker-startup: --skip-dotfiles-first: $ref starts while dotfiles $waiting wait ($skip)" >&2
     return 0
