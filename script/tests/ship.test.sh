@@ -1449,6 +1449,37 @@ else
   bad "one Does not hold line does not answer a second quoted Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# Split review in reverse order: Review: PASS (opus) first, then Review: FAIL (gemini) at the same head (#1772 note 3).
+h1779=$(code_head 1779 feat-split-review-pass-first)
+gh pr comment 1779 --repo example/repo --body "Review: PASS head=$h1779 model=opus" >/dev/null
+gh pr comment 1779 --repo example/repo --body "Review: FAIL head=$h1779 model=gemini
+- the total ignores the discount" >/dev/null
+post_verdict 1779 PASS "$h1779"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1779
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1779:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a plain Verdict does not cover a Review FAIL posted after an earlier Review PASS from another model"
+else
+  bad "a plain Verdict does not cover a Review FAIL posted after an earlier Review PASS from another model" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1780=$(code_head 1780 feat-split-review-pass-first-answered)
+gh pr comment 1780 --repo example/repo --body "Review: PASS head=$h1780 model=opus" >/dev/null
+gh pr comment 1780 --repo example/repo --body "Review: FAIL head=$h1780 model=gemini
+- the total ignores the discount" >/dev/null
+gh pr comment 1780 --repo example/repo --body "Verdict: PASS head=$h1780 verifier=ctx_verifier author=ctx_author agent=claude model=opus
+
+> Review: FAIL head=$h1780 model=gemini
+Does not hold: the discount is applied in cart.php line 40, the test covers it." >/dev/null
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1780
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1780 --repo example/repo --squash --match-head-commit $h1780" "$MF_GH_LOG"; then
+  ok "a Verdict that quotes a Review FAIL posted after an earlier Review PASS from another model ships"
+else
+  bad "a Verdict that quotes a Review FAIL posted after an earlier Review PASS from another model ships" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # Private name check runs only on a public repo (visibility read from GitHub).
 name_scope_case() { # <pr> <repo> <visibility|fails> <expect ship|refuse> <label>
   local n=$1 r=$2 vis=$3 expect=$4 label=$5 h
