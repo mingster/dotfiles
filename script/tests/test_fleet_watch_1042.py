@@ -4,10 +4,14 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 REPO = 'owner/app'
 DOTFILES = 'mingster/dotfiles'
@@ -61,6 +65,12 @@ def scan_config(caps, root='/tmp/app-1042', extra=None):
 
 
 class RefusedHostHoldsHeadChecks(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_refused_local_does_not_start_head_checks_and_still_logs_ship_start(self):
         state = {}
         detached = []
@@ -116,6 +126,12 @@ class RefusedHostHoldsHeadChecks(unittest.TestCase):
 
 
 class BabysitBriefMatchesAutoShip(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_verifier_and_fixer_name_the_fleet_watch_ship_start(self):
         row = {'number': 4, 'headRefOid': HEAD}
         with tempfile.TemporaryDirectory() as root:
@@ -130,6 +146,12 @@ class BabysitBriefMatchesAutoShip(unittest.TestCase):
 
 
 class EnvironmentListOncePerPass(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_two_admits_read_the_environment_list_once(self):
         calls = []
 
@@ -159,6 +181,12 @@ class EnvironmentListOncePerPass(unittest.TestCase):
 
 
 class OverflowNeedsRepoMapping(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def mapping(self):
         return {
             'worker_placement': {

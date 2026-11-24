@@ -1,0 +1,1 @@
+The fleet-watch issue scan tests no longer spawn real `gh` writes. The seven remaining `test_fleet_watch_*.py` suites now run under the gh write guard and stub `run_gh`, so a test that edits GitHub fails instead of touching the network.

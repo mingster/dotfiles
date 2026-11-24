@@ -5,10 +5,14 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 from test_fleet_watch_stall import OLD_MS, T0, base_worker, mark_own, stall_test_config  # noqa: E402
 
@@ -41,6 +45,12 @@ def recorded_worker_start():
 
 
 class RecordedReply(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_stdout_error_message_wins_over_a_closing_brace(self):
         record, message = recorded_worker_start()
         reason = fw._start_reason('}\n', record['stdout'])
@@ -70,6 +80,12 @@ def verifier_pr(head=HEAD):
 
 
 class VerifierPark(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def pass_with(self, state, result, root, head=HEAD, mtime=None):
         config = {
             'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
@@ -184,6 +200,12 @@ def failing_review_pr(number, head):
 
 
 class ScanPark(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_rework_failure_parks_until_the_head_or_round_changes(self):
         result, message = failure_result()
         with tempfile.TemporaryDirectory() as root:
@@ -337,6 +359,12 @@ class ScanPark(unittest.TestCase):
 
 
 class StallPark(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_failed_restart_parks_with_the_recorded_message(self):
         record, message = recorded_worker_start()
         starts = []
@@ -387,6 +415,12 @@ class StallPark(unittest.TestCase):
 
 
 class PruneClosed(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def test_closed_pr_and_issue_drop_parked_failed_stall_and_babysit_rows(self):
         state = {
             'parked': {

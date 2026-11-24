@@ -8,6 +8,9 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_env)
 
 from test_fleet_watch_park import REPO, issue_row, scan_config  # noqa: E402
 
@@ -26,6 +29,12 @@ def live_worker(title):
 
 
 class OwnStarts(unittest.TestCase):
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
     def issue_pass(self, root, workers):
         starts = []
         state = {'issue_scan_backlog_sweep_at': 1}
