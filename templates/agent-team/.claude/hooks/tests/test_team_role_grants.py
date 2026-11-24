@@ -35,11 +35,14 @@ ROLE_GRANTS = {
         ("sh", "ok   allows release-manager role after the Orca preamble"),
         ("sh", "ok   blocks builder role after the Orca preamble"),
     ),
+    "Heavy jobs": (
+        "coordinator",
+        ("test_guard_bash", "CalibrateCoordinatorOnly", "test_coordinator_session_calibrates"),
+        ("test_guard_bash", "CalibrateCoordinatorOnly", "test_a_worker_cannot_calibrate"),
+    ),
 }
 # Rows that grant a role an action the named guard does not implement. Fixing one edits a hook, which needs the owner.
-UNENFORCED = {
-    "Heavy jobs": "'Only the coordinator runs hw-probe.sh --calibrate' has no check in guard-bash.py or heavy-gate.sh.",
-}
+UNENFORCED = {}
 
 
 def roles():
@@ -76,10 +79,6 @@ class RoleGrants(unittest.TestCase):
         self.assertFalse(missing, f"team.md rows grant a role an action with no guard test: {sorted(missing)}")
         stale = (set(ROLE_GRANTS) | set(UNENFORCED)) - set(rows)
         self.assertFalse(stale, f"rows no longer in team.md or no longer name a role: {sorted(stale)}")
-
-    def test_unenforced_rows_stay_unenforced_until_moved(self):
-        with open(os.path.join(ROOT, "templates/agent-team/.claude/hooks/guard-bash.py")) as f:
-            self.assertNotIn("calibrate", f.read(), "guard-bash.py now mentions calibrate: move Heavy jobs to ROLE_GRANTS")
 
     def test_the_guard_allows_each_granted_role_and_refuses_another(self):
         sh_out = None

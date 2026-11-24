@@ -2995,7 +2995,7 @@ def check_segment(segment, depth=0, cwd=None):
             heavy_tokens = heavy_tokens[1:]
         heavy_prog, heavy_args = program_and_args(heavy_tokens)
     except ValueError:
-        heavy_prog, heavy_args = None, []
+        heavy_tokens, heavy_prog, heavy_args = [], None, []
     heavy_base = os.path.basename(heavy_prog or "")
     if heavy_base == "bun":
         while heavy_args and heavy_args[0].startswith("-"):
@@ -3028,6 +3028,15 @@ def check_segment(segment, depth=0, cwd=None):
     elif weight:
         deny("Heavy jobs must run through the shared machine gate. "
              f"Run: ~/dotfiles/script/heavy-gate.sh --weight {weight} -- {segment}")
+
+    # Only the coordinator calibrates the machine budget (team.md, Heavy jobs). A worker session has a role in its brief.
+    if (any(os.path.basename(t) == "hw-probe.sh" for t in heavy_tokens)
+            and any(t == "--calibrate" or t.startswith("--calibrate=") for t in heavy_tokens)):
+        brief = first_brief(HOOK_INPUT.get("transcript_path") if isinstance(HOOK_INPUT, dict) else "")
+        worker = stamped_worker_role(brief) or session_role()
+        if worker and worker != "coordinator":
+            deny(f"hw-probe.sh --calibrate is the coordinator's job, and this session is {worker}. "
+                 "Ask the coordinator to run it at a quiet time.")
 
     # 1. Raw deploy scripts.
     if base in BLOCKED_SCRIPTS:
