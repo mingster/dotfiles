@@ -76,6 +76,38 @@ cp "$settings" "$tmp/first.json"
 run_setup || bad 'second setup failed'
 cmp -s "$settings" "$tmp/first.json" && ok 'second run changes nothing' || bad 'second run changed settings'
 
+# One worker-budget and one guard-bash registration per event and tool (#1797).
+dup="$tmp/dup"
+mkdir -p "$dup"
+wb_abs="python3 $root/templates/agent-team/.claude/hooks/worker-budget.py"
+wb_home='python3 "$HOME/.claude/hooks/worker-budget.py"'
+gb='python3 "$HOME/.claude/hooks/guard-bash.py"'
+jq -n --arg a "$wb_abs" --arg h "$wb_home" --arg g "$gb" '{hooks: {
+  PreToolUse: [
+    {matcher: "Bash", hooks: [{type: "command", command: $g}]},
+    {matcher: "Write|Edit|MultiEdit|NotebookEdit", hooks: [{type: "command", command: $g}]},
+    {matcher: "Read|Write|Edit|MultiEdit|NotebookEdit", hooks: [{type: "command", command: $g}]},
+    {matcher: ".*", hooks: [{type: "command", command: $a}]},
+    {matcher: ".*", hooks: [{type: "command", command: $h}]}],
+  PostToolUse: [
+    {matcher: ".*", hooks: [{type: "command", command: $a}]},
+    {matcher: ".*", hooks: [{type: "command", command: $h}]}]}}' >"$dup/settings.json"
+render() { DOTFILES="$root" bash "$root/script/setup-agent-hooks.sh" --render "$1"; }
+render "$dup/settings.json" >"$dup/out.json" || bad 'render failed on duplicate hooks'
+for event in PreToolUse PostToolUse; do
+  n=$(jq --arg e "$event" '[.hooks[$e][]?.hooks[]? | select(.command | contains("worker-budget.py"))] | length' "$dup/out.json")
+  [ "$n" -eq 1 ] && ok "$event keeps one worker-budget" || bad "$event has $n worker-budget registrations"
+  jq -e --arg e "$event" '[.hooks[$e][]?.hooks[]? | select(.command | contains("worker-budget.py")) | .command] == ["python3 \"$HOME/.claude/hooks/worker-budget.py\""]' "$dup/out.json" >/dev/null \
+    && ok "$event keeps the HOME worker-budget form" || bad "$event did not keep the HOME worker-budget form"
+done
+for tool in Bash Read Write Edit MultiEdit NotebookEdit; do
+  n=$(jq --arg t "$tool" '[.hooks.PreToolUse[] | select(.matcher as $m | $t | test("^(" + $m + ")$")) | .hooks[] | select(.command | contains("guard-bash.py"))] | length' "$dup/out.json")
+  [ "$n" -eq 1 ] && ok "$tool has one guard-bash registration" || bad "$tool has $n guard-bash registrations"
+done
+jq '.' "$dup/out.json" >"$dup/second-in.json"
+render "$dup/second-in.json" >"$dup/second-out.json" || bad 'second render failed'
+cmp -s "$dup/out.json" "$dup/second-out.json" && ok 'second render of deduped hooks changes nothing' || bad 'second render of deduped hooks changed settings'
+
 # A linked worktree must not write its own hook paths into the real home (#1536).
 MAIN="$tmp/main" WT="$tmp/wt" REAL="$tmp/real-home"
 mkdir -p "$MAIN/script/lib" "$REAL/.claude"
