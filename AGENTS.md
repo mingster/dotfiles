@@ -114,7 +114,7 @@ Configured so far: `<project-a>`, `mingster.com`, `dotfiles`, `<project-b>/web2`
 ## Agent instruction file convention
 
 `AGENTS.md` is the single source in every repo; `CLAUDE.md` is a one line `@AGENTS.md` pointer.
-Keep `AGENTS.md` under 200 lines and push area-specific content into `docs/<area>/<topic>.md`
+Keep `AGENTS.md` short (the `rule-checks.py` hook warns over its limit) and push area-specific content into `docs/<area>/<topic>.md`
 behind a pointer that names when to read it. Full convention, including why `~/.claude/CLAUDE.md`
 is copied rather than symlinked: `docs/agents/agent-files.md`. Read it before adding, moving, or
 growing an agent instruction file in any repo.
@@ -176,7 +176,7 @@ sh install.sh
 - No secrets in committed files. MCP secrets go in `~/.claude/settings.local.json` (gitignored globally via `.gitignore_global`).
 - Prefer small, focused changes; match existing shell and doc style.
 - A change under `script/` or `templates/` updates a doc in the same PR (`docs/`, `README.md`, `RELEASE-NOTES.md`, a `.md` beside the file), or the PR body says `Docs: none, <reason>`. `script/check-docs-updated.sh` enforces it in head checks. A label change updates `docs/agents/labels.md`.
-- Never edit `CHANGELOG.md` in a PR. Add a `changelog.d/<issue>-<slug>.md` fragment (`<branch-slug>.md` with no issue); release runs `bin/changelog-compile.sh` to compile them.
+- Changelog: add a `changelog.d/<issue>-<slug>.md` fragment (`<branch-slug>.md` with no issue); release compiles them with `bin/changelog-compile.sh`. The `rule-checks.py` hook blocks edits to `CHANGELOG.md`.
 - Scripts must pass `shellcheck --severity=error`. CI enforces this on `install.sh`, `mac/stowall`, the three `system_setup.sh` files, `script/*.sh` and `script/lib/*.sh`. Run: `bash script/shellcheck-dotfiles.sh`
 - Installs must be idempotent and safe to re-run. Follow the Homebrew pattern for external tools: check before installing.
 - `_outdated/` is read-only historical context. Update the active files under `mac/`, `arch/`, `debian/` instead.
