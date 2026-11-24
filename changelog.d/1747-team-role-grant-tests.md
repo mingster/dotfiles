@@ -1,0 +1,1 @@
+Added test_team_role_grants.py: every team.md row that grants a role an action through a guard hook needs a test that the guard allows that role and refuses another. checks-local runs it when team.md or the shared DB guard changes (#1747).

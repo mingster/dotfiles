@@ -47,7 +47,7 @@ if grep -q SKIPPED <<<"$got"; then echo "FAIL: SKIPPED shown with a pattern file
 # 1200. The hook tests run only when a hook, brief-lint.sh or checks-local.sh changed.
 . "$src/script/lib/hooks-changed.sh"
 hc() { hooks_changed "$@" && echo yes || echo no; }
-for c in "docs/readme.md script/ship.sh:no" "templates/agent-team/.claude/hooks/guard.py:yes" ".claude/hooks/x.sh docs/a.md:yes" "script/brief-lint.sh:yes" "script/checks-local.sh:yes" ":no"; do
+for c in "docs/readme.md script/ship.sh:no" "templates/agent-team/.claude/hooks/guard.py:yes" ".claude/hooks/x.sh docs/a.md:yes" "script/brief-lint.sh:yes" "script/checks-local.sh:yes" "templates/agent-team/docs/agents/team.md:yes" "script/check-shared-db-write.py:yes" "docs/agents/team.md:no" ":no"; do
   files=${c%:*}; want=${c##*:}
   # shellcheck disable=SC2086
   got=$(hc $files)
