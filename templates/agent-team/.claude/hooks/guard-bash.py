@@ -4031,6 +4031,225 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# #1795: judge `H=blue; ssh $H uptime` and `for h in a b; do ssh $h uptime; done` by their literal values.
+# A closed grammar: one anchored tokenizer must read the whole command, or nothing resolves and the
+# command is judged exactly as before. Anything the grammar does not name (quotes other than plain double
+# quotes, backslashes, substitutions, groups, comments, heredocs, a lone &, while, if, nested loops) falls out.
+_LV_SAFE = re.compile(r"[A-Za-z0-9_./:@%+,-]+\Z")
+_LV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_LV_BARE = r"[A-Za-z0-9_./:@%+,=~*?\[\]-]"
+_LV_REF = r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})"
+_LV_TOKEN = re.compile(
+    r"(?P<space>[ \t]+)"
+    r"|(?P<op>\n|&&|\|\||;|\|(?!&))"
+    r"|(?P<redir>[0-9]*(?:>&[0-9]+(?=[ \t\n;|]|\Z)|>>|>(?![|&(])|<(?![<>&(0-9-])))"
+    r"|(?P<word>(?:" + _LV_BARE + r"+|" + _LV_REF + r"|\"(?:[A-Za-z0-9_./:@%+,=~*?\[\] -]+|" + _LV_REF + r")*\")+)"
+)
+_LV_PIECE = re.compile(r"(?P<bare>" + _LV_BARE + r"+)|" + _LV_REF + r"|(?P<quote>\")|(?P<text>[^\"$]+)")
+# Names a shell gives a meaning to (bash and zsh). Binding one changes how other words run.
+_LV_SPECIAL = {
+    "IFS", "PATH", "HOME", "CDPATH", "REPLY", "ENV", "SHELLOPTS", "BASHOPTS", "PWD", "OLDPWD", "OPTIND",
+    "OPTARG", "GLOBIGNORE", "HISTFILE", "ZDOTDIR", "TMPDIR", "SHELL", "FPATH", "MAILPATH", "MAIL", "TERM",
+    "USER", "LOGNAME", "SECONDS", "RANDOM", "LINENO", "HOSTNAME", "PPID", "UID", "EUID", "TMOUT", "NULLCMD",
+    "READNULLCMD", "WORDCHARS", "KEYTIMEOUT", "FIGNORE", "POSIXLY_CORRECT", "PROMPT_COMMAND", "MAILCHECK",
+    "path", "cdpath", "fpath", "manpath", "module_path", "mailpath", "psvar", "status", "argv", "pipestatus",
+    "prompt", "options", "commands", "functions", "aliases", "builtins", "parameters", "reply", "match",
+    "mbegin", "mend", "signals", "history", "historywords", "jobstates", "jobtexts", "jobdirs", "dirstack",
+    "funcstack", "widgets", "termcap", "terminfo", "modules", "nameddirs", "userdirs", "sysparams", "_",
+}
+_LV_SPECIAL_PREFIX = ("LC_", "BASH", "LD_", "DYLD_", "ZSH", "GIT_", "PS", "PROMPT", "HIST", "SSH_", "SUDO")
+# A command word that sets variables, runs other code or changes the directory.
+_LV_BANNED = {
+    "read", "declare", "typeset", "local", "export", "readonly", "unset", "printf", "print", "mapfile",
+    "readarray", "eval", "source", ".", "command", "builtin", "exec", "time", "cd", "chdir", "pushd", "popd",
+    "while", "until", "if", "then", "else", "elif", "fi", "case", "esac", "for", "in", "do", "done",
+    "function", "select", "let", "set", "shopt", "setopt", "unsetopt", "alias", "unalias", "trap", "enable",
+    "disable", "getopts", "hash", "rehash", "fc", "r", "vared", "zparseopts", "integer", "float", "private",
+    "noglob", "nocorrect", "coproc", "repeat", "foreach", "emulate", "zmodload", "autoload", "zle", "sched",
+    "-", "[[", "getln", "unhash", "unfunction", "dirs", "jobs", "fg", "bg", "wait", "kill", "exit", "return",
+    "break", "continue", "shift", "zstyle", "zformat", "zregexparse", "strftime", "sysread", "zsocket",
+}
+LOOP_WORD_LIMIT = 16
+
+
+class _LvNo(Exception):
+    """The command is outside the grammar: resolve nothing."""
+
+
+def _lv_tokens(command):
+    tokens, pos = [], 0
+    while pos < len(command):
+        m = _LV_TOKEN.match(command, pos)
+        if not m:
+            raise _LvNo()
+        kind = m.lastgroup
+        if kind != "space":
+            tokens.append((kind, m.start(), m.end()))
+        pos = m.end()
+    return tokens
+
+
+def _lv_pieces(command, start, end):
+    """A word as ("lit", text) and ("ref", name, start, end) pieces, quotes dropped."""
+    out, pos = [], start
+    while pos < end:
+        m = _LV_PIECE.match(command, pos, end)
+        name = m.group(2) or m.group(3)
+        if name:
+            out.append(("ref", name, m.start(), m.end()))
+        elif m.group("bare") or m.group("text"):
+            out.append(("lit", m.group(0)))
+        pos = m.end()
+    for a, b in zip(out, out[1:]):
+        # zsh reads `$H:r` and `$H[1]` as modifiers and subscripts; an unresolved `$H` before `$A` becomes `$H1`.
+        if a[0] == "ref" and (b[0] == "ref" or b[1][:1] in (":", "[")):
+            raise _LvNo()
+    return out
+
+
+def _lv_value(command, start, end, bound):
+    """The word's text after substituting bound names; None while it holds an unbound reference."""
+    text = []
+    for piece in _lv_pieces(command, start, end):
+        if piece[0] == "lit":
+            text.append(piece[1])
+        elif piece[1] in bound:
+            text.append(bound[piece[1]])
+        else:
+            return None
+    return "".join(text)
+
+
+def _lv_plain(raw):
+    """A literal a variable may hold: no glob, no =, no space, ~ only alone or as a leading ~/."""
+    if raw is None:
+        return None
+    if raw == "~" or raw.startswith("~/"):
+        raw = os.path.expanduser("~") + raw[1:]
+    if "~" in raw or not _LV_SAFE.match(raw):
+        return None
+    return raw
+
+
+def _lv_bind(name, bound):
+    if not _LV_NAME.match(name) or name in bound or name in _LV_SPECIAL or name.startswith(_LV_SPECIAL_PREFIX):
+        raise _LvNo()
+
+
+def _lv_statements(tokens):
+    """Split tokens into (separator before, tokens) statements. A newline after && || | continues it."""
+    out, cur, sep = [], [], "start"
+    for tok in tokens:
+        if tok[0] != "op":
+            cur.append(tok)
+        elif cur:
+            out.append((sep, cur))
+            cur, sep = [], tok[3]
+        elif tok[3] != "\n":
+            raise _LvNo()
+    if cur:
+        out.append((sep, cur))
+    elif sep in ("&&", "||", "|"):
+        raise _LvNo()
+    return out
+
+
+def _lv_check(command, stmts, values, names):
+    """Each statement runs a command whose final word is not banned, and no word names a bound variable."""
+    for _, toks in stmts:
+        target = [n > 0 and toks[n - 1][0] == "redir" and "&" not in toks[n - 1][3] for n in range(len(toks))]
+        cmd = next((t for n, t in enumerate(toks) if t[0] == "word" and not target[n]
+                    and not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", t[3])), None)
+        if cmd is None or (toks[-1][0] == "redir" and "&" not in toks[-1][3]):
+            raise _LvNo()
+        for tok in toks:
+            if tok[0] != "word":
+                continue
+            seen = _lv_value(command, tok[1], tok[2], values)
+            if tok is cmd and (seen is None or seen in _LV_BANNED):
+                raise _LvNo()
+            if seen is not None and (seen in names or any(seen.startswith(n + "=") for n in names)):
+                raise _LvNo()
+
+
+def resolve_literal_variables(command):
+    """Texts to judge in place of command, or None to judge the command as written (#1795)."""
+    if "$" not in command:
+        return None
+    tokens = [(k, s, e, command[s:e]) for k, s, e in _lv_tokens(command)]
+    stmts = _lv_statements(tokens)
+    bound, i = {}, 0
+    while i < len(stmts):
+        sep, toks = stmts[i]
+        nxt = stmts[i + 1][0] if i + 1 < len(stmts) else ";"
+        m = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", toks[0][3]) if len(toks) == 1 and toks[0][0] == "word" else None
+        if not m or sep not in ("start", ";", "\n") or nxt not in (";", "\n"):
+            break
+        _lv_bind(m.group(1), bound)
+        value = _lv_plain(_lv_value(command, toks[0][1] + m.end(), toks[0][2], {}))
+        if value is None:
+            raise _LvNo()
+        bound[m.group(1)] = value
+        i += 1
+    loop = next((j for j in range(i, len(stmts)) if stmts[j][1][0][3] == "for"), None)
+    flat = stmts[i:loop] if loop is not None else stmts[i:]
+    texts_end, body, loop_name, words = len(command), [], None, []
+    if loop is not None:
+        sep, head = stmts[loop]
+        if sep not in ("start", ";", "\n") or len(head) < 4 or head[2][3] != "in":
+            raise _LvNo()
+        if any(t[0] != "word" for t in head) or stmts[-1][1] != [stmts[-1][1][0]] or stmts[-1][1][0][3] != "done":
+            raise _LvNo()
+        rest = stmts[loop + 1:-1]
+        if not rest or rest[0][0] not in (";", "\n") or stmts[-1][0] not in (";", "\n") or rest[0][1][0][3] != "do":
+            raise _LvNo()
+        first = rest[0][1][1:]
+        body = ([(rest[0][0], first)] if first else []) + rest[1:]
+        if not body or (not first and rest[1][0] != "\n"):
+            raise _LvNo()
+        loop_name = head[1][3]
+        _lv_bind(loop_name, bound)
+        words = [_lv_plain(_lv_value(command, t[1], t[2], bound)) for t in head[3:]]
+        texts_end = head[0][1]
+    names = set(bound) | ({loop_name} if loop_name else set())
+    _lv_check(command, flat, bound, names)
+    for w in words if None not in words else [None]:
+        _lv_check(command, body, dict(bound, **{loop_name: w}) if w else bound, names)
+    if words and None not in words and len(words) > LOOP_WORD_LIMIT:
+        deny(f"This loop runs over {len(words)} words; the guard checks at most {LOOP_WORD_LIMIT}. "
+             "Please split the loop into smaller ones.")
+    if not bound and (loop_name is None or None in words):
+        return None
+
+    def render(start, end, values):
+        out, pos = [], start
+        for tok in tokens:
+            if tok[0] != "word" or tok[2] <= start or tok[1] >= end:
+                continue
+            for piece in _lv_pieces(command, tok[1], tok[2]):
+                if piece[0] == "ref" and piece[1] in values:
+                    out.append(command[pos:piece[2]])
+                    out.append(values[piece[1]])
+                    pos = piece[3]
+        out.append(command[pos:end])
+        return "".join(out)
+
+    if loop_name is None or None in words:
+        return [render(0, len(command), bound)]
+    body_start, body_end = body[0][1][0][1], body[-1][1][-1][2]
+    return [render(0, texts_end, bound) + render(body_start, body_end, dict(bound, **{loop_name: w}))
+            for w in words]
+
+
+def resolved_texts(command):
+    try:
+        return resolve_literal_variables(command)
+    except SystemExit:
+        raise
+    except Exception:
+        return None
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4086,7 +4305,9 @@ def main():
     RAW_COMMAND = command
     check_background_wait(command)
     try:
-        check_command(command)
+        for text in resolved_texts(command) or [command]:
+            RAW_COMMAND = text
+            check_command(text)
     except SystemExit:
         raise
     except Exception:

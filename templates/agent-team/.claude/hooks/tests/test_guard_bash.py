@@ -1810,5 +1810,221 @@ class BuilderOwnerPathGate(GuardTest):
         self.assertIsNotNone(self.write(self.HOOK_PATH))
 
 
+# The #1805 Review: FAIL shapes (#1795). Each must be denied, or judged the same as origin/main.
+SECRETS = "fileServer/" + "secrets"
+FAIL_SHAPES_1805 = (
+    'H=$(cat /tmp/hosts); rsync -a /tmp/x $H',
+    'H=$(cat /tmp/hosts); scp -q $H /tmp/x',
+    'H=$(cat /tmp/hosts); scp "$H/x" /tmp/y',
+    'H=$(cat /tmp/hosts); scp $H /tmp/x',
+    'H=blue & ssh $H uptime',
+    'H=blue | ssh $H uptime',
+    "H=blue; : ${X:-'}'}; H=prod.example; : \\'; ssh $H rm -rf /x",
+    'H=blue; "read" H < /tmp/hosts; ssh $H uptime',
+    'H=blue; >/dev/null H=$(cat /tmp/hosts); ssh $H uptime',
+    'H=blue; command -p source /tmp/hosts; ssh $H uptime',
+    'H=blue; declare -n R=H; R=prod.example; ssh $H rm -rf /x',
+    'H=blue; declare "H=prod.example"; ssh $H rm -rf /x',
+    'H=blue; echo "$(H=$(cat /tmp/hosts); ssh $H uptime)"',
+    'H=blue; echo "$(H=prod.example; ssh $H rm -rf /x)"',
+    'H=blue; echo \\ #; H=prod.example\nssh $H rm -rf /x',
+    'H=blue; echo \\ #; read H < /tmp/hosts\nssh $H uptime',
+    'H=blue; echo \\>& H=prod.example; ssh $H rm -rf /x',
+    "H=blue; echo $'\\''; H=prod.example # '\nssh $H rm -rf /x",
+    "H=blue; echo $'\\''; H=prod.example; echo $'\\''; ssh $H rm -rf /x",
+    "H=blue; echo $'\\''; read H < /tmp/hosts # '\nssh $H uptime",
+    'H=blue; echo ${X:-$(H=$(cat /tmp/hosts); ssh $H uptime)}',
+    'H=blue; echo ${X:-$(H=prod.example; ssh $H rm -rf /x)}',
+    'H=blue; export "H=$(cat /tmp/hosts)"; ssh $H uptime',
+    'H=blue; printf -v "H" %s "$(cat /tmp/hosts)"; ssh $H uptime',
+    'H=blue; printf -v "H" %s prod.example; ssh $H rm -rf /x',
+    'H=blue; printf -vH %s "$(cat /tmp/hosts)"; ssh $H uptime',
+    'H=blue; printf -vH %s prod.example; ssh $H rm -rf /x',
+    'H=blue; R=read; command $R H < /tmp/hosts; ssh $H uptime',
+    'H=blue; read -aH < /tmp/hosts; ssh $H uptime',
+    'H=blue; read "H" < /tmp/hosts; ssh $H uptime',
+    'H=blue; read $V < /tmp/hosts; ssh $H uptime',
+    'H=blue; time -p declare H=prod.example; ssh $H rm -rf /x',
+    'H=blue; time -p read H < /tmp/hosts; ssh $H uptime',
+    'H=blue; true &&{ H=prod.example; }; ssh $H rm -rf /x',
+    'H=blue; V=H; printf -v $V prod.example; ssh $H rm -rf /x',
+    'H=blue; V=H; read $V < /tmp/hosts; ssh $H uptime',
+    'H=blue; V=H=prod.example; declare $V; ssh $H rm -rf /x',
+    'H=blueDevil; echo "$(echo "it\'s")"; ssh $H uptime',
+    'A=1; H1=blue; H="prod.example rm -rf /x "; ssh $H$A',
+    'A=1; H1=blue; ssh $H$A uptime',
+    "builtin -- eval 'H=prod''.''example'; ssh $H rm -rf /x",
+    'echo x | { :; H=blue; }; ssh $H uptime',
+    'false && { :; H=blue; }; ssh $H uptime',
+    'false && for x in a; do :; H=blue; done; ssh $H uptime',
+    'false || { :; H=blue; }; ssh $H uptime',
+    'true || { :; H=blue; }; ssh $H uptime',
+    'true | for x in a; do :; H=blue; done; ssh $H uptime',
+    'for x in $EMPTY; do :; H=blue; done; ssh $H uptime',
+    'for x in $UNSET; do :; H=blue; done; ssh $H uptime',
+    'for x in a; do break; H=blue; done; ssh $H uptime',
+    'for x in; do :; H=blue; done; ssh $H uptime',
+    'for x in; do H=blue; done; ssh $H uptime',
+    'for x in; do\nH=blue\ndone\nssh $H uptime',
+    'for x in\ndo\nH=blue\ndone\nssh $H uptime',
+    'for x; do :; H=blue; done; ssh $H uptime',
+    'until true; do H=blue; done; ssh $H uptime',
+    'while false; do H=blue; done; ssh $H uptime',
+    'if false; then :; H=blue; fi; ssh $H uptime',
+    'if false; then\n H=blue\nfi\nssh $H uptime',
+    'if true; then (ssh prod.example rm -rf /x); fi',
+    'if true; then ssh prod.example rm -rf /x; fi',
+    'if true; then\\\n ssh prod.example rm -rf /x; fi',
+    'X="H=blue"; $X; ssh $H uptime',
+    'X=H=blue; $X 2>/dev/null; ssh $H uptime',
+    'REPLY=blue; read -r < /tmp/hosts; ssh $REPLY uptime',
+    'REPLY=blue; read < /tmp/hosts; ssh $REPLY uptime',
+    'read H < /tmp/hosts; rsync -a "$H" /tmp/x',
+    'H=prod.example; ssh prod.example rm -rf /x',
+    'S=safe; time -p declare S=deploy; bash bin/$S-raw.sh',
+    "mkdir -p '~'; D='~'; for f in $D/../*/*/*; do cat $f; done",
+    'for d in fileServer; do cd $d; for f in s*/*; do cat $f; done; done',
+    'for h in $(cat /tmp/hosts); do (ssh $h uptime); done',
+    'for h in $(cat /tmp/hosts); do { ssh $h uptime; }; done',
+    'for h in $(cat /tmp/hosts); do \\\nssh $h uptime; done',
+    'for h in $(cat /tmp/hosts); do scp -q $h /tmp/x; done',
+    'for h in $(cat /tmp/hosts); do time (ssh $h uptime); done',
+    'for h in $(cat /tmp/hosts); do\\\n ssh $h uptime; done',
+    'for h in prod.example; do (ssh $h rm -rf /x); done',
+    'for s in a; do \\\nbash bin/deploy-raw.sh; done',
+    'for d in ' + ' '.join(f'a{i}' for i in range(1, 33)) + ' ' + SECRETS + '; do cat $d/x.json; done',
+    'for s in ' + ' '.join(f'a{i}' for i in range(1, 33)) + ' deploy; do bash bin/$s-raw.sh; done',
+    'scp -q "$REMOTE_SRC" /tmp/x',
+    'scp -q niteking:x.patch "$HOME/x/"',
+    'scp -q niteking:x.patch {a,b}.patch',
+    'scp -q niteking:x.patch *.patch',
+    'scp -q {prod,dev}.example:x.patch /tmp/x',
+    'scp ${H} /tmp/x',
+    'rsync -a niteking:x /tmp/$USER/',
+    'rsync -a pro{d,x}.example:x /tmp/x',
+)
+
+
+class LiteralVariables(GuardTest):
+    """A variable bound to a literal in the same command is judged by its value (#1795), under a closed grammar."""
+    CONFIG = {"production_hosts": ["prod.example"], "secrets_dir": SECRETS,
+              "exact_only_scripts": [".claude/bin/probe-secrets.sh"], "blocked_scripts": ["deploy-raw.sh"]}
+
+    def setUp(self):
+        super().setUp()
+        self.project = os.path.join(self.home, "project")
+        os.makedirs(os.path.join(self.project, ".claude", "hooks"))
+        os.makedirs(os.path.join(self.project, ".claude", "bin"))
+        os.makedirs(os.path.join(self.project, SECRETS))
+        with open(os.path.join(self.project, ".claude", "bin", "probe-secrets.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.project, ".claude", "hooks", "guard-config.json"), "w") as f:
+            json.dump(self.CONFIG, f)
+
+    def run_guard(self, hook, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.project}
+        env = dict(os.environ, HOME=self.home)
+        env.pop("GUARD_CONFIG", None)
+        out = subprocess.run([sys.executable, hook], input=json.dumps(payload), text=True, capture_output=True,
+                             env=env, cwd=self.project, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        if not out.stdout.strip():
+            return None
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def bash(self, command):
+        return self.run_guard(HOOK, command)
+
+    def base_hook(self):
+        root = subprocess.run(["git", "-C", os.path.dirname(HOOK), "rev-parse", "--show-toplevel"],
+                              capture_output=True, text=True).stdout.strip()
+        ref = os.environ.get("GUARD_BASE_REF", "origin/main")
+        source = subprocess.run(["git", "-C", root, "show", f"{ref}:{os.path.relpath(HOOK, root)}"],
+                                capture_output=True)
+        if not root or source.returncode != 0:
+            self.skipTest(f"{ref} is not available to compare against")
+        path = os.path.join(self.home, "base-guard-bash.py")
+        with open(path, "wb") as f:
+            f.write(source.stdout)
+        return path
+
+    def test_literal_shapes_are_allowed(self):
+        for command in (
+            "P=/tmp/p; for f in $P/.claude/skills/*/SKILL.md; do echo $f; done",
+            "for w in a b; do [ -d ../$w ] && echo $w; done",
+            "B=~/agent-state/briefs; cat $B/x",
+            'for h in blueDevil niteking; do echo "== $h"; ssh $h uptime; done',
+            'S=/tmp/sp; scp -q niteking:x.patch "$S/"',
+            "P=/tmp/p\nfor h in blue green\ndo\n  ls $P/$h\ndone",
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_loop_over_a_production_host_is_judged_as_that_host(self):
+        self.assertDenied("for h in blue prod.example; do ssh $h rm -rf /x; done", "production host")
+        self.assertDenied("H=prod.example; ssh $H rm -rf /x", "production host")
+        self.assertDenied("C=ssh; $C prod.example rm -rf /x")
+
+    def test_loop_variable_reaching_a_protected_path_is_denied(self):
+        self.assertDenied(f"for d in docs {SECRETS}; do cat $d/x.json; done")
+        self.assertDenied("for s in safe deploy; do bash bin/$s-raw.sh; done")
+        self.assertDenied("S=deploy; bash bin/$S-raw.sh")
+
+    def test_more_than_16_loop_words_is_denied(self):
+        words = " ".join(f"a{i}" for i in range(17))
+        self.assertDenied(f"for w in {words}; do ssh $w uptime; done", "split the loop")
+
+    def test_rebinding_and_unreadable_shapes_resolve_nothing(self):
+        # Each stays denied, as on main: the guard cannot tell the value of $H.
+        for command in (
+            "H=blue; H=prod.example; ssh $H rm -rf /x",
+            "H=blue; echo x; H=prod.example; ssh $H rm -rf /x",
+            "H=blue; read H < /tmp/hosts; ssh $H uptime",
+            "R=read; A=H; $R $A < /tmp/hosts; ssh $H uptime",
+            "H=blue; $X; ssh $H rm -rf /x",
+            "H=blue; eval H=prod.example; ssh $H rm -rf /x",
+            "H=blue; noglob eval H=prod.example; ssh $H rm -rf /x",
+            "H=blue; print -v H prod.example; ssh $H rm -rf /x",
+            "H=blue; typeset H=prod.example; ssh $H rm -rf /x",
+            "H=blue && ssh $H uptime",
+            "H=blue B=green; ssh $H uptime",
+            "H=blue; cd /tmp; ssh $H uptime",
+            "PATH=/tmp; H=blue; ssh $H uptime",
+            "path=/tmp; H=blue; ssh $H uptime",
+            "IFS=.; H=blue; ssh $H uptime",
+            "H=blue; ssh $H:r uptime",
+            "H=blue; ssh $H[1] uptime",
+            "H=~user; ssh $H uptime",
+            "H=a:~/b; ssh $H uptime",
+            "H='blue'; ssh $H uptime",
+            "H=blue; ssh $H uptime # x",
+            "H=blue; ssh $H uptime &",
+            "H=blue; ssh $H uptime <<EOF\nx\nEOF",
+            "for h in blue; do ssh $h uptime; done; ssh $h uptime",
+            "for h in blue; do h=prod.example; ssh $h rm -rf /x; done",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_out_of_grammar_loops_are_judged_as_on_main(self):
+        # Nested loops, loops over globs or = words, and a statement after done resolve nothing (#1810 covers do).
+        base = self.base_hook()
+        for command in (
+            "for h in =ssh; do $h prod.example rm -rf /x; done",
+            "for h in blue; do for g in a; do ssh $h $g; done; done",
+            "for h in b*; do ssh $h uptime; done",
+            "for h in blue; do ssh $h uptime; done; echo x",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), self.run_guard(base, command))
+
+    def test_1805_fail_shapes_are_denied_or_unchanged_from_main(self):
+        base = self.base_hook()
+        for command in FAIL_SHAPES_1805:
+            with self.subTest(command=command):
+                if self.bash(command) is None:
+                    self.assertIsNone(self.run_guard(base, command), "main denies this shape and head allows it")
+
+
 if __name__ == "__main__":
     unittest.main()
