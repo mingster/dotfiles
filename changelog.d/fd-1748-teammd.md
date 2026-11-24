@@ -1,0 +1,1 @@
+agent-team: the team.md template adds a Wait limits row (every wait has a named time limit and one escalation) and the Issue budget row says to split owner reviewed files from code into linked issues. Closes #1748. Owner approved the diff in chat 2026-11-24; the owner adds the Owner-approved trailer before merge.
