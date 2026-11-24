@@ -1,0 +1,1 @@
+The deploy skill runs the release contract check named in the project deploy facts before it asks the owner for the production go, and stops with the contract file named when it fails. No configured check, no change. (#1764)
