@@ -1280,8 +1280,8 @@ else
 fi
 
 h1072=$(code_head 1072 feat-review-fail-then-pass)
-gh pr comment 1072 --repo example/repo --body "Review: FAIL head=$h1072" >/dev/null
-gh pr comment 1072 --repo example/repo --body "Review: PASS head=$h1072" >/dev/null
+gh pr comment 1072 --repo example/repo --body "Review: FAIL head=$h1072 model=opus" >/dev/null
+gh pr comment 1072 --repo example/repo --body "Review: PASS head=$h1072 model=opus" >/dev/null
 post_verdict 1072 PASS "$h1072"
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 1072
@@ -1316,9 +1316,9 @@ else
 fi
 
 h1075=$(code_head 1075 feat-review-fail-again)
-gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075" >/dev/null
-gh pr comment 1075 --repo example/repo --body "Review: PASS head=$h1075" >/dev/null
-gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075" >/dev/null
+gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075 model=opus" >/dev/null
+gh pr comment 1075 --repo example/repo --body "Review: PASS head=$h1075 model=opus" >/dev/null
+gh pr comment 1075 --repo example/repo --body "Review: FAIL head=$h1075 model=opus" >/dev/null
 post_verdict 1075 PASS "$h1075"
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 1075
@@ -1330,8 +1330,8 @@ else
 fi
 
 h1076=$(code_head 1076 feat-review-edited-pass)
-gh pr comment 1076 --repo example/repo --body "Review: FAIL head=$h1076" >/dev/null
-gh pr comment 1076 --repo example/repo --body "Review: PASS head=$h1076" >/dev/null
+gh pr comment 1076 --repo example/repo --body "Review: FAIL head=$h1076 model=opus" >/dev/null
+gh pr comment 1076 --repo example/repo --body "Review: PASS head=$h1076 model=opus" >/dev/null
 mf_comment_flag 1076 1 edited true
 post_verdict 1076 PASS "$h1076"
 : > "$MF_GH_LOG"
@@ -1341,6 +1341,63 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1076:0:12}" <<<"$SH
   ok "an edited Review PASS does not cover a Review FAIL"
 else
   bad "an edited Review PASS does not cover a Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+# A Review PASS from another model does not cover a Review FAIL at the head (#1770).
+h1770=$(code_head 1770 feat-split-review)
+gh pr comment 1770 --repo example/repo --body "Review: FAIL head=$h1770 model=gemini" >/dev/null
+gh pr comment 1770 --repo example/repo --body "Review: PASS head=$h1770 model=opus" >/dev/null
+post_verdict 1770 PASS "$h1770"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1770
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1770:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a Review PASS from another model does not cover a Review FAIL"
+else
+  bad "a Review PASS from another model does not cover a Review FAIL" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1771=$(code_head 1771 feat-split-review-same-model)
+gh pr comment 1771 --repo example/repo --body "Review: FAIL head=$h1771 model=gemini" >/dev/null
+gh pr comment 1771 --repo example/repo --body "Review: PASS head=$h1771 model=gemini" >/dev/null
+post_verdict 1771 PASS "$h1771"
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1771
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1771 --repo example/repo --squash --match-head-commit $h1771" "$MF_GH_LOG"; then
+  ok "a later Review PASS from the model that posted the FAIL covers it"
+else
+  bad "a later Review PASS from the model that posted the FAIL covers it" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1772=$(code_head 1772 feat-split-review-answered)
+gh pr comment 1772 --repo example/repo --body "Review: FAIL head=$h1772 model=gemini
+- the total ignores the discount" >/dev/null
+gh pr comment 1772 --repo example/repo --body "Review: PASS head=$h1772 model=opus" >/dev/null
+gh pr comment 1772 --repo example/repo --body "Verdict: PASS head=$h1772 verifier=ctx_verifier author=ctx_author agent=claude model=opus
+
+> Review: FAIL head=$h1772 model=gemini
+Does not hold: the discount is applied in cart.php line 40, the test covers it." >/dev/null
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1772
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 1772 --repo example/repo --squash --match-head-commit $h1772" "$MF_GH_LOG"; then
+  ok "a Verdict that quotes the Review FAIL and says why it does not hold ships"
+else
+  bad "a Verdict that quotes the Review FAIL and says why it does not hold ships" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+h1773=$(code_head 1773 feat-split-review-quote-no-reason)
+gh pr comment 1773 --repo example/repo --body "Review: FAIL head=$h1773 model=gemini" >/dev/null
+gh pr comment 1773 --repo example/repo --body "Review: PASS head=$h1773 model=opus" >/dev/null
+gh pr comment 1773 --repo example/repo --body "Verdict: PASS head=$h1773 verifier=ctx_verifier author=ctx_author agent=claude model=opus
+
+> Review: FAIL head=$h1773 model=gemini" >/dev/null
+: > "$MF_GH_LOG"
+run_ship --repo example/repo --pr 1773
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Review: FAIL at head ${h1773:0:12}" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a Verdict that quotes the Review FAIL with no reason does not cover it"
+else
+  bad "a Verdict that quotes the Review FAIL with no reason does not cover it" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 # Private name check runs only on a public repo (visibility read from GitHub).
