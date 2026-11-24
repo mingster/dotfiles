@@ -219,6 +219,15 @@ scheduled_round() {
   else
     round_limit=$precheck_timeout
   fi
+  # The coordinator's board steps run last. Hold their time back from the repos and cleaners, so a slow repo cannot leave
+  # board-clean the last few seconds of the precheck limit (#1726).
+  local board_reserve=0 board_note='' fail_exit=0
+  # The daily round ends non-zero on a failed round, so the automation's end phase shows it; the legacy scheduled round keeps exit 0.
+  [ "$round_kind" != daily ] || fail_exit=1
+  if coordinator_runs_board_done; then
+    board_reserve=${WRAP_UP_SCHEDULED_BOARD_RESERVE:-90}
+    [ "$((round_limit - board_reserve))" -ge 60 ] && round_limit=$((round_limit - board_reserve))
+  fi
   call_timeout=${WRAP_UP_CALL_TIMEOUT:-60}
   round_state=${WRAP_UP_STATE_DIR-${XDG_STATE_HOME:-$HOME/.local/state}/agent-team}
   if [ "$round_kind" = daily ]; then log_file=${WRAP_UP_DAILY_LOG:-$HOME/.orca/logs/wrap-up-daily.log}
@@ -245,7 +254,7 @@ scheduled_round() {
 
   orca_dir=$(find_orca_dir)
   export PATH="${orca_dir:+$orca_dir:}$PATH:$HOME/.local/bin:$extra_bin:/usr/sbin:/sbin"
-  if [ -z "$orca_dir" ]; then round_failed 'no orca CLI on this host'; exit 0; fi
+  if [ -z "$orca_dir" ]; then round_failed 'no orca CLI on this host'; exit "$fail_exit"; fi
 
   # Orca must answer and report ready.
   if ! status_json=$(run_limited "$call_timeout" orca status --json 2>/dev/null) \
@@ -255,15 +264,15 @@ scheduled_round() {
 
   # 1 minute load against the cores: skip at 0.7 per core or more.
   load=$(read_load); cores=$(read_cores)
-  if ! awk -v l="${load:-}" 'BEGIN { exit (l ~ /^[0-9]+([.][0-9]+)?$/) ? 0 : 1 }'; then round_failed 'load unreadable'; exit 0; fi
-  case "$cores" in ''|0*|*[!0-9]*) round_failed 'cores unreadable'; exit 0 ;; esac
+  if ! awk -v l="${load:-}" 'BEGIN { exit (l ~ /^[0-9]+([.][0-9]+)?$/) ? 0 : 1 }'; then round_failed 'load unreadable'; exit "$fail_exit"; fi
+  case "$cores" in ''|0*|*[!0-9]*) round_failed 'cores unreadable'; exit "$fail_exit" ;; esac
   if awk -v l="$load" -v c="$cores" 'BEGIN { exit (l / c >= 0.7) ? 0 : 1 }'; then
     round_log "skip: load $load at or above 0.7 per core ($cores cores)"; exit 0
   fi
 
   if ! list_json=$(run_limited "$call_timeout" orca repo list --json 2>/dev/null) \
     || ! printf '%s' "$list_json" | jq -e '.result.repos | type == "array"' >/dev/null 2>&1; then
-    round_failed 'cannot read orca repo list'; exit 0
+    round_failed 'cannot read orca repo list'; exit "$fail_exit"
   fi
 
   # Per repo, each with its own budget, while keeping the multi-repo round inside WRAP_UP_PRECHECK_TIMEOUT.
@@ -342,10 +351,11 @@ scheduled_round() {
       fi
       step_code=$?
       [ "$step_code" -eq 0 ] || round_log "$step exit $step_code"
+      [ "$step_code" -ne 124 ] || board_note="$board_note, $step timed out"
     done
   fi
-  if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit 0; fi
-  round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note"
+  if [ -n "$fails" ]; then round_failed "${fails}${skipped:+; skipped=$skipped}"; exit "$fail_exit"; fi
+  round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note$board_note"
   exit 0
 }
 coordinator_runs_board_done() {
