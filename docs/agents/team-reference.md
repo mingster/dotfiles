@@ -412,7 +412,7 @@ Existing differing configuration files are moved to `<file>.bak.<date>` before
 replacement. `setup-orca.sh` links `~/.orca/presets.json` to `~/dotfiles/.orca/presets.json`
 after backing up any differing file. Usage gate (`usage-gate-hook.py`) and worker budget
 (`worker-budget.py`) hooks are composed into Claude Code, Cursor and Antigravity hook
-files via `setup-agent-hooks.sh`, which keeps one usage gate entry (it skips a copy `agent-team.sh machine`
+files via `setup-agent-hooks.sh`, which keeps one usage gate entry, one `worker-budget.py` per event and one `guard-bash.py` per tool, preferring the `$HOME` form (#1797; it skips a copy `agent-team.sh machine`
 already wrote and removes an older absolute path duplicate, and refuses to run from a linked worktree, #1536). The usage gate hook caches an allowed
 reading per provider for 30 seconds; a block is never cached. The same script carries the fleet defaults
 in `.agents/claude/settings.json` (model, effort, output style, status line, plugins, permission rules and

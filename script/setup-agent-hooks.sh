@@ -81,6 +81,34 @@ for event in hooks:
                       if not (re.fullmatch(r'python3 (/\S+/(usage-gate-hook|worker-budget)\.py)', h.get('command', ''))
                               and not pathlib.Path(h['command'][8:]).exists())]
     hooks[event] = [g for g in hooks[event] if g.get('hooks')]
+# One worker-budget and one guard-bash registration per event and tool (#1797). A tool covered twice
+# (an absolute path copy beside the $HOME one, or overlapping matchers) runs the hook twice and shows a deny twice.
+# The widest matcher wins, then the $HOME form, so a moved checkout keeps working. A matcher that is not a plain
+# tool list (a regex) is left alone.
+for event in hooks:
+    for name in ('worker-budget.py', 'guard-bash.py'):
+        owners = []
+        for gi, g in enumerate(hooks[event]):
+            matcher = g.get('matcher')
+            if matcher is None or not re.fullmatch(r'(\.\*|\w+)(\|\w+)*', matcher):
+                continue
+            for hi, h in enumerate(g['hooks']):
+                if name in h.get('command', ''):
+                    tools = ['*' if t == '.*' else t for t in matcher.split('|')]
+                    owners.append((-len(tools), '$HOME' not in h['command'], gi, hi, tools))
+        seen, drop, split = set(), set(), []
+        for _, _, gi, hi, tools in sorted(owners):
+            fresh = [t for t in tools if t not in seen]
+            seen.update(tools)
+            if not fresh:
+                drop.add((gi, hi))
+            elif len(fresh) < len(tools):
+                drop.add((gi, hi))
+                split.append({'matcher': '|'.join('.*' if t == '*' else t for t in fresh),
+                              'hooks': [hooks[event][gi]['hooks'][hi]]})
+        for gi, g in enumerate(hooks[event]):
+            g['hooks'] = [h for hi, h in enumerate(g['hooks']) if (gi, hi) not in drop]
+        hooks[event] = [g for g in hooks[event] if g['hooks']] + split
 # The tracked Claude settings are the fleet defaults: their keys win over this machine's (#1395).
 # Keys only this machine holds (env, mcpServers, feedbackDrafts, its own extras) are never touched.
 # Hooks belong to Orca and agent-team.sh machine, and permissions.defaultMode to the team template.

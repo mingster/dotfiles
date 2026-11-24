@@ -1,0 +1,2 @@
+- `setup-agent-hooks.sh` keeps one `worker-budget.py` per event and one `guard-bash.py` per tool, preferring the `$HOME` form (#1797).
+- SessionStart `state-of-play.sh` runs its two `gh` calls at once, each stopped after 3 s (#1798).
