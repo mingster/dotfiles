@@ -4328,12 +4328,20 @@ def build_supply_command(config, repos, agent, model):
     return [part for part in command if part]
 
 
-def work_order_supply_line(config, now, workers, supply):
-    """`work order: N of T live, supply S`, S the ready-for-agent count, or None without a work_order block (#1689)."""
-    order = work_order_settings(config, now)
-    if order is None:
+def work_order_supply_line(config, now, workers, supply, host=None, admission=None):
+    """`work order: N live, supply S[, host load L cap C]`, S the ready-for-agent count, or None without a work_order block.
+
+    There is no fleet-wide count limit (#1757): starts follow each host's load and cap, so the line shows those, not N of T."""
+    if work_order_settings(config, now) is None:
         return None
-    return 'work order: %d of %d live, supply %d' % (active_worker_count(workers), order[1], supply)
+    line = 'work order: %d live, supply %d' % (active_worker_count(workers), supply)
+    if host and isinstance(admission, dict):
+        load = admission.get('load_per_core')
+        if load is None and _is_local_coordinator_host(host, config):
+            load = coordinator_load_per_core()  # admit() reports it only on a breach
+        cap = (config.get('host_caps') or {}).get(host, 4)
+        line += ', %s load %s cap %s' % (host, '%.2f' % load if isinstance(load, (int, float)) else 'n/a', cap)
+    return line
 
 
 def _architect_pm_making_work(workers):
@@ -4348,7 +4356,7 @@ def work_order_try_supply(
     config, state, now, repos, supply, host, admission, extra_starts, reserved, workers,
     start_worker, pick_fn=None, persist_state=None,
 ):
-    """Free seats under target_workers above the ready-for-agent supply: start one architect-pm to make work (#1689).
+    """Free capacity under target_workers above the ready-for-agent supply: start one architect-pm to make work (#1689).
 
     At most one runs: a live #0|architect-pm worker blocks it, and it starts at most once per
     triage_interval_hours. `reserved` local seats stay free for the ready issues of this pass."""
@@ -7467,7 +7475,7 @@ def issue_scan_pass(
                 continue
             candidates.append((repo, row))
 
-    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count)
+    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission)
     if supply_line:
         notices.append(supply_line)
 
@@ -7520,12 +7528,8 @@ def issue_scan_pass(
     # The workers inventory is a snapshot from before this pass, so count this pass's starts per host.
     pass_starts = {}
     attempts = 0
-    order = work_order_settings(config)
     for repo, row in candidates:
         placement = None
-        if order is not None and active_worker_count(workers) + extra_starts >= order[1]:
-            log_bits.append('work_order_target=%d' % order[1])
-            break
         if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
             count_refused('host_cap')
             break
