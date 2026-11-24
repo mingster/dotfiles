@@ -10,6 +10,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -53,6 +54,7 @@ class Leads(unittest.TestCase):
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}],
                                       'leads': [{'name': 'lead 2', 'terminal': 'term_lead2'}]}))
         with redirect_main_log_under(str(state.parent.resolve())), \
+             patch.dict(os.environ, {'SHIP_FLEET_PULL_LOG': str(state.parent/'fleet-pull.log'), 'TEMPLATE_SYNC_STATE': str(state.parent/'template-sync.json')}), \
              patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
              patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
@@ -91,6 +93,7 @@ class Leads(unittest.TestCase):
                                           'leads': [{'name': 'lead 2', 'terminal': 'term_lead2'}]}))
             buf = io.StringIO()
             with redirect_main_log_under(str(home)), \
+                 patch.dict(os.environ, {'SHIP_FLEET_PULL_LOG': str(home/'fleet-pull.log'), 'TEMPLATE_SYNC_STATE': str(home/'template-sync.json')}), \
                  patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
                  patch.object(watch, 'rpc', side_effect=rpc), \
                  patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)), \
