@@ -1764,6 +1764,9 @@ def check_hidden_hosts(segment, base, args):
         deny(f"The guard cannot read the words of this {base} command, so it is refused. Write it with plain words.")
     raw_args = raw[len(tokens) - len(args):]
     for i in [ssh_argv(args)[1]] if base == "ssh" else operands_indices(base, args):
+        if (base in ("scp", "rsync") and i is not None and i < len(raw_args) and ":" not in raw_args[i]
+                and not re.search(r"\$\(|`|\$\{[^}]*$", raw_args[i])):
+            continue  # no colon: a local path, not a host (#1795). An open `$(` or `${` was cut by the segment split.
         if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
@@ -2950,9 +2953,13 @@ def check_indirection(base, args):
                             "hides the command from the guard. Run the command directly.")
 
 
+LEAD_KEYWORDS = re.compile(r"^(?:(?:if|then|else|elif|do|while|until|!)(?:\s+|$))+")
+
+
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
+    segment = LEAD_KEYWORDS.sub("", segment).strip()  # `do ssh $h x` is an ssh command (#1795)
     tokens = words(segment)
     prog, args = program_and_args(tokens)
     if not prog:
@@ -4031,8 +4038,180 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# A variable the same command sets to a literal is judged by its value (#1795). Anything that could change the value
+# in a way the text does not show (command output, read, the environment, a second assignment) stays unresolved, and
+# the checks deny the `$name` as before.
+LEAD_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "time"}
+ASSIGN_WORD = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\+?)=(.*)", re.S)
+NAME_ONLY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+LITERAL_VALUE = re.compile(r"~?[A-Za-z0-9_./@:+,%=^-]+")
+BINDING_BUILTINS = {"read", "mapfile", "readarray", "getopts", "unset", "export", "declare", "typeset", "local",
+                    "readonly", "let", "select", "coproc"}
+MAX_VARIANTS = 32
+UNREADABLE_SHAPE = re.compile(r"\(\(|<<|`|\bfunction\b|\(\)|\bcase\b")
+
+
+def _literal_value(word):
+    m = re.fullmatch(r"'([^']*)'|\"([^\"$`\\]*)\"", word)
+    value = word if m is None else (m.group(1) if m.group(1) is not None else m.group(2))
+    return os.path.expanduser(value) if LITERAL_VALUE.fullmatch(value) else None
+
+
+def _shell_statements(command):
+    """(statements, single quoted spans) or None when the text has a shape the resolver does not read.
+    A statement is (start, end, operator before it, parenthesis depth)."""
+    if UNREADABLE_SHAPE.search(command):
+        return None
+    out, singles, quote, start, prev, depth, i, n = [], [], None, 0, "", 0, 0, len(command)
+    sq = 0
+    while i < n:
+        c = command[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                if quote == "'":
+                    singles.append((sq, i))
+                quote = None
+        elif c in "'\"":
+            quote, sq = c, i
+        elif c == "\\":
+            i += 2
+            continue
+        elif c == "$" and command.startswith("${", i):
+            j = command.find("}", i)
+            if j < 0 or command.startswith("${!", i):
+                return None
+            i = j
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>"):
+            j = command.find("\n", i)
+            i = n if j < 0 else j - 1
+        elif c in ";\n|&()" or (c == "{" and command[i + 1:i + 2] in (" ", "\t", "\n")
+                                and (i == 0 or command[i - 1] in " \t\n;")) \
+                or (c == "}" and command[i - 1:i] in (" ", "\t", "\n", ";")
+                    and command[i + 1:i + 2] in ("", " ", "\t", "\n", ";")):
+            if c == "&" and (command[i - 1:i] in (">", "<") or command[i + 1:i + 2] == ">"):
+                i += 1
+                continue
+            width = 2 if command[i:i + 2] in ("&&", "||") else 1
+            out.append((start, i, prev, depth))
+            depth += 1 if c == "(" else -1 if c == ")" else 0
+            if depth < 0:
+                return None
+            start, prev, i = i + width, command[i:i + width], i + width - 1
+        i += 1
+    if quote:
+        return None
+    out.append((start, n, prev, depth))
+    return out, singles
+
+
+def _bindings(command, stmts):
+    """name -> [(statement end, values or None)] for every way the text can set a variable. None: do not resolve."""
+    events = {}
+
+    def add(name, end, values=None):
+        events.setdefault(name, []).append((end, values))
+
+    for m in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?=", command):
+        add(m.group(1), 0)
+    for start, end, prev, depth in stmts:
+        raw = raw_words(command[start:end])
+        keywords = []
+        while raw and raw[0] in LEAD_WORDS:
+            keywords.append(raw.pop(0))
+        if not raw:
+            continue
+        plain = depth == 0 and prev in ("", ";", "\n") and all(k == "do" for k in keywords)
+        if raw[0] == "for":
+            if len(raw) < 2 or not NAME_ONLY.fullmatch(raw[1]):
+                return None
+            values = [_literal_value(w) for w in raw[3:]] if len(raw) > 3 and raw[2] == "in" else []
+            add(raw[1], end, values if plain and values and None not in values else None)
+            continue
+        idx, found = 0, []
+        while idx < len(raw) and ASSIGN_WORD.fullmatch(raw[idx]):
+            found.append(ASSIGN_WORD.fullmatch(raw[idx]))
+            idx += 1
+        for m in found:
+            literal = _literal_value(m.group(3)) if plain and idx == len(raw) and not m.group(2) else None
+            add(m.group(1), end, [literal] if literal else None)
+        rest = raw[idx:]
+        for j, word in enumerate(rest):
+            if word in ("eval", "source", ".") and (j == 0 or rest[j - 1] in ("command", "builtin")):
+                return None
+            if word == "printf" and "-v" in rest[j + 1:]:
+                k = rest.index("-v", j + 1)
+                if k + 1 < len(rest):
+                    add(rest[k + 1], end)
+            if word in BINDING_BUILTINS:
+                for other in rest[j + 1:]:
+                    m = NAME_ONLY.match(other)
+                    if m and not other.startswith("-"):
+                        add(m.group(0), end)
+    if "IFS" in events:
+        return None
+    return events
+
+
+def _resolve_once(command):
+    """Texts with the first resolvable variable replaced by its literal value, one per value; None if none is."""
+    scanned = _shell_statements(command)
+    if scanned is None:
+        return None
+    stmts, singles = scanned
+    events = _bindings(command, stmts)
+    if events is None:
+        return None
+    for name, found in sorted(events.items(), key=lambda kv: kv[1][0][0]):
+        if len(found) != 1 or found[0][1] is None:
+            continue
+        end, values = found[0]
+        use = re.compile(r"(?<!\\)\$(?:%s(?![A-Za-z0-9_])|\{%s\})" % (name, name))
+        out = []
+        for value in dict.fromkeys(values):
+            def sub(m, value=value):
+                if m.start() < end or any(a <= m.start() < b for a, b in singles):
+                    return m.group(0)
+                return value
+            out.append(use.sub(sub, command))
+        if out[0] != command:
+            return out
+    return None
+
+
+def literal_variants(command):
+    """The command itself, or its texts with every literally set variable replaced by each value it can hold."""
+    try:
+        variants = [command]
+        for _ in range(8):
+            nxt, changed = [], False
+            for text in variants:
+                more = _resolve_once(text)
+                nxt.extend([text] if more is None else more)
+                changed = changed or more is not None
+            if len(nxt) > MAX_VARIANTS:
+                return [command]
+            variants = list(dict.fromkeys(nxt))
+            if not changed:
+                return variants
+    except Exception:
+        pass
+    return [command]
+
+
 def check_command(command):
     command = report_command_text(command)
+    for variant in literal_variants(command):
+        check_command_text(variant)
+    # After the rules above, so an existing deny keeps its reason.
+    check_blocked_script_mentions(RAW_COMMAND)
+    if INDIRECT:
+        deny(INDIRECT[0])
+
+
+def check_command_text(command):
     global CODE_COMMAND
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
@@ -4049,9 +4228,6 @@ def check_command(command):
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
-    check_blocked_script_mentions(RAW_COMMAND)
-    if INDIRECT:
-        deny(INDIRECT[0])
 
 
 def main():

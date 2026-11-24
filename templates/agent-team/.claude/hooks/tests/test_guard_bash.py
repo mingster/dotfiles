@@ -1810,5 +1810,64 @@ class BuilderOwnerPathGate(GuardTest):
         self.assertIsNotNone(self.write(self.HOOK_PATH))
 
 
+class LiteralVariables(GuardTest):
+    """A variable set to a literal in the same command is judged by its value (#1795); anything else stays denied."""
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"production_hosts": ["prod.example"], "secrets_dir": "fileServer/secrets"}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "grant.json")}
+
+    ALLOWED = (
+        "P=/tmp/p; for f in $P/.claude/skills/*/SKILL.md; do echo $f; done",
+        "for w in a b; do [ -d ../$w ] && echo $w; done",
+        "B=~/agent-state/briefs; cat $B/x",
+        'for h in blueDevil niteking; do echo "== $h"; ssh $h uptime; done',
+        'S=/tmp/sp; scp -q niteking:x.patch "$S/"',
+    )
+    DENIED = (
+        "for h in $(cat /tmp/hosts); do ssh $h uptime; done",
+        "H=$(cat /tmp/hosts); ssh $H uptime",
+        "for h in prod.example; do ssh $h rm -rf /x; done",
+        "D=.; cat $D/fileServer/secrets/x.json",
+        "for f in fileServer/secrets/*; do cat $f; done",
+        "H=blue ssh $H uptime",
+        "ssh $H uptime; H=blue",
+        "H=blue; H=$(cat /tmp/h); ssh $H uptime",
+        "H=blue; read H; ssh $H uptime",
+        "H=blue; IFS=:; ssh $H uptime",
+        "(H=blue); ssh $H uptime",
+        "false || H=blue; ssh $H uptime",
+        "H=blue; ssh ${H:-x} uptime; ssh $H$(cat /tmp/h) uptime",
+        "for h in blue $(cat /tmp/h); do ssh $h uptime; done",
+        "for h in blue *; do ssh $h uptime; done",
+        "D=..; cat $D/fileServer/secrets/x.json",
+        "for d in . x; do cat $d/fileServer/secrets/x.json; done",
+        "do ssh prod.example rm -rf /x",
+    )
+
+    def test_literal_variables_are_allowed(self):
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_other_values_stay_denied(self):
+        for command in self.DENIED:
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_ssh_inside_a_loop_body_is_judged(self):
+        self.assertDenied("for h in $(cat /tmp/hosts); do ssh $h uptime; done", "ssh")
+        self.assertDenied("if true; then ssh prod.example rm -rf /x; fi")
+
+    def test_scp_local_operand_is_not_a_host(self):
+        self.assertAllowed('scp -q niteking:x.patch "$HOME/x/"')
+        self.assertDenied("scp -q $(cat /tmp/h):x.patch /tmp/x")
+        self.assertDenied("scp -q ${H}:x.patch /tmp/x")
+        self.assertAllowed("rsync -a niteking:x /tmp/$USER/")
+
+
 if __name__ == "__main__":
     unittest.main()
