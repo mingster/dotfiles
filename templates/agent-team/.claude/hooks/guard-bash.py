@@ -1767,9 +1767,6 @@ def check_hidden_hosts(segment, base, args):
         deny(f"The guard cannot read the words of this {base} command, so it is refused. Write it with plain words.")
     raw_args = raw[len(tokens) - len(args):]
     for i in [ssh_argv(args)[1]] if base == "ssh" else operands_indices(base, args):
-        if (base in ("scp", "rsync") and i is not None and i < len(raw_args) and ":" not in raw_args[i]
-                and not re.search(r"\$\(|`|\$\{[^}]*$", raw_args[i])):
-            continue  # no colon: a local path, not a host (#1795). An open `$(` or `${` was cut by the segment split.
         if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
@@ -4047,9 +4044,13 @@ def check_blocked_script_mentions(command):
 LEAD_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "time"}
 ASSIGN_WORD = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)(\+?)=(.*)", re.S)
 NAME_ONLY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-LITERAL_VALUE = re.compile(r"~?[A-Za-z0-9_./@:+,%=^-]+")
-BINDING_BUILTINS = {"read", "mapfile", "readarray", "getopts", "unset", "export", "declare", "typeset", "local",
-                    "readonly", "let", "select", "coproc"}
+LITERAL_VALUE = re.compile(r"~?[A-Za-z0-9_./@:+,%^-]+")
+PLAIN_PROGRAM = re.compile(r"[A-Za-z0-9_./+-]+|\[|:")
+SHELL_BUILTINS = set("alias bg bind break builtin caller cd command compgen complete compopt continue declare dirs disown echo "
+                     "enable eval exec exit export false fc fg getopts hash help history jobs kill let local logout mapfile "
+                     "popd printf pushd pwd read readarray readonly return set shift shopt source suspend test times trap true "
+                     "type typeset ulimit umask unalias unset wait . : [ coproc select".split())
+HARMLESS_BUILTINS = {"echo", "test", "[", "true", "false", "pwd", ":"}
 MAX_VARIANTS = 32
 # Only a flat command is resolved: no substitution, group, subshell, heredoc, function or compound statement other
 # than `for ... do ... done`. A bare `${name}` is the one expansion it reads.
@@ -4103,52 +4104,43 @@ def _shell_statements(command):
 
 
 def _bindings(command, stmts):
-    """name -> [(statement end, values or None)] for every way the text can set a variable. None: do not resolve."""
+    """name -> [(statement end, values or None)] for every way the text can set a variable. None: do not resolve.
+    A statement that is not an assignment or a `for` header must start with a plain program word that is not a
+    shell builtin (only echo, test, [, true, false, pwd and : are let through), so nothing else can set a name."""
     events = {}
 
     def add(name, end, values=None):
         events.setdefault(name, []).append((end, values))
 
-    for start, end, prev in stmts:
+    for index, (start, end, prev) in enumerate(stmts):
+        following = stmts[index + 1][2] if index + 1 < len(stmts) else ""
         raw = raw_words(command[start:end])
         keywords = []
         while raw and raw[0] in LEAD_WORDS:
             keywords.append(raw.pop(0))
         if not raw:
             continue
-        plain = prev in ("", ";", "\n") and all(k == "do" for k in keywords)
+        # Not a pipeline or background part, no condition, and always run.
+        plain = prev in ("", ";", "\n") and following in ("", ";", "\n", "&&", "||") \
+            and all(k == "do" for k in keywords)
         if raw[0] == "for":
             if len(raw) < 2 or not NAME_ONLY.fullmatch(raw[1]):
                 return None
             values = [_literal_value(w) for w in raw[3:]] if len(raw) > 3 and raw[2] == "in" else []
-            add(raw[1], end, values if plain and values and None not in values else None)
+            add(raw[1], end, values if plain and following in ("", ";", "\n") and values and None not in values
+                else None)
             continue
         idx, found = 0, []
         while idx < len(raw) and ASSIGN_WORD.fullmatch(raw[idx]):
             found.append(ASSIGN_WORD.fullmatch(raw[idx]))
             idx += 1
         for m in found:
-            literal = _literal_value(m.group(3)) if plain and idx == len(raw) and not m.group(2) else None
+            literal = _literal_value(m.group(3)) if plain and not keywords and idx == len(raw) and not m.group(2) else None
             add(m.group(1), end, [literal] if literal else None)
-        # Quotes and backslashes do not change which builtin runs or which name it sets.
-        rest = [re.sub(r"[\"'\\]", "", w) for w in raw[idx:]]
-        if rest and "$" in rest[0]:
-            return None  # the program comes from a variable: it could be read, eval or declare
-        for j, word in enumerate(rest):
-            if word in ("eval", "source", ".") and (j == 0 or rest[j - 1] in ("command", "builtin")):
+        if idx < len(raw):
+            program = raw[idx]
+            if not PLAIN_PROGRAM.fullmatch(program) or (program in SHELL_BUILTINS and program not in HARMLESS_BUILTINS):
                 return None
-            if word == "printf":
-                for k, other in enumerate(rest[j + 1:], j + 1):
-                    if other.startswith("-v") and len(other) > 2:
-                        add(other[2:], end)
-                    elif other == "-v" and k + 1 < len(rest):
-                        add(rest[k + 1], end)
-            if word in BINDING_BUILTINS:
-                add("REPLY", end)  # a bare read sets REPLY
-                for other in rest[j + 1:]:
-                    m = NAME_ONLY.match(other)
-                    if m and not other.startswith("-"):
-                        add(m.group(0), end)
     if "IFS" in events:
         return None
     return events

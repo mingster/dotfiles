@@ -1876,11 +1876,24 @@ class LiteralVariables(GuardTest):
         self.assertDenied("for h in $(cat /tmp/hosts); do ssh $h uptime; done", "ssh")
         self.assertDenied("if true; then ssh prod.example rm -rf /x; fi")
 
-    def test_scp_local_operand_is_not_a_host(self):
-        self.assertAllowed('scp -q niteking:x.patch "$HOME/x/"')
-        self.assertDenied("scp -q $(cat /tmp/h):x.patch /tmp/x")
-        self.assertDenied("scp -q ${H}:x.patch /tmp/x")
-        self.assertAllowed("rsync -a niteking:x /tmp/$USER/")
+    def test_scp_operand_from_an_unknown_value_stays_denied(self):
+        # The colon of host:path can sit in the value, so a `$name` operand is not a local path until it resolves.
+        for command in ('scp -q niteking:x.patch "$HOME/x/"', "scp -q $(cat /tmp/h):x.patch /tmp/x",
+                        "scp -q ${H}:x.patch /tmp/x", "H=$(cat /tmp/h); scp $H /tmp/x", "rsync -a /tmp/x $H",
+                        "scp -q {prod,dev}.example:x.patch /tmp/x"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+        self.assertAllowed("D=/tmp/sp; rsync -a niteking:x $D/")
+        self.assertDenied("D=/tmp/sp; D=prod.example:; rsync -a niteking:x $D/")
+
+    def test_resolver_gives_up_on_unreadable_statements(self):
+        for command in ("H=blue | ssh $H uptime", "H=blue & ssh $H uptime", "H=blue; >/dev/null H=$(cat /t); ssh $H x",
+                        "H=blue; read -aH < /tmp/h; ssh $H uptime", "H=blue; declare -n R=H; R=prod.example; ssh $H x",
+                        "H=blue; V=H; read $V < /tmp/h; ssh $H uptime", "H=blue; command -p source /tmp/h; ssh $H x",
+                        "X=H=blue; $X; ssh $H uptime", "H=blue; export \"H=$(cat /tmp/h)\"; ssh $H uptime",
+                        "for x in; do H=blue; done; ssh $H uptime", "H=blue; printf -vH %s p; ssh $H uptime"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
 
 
 if __name__ == "__main__":
