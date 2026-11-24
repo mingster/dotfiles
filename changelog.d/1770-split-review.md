@@ -1,0 +1,1 @@
+ship.sh refuses a Review: FAIL at the head unless a later Review: PASS from the model that posted it, a Countersign, or a Verdict quoting it with a Does not hold line covers it. A split review is no longer a pass.
