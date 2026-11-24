@@ -189,9 +189,10 @@ def has_python_tests(directory):
 
 
 def find_bash5():
-    # The override lists extra candidates, for tests.
-    extra = [item for item in os.environ.get('SCOPED_TESTS_BASH_CANDIDATES', '').split(os.pathsep) if item]
-    for candidate in [shutil.which('bash'), *extra, '/opt/homebrew/bin/bash', '/usr/local/bin/bash']:
+    # SCOPED_TESTS_BASH_CANDIDATES replaces the Homebrew defaults, for tests.
+    override = os.environ.get('SCOPED_TESTS_BASH_CANDIDATES')
+    fallbacks = [item for item in override.split(os.pathsep) if item] if override is not None else ['/opt/homebrew/bin/bash', '/usr/local/bin/bash']
+    for candidate in [shutil.which('bash'), *fallbacks]:
         if candidate and os.path.exists(candidate) and subprocess.run([candidate, '-c', '((BASH_VERSINFO[0] >= 5))']).returncode == 0:
             return candidate
     return None
