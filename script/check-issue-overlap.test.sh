@@ -88,6 +88,18 @@ printf 'Fix.\n\n## Out of scope\nnothing\n' >"$TMP/brief2.md"
 run --spec "$TMP/brief2.md" 16
 [ "$rc" -eq 1 ] && ok "--spec without Allowed files falls back to the issue body" || bad "spec fallback (rc=$rc, $out)"
 
+# owner-reviewed files mixed with code: a warning, not a refusal
+echo '[]' >"$FAKE/inflight.json"; echo '[]' >"$FAKE/prs.json"
+printf 'x\n\n## Allowed files\n- script/mix.sh\n- .claude/agents/fullstack-dev.md\n' >"$FAKE/issue-30.md"
+run 30
+if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out" && grep -qF "two issues" <<<"$out"; then ok "owner-reviewed files mixed with code warn and still exit 0"; else bad "mixed warn (rc=$rc, $out)"; fi
+printf 'x\n\n## Allowed files\n- script/only.sh\n- script/tests/only.test.sh\n' >"$FAKE/issue-31.md"
+run 31
+if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "code only: no warning"; else bad "code only (rc=$rc, $out)"; fi
+printf 'x\n\n## Allowed files\n- templates/agent-team/docs/agents/team.md\n- changelog.d/1-x.md\n- docs/agents/team-reference.md\n' >"$FAKE/issue-32.md"
+run 32
+if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "owner-reviewed docs only: no warning"; else bad "docs only (rc=$rc, $out)"; fi
+
 run
 [ "$rc" -eq 2 ] && ok "no arguments is a usage error" || bad "usage (rc=$rc)"
 
