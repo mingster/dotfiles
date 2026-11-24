@@ -3287,12 +3287,13 @@ def worker_signal_pass(config, state, now, workers, term_times, terminal_branche
         rec = bucket.setdefault(did, {'fired': {}})
         fired = rec.setdefault('fired', {})
         runs = runs_fn(repo, branch) if (branch and repo) else None
-        if runs:
-            head = runs[0].get('headSha') or ''
-            if head and head != rec.get('head'):
-                if rec.get('head') is not None:
+        if runs is not None:
+            head = (runs[0].get('headSha') or '') if runs else ''
+            if head != rec.get('head', ''):
+                if 'head' in rec:
                     rec['head_at'] = now  # a changed head is a push; the first read is only a baseline
                 rec['head'] = head
+            rec.setdefault('head', head)
         rec.setdefault('head_at', now)
         label = 'worker %s' % did
         pr = worker_pr_number(w)

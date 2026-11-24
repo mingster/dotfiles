@@ -111,5 +111,14 @@ class FailureReads(unittest.TestCase):
         self.assertEqual(len(notices), 1)
 
 
+    def test_first_push_to_a_branch_with_no_runs_counts_as_a_push(self):
+        state = {}
+        run(state, T0, [], out_age=60)
+        run(state, T0 + 600, [{'status': 'completed', 'headSha': 'first'}], out_age=600)
+        notices, _ = run(state, T0 + LIMIT + 120, [{'status': 'completed', 'headSha': 'first'}],
+                         out_age=LIMIT + 120)
+        self.assertEqual(notices, [])
+
+
 if __name__ == '__main__':
     unittest.main()
