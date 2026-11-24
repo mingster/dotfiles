@@ -255,9 +255,9 @@ class SupplyWorker(unittest.TestCase):
 
     def test_digest_line_each_pass(self):
         _s, _t, _bits, _state, notices = self.supply([row(1)], workers=TriageWorker.live(self, 4))
-        self.assertRegex(' '.join(notices), r'work order: 4 live, supply 1, \S+ load \d+\.\d\d cap 4')
+        self.assertRegex(' '.join(notices), r'work order: 4 live \(4 working, 0 waiting on coordinator\), supply 1, \S+ load \d+\.\d\d cap 4')
         _s, _t, _bits, _state, notices = self.supply([], workers=TriageWorker.live(self, 10))
-        self.assertRegex(' '.join(notices), r'work order: 10 live, supply 0, \S+ load \d+\.\d\d cap 4')
+        self.assertRegex(' '.join(notices), r'work order: 10 live \(10 working, 0 waiting on coordinator\), supply 0, \S+ load \d+\.\d\d cap 4')
 
     def test_supply_spec_passes_brief_lint(self):
         supply, _triage, _bits, _state, _n = self.supply([])
