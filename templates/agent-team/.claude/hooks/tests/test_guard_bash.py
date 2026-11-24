@@ -1846,6 +1846,20 @@ class LiteralVariables(GuardTest):
         "D=..; cat $D/fileServer/secrets/x.json",
         "for d in . x; do cat $d/fileServer/secrets/x.json; done",
         "do ssh prod.example rm -rf /x",
+        'H=blue; echo "$(H=prod.example; ssh $H rm -rf /x)"',
+        "H=blue; echo ${X:-$(H=prod.example; ssh $H rm -rf /x)}",
+        "while false; do H=blue; done; ssh $H uptime",
+        "if false; then :; H=blue; fi; ssh $H uptime",
+        "true || { :; H=blue; }; ssh $H uptime",
+        "H=blue; true &&{ H=prod.example; }; ssh $H rm -rf /x",
+        'H=blue; read "H" < /tmp/hosts; ssh $H uptime',
+        'H=blue; "read" H < /tmp/hosts; ssh $H uptime',
+        'H=blue; declare "H=prod.example"; ssh $H rm -rf /x',
+        "H=blue; printf -vH %s prod.example; ssh $H rm -rf /x",
+        "REPLY=blue; read < /tmp/hosts; ssh $REPLY uptime",
+        "R=read; H=blue; $R H < /tmp/hosts; ssh $H uptime",
+        "for h in prod.example; do (ssh $h rm -rf /x); done",
+        "for h in $(cat /tmp/hosts); do { ssh $h uptime; }; done",
     )
 
     def test_literal_variables_are_allowed(self):

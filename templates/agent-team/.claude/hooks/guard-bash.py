@@ -486,6 +486,9 @@ def load_guard_config(start_dir):
             GRILL_APPROVERS.add(login.strip().lower())
 
 
+LEADING_ONLY = re.compile(r"(?:(?:if|then|else|elif|do|while|until|!)\s*)*")  # empty or only shell keywords
+
+
 def segments(command):
     """Split a command line on control operators, keeping quoted text intact."""
     out, buf, quote, i = [], [], None, 0
@@ -504,7 +507,7 @@ def segments(command):
         elif c == "\\" and i + 1 < len(command):
             buf.append(c + command[i + 1])
             i += 1
-        elif c in ";|&\n" or (c in "({" and not "".join(buf).strip()):
+        elif c in ";|&\n" or (c in "({" and LEADING_ONLY.fullmatch("".join(buf).strip())):
             out.append("".join(buf))
             buf = []
         elif c in ")}" and not quote:
@@ -4048,7 +4051,10 @@ LITERAL_VALUE = re.compile(r"~?[A-Za-z0-9_./@:+,%=^-]+")
 BINDING_BUILTINS = {"read", "mapfile", "readarray", "getopts", "unset", "export", "declare", "typeset", "local",
                     "readonly", "let", "select", "coproc"}
 MAX_VARIANTS = 32
-UNREADABLE_SHAPE = re.compile(r"\(\(|<<|`|\bfunction\b|\(\)|\bcase\b")
+# Only a flat command is resolved: no substitution, group, subshell, heredoc, function or compound statement other
+# than `for ... do ... done`. A bare `${name}` is the one expansion it reads.
+UNREADABLE_SHAPE = re.compile(r"<<|\$[({!]|[`(){}]|\b(?:function|case|while|until|if|then|else|elif|fi|select)\b")
+BARE_USE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
 def _literal_value(word):
@@ -4059,10 +4065,10 @@ def _literal_value(word):
 
 def _shell_statements(command):
     """(statements, single quoted spans) or None when the text has a shape the resolver does not read.
-    A statement is (start, end, operator before it, parenthesis depth)."""
-    if UNREADABLE_SHAPE.search(command):
+    A statement is (start, end, operator before it)."""
+    if UNREADABLE_SHAPE.search(BARE_USE.sub("", command)):
         return None
-    out, singles, quote, start, prev, depth, i, n = [], [], None, 0, "", 0, 0, len(command)
+    out, singles, quote, start, prev, i, n = [], [], None, 0, "", 0, len(command)
     sq = 0
     while i < n:
         c = command[i]
@@ -4079,31 +4085,20 @@ def _shell_statements(command):
         elif c == "\\":
             i += 2
             continue
-        elif c == "$" and command.startswith("${", i):
-            j = command.find("}", i)
-            if j < 0 or command.startswith("${!", i):
-                return None
-            i = j
-        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()<>"):
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|<>"):
             j = command.find("\n", i)
             i = n if j < 0 else j - 1
-        elif c in ";\n|&()" or (c == "{" and command[i + 1:i + 2] in (" ", "\t", "\n")
-                                and (i == 0 or command[i - 1] in " \t\n;")) \
-                or (c == "}" and command[i - 1:i] in (" ", "\t", "\n", ";")
-                    and command[i + 1:i + 2] in ("", " ", "\t", "\n", ";")):
+        elif c in ";\n|&":
             if c == "&" and (command[i - 1:i] in (">", "<") or command[i + 1:i + 2] == ">"):
                 i += 1
                 continue
             width = 2 if command[i:i + 2] in ("&&", "||") else 1
-            out.append((start, i, prev, depth))
-            depth += 1 if c == "(" else -1 if c == ")" else 0
-            if depth < 0:
-                return None
+            out.append((start, i, prev))
             start, prev, i = i + width, command[i:i + width], i + width - 1
         i += 1
     if quote:
         return None
-    out.append((start, n, prev, depth))
+    out.append((start, n, prev))
     return out, singles
 
 
@@ -4114,16 +4109,14 @@ def _bindings(command, stmts):
     def add(name, end, values=None):
         events.setdefault(name, []).append((end, values))
 
-    for m in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*):?=", command):
-        add(m.group(1), 0)
-    for start, end, prev, depth in stmts:
+    for start, end, prev in stmts:
         raw = raw_words(command[start:end])
         keywords = []
         while raw and raw[0] in LEAD_WORDS:
             keywords.append(raw.pop(0))
         if not raw:
             continue
-        plain = depth == 0 and prev in ("", ";", "\n") and all(k == "do" for k in keywords)
+        plain = prev in ("", ";", "\n") and all(k == "do" for k in keywords)
         if raw[0] == "for":
             if len(raw) < 2 or not NAME_ONLY.fullmatch(raw[1]):
                 return None
@@ -4137,15 +4130,21 @@ def _bindings(command, stmts):
         for m in found:
             literal = _literal_value(m.group(3)) if plain and idx == len(raw) and not m.group(2) else None
             add(m.group(1), end, [literal] if literal else None)
-        rest = raw[idx:]
+        # Quotes and backslashes do not change which builtin runs or which name it sets.
+        rest = [re.sub(r"[\"'\\]", "", w) for w in raw[idx:]]
+        if rest and "$" in rest[0]:
+            return None  # the program comes from a variable: it could be read, eval or declare
         for j, word in enumerate(rest):
             if word in ("eval", "source", ".") and (j == 0 or rest[j - 1] in ("command", "builtin")):
                 return None
-            if word == "printf" and "-v" in rest[j + 1:]:
-                k = rest.index("-v", j + 1)
-                if k + 1 < len(rest):
-                    add(rest[k + 1], end)
+            if word == "printf":
+                for k, other in enumerate(rest[j + 1:], j + 1):
+                    if other.startswith("-v") and len(other) > 2:
+                        add(other[2:], end)
+                    elif other == "-v" and k + 1 < len(rest):
+                        add(rest[k + 1], end)
             if word in BINDING_BUILTINS:
+                add("REPLY", end)  # a bare read sets REPLY
                 for other in rest[j + 1:]:
                     m = NAME_ONLY.match(other)
                     if m and not other.startswith("-"):
@@ -4185,7 +4184,7 @@ def literal_variants(command):
     """The command itself, or its texts with every literally set variable replaced by each value it can hold."""
     try:
         variants = [command]
-        for _ in range(8):
+        for _ in range(16):
             nxt, changed = [], False
             for text in variants:
                 more = _resolve_once(text)
@@ -4195,10 +4194,10 @@ def literal_variants(command):
                 return [command]
             variants = list(dict.fromkeys(nxt))
             if not changed:
-                return variants
+                break
+        return variants
     except Exception:
-        pass
-    return [command]
+        return [command]
 
 
 def check_command(command):

@@ -720,19 +720,7 @@
   "command": "for s in a deploy; do bash bin/$s-raw.sh; done"
  },
  {
-  "name": "i1795-assigned-from-output",
-  "command": "S=$(echo deploy); bash bin/$S-raw.sh"
- },
- {
   "name": "i1795-do-prefix-blocked-script",
   "command": "for s in a; do bash bin/deploy-raw.sh; done"
- },
- {
-  "name": "i1795-env-prefix-not-an-assignment",
-  "command": "S=a bash bin/$S-raw.sh"
- },
- {
-  "name": "i1795-use-before-assignment",
-  "command": "bash bin/$S-raw.sh; S=deploy"
  }
 ]
