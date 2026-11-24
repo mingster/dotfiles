@@ -2423,9 +2423,111 @@ def _normalize_terminal_time_ms(value):
     return v
 
 
+GONE_REMOTE_KEY = '_remote_gone'
+ASK_REPLY_SECONDS = 15 * 60
+ASK_TYPES = ('question', 'escalation')
+
+
+def _remote_ready_record(w):
+    """A remote row with a `ready` state and no local terminal: a server record, whether or not it names `server`."""
+    host = w.get('host')
+    return ((w.get('state') or w.get('workerState')) == 'ready'
+            and (_remote_server_row(w) or (isinstance(host, str) and host not in ('', 'local')
+                                           and not (w.get('projection') or w.get('agentTerminalHandle')
+                                                    or w.get('terminalState') or w.get('resource')))))
+
+
+def gone_remote_dispatch_notices(workers, state, rpc_call):
+    """Mark remote server-record rows whose dispatch has no terminal on its host, and report each once (#1781).
+
+    Remote rows say `ready` whether the worker is working, idle or gone, and `asOf` is not a heartbeat, so the row
+    alone proves nothing. The dispatch's terminal (worker-show) must appear in `terminal list --environment <host>`.
+    A host whose list or show cannot be read leaves its rows as they were."""
+    candidates = {}
+    for w in workers or []:
+        if (isinstance(w, dict) and _remote_ready_record(w) and worker_row_is_live(w)
+                and w.get('dispatchId')):
+            candidates.setdefault(projection_host_id(w), []).append(w)
+    reported = state.setdefault('gone_remote', [])
+    notices = []
+    for host, rows in candidates.items():
+        try:
+            listed = rpc_call('terminal', 'list', '--environment', host)
+        except SEND_ERRORS:
+            continue
+        handles = {t.get('handle') for t in (listed or {}).get('terminals') or [] if isinstance(t, dict)}
+        for w in rows:
+            dispatch = w['dispatchId']
+            try:
+                shown = rpc_call('orchestration', 'worker-show', '--dispatch', dispatch, '--environment', host)
+            except SEND_ERRORS:
+                continue
+            if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+                shown = shown['worker']
+            if worker_terminal_handle(shown if isinstance(shown, dict) else {}) in handles - {''}:
+                continue
+            w[GONE_REMOTE_KEY] = True
+            if dispatch not in reported:
+                reported.append(dispatch)
+                notices.append(Urgent('dead dispatch %s on %s: no terminal on the host; stop it with worker-stop --dispatch %s --environment %s' % (
+                    dispatch, host, dispatch, host)))
+    return notices
+
+
+def _reply_ids(messages, dispatch, handle):
+    targets = {'dispatch:' + dispatch, handle} - {''}
+    return {m['id'] for m in messages
+            if isinstance(m, dict) and m.get('id') and m.get('to') in targets and m.get('from') != handle
+            and m.get('type') not in ASK_TYPES}
+
+
+def unanswered_ask_notices(state, now, messages, workers):
+    """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
+    within 15 minutes (#1781). The inbox `handled` flag is ignored: it can be set without a reply.
+
+    Messages carry no timestamp, so the age runs from the pass that first saw the ask. A reply is a later
+    non-ask message sent to the worker's dispatch or terminal, one not already in the inbox when the ask was first seen."""
+    live = {w['dispatchId']: w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
+    book = state.setdefault('open_asks', {})
+    seen = set()
+    notices = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get('type') not in ASK_TYPES or not m.get('id'):
+            continue
+        payload = m.get('payload') if isinstance(m.get('payload'), dict) else {}
+        dispatch = payload.get('dispatchId')
+        if dispatch not in live:
+            continue
+        mid = m['id']
+        seen.add(mid)
+        handle = worker_terminal_handle(live[dispatch]) or m.get('from') or ''
+        replies = _reply_ids(messages, dispatch, handle)
+        row = book.setdefault(mid, {'at': now, 'dispatch': dispatch, 'before': sorted(replies)})
+        if replies - set(row['before']):
+            row['answered'] = True
+        if row.get('answered') or row.get('notified') or now - row['at'] < ASK_REPLY_SECONDS:
+            continue
+        row['notified'] = True
+        notices.append(Urgent('unanswered %s %s from %s for %d minutes: %s; reply to it' % (
+            m['type'], mid, dispatch, (now - row['at']) // 60, m.get('subject') or '(no subject)')))
+    for mid in list(book):
+        if mid not in seen:
+            book.pop(mid)
+    return notices
+
+
+def waiting_on_coordinator(state, workers):
+    """Dispatch ids of live workers holding an ask nobody answered."""
+    live = {w.get('dispatchId') for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w)}
+    return {row['dispatch'] for row in (state.get('open_asks') or {}).values()
+            if not row.get('answered') and row['dispatch'] in live}
+
+
 def worker_row_is_live(w):
     """True when this worker-list row is an in-progress supervised worker (both JSON shapes)."""
     w = w or {}
+    if w.get(GONE_REMOTE_KEY):
+        return False
     if 'dispatchStatus' in w or 'projection' in w:
         proj = w.get('projection') or {}
         liv = proj.get('liveness') or {}
@@ -4447,13 +4549,15 @@ def build_supply_command(config, repos, agent, model):
     return [part for part in command if part]
 
 
-def work_order_supply_line(config, now, workers, supply, host=None, admission=None):
+def work_order_supply_line(config, now, workers, supply, host=None, admission=None, waiting=()):
     """`work order: N live, supply S[, host load L cap C]`, S the ready-for-agent count, or None without a work_order block.
 
     There is no fleet-wide count limit (#1757): starts follow each host's load and cap, so the line shows those, not N of T."""
     if work_order_settings(config, now) is None:
         return None
-    line = 'work order: %d live, supply %d' % (active_worker_count(workers), supply)
+    live = active_worker_count(workers)
+    asking = len({w.get('dispatchId') for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w)} & set(waiting))
+    line = 'work order: %d live (%d working, %d waiting on coordinator), supply %d' % (live, live - asking, asking, supply)
     if host and isinstance(admission, dict):
         load = admission.get('load_per_core')
         if load is None and _is_local_coordinator_host(host, config):
@@ -7765,7 +7869,7 @@ def issue_scan_pass(
                 continue
             candidates.append((repo, row))
 
-    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission)
+    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission, waiting_on_coordinator(state, workers))
     if supply_line:
         notices.append(supply_line)
 
@@ -9174,6 +9278,11 @@ def main():
             inv['messages'], workers, inv['alive'], inv['leads'],
         )
         state.pop('orca_inventory_skip_latched', None)
+        try:
+            notices += gone_remote_dispatch_notices(workers, state, rpc)
+            notices += unanswered_ask_notices(state, now, inv['messages'], workers)
+        except Exception as error:
+            print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
             notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
             for failed in workers:
