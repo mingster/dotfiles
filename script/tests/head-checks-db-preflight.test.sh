@@ -80,3 +80,10 @@ run_case no-db-step "# db-preflight: exit 3
 exit 0"
 [ "$rc" -eq 0 ] || fail "a preflight with no database step must not run, got rc=$rc"
 echo "ok the preflight does not run when no step needs the database"
+
+run_case long-preflight "# db-preflight: for i in \$(seq 1 60); do echo migration-error-line-\$i >&2; done; exit 3
+$db_step"
+head -1 "$tmp/state/receipt" | grep -q '^Checks: INFRA head=' || fail "a long failing preflight is not INFRA"
+grep -q '^infra: shared database behind main, not this PR$' "$tmp/state/receipt" || fail "a long preflight output cut the infra line"
+grep -q '^blocked by red gate #41 (test-database)$' "$tmp/state/receipt" || fail "a long preflight output lost the red gate"
+echo "ok a failing preflight with long output still files the red gate"

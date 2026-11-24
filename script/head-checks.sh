@@ -602,7 +602,7 @@ while IFS= read -r command || [ -n "$command" ]; do
     pre_out=$(cd "$worktree" && env -i PATH="$step_path" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" "$bash_bin" -euo pipefail -c "$db_preflight" 2>&1) || pre_status=$?
     if [ "$pre_status" -ne 0 ]; then
       check_result=INFRA
-      gate_text=$(printf 'infra: shared database behind main, not this PR\n%s\n' "$pre_out" | tail -40)
+      gate_text=$(printf 'infra: shared database behind main, not this PR\n%s\n' "$(printf '%s\n' "$pre_out" | tail -39)")
       gate_tool=$(printf '%s\n' "$gate_text" | python3 "$script_dir/red-gate.py" infra-tool) || gate_tool=""
       printf '%s\n' "$gate_text" >> "$log"
       printf 'Result: preflight exit %s; remaining checks stopped\nDuration: %ss\n' "$pre_status" "$((SECONDS - started))" >> "$log"
