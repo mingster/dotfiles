@@ -6,7 +6,9 @@
 # (PR body line "Builder: agent=<a> model=<m>"). The same model family is refused unless the Verdict
 # comment is tagged same-family-different-model. The body also needs checked Acceptance and a
 # ## Self-check with a command and its output. A Review: FAIL at the merge head refuses the merge
-# unless a later Review: PASS for that head, or a Countersign, covers it. A Verdict does not cover it.
+# unless a later Review: PASS for that head from the model that posted the FAIL, a Countersign, or a Verdict
+# quoting the FAIL line as "> <line>" with a "Does not hold: <why>" line (verdict lane only) covers it (#1770).
+# Every FAIL at the head needs covering, not only the newest.
 # A docs only PR needs a cold "Review: PASS head=<head>"
 # or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
 # a tier 0 PR (script/pr-tier.py: test files and docs only, 150 changed lines or fewer, no protected path) takes the same lane (#1730);
@@ -418,30 +420,45 @@ load_newest_verdict() {
   done < <(jq -r '[.comments[]? | {f: ((.includesCreatedEdit // false) or (.isMinimized // false)), l: (.body // "" | split("\n")[0]), tag: (if ((.body // "") | test("same-family-different-model")) then "same-family-different-model" else "" end)}] | reverse[] | .f, .l, .tag' <<<"$info")
 }
 
-# A Verdict does not cover a Review: FAIL at the merge head. Comments are oldest
-# first, the same order the docs lane treats as newest-last. An edited or
-# minimized PASS does not count. An edited FAIL still blocks.
+# Every Review: FAIL at the merge head must be covered (#1770). A FAIL is covered by a later cold Review: PASS
+# from the model that posted it, by a Countersign (all FAILs), or, in the verdict lane, when the newest Verdict
+# comment is a PASS or PASS+NOTES at the head, posted after that FAIL, that quotes the FAIL's first line as
+# "> <line>" with a "Does not hold: <reason>" line right after the quote. The newest Verdict already passed the gates of its lane.
+# Another model's PASS does not cover a FAIL. An edited or minimized PASS or Verdict does not count. An edited FAIL
+# still blocks. Comments are oldest first.
 review_fail_blocks_merge() {
   local uncovered
-  uncovered=$(jq -r --arg h "$head" '
-    [ .comments[]?
-      | (.body // "" | split("\n")[0]) as $line
-      | select($line | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
-      | {
-          r: ($line | capture("^Review: (?<r>PASS|FAIL)").r),
-          cold: (((.includesCreatedEdit // false) or (.isMinimized // false)) | not)
-        }
-      | select(.r == "FAIL" or .cold)
-    ] as $rows
-    | ($rows | to_entries | map(select(.value.r == "FAIL")) | last | .key) as $at
-    | if $at == null then ""
-      elif any($rows[($at + 1):][]; .r == "PASS") then ""
-      else "Review: FAIL"
-      end
+  uncovered=$(jq -r --arg h "$head" --arg lane "$lane" '
+    [ .comments[]? | {body: (.body // ""), flagged: ((.includesCreatedEdit // false) or (.isMinimized // false))} ]
+    | to_entries | map(.value + {idx: .key}) as $cs
+    | [ $cs[] | (.body | split("\n")) as $ls | ($ls[0]) as $line
+        | select($line | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
+        | {
+            idx: .idx,
+            r: ($line | capture("^Review: (?<r>PASS|FAIL)").r),
+            m: ([$line | capture("(^| )model=(?<m>[^ ]+)") | .m][0] // ""),
+            line: $line,
+            cold: (.flagged | not)
+          }
+        | select(.r == "FAIL" or .cold)
+      ] as $rows
+    | ([ $cs[] | (.body | split("\n")) as $ls
+         | ($ls[0] | capture("^Verdict: (?<res>PASS\\+NOTES|PASS|FAIL) head=[0-9a-f]{40} verifier=[a-zA-Z0-9_-]+ author=[a-zA-Z0-9_-]+( agent=[A-Za-z0-9._-]+ model=[A-Za-z0-9._:-]+)?$")?) as $m
+         | select($m != null and (.flagged | not or $m.res == "FAIL"))
+         | . + {ls: $ls}] | last) as $v
+    | ($v != null and $lane == "verdict" and ($v.flagged | not)
+        and ($v.ls[0] | test("^Verdict: (PASS\\+NOTES|PASS) head=" + $h + " "))) as $verdict_answers
+    | [ $rows[] | select(.r == "FAIL") as $f
+        | select(
+            (any($rows[]; .idx > $f.idx and .r == "PASS" and .m != "" and .m == $f.m) | not)
+            and (($verdict_answers and $v.idx > $f.idx
+                  and (($v.ls | index("> " + $f.line)) as $k
+                       | $k != null and (($v.ls[$k + 1] // "") | test("^Does not hold: [^ ]")))) | not)
+          ) ] | if length == 0 then "" else "Review: FAIL" end
   ' <<<"$info") || refuse "cannot read Review comments on PR $pr"
   [ -n "$uncovered" ] || return 0
   countersigned "$head" && return 0
-  refuse "Review: FAIL at head ${head:0:12} is not covered by a later Review: PASS or a Countersign"
+  refuse "Review: FAIL at head ${head:0:12} is not covered by a later Review: PASS from the same model, a Countersign, or a Verdict that quotes it and says 'Does not hold: <why>'"
 }
 
 # Generated team copies change only through the dotfiles template. A copy that is not the origin/main
