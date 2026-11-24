@@ -274,5 +274,39 @@ else
   bad "failed to match worker_done after command separators or newline"
 fi
 
+# 6. A fullstack-dev worker_done needs a Review: PASS at the PR head (#1675)
+mkdir -p "$TMP/fakebin"
+cat >"$TMP/fakebin/gh" <<'GH'
+#!/usr/bin/env bash
+[ -f "$FAKE_PR_JSON" ] || exit 1
+cat "$FAKE_PR_JSON"
+GH
+chmod +x "$TMP/fakebin/gh"
+export FAKE_PR_JSON="$TMP/pr6.json"
+HEAD6=3333333333333333333333333333333333333333
+T6="$TMP/t6.jsonl"
+python3 -I -c 'import json,sys
+with open(sys.argv[1],"w") as f:
+    f.write(json.dumps({"type":"user","message":{"role":"user","content":"You are a dispatched worker.\nWorker role: fullstack-dev\nSend: orca orchestration send --type worker_done --task-id task_6 --dispatch-id ctx_six"}})+"\n")
+' "$T6"
+WD6="orca orchestration send --from term_1 --type worker_done --subject done --body ok --task-id task_6 --dispatch-id ctx_six --outcome succeeded"
+printf '{"number":9,"headRefOid":"%s","comments":[{"body":"no review here"}]}' "$HEAD6" >"$FAKE_PR_JSON"
+deny6="$(PATH="$TMP/fakebin:$PATH" run_hook "$WORKTREE" "s-six" "$T6" "PreToolUse" "Bash" "$WD6")"
+if [ "$(decision "$deny6")" = "deny" ] && grep -qF "pr-review.sh 9 $HEAD6" <<<"$deny6"; then
+  ok "fullstack-dev worker_done without Review: PASS is denied with the pr-review.sh command"
+else
+  bad "fullstack-dev worker_done without a Review was not denied ($deny6)"
+fi
+failed6="$(PATH="$TMP/fakebin:$PATH" run_hook "$WORKTREE" "s-six" "$T6" "PreToolUse" "Bash" "${WD6/succeeded/failed}")"
+[ "$(decision "$failed6")" = "allow" ] && ok "--outcome failed needs no Review" || bad "failed outcome was denied ($failed6)"
+printf '{"number":9,"headRefOid":"%s","comments":[{"body":"Review: PASS head=%s model=sonnet"}]}' "$HEAD6" "$HEAD6" >"$FAKE_PR_JSON"
+pass6="$(PATH="$TMP/fakebin:$PATH" run_hook "$WORKTREE" "s-six" "$T6" "PreToolUse" "Bash" "$WD6")"
+[ "$(decision "$pass6")" = "allow" ] && ok "worker_done with Review: PASS at the head is allowed" || bad "worker_done with a Review was denied ($pass6)"
+T6B="$TMP/t6b.jsonl"
+sed 's/Worker role: fullstack-dev/Worker role: qa-sdet/' "$T6" >"$T6B"
+printf '{"number":9,"headRefOid":"%s","comments":[]}' "$HEAD6" >"$FAKE_PR_JSON"
+other6="$(PATH="$TMP/fakebin:$PATH" run_hook "$WORKTREE" "s-six-b" "$T6B" "PreToolUse" "Bash" "$WD6")"
+[ "$(decision "$other6")" = "allow" ] && ok "another role is not gated" || bad "qa-sdet was gated ($other6)"
+
 echo "pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]

@@ -189,11 +189,12 @@ check 'the daily round does not use the scheduled lock or log' bash -c '! test -
 # A failing cleaner fails the round and counts toward the failure streak (it must not be reset first). With only 130 s of round
 # budget left, a quick brew must not eat bun's share: the budget is elapsed time, not the cap.
 rm -f "$tmp/tools.log"
-FAKE_BREW_RC=3 WRAP_UP_SCHEDULED_ROUND_LIMIT=130 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+rc=0; FAKE_BREW_RC=3 WRAP_UP_SCHEDULED_ROUND_LIMIT=130 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+check 'a failed round ends non-zero, so the automation end phase shows it (#1726)' test "$rc" -ne 0
 check 'a failing cleaner fails the round' grep -Fq 'round failed: brew cleanup -s exit 3' "$tmp/round.log"
 check 'the failure streak survives it' test "$(cat "$tmp/state/wrap-up-daily.failures" 2>/dev/null)" = 1
 check 'bun still runs after a quick brew with little budget left' tool_called 'bun pm cache rm'
-FAKE_BREW_RC=3 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+FAKE_BREW_RC=3 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
 check 'a second failing round makes the streak two' test "$(cat "$tmp/state/wrap-up-daily.failures" 2>/dev/null)" = 2
 
 # A cache cleaner that only runs out of time (exit 124) is not a failed round: the cache stays and the next day's run retries it (#1533).
@@ -202,6 +203,22 @@ FAKE_BUN_RC=124 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
 check 'a cleaner timeout does not fail the round' bash -c 'tail -n1 "$1" | grep -Fq "round ok"' _ "$tmp/round.log"
 check 'a cleaner timeout leaves no failure streak' test ! -s "$tmp/state/wrap-up-daily.failures"
 check 'a cleaner timeout is named in the round line' bash -c 'tail -n1 "$1" | grep -Fq "bun pm cache rm timed out"' _ "$tmp/round.log"
+
+# #1726: board-clean timing out is reported in the round line, never silent, and does not fail the repo round. The board steps
+# keep their share of the round: the repos get the round limit less the reserve.
+rm -f "$tmp/state/wrap-up-daily.failures"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+printf '#!/usr/bin/env bash\nexit 124\n' > "$tmp/board-clean-slow"; chmod +x "$tmp/board-clean-slow"
+printf '#!/usr/bin/env bash\necho "$WRAP_UP_TOTAL_TIMEOUT" >> "$FAKE_DIR/child-limits"\nexit 0\n' > "$tmp/child-limit-probe"; chmod +x "$tmp/child-limit-probe"
+rc=0
+BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-slow" \
+  WRAP_UP_SCHEDULED_WRAP_UP="$tmp/child-limit-probe" WRAP_UP_SCHEDULED_ROUND_LIMIT=300 WRAP_UP_SCHEDULED_BOARD_RESERVE=120 \
+  bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+check 'a board-clean timeout does not fail the round' test "$rc" -eq 0
+check 'a board-clean timeout is logged' grep -Fq 'board-clean exit 124' "$tmp/round.log"
+check 'a board-clean timeout is named in the round line' bash -c 'tail -n1 "$1" | grep -Fq "round ok" && tail -n1 "$1" | grep -Fq "board-clean timed out"' _ "$tmp/round.log"
+check 'a board-clean timeout leaves no failure streak' test ! -s "$tmp/state/wrap-up-daily.failures"
+check 'the repo child leaves the board reserve out of its limit' test "$(head -n1 "$tmp/child-limits")" -le 180
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

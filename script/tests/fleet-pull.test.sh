@@ -594,5 +594,32 @@ else
   bad "dirty detached checkout should fail and keep its changes: $out10"
 fi
 
+# 1683 follow-up: a detached HEAD on origin/main while local main has an unpushed commit fails, stays detached, and keeps that commit on main
+state11="$tmp/state11"
+state11_bare="$tmp/state11.git"
+rep_main_ahead="$tmp/rep-main-ahead"
+rep_main_ahead_bare="$tmp/rep-main-ahead.git"
+make_repo "$state11" "$state11_bare"
+make_repo "$rep_main_ahead" "$rep_main_ahead_bare"
+cat >"$state11/fleet-pull.json" <<EOF
+{"hosts":[],"repos":["$rep_main_ahead"]}
+EOF
+echo unpushed >>"$rep_main_ahead/file.txt"
+git -C "$rep_main_ahead" commit -qam unpushed
+main_ahead_tip=$(git -C "$rep_main_ahead" rev-parse refs/heads/main)
+git -C "$rep_main_ahead" checkout -q --detach origin/main
+set +e
+out13=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state11" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+ec13=$?
+set -e
+if [ "$ec13" -ne 0 ] \
+  && grep -qF "fail local $rep_main_ahead (not on main: detached, local main has commits not on origin/main)" <<<"$out13" \
+  && [ -z "$(git -C "$rep_main_ahead" branch --show-current)" ] \
+  && [ "$(git -C "$rep_main_ahead" rev-parse refs/heads/main)" = "$main_ahead_tip" ]; then
+  ok "detached HEAD on origin/main with local main ahead fails, stays detached, and keeps the unpushed commit on main"
+else
+  bad "detached HEAD with local main ahead should fail, stay detached, and keep main (ec=$ec13): $out13"
+fi
+
 echo "fleet-pull: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

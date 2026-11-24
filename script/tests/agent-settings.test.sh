@@ -115,9 +115,11 @@ for flag in -h --help; do
 done
 echo 'PASS: --help prints usage without running the audit'
 mkdir -p "$TEST_ROOT/notgit"
-if DOTFILES="$TEST_ROOT/notgit" python3 "$ROOT/script/agent-settings-check.py" > "$TEST_ROOT/out" 2>&1; then
+if env -u AGENT_PRIVATE_BACKUP_MANIFEST DOTFILES="$TEST_ROOT/notgit" python3 "$ROOT/script/agent-settings-check.py" > "$TEST_ROOT/out" 2>&1; then
   echo 'FAIL: non git root accepted'; exit 1
 fi
 grep -q "$TEST_ROOT/notgit" "$TEST_ROOT/out"
+[ "$(wc -l < "$TEST_ROOT/out")" -eq 1 ]
+! grep -q 'private backup manifest' "$TEST_ROOT/out"
 ! grep -q Traceback "$TEST_ROOT/out"
 echo 'PASS: a root that is not a git checkout fails in one line, no traceback'

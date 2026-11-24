@@ -1,0 +1,1 @@
+wrap-up-daily keeps 90 s of the round for the coordinator board steps, names a board-clean timeout in the round line, and ends non zero when the round failed, so the automation end phase no longer shows exit=0 for it.

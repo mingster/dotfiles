@@ -1,0 +1,1 @@
+Added `script/verdict-to-merge.py`, which measures the minutes from a PASS Verdict to the merge per PR and names the cause of each slow one. Over the 48 hours before the fix of #1681 and after it, the p90 fell from 8.6 to 0.4 minutes once the verifier shipped with `post-verdict.sh --ship`.

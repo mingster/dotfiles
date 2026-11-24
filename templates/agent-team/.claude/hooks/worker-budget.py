@@ -144,6 +144,40 @@ def is_worker(transcript):
     return False
 
 
+BUILDER_ROLE_RE = re.compile(r"^Worker role:\s*(fullstack-dev(?:-[A-Za-z0-9_-]+)?|builder)\s*$", re.M)
+_HERE = os.path.realpath(__file__)
+for _ in range(4):  # hooks, .claude, agent-team, templates
+    _HERE = os.path.dirname(_HERE)
+REVIEW_CHECK = os.path.join(os.path.dirname(_HERE), "script", "check-builder-review.sh")
+if not os.path.isfile(REVIEW_CHECK):  # a copy installed in a project: use the dotfiles checkout
+    REVIEW_CHECK = os.path.expanduser("~/dotfiles/script/check-builder-review.sh")
+
+
+def is_builder(transcript):
+    """True when the brief stamps a builder role (`Worker role: fullstack-dev`)."""
+    with open(transcript, "rb") as f:
+        for raw in f:
+            try:
+                utext = user_message_text(json.loads(raw))
+            except Exception:
+                continue
+            if utext is not None:
+                return bool(BUILDER_ROLE_RE.search(utext))
+    return False
+
+
+def missing_review(cwd):
+    """The check script's message when this worktree's PR head has no `Review: PASS head=<sha>`, else ''.
+    A missing script, a timeout or any other failure lets the worker_done through (#1675)."""
+    if not os.path.isfile(REVIEW_CHECK):
+        return ""
+    try:
+        r = subprocess.run(["bash", REVIEW_CHECK, "--worktree", cwd], capture_output=True, text=True, timeout=60)
+    except Exception:
+        return ""
+    return r.stderr.strip() if r.returncode == 1 else ""
+
+
 def inspect_session(transcript, session):
     path = os.path.join(STATE_DIR, re.sub(r"[^A-Za-z0-9_-]", "", session)[:64] + ".json")
     try:
@@ -263,6 +297,12 @@ def main():
                 print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                     "permissionDecisionReason": "You have unread orchestration messages. Handle them, then send worker_done again, "
                     "or Orca opens a 'New messages' follow-up dispatch on your finished terminal.\n" + body}}))
+                return
+            if not re.search(r"--outcome(?:=|\s+)['\"]?failed\b", cmd) and is_builder(transcript):
+                why = missing_review(cwd)
+                if why:
+                    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                        "permissionDecisionReason": why}}))
             return
         if is_done:
             if tool in ("Read", "Grep", "Glob"):

@@ -56,9 +56,12 @@ blocked "prisma migrate deploy" builder - 'DATABASE_URL=postgres://h/app_dev_s2 
 blocked "prisma migrate dev from env DATABASE_URL" builder 'postgres://h/app_dev_s1' 'npx prisma migrate dev'
 blocked "dbpush from env DATABASE_URL" builder 'postgres://h/app_dev' 'bun run dbpush'
 blocked "dbpush with --url naming shard" builder - 'bun run dbpush --url postgres://h/app_dev_s3'
-blocked "psql DDL in a sql file" builder - "printf 'DROP TABLE t;' >$tmp/x.sql; psql app_dev_s1 -f $tmp/x.sql"
+printf 'DROP TABLE t;' >"$tmp/x.sql"
+blocked "psql DDL in a sql file" builder - "psql app_dev_s1 -f \"$tmp/x.sql\""
 
 allowed "psql SELECT on dev" builder - 'psql -d app_dev -c "select 1"'
+printf 'SELECT 1;' >"$tmp/select.sql"
+allowed "psql SELECT from a sql file" builder - "psql app_dev_s1 -f \"$tmp/select.sql\""
 allowed "verifier temp DB DDL" builder - 'psql -d app_verifier_ab12 -c "CREATE TABLE x (id int)"'
 allowed "prisma db push on verifier URL" builder - 'DATABASE_URL=postgres://h/app_verifier_9z npx prisma db push'
 allowed "verifier URL beats env dev URL" builder 'postgres://h/app_dev' 'DATABASE_URL=postgres://h/app_verifier_x npx prisma migrate deploy'

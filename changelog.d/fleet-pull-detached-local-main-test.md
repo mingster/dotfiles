@@ -1,0 +1,1 @@
+fleet-pull: a test now covers a detached HEAD on origin/main while local main has an unpushed commit. The run must fail, stay detached, and keep that commit on main. Test only, no change to fleet-pull behavior (#1718).
