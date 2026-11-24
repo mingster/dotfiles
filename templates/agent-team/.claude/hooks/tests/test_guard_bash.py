@@ -1707,6 +1707,33 @@ class DeployFactsRollbackWording(unittest.TestCase):
 WORKER_ROLE_LIB = os.path.join(os.path.dirname(HOOK), "..", "..", "..", "..", "script", "lib", "worker-role.sh")
 
 
+class CalibrateCoordinatorOnly(GuardTest):
+    """Only the coordinator runs `hw-probe.sh --calibrate` (team.md, Heavy jobs; #1752)."""
+    CMD = "bash ~/dotfiles/script/hw-probe.sh --calibrate 'true'"
+
+    def brief(self, text):
+        path = os.path.join(self.home, "transcript.jsonl")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+        self.transcript = path
+
+    def test_coordinator_session_calibrates(self):
+        self.assertAllowed(self.CMD)
+        self.brief("Please calibrate the heavy gate.\n")
+        self.assertAllowed(self.CMD)
+
+    def test_a_worker_cannot_calibrate(self):
+        for text in ("Worker role: fullstack-dev\nRefs: #1\n", "# qa-sdet - run\n\nRole: qa-sdet\n"):
+            with self.subTest(brief=text):
+                self.brief(text)
+                self.assertDenied(self.CMD, "coordinator's job")
+                self.assertDenied("~/dotfiles/script/hw-probe.sh --calibrate=true", "coordinator's job")
+
+    def test_a_worker_may_probe_without_calibrating(self):
+        self.brief("Worker role: fullstack-dev\n")
+        self.assertAllowed("bash ~/dotfiles/script/hw-probe.sh")
+
+
 class BuilderOwnerPathGate(GuardTest):
     """#1328: a builder is refused Edit and Write on an owner gated path its brief does not allow.
     Briefs come from the real stamp_worker_role that worker-startup.sh and start-cursor-worker.sh call."""

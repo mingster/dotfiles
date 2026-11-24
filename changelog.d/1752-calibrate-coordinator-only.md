@@ -1,0 +1,1 @@
+guard-bash.py refuses `hw-probe.sh --calibrate` in any worker session, so only the coordinator can run it, as team.md Heavy jobs says. Allow and refuse tests are wired into test_team_role_grants.py (#1752).
