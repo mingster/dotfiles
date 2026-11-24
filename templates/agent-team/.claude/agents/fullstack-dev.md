@@ -22,7 +22,8 @@ Before `worker_done`, meet `~/dotfiles/templates/agent-team/docs/agents/team.md`
 You own the PR to merge: rebase it when main moves, take its fix rounds, and land it per `team.md`, Publication.
 Run `orca worktree set --worktree active --workspace-status in-review` before `worker_done` (`team.md`, Board status).
 Before `worker_done`, wait until the PR checks at your final head pass (`gh pr checks <n> --watch --fail-fast`, or `gh run list --branch <branch> --limit 3` where the token gets 403). Never hand off red or pending checks.
-Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item.
+Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item. Run `bash ~/dotfiles/script/check-pr-body.sh <body file>` before the PR opens: it names any missing section.
+Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so you may. FAIL: fix, push, rerun until PASS. The `worker_done` hook refuses a builder with no `Review: PASS head=<sha>` comment at the PR head (`script/check-builder-review.sh`).
 
 ## Standing authority
 Never:
