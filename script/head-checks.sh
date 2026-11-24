@@ -62,7 +62,7 @@ orphan_check_worktree() {
 # A non-login ssh run has a bare PATH; keep this line the same as in remote-heavy.sh.
 export PATH="$HOME/.bun/bin:$HOME/.asdf/shims:$PATH"
 repo="" pr="" ref="" sha="" worktree="" lock="" db_lock="" refused="" train_heads=""
-override="" changed="" explicit_base="" main_sha="" check_result=""
+override="" changed="" explicit_base="" main_sha="" check_result="" gate_tool="" gate_text=""
 usage() { echo "head-checks: $*" >&2; exit 1; }
 need_value() { echo "head-checks: $1 needs a value" >&2; exit 2; }
 # lock_acquire <dir>: take a lock directory. Returns 1 when held (a live pid, or no pid yet and younger than
@@ -134,8 +134,14 @@ finish() {
   [ -z "$refused" ] || { rm -f "$log" "$receipt"; exit 1; }
   printf '\nTotal: %ss\n' "$SECONDS" >> "$log"
   [ "$status" -ne 0 ] || result=PASS
+  # A broken gate gets one deduped `red gate: <tool>` issue; the receipt names it so the PR waits on it (#1746).
+  gate_issue=""
+  if [ "$result" = INFRA ] && [ -n "$gate_tool" ] && [ -n "$pr" ] && [ "${HEAD_CHECKS_RED_GATE:-1}" != 0 ]; then
+    gate_issue=$(cd "$repo" && printf '%s\n' "$gate_text" | python3 "$script_dir/red-gate.py" file --tool "$gate_tool" 2>/dev/null) || gate_issue=""
+  fi
   {
     printf 'Checks: %s head=%s%s%s\n\n' "$result" "$sha" "${main_sha:+ main=$main_sha}" "${train_heads:+ train-heads=$train_heads}"
+    [ -z "$gate_issue" ] || printf 'blocked by red gate #%s (%s)\n\n' "$gate_issue" "$gate_tool"
     if [ -n "$changed" ]; then
       unchecked_paths=$(logsed -n 's/^UNCHECKED: //p' "$changed.unchecked" 2>/dev/null | sort -u | paste -sd ',' - | sed 's/,/, /g')
       [ -z "$unchecked_paths" ] || printf 'Unchecked paths: %s\n\n' "$unchecked_paths"
@@ -638,6 +644,17 @@ while IFS= read -r command || [ -n "$command" ]; do
           exit 1
         fi
       fi
+      # A gate tool that says `infra: <tool>: <reason>` (or the database preflight's `infra: <reason>`) broke
+      # on its own: not a verdict on the code, and every worker meets it until one fixer repairs it.
+      if gate_tool=$(python3 "$script_dir/red-gate.py" infra-tool --output-file "$output"); then
+        gate_text=$(tail -40 "$output")
+        check_result=INFRA
+        printf 'Result: gate broken; %s reported an infra failure (exit %s), the code was not judged. A red gate issue holds this PR until the gate is fixed.\nDuration: %ss\n' "$gate_tool" "$status" "$((SECONDS - started))" >> "$log"
+        [ -z "$summary" ] || printf '%s\n' "$summary" >> "$log"
+        rm -f "$output"
+        exit 1
+      fi
+      gate_tool=""
       if [ "$status" -eq 137 ] && is_tsc_step "$expanded"; then
         if [ "$tsc_attempt" -eq 1 ]; then
           printf 'Result: exit 137; retryable infra failure (tsc killed by OS, the code was not judged); retrying once when load drops\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
