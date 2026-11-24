@@ -1,0 +1,1 @@
+ship-test-answering-verdict-order: script/tests/ship.test.sh covers a split review where Review: PASS (model A) is posted before Review: FAIL (model B) at the same head, so a plain Verdict is refused and a Verdict quoting the FAIL with a Does not hold line ships (#1772 note 3).
