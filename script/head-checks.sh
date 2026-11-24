@@ -477,9 +477,13 @@ PYTEST
 }
 # failing_tests <step output>: the names of failing tests (bun prints "(fail) name"), up to 30, so a long passing log cannot hide them.
 failing_tests() {
-  local names
-  names=$(logsed -n 's/\x1b\[[0-9;]*m//g; s/^(fail) //p' "$1" | awk '!seen[$0]++' | head -30)
-  [ -z "$names" ] || printf 'Failing tests:\n%s\n' "$names"
+  python3 - "$1" <<'PYFAIL'
+import re, sys
+text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1], errors="replace").read())
+names = list(dict.fromkeys(m for m in re.findall(r"^\(fail\) (.*)$", text, re.M)))[:30]
+if names:
+    print("Failing tests:\n" + "\n".join(names))
+PYFAIL
 }
 # True when a bun test run printed load errors and zero failing tests.
 load_errors_only() {
@@ -597,7 +601,10 @@ while IFS= read -r command || [ -n "$command" ]; do
       [ -n "${token:-}" ] && db_prefix+=("$token")
     done <<<"$db_out"
     # The database host has its own PATH and HOME; this host's would break the step there.
-    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
+    # remote-heavy.sh leaves the command in the app sub directory; checks lines are written for the checkout root.
+    remote_cmd=$expanded
+    [ "$(db_app_dir)" = . ] || remote_cmd=$'cd "$(git rev-parse --show-toplevel)"\n'$expanded
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$remote_cmd" )
     if [ ${#db_prefix[@]} -gt 0 ] && ! db_lock_acquire; then
       check_result=INFRA
       printf 'Result: host busy; another run holds the database host checkout (%s) and the wait ran out, so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: 0s\n' "$db_remote_host" >> "$log"
