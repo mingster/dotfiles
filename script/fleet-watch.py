@@ -1507,7 +1507,7 @@ def alerts(config, state, now, messages, workers, waiter_alive, lead_alive=None)
 
 _PR_LIST_FIELDS = (
     'number,state,isDraft,headRefOid,headRefName,baseRefOid,mergeable,mergeStateStatus,'
-    'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit,body'
+    'reviewDecision,files,labels,comments,statusCheckRollup,mergeCommit,body,updatedAt'
 )
 
 
@@ -7628,17 +7628,123 @@ def failure_streak_notices(state, key, failing, text):
     return []
 
 
-def issue_scan_pass(
+ISSUE_DEFER_ESCALATE_PASSES = 3  # owner 2026-11-24 (#1778): the same deferral reason for 3 passes goes to elon
+ISSUE_DEFER_GAP_SECONDS = 1800  # a longer gap between two deferrals starts the pass count over
+PR_UNOWNED_SECONDS = 3600  # a PR with no live owner worker and no progress this long goes to elon
+
+
+def _is_dotfiles_repo(repo):
+    return str(repo).rsplit('/', 1)[-1] == 'dotfiles'
+
+
+def defer_issue(state, now, repo, number, reason, deferred, notices, log_bits, persist_state=None):
+    """Record that a ready issue was not started this pass (#1778).
+
+    Counts consecutive passes with the same reason and escalates to elon on the third. A dotfiles
+    issue is also written to state['dotfiles_deferred'], which worker-startup reads so that a
+    dotfiles issue that cannot start does not hold back other repos."""
+    reason = re.sub(r'[,;\s]+', ' ', str(reason or 'unknown')).strip()[:80] or 'unknown'
+    deferred.append(reason)
+    log_bits.append('issue_deferred=%d:%s' % (number, reason))
+    book = state.setdefault('issue_scan_deferred', {})
+    repo_book = book.setdefault(repo, {})
+    for key in [k for k, e in repo_book.items() if now - float(e.get('at', 0)) > ISSUE_DEFER_GAP_SECONDS]:
+        repo_book.pop(key)
+    entry = repo_book.get(str(number))
+    if entry and entry.get('reason') == reason:
+        if entry.get('at') != now:
+            entry['passes'] = int(entry.get('passes', 1)) + 1
+        entry['at'] = now
+    else:
+        entry = repo_book[str(number)] = {'reason': reason, 'passes': 1, 'at': now}
+    if entry['passes'] >= ISSUE_DEFER_ESCALATE_PASSES and not entry.get('notified'):
+        entry['notified'] = True
+        notices.append(Urgent('%s #%d deferred %d passes in a row (%s): elon resolves it this wake' % (
+            repo, number, entry['passes'], reason)))
+    if _is_dotfiles_repo(repo):
+        state.setdefault('dotfiles_deferred', {})[str(number)] = now
+    if persist_state:
+        persist_state()
+
+
+def clear_issue_deferral(state, repo, number):
+    state.get('issue_scan_deferred', {}).get(repo, {}).pop(str(number), None)
+    state.get('dotfiles_deferred', {}).pop(str(number), None)
+
+
+def pr_has_owner_worker(workers, pr_row):
+    """A live non verifier worker on the PR: its number or branch, or a `#<issue>|` title for an issue the PR closes or refs (#1778)."""
+    number = pr_row.get('number')
+    body = pr_row.get('body') or ''
+    branch = pr_row.get('headRefName') or ''
+    issues = set(re.findall(r'(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+(?:[\w.-]+/[\w.-]+)?#(\d+)', body, re.I))
+    issues |= set(re.findall(r'(?<!\d)(\d{2,})(?!\d)', branch))
+    for w in workers or ():
+        if not isinstance(w, dict) or not worker_row_is_live(w) or _worker_titled_verifier(w):
+            continue
+        title = str(w.get('_task_title') or w.get('title') or '')
+        match = re.match(r'#(\d+)\|', title)
+        if match and (match.group(1) in issues or match.group(1) == str(number)):
+            return True
+    return pr_has_live_fix_worker([w for w in workers or () if isinstance(w, dict) and not _worker_titled_verifier(w)], pr_row)
+
+
+def pr_unowned_notice(state, now, repo, pr_row, workers):
+    """An Urgent line once per head for a PR with no live owner worker and no progress for 60 minutes, else None (#1778)."""
+    updated = _iso_epoch(pr_row.get('updatedAt'))
+    if updated is None or now - updated < PR_UNOWNED_SECONDS:
+        return None
+    if pr_has_owner_worker(workers, pr_row):
+        return None
+    head = pr_row.get('headRefOid') or ''
+    noted = state.setdefault('issue_scan_pr_unowned', {}).setdefault(repo, {})
+    key = str(pr_row['number'])
+    if noted.get(key) == head:
+        return None
+    noted[key] = head
+    return Urgent('%s #%d has no live owner worker and no progress for %d minutes: elon resolves it this wake' % (
+        repo, pr_row['number'], int((now - updated) // 60)))
+
+
+def fill_gap_notice(config, now, workers, log_bits, deferred):
+    """`fill gap: L of T live, K ready not started (reasons)` when starts were refused below target_workers, else None (#1778)."""
+    order = work_order_settings(config)
+    if order is None or not deferred:
+        return None
+    started = sum(1 for bit in log_bits if bit.startswith(('issue_start=', 'rework_start=', 'supply_start=')))
+    live = active_worker_count(workers) + started
+    if live >= order[1]:
+        return None
+    reasons = {}
+    for reason in deferred:
+        reasons[reason] = reasons.get(reason, 0) + 1
+    return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), elon tops up by hand' % (
+        live, order[1], len(deferred), ', '.join('%s x%d' % (r, n) for r, n in sorted(reasons.items())))
+
+
+def issue_scan_pass(config, state, now, workers, *args, **kwargs):
+    """The pass of `_issue_scan_pass`, plus one fill-gap line when starts fell short of target_workers (#1778)."""
+    deferred = []
+    notices, log_bits = _issue_scan_pass(config, state, now, workers, *args, deferred=deferred, **kwargs)
+    gap = fill_gap_notice(config, now, workers, log_bits, deferred)
+    if gap:
+        notices.append(gap)
+    return notices, log_bits
+
+
+def _issue_scan_pass(
     config, state, now, workers, list_issues=None, pr_fetch=None,
     gate_check=None, admit_fn=None, start_worker=None,
     inventory_ok=True, persist_state=None, act=None,
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
     babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None, red_gates=None,
     issue_state=None,
+    deferred=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
     log_bits = []
+    deferred = [] if deferred is None else deferred
     babysit_owned = set(babysit_repos or ())
     scan = config.get('issue_scan') or {}
     if not scan.get('enabled'):
@@ -7715,6 +7821,12 @@ def issue_scan_pass(
             if not head:
                 continue
             pr_num = pr_row['number']
+            unowned = pr_unowned_notice(state, now, repo, pr_row, workers)
+            if unowned:
+                notices.append(unowned)
+                log_bits.append('pr_unowned=%d' % pr_num)
+                if persist_state:
+                    persist_state()
             needs_head_checks = (
                 bool(root)
                 and not checks_receipt_at_head(pr_row)
@@ -7889,9 +8001,6 @@ def issue_scan_pass(
 
     prune_closed_maps(state, listed, {})
 
-    if refused and not remote_hosts:
-        return notices, log_bits
-
     if list_issues is None:
         list_issues = fetch_ready_issues
     if issue_state is None:
@@ -7961,6 +8070,12 @@ def issue_scan_pass(
         log_bits.extend(bits)
         return used
 
+    if refused and not remote_hosts:
+        # Local admission refused and no other host exists: every ready issue is deferred, and elon hears the gap (#1778).
+        for repo, row in candidates:
+            defer_issue(state, now, repo, row['number'], refusal_token(reason) or 'host_cap', deferred, notices, log_bits, persist_state)
+        return notices, log_bits
+
     if not candidates and remote_hosts:
         log_bits.append('issue_scan_none')
         return notices, log_bits
@@ -7989,24 +8104,33 @@ def issue_scan_pass(
             log_bits.append('issue_scan_none')
         return notices, log_bits
 
+    candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
     if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
         count_refused('host_cap')
+        for repo, row in candidates:
+            defer_issue(state, now, repo, row['number'], 'host_cap', deferred, notices, log_bits, persist_state)
         return notices, log_bits
 
     if not remote_hosts:
         extra_starts += try_supply(len(candidates))
-    candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
     lookup = repo_id_lookup or default_repo_id_lookup
     # The workers inventory is a snapshot from before this pass, so count this pass's starts per host.
     pass_starts = {}
     attempts = 0
-    for repo, row in candidates:
+    for index, (repo, row) in enumerate(candidates):
         placement = None
+
+        def defer_rest(reason, first=index):
+            for rest_repo, rest_row in candidates[first:]:
+                defer_issue(state, now, rest_repo, rest_row['number'], reason, deferred, notices, log_bits, persist_state)
+
         if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
             count_refused('host_cap')
+            defer_rest('host_cap')
             break
         if remote_hosts:
             placed = False
+            unmapped = 0
             for candidate in remote_hosts:
                 receipt = admit_fn(candidate, config, workers)
                 if not receipt.get('admitted'):
@@ -8023,16 +8147,24 @@ def issue_scan_pass(
                     continue
                 if not _host_maps_repo(config, candidate, repo):
                     log_bits.append('issue_scan_no_repo_%s' % candidate)
+                    unmapped += 1
                     continue
                 repo_id = lookup(candidate, repo)
                 if not repo_id:
                     log_bits.append('issue_scan_no_repo_%s' % candidate)
+                    unmapped += 1
                     continue
                 placement = (candidate, repo_id)
                 log_bits.append('issue_scan_placed=%s' % candidate)
                 placed = True
                 break
             if not placed:
+                # A repo no free host maps defers only this issue: the rest of the queue still starts (#1778).
+                # When every host was refused or full, nothing else fits either.
+                if unmapped:
+                    defer_issue(state, now, repo, row['number'], 'placement', deferred, notices, log_bits, persist_state)
+                    continue
+                defer_rest('host_cap')
                 return notices, log_bits
         route = None
         labelled = issue_scan_route(row)
@@ -8097,8 +8229,10 @@ def issue_scan_pass(
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
+            defer_issue(state, now, repo, row['number'], reason or 'start_deferred', deferred, notices, log_bits, persist_state)
             continue
         if code == 0:
+            clear_issue_deferral(state, repo, row['number'])
             remember_started_dispatch(state, started_worker, 'issue')
             if placement:
                 pass_starts[placement[0]] = pass_starts.get(placement[0], 0) + 1

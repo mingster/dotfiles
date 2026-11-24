@@ -17,7 +17,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Dispatch facts: `~/dotfiles/templates/agent-team/docs/agents/elon-dispatch.md` and `~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`.
 
 ## Work order
-1. Keep at least 8 workers busy while open issues remain; the coordinator relabels what triage settles (Musts 4).
+1. Keep `work_order.target_workers` workers busy; top up on `fill gap:`; the coordinator relabels what triage settles (Musts 4).
 2. Every day at 19:00 owner local time (Asia/Taipei), or earlier when no work is left: deploy `main` to staging and run the full regression. The sha that passes is the production ready version.
 3. Before go-live: deploy each production ready version as soon as it passes, no owner approval. After go-live: only on the owner's approval.
 

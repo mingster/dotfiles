@@ -2222,6 +2222,28 @@ GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_
 printf 'Refs acme/app#7950\n\n# fullstack-dev - issue 7950\n\n%s\n' "$spec_saved" >"$spec_file"
 GH_STUB_FAIL=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh call must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
+# #1778: a dotfiles issue fleet-watch could not start (placement or host cap) in its last 15 minutes does not hold back other repos.
+printf 'Refs acme/app#7950\n\n# fullstack-dev - issue 7950\n\n%s\n' "$spec_saved" >"$spec_file"
+deferred_state="$tmp/fleet-watch-deferred.json"
+printf '{"dotfiles_deferred":{"5":%s}}\n' "$(date +%s)" >"$deferred_state"
+FLEET_WATCH_STATE=$deferred_state GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a dotfiles issue deferred this pass must not block another repo (ec=$route_ec) $(cat "$tmp/route.err")"
+printf '{"dotfiles_deferred":{"5":%s}}\n' "$(( $(date +%s) - 3600 ))" >"$deferred_state"
+FLEET_WATCH_STATE=$deferred_state GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a deferral older than 15 minutes must not lift the dotfiles first rule (ec=$route_ec)"
+printf '{"dotfiles_deferred":{"6":%s}}\n' "$(date +%s)" >"$deferred_state"
+FLEET_WATCH_STATE=$deferred_state GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a deferral of another dotfiles issue must not lift the rule for issue 5 (ec=$route_ec)"
+# #1778: a hand start with `Refs: #n` (no repo) claims the issue in the repo of the start, not the repo of the shell.
+claim_repo="$tmp/claim-repo"
+git init -q "$claim_repo"
+git -C "$claim_repo" remote add origin git@github.com:acme/widgets.git
+printf 'Refs: #7950\n\n# fullstack-dev - issue 7950\n\n%s\n' "$spec_saved" >"$spec_file"
+: >"$GH_STUB_LOG"
+GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium --repo "path:$claim_repo"
+[ "$route_ec" = 0 ] && ok || bad "a Refs: #n start should go on (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fxq -- 'issue edit 7950 -R acme/widgets --remove-label ready-for-agent --add-label status:進行中 --remove-label needs-triage' "$GH_STUB_LOG" && ok || bad "Refs: #n should claim in the --repo of the start ($(cat "$GH_STUB_LOG"))"
+printf 'Refs acme/app#7950\n\n# fullstack-dev - issue 7950\n\n%s\n' "$spec_saved" >"$spec_file"
 # A started issue gets the in flight board label, and the gate runs before the start.
 : >"$GH_STUB_LOG"
 GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
