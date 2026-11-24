@@ -116,11 +116,16 @@ class TriageWorker(unittest.TestCase):
             run([], backlog=0, state={'issue_scan_backlog_sweep_at': kwargs['now']}, notices_out=notices, **kwargs)
             self.assertNotIn(line, notices, kwargs)
 
-    def test_fill_stops_at_target_workers(self):
-        notices = []
-        triage, bits, _state = run([row(1), row(2), row(3)], backlog=0, order={'min_active': 3, 'target_workers': 2},
-                                   workers=self.live(2), notices_out=notices)
-        self.assertIn('work_order_target=2', bits)
+    def test_live_at_or_above_target_still_starts_when_a_host_admits(self):
+        _triage, bits, _state = run([row(5), row(6)], backlog=0, order={'min_active': 3, 'target_workers': 2},
+                                    workers=self.live(2), occupied=0)
+        self.assertIn('issue_start=5', bits)
+        self.assertIn('issue_start=6', bits)
+        self.assertFalse([b for b in bits if b.startswith('work_order_target')])
+
+    def test_host_over_cap_starts_nothing_even_under_target(self):
+        _triage, bits, _state = run([row(1)], backlog=0, order={'min_active': 3, 'target_workers': 20},
+                                    workers=self.live(1), occupied=4)
         self.assertNotIn('issue_start=1', bits)
 
     def test_generated_spec_passes_brief_lint(self):
@@ -250,9 +255,9 @@ class SupplyWorker(unittest.TestCase):
 
     def test_digest_line_each_pass(self):
         _s, _t, _bits, _state, notices = self.supply([row(1)], workers=TriageWorker.live(self, 4))
-        self.assertIn('work order: 4 of 10 live, supply 1', notices)
+        self.assertRegex(' '.join(notices), r'work order: 4 live, supply 1, \S+ load \d+\.\d\d cap 4')
         _s, _t, _bits, _state, notices = self.supply([], workers=TriageWorker.live(self, 10))
-        self.assertIn('work order: 10 of 10 live, supply 0', notices)
+        self.assertRegex(' '.join(notices), r'work order: 10 live, supply 0, \S+ load \d+\.\d\d cap 4')
 
     def test_supply_spec_passes_brief_lint(self):
         supply, _triage, _bits, _state, _n = self.supply([])
