@@ -3321,8 +3321,8 @@ def issue_scan_sort_key(issue):
 def issue_scan_queue_key(repo, issue):
     """Owner rule 2026-11-20: every dotfiles issue goes before any other repo's, then the sort key."""
     dotfiles_first = 0 if str(repo).rsplit('/', 1)[-1] == 'dotfiles' else 1
-    # A red main fix goes before everything else, in any repo (#1677).
-    main_red_first = 0 if str(issue.get('title') or '').startswith(MAIN_RED_TITLE_PREFIX) else 1
+    # A red main fix and a red gate fix go before everything else, in any repo (#1677, #1746).
+    main_red_first = 0 if str(issue.get('title') or '').startswith((MAIN_RED_TITLE_PREFIX, RED_GATE_TITLE_PREFIX)) else 1
     return (main_red_first, dotfiles_first) + issue_scan_sort_key(issue)
 
 
@@ -7664,6 +7664,7 @@ def workflow_notices(config, state, now, fetch=None, act=None):
 
 
 MAIN_RED_TITLE_PREFIX = 'main red: '
+RED_GATE_TITLE_PREFIX = 'red gate: '  # filed by script/lib/red-gate.sh (#1745, #1746)
 
 
 def main_red_failing_step(repo, run_id, run=subprocess.run):
