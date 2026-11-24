@@ -1102,6 +1102,7 @@ run_mode() {
   refuse_overlapping_issue "$spec" "$title" "$allow_overlap"
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"
+  claim_repo_sel=$repo # the caller's own selector, before a remote placement rewrites it (#1778)
   warn_live_verifier "$spec" "$title" "$name" "$run"
   spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   lint_dir=${wt:-}
@@ -1219,7 +1220,7 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       cursor_repo=$WORKER_STARTUP_PLACED_REPO
     fi
-    claim_issue "$spec" "$title" "$repo" "$wt"
+    claim_issue "$spec" "$title" "${claim_repo_sel:-$repo}" "$wt"
     run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} \
@@ -1326,7 +1327,7 @@ run_mode() {
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
     fi
   }
-  claim_issue "$spec" "$title" "$repo" "$wt"
+  claim_issue "$spec" "$title" "${claim_repo_sel:-$repo}" "$wt"
   start_agent_worker
   local agy_ec=0
   surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?

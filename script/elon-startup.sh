@@ -143,8 +143,12 @@ else
   else
     nohup bash "$loop" >/dev/null 2>&1 &
     disown 2>/dev/null || true
-    sleep 1
-    if loop_status=$(bash "$loop" --status 2>&1); then
+    started=0
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      sleep 1
+      if loop_status=$(bash "$loop" --status 2>&1); then started=1; break; fi
+    done
+    if [ "$started" = 1 ]; then
       echo "job fleet-watch loop: started ($loop_status)"
     else
       flag "fleet-watch loop did not start ($loop)"

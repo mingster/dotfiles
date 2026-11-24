@@ -7672,12 +7672,29 @@ def clear_issue_deferral(state, repo, number):
     state.get('dotfiles_deferred', {}).pop(str(number), None)
 
 
+def pr_has_owner_worker(workers, pr_row):
+    """A live non verifier worker on the PR: its number or branch, or a `#<issue>|` title for an issue the PR closes or refs (#1778)."""
+    number = pr_row.get('number')
+    body = pr_row.get('body') or ''
+    branch = pr_row.get('headRefName') or ''
+    issues = set(re.findall(r'(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\s*:?\s+(?:[\w.-]+/[\w.-]+)?#(\d+)', body, re.I))
+    issues |= set(re.findall(r'(?<!\d)(\d{2,})(?!\d)', branch))
+    for w in workers or ():
+        if not isinstance(w, dict) or not worker_row_is_live(w) or _worker_titled_verifier(w):
+            continue
+        title = str(w.get('_task_title') or w.get('title') or '')
+        match = re.match(r'#(\d+)\|', title)
+        if match and (match.group(1) in issues or match.group(1) == str(number)):
+            return True
+    return pr_has_live_fix_worker([w for w in workers or () if isinstance(w, dict) and not _worker_titled_verifier(w)], pr_row)
+
+
 def pr_unowned_notice(state, now, repo, pr_row, workers):
     """An Urgent line once per head for a PR with no live owner worker and no progress for 60 minutes, else None (#1778)."""
     updated = _iso_epoch(pr_row.get('updatedAt'))
     if updated is None or now - updated < PR_UNOWNED_SECONDS:
         return None
-    if pr_has_live_fix_worker(workers, pr_row):
+    if pr_has_owner_worker(workers, pr_row):
         return None
     head = pr_row.get('headRefOid') or ''
     noted = state.setdefault('issue_scan_pr_unowned', {}).setdefault(repo, {})
@@ -7984,9 +8001,6 @@ def _issue_scan_pass(
 
     prune_closed_maps(state, listed, {})
 
-    if refused and not remote_hosts:
-        return notices, log_bits
-
     if list_issues is None:
         list_issues = fetch_ready_issues
     if issue_state is None:
@@ -8055,6 +8069,12 @@ def _issue_scan_pass(
         )
         log_bits.extend(bits)
         return used
+
+    if refused and not remote_hosts:
+        # Local admission refused and no other host exists: every ready issue is deferred, and elon hears the gap (#1778).
+        for repo, row in candidates:
+            defer_issue(state, now, repo, row['number'], refusal_token(reason) or 'host_cap', deferred, notices, log_bits, persist_state)
+        return notices, log_bits
 
     if not candidates and remote_hosts:
         log_bits.append('issue_scan_none')

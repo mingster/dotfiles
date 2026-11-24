@@ -90,6 +90,16 @@ class FillTarget(Base):
         notices, _log, _starts = self.scan(cfg, {'issue_scan_backlog_sweep_at': NOW}, {APP: [ready(n) for n in range(1, 7)]}, workers=live(5))
         self.assertFalse([n for n in notices if str(n).startswith('fill gap:')])
 
+    def test_local_admission_refused_with_no_other_host_still_tells_elon(self):
+        refuse = lambda _h, _c, _w: {'admitted': False, 'occupied': 5, 'reason': 'host_cap 5 of 5'}  # noqa: E731
+        notices, log, starts = self.scan(
+            config(host_caps={'local': 5}), {'issue_scan_backlog_sweep_at': NOW}, {APP: [ready(1), ready(2)]},
+            workers=live(5), admit=refuse)
+        self.assertEqual(starts, [])
+        gap = [n for n in notices if str(n).startswith('fill gap:')]
+        self.assertEqual(len(gap), 1)
+        self.assertIn('5 of 10 live, 2 ready issue(s) not started', gap[0])
+
     def test_all_host_caps_full_defers_every_ready_issue(self):
         notices, log, starts = self.scan(
             config(host_caps={'local': 5}), {'issue_scan_backlog_sweep_at': NOW}, {APP: [ready(1), ready(2)]}, workers=live(5))
@@ -215,6 +225,20 @@ class UnownedPr(Base):
         owner = {'dispatchId': 'ctx_o', 'state': 'running', 'name': 'build-40', 'headRefName': 'feature/x', 'githubPullRequestNumber': 40}
         notices, _log, _ = self.scan_prs({'issue_scan_backlog_sweep_at': NOW}, [open_pr(40, iso(NOW - 7200))], workers=[owner])
         self.assertFalse([n for n in notices if 'no live owner worker' in str(n)])
+
+    def test_issue_builder_titled_for_the_issue_the_pr_closes_owns_it(self):
+        row = open_pr(40, iso(NOW - 7200), branch='x')
+        row['body'] = 'Closes #1778'
+        builder = {'dispatchId': 'ctx_b', 'state': 'running', '_task_title': '#1778|fullstack-dev'}
+        notices, _log, _ = self.scan_prs({'issue_scan_backlog_sweep_at': NOW}, [row], workers=[builder])
+        self.assertFalse([n for n in notices if 'no live owner worker' in str(n)])
+
+    def test_a_live_verifier_alone_is_not_an_owner(self):
+        row = open_pr(40, iso(NOW - 7200))
+        verifier = {'dispatchId': 'ctx_v', 'state': 'running', '_task_title': '#40|qa-sdet', 'headRefName': 'feature/x',
+                    'githubPullRequestNumber': 40}
+        notices, _log, _ = self.scan_prs({'issue_scan_backlog_sweep_at': NOW}, [row], workers=[verifier])
+        self.assertEqual(len([n for n in notices if 'no live owner worker' in str(n)]), 1)
 
     def test_pr_already_labelled_needs_elon_is_left_alone(self):
         notices, _log, _ = self.scan_prs({'issue_scan_backlog_sweep_at': NOW}, [open_pr(40, iso(NOW - 7200), labels=['needs-elon'])])
