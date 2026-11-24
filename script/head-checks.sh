@@ -9,7 +9,7 @@
 #   -h, --help     print this Usage block
 # Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
 # host has no reachable local Postgres (pg_isready finds no server; having the client tools is not enough). Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
-# for a script that calls createdb itself. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
+# for a script that calls createdb itself. A line `# app-dir: web` in the checks file names the app sub directory (lockfile, prisma/) the database host installs and regenerates in. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Step output is arbitrary bytes. BSD sed aborts with "illegal byte sequence" when the locale cannot read them (#1633).
@@ -475,6 +475,16 @@ if re.search(r"^bun test v", text, re.M):
     print(f"Tests executed: {executed}\nLoad errors: {errors}")
 PYTEST
 }
+# failing_tests <step output>: the names of failing tests (bun prints "(fail) name"), up to 30, so a long passing log cannot hide them.
+failing_tests() {
+  python3 - "$1" <<'PYFAIL'
+import re, sys
+text = re.sub(r"\x1b\[[0-9;]*m", "", open(sys.argv[1], errors="replace").read())
+names = list(dict.fromkeys(m for m in re.findall(r"^\(fail\) (.*)$", text, re.M)))[:30]
+if names:
+    print("Failing tests:\n" + "\n".join(names))
+PYFAIL
+}
 # True when a bun test run printed load errors and zero failing tests.
 load_errors_only() {
   python3 - "$1" <<'PYLOAD'
@@ -502,6 +512,13 @@ db_remote_load() {
   db_remote_repo_dir=$(jq -r '.head_checks_remote.repo_dir // ""' <<<"$cfg")
   db_remote_dir=$(jq -r '.head_checks_remote.dir // ""' <<<"$cfg")
 }
+# db_app_dir: the app sub directory (where bun.lock lives) from a "# app-dir: <dir>" line in the checks file; "." without one.
+db_app_dir() {
+  local dir
+  dir=$(sed -n 's/^#[[:space:]]*app-dir:[[:space:]]*\([A-Za-z0-9._\/-]*\)[[:space:]]*$/\1/p' "$config" | head -1)
+  case "$dir" in ''|/*|*..*) dir=. ;; esac
+  printf '%s' "$dir"
+}
 # db_step_runner <expanded command>: prints the remote-heavy argv tokens, one per line, when the step must go to the
 # database host; prints nothing when it runs here. Returns 1 (a host fault) when it can run nowhere.
 db_step_runner() {
@@ -514,7 +531,7 @@ db_step_runner() {
   if [ -z "$db_remote_host" ] || [ -z "$db_remote_repo_dir" ] || [ -z "$db_remote_dir" ]; then
     return 1
   fi
-  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --max-wait "${HEAD_CHECKS_DB_GATE_WAIT_SECONDS:-600}" --
+  printf '%s\n' bash "${HEAD_CHECKS_REMOTE_HEAVY:-$script_dir/remote-heavy.sh}" --host "$db_remote_host" --repo-dir "$db_remote_repo_dir" --dir "$db_remote_dir" --sub "$(db_app_dir)" --max-wait "${HEAD_CHECKS_DB_GATE_WAIT_SECONDS:-600}" --
 }
 # db_wait_receipt <step output>: the remote heavy-gate's wait for admission, so the audit can split wait from run time.
 db_wait_receipt() {
@@ -584,7 +601,10 @@ while IFS= read -r command || [ -n "$command" ]; do
       [ -n "${token:-}" ] && db_prefix+=("$token")
     done <<<"$db_out"
     # The database host has its own PATH and HOME; this host's would break the step there.
-    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$expanded" )
+    # remote-heavy.sh leaves the command in the app sub directory; checks lines are written for the checkout root.
+    remote_cmd=$expanded
+    [ "$(db_app_dir)" = . ] || remote_cmd=$'cd "$(git rev-parse --show-toplevel)"\n'$expanded
+    [ ${#db_prefix[@]} -eq 0 ] || runner=( "${db_prefix[@]}" env "${step_env[@]}" bash -euo pipefail -c "$remote_cmd" )
     if [ ${#db_prefix[@]} -gt 0 ] && ! db_lock_acquire; then
       check_result=INFRA
       printf 'Result: host busy; another run holds the database host checkout (%s) and the wait ran out, so the database step did not run. Not a verdict on the code; rerun Checks.\nDuration: 0s\n' "$db_remote_host" >> "$log"
@@ -627,6 +647,7 @@ while IFS= read -r command || [ -n "$command" ]; do
       logsed -n '/^Scoped tests: /p; /^Selected: /p' "$output" >> "$log"
       summary=$(test_summary "$output")
       tail -20 "$output" >> "$log"
+      failing_tests "$output" >> "$log"
       if [ ${#db_prefix[@]} -gt 0 ]; then
         db_wait_receipt "$output" >> "$log"
         # Exit 75 is the remote heavy-gate giving up on admission: the step never ran.

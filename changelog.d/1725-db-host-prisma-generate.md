@@ -1,0 +1,1 @@
+head-checks database steps now install and regenerate the Prisma client on the database host when the lockfile or prisma/schema.prisma changed. A `# app-dir: <dir>` line in the checks file names the app sub directory. A failed step lists its failing test names in the receipt.
