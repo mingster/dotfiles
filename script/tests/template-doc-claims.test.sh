@@ -19,7 +19,7 @@ while IFS= read -r ref; do
   if [ -z "$(find "$ROOT/bin" "$ROOT/script" "$ROOT/templates/agent-team" -name "$name" -print -quit)" ]; then
     echo "FAIL: docs name $ref but no $name exists"; missing=1
   fi
-done < <(grep -rhoE 'python3 bin/[A-Za-z0-9._-]+\.py' "$docs" | awk '{print $2}' | sort -u)
+done < <(grep -rhoE '(python3|bash) bin/[A-Za-z0-9._-]+\.(py|sh)' "$docs" | awk '{print $2}' | sort -u)
 [ "$missing" -eq 0 ]
 if grep -n 'check-intent-roots' "$docs/agents/engineering-integration.md"; then
   echo 'FAIL: engineering-integration.md claims a missing intent root check'; exit 1
