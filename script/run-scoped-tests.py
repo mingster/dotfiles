@@ -189,7 +189,9 @@ def has_python_tests(directory):
 
 
 def find_bash5():
-    for candidate in [shutil.which('bash'), '/opt/homebrew/bin/bash', '/usr/local/bin/bash']:
+    # The override lists extra candidates, for tests.
+    extra = [item for item in os.environ.get('SCOPED_TESTS_BASH_CANDIDATES', '').split(os.pathsep) if item]
+    for candidate in [shutil.which('bash'), *extra, '/opt/homebrew/bin/bash', '/usr/local/bin/bash']:
         if candidate and os.path.exists(candidate) and subprocess.run([candidate, '-c', '((BASH_VERSINFO[0] >= 5))']).returncode == 0:
             return candidate
     return None
@@ -213,7 +215,9 @@ def run_shell_tests(directory):
             continue
         command = [bash5 or 'bash', str(script)]
         print('Component check:', shlex.join(command), flush=True)
-        result = subprocess.run(command)
+        # Child scripts that run `bash` must also get bash 5.
+        env = dict(os.environ, PATH=os.path.dirname(bash5) + os.pathsep + os.environ['PATH']) if bash5 else None
+        result = subprocess.run(command, env=env)
         if result.returncode:
             return result.returncode
     return 0
