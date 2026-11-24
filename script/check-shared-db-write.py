@@ -16,11 +16,17 @@ ${SHARED_DB_PATTERN_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiles/shared-db.p
 No file means nothing is checked (exit 0, and --command says so on stderr).
 
 Allowed: databases starting with the verifier prefix, bin/bootstrap-regression-shard.ts, and the release-manager
-role (the brief's first line `Worker role: release-manager`). Unexpected input exits 0: a gate, not a crash.
+role pushing a merged schema. The role is the brief's stamp `Worker role: release-manager`, on the first line of the
+first user message or on the line right after Orca's `=== TASK ===` marker (Orca puts a preamble before the brief).
+Merged means the checkout's HEAD is an ancestor of origin/main (or equal); an unmerged branch is refused for every
+role. Text inside `--body`, `--subject`, `--question` or `--spec` values (an `orca orchestration send` message) is not
+part of the command. Unexpected input exits 0: a gate, not a crash.
 """
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 
 NAME = re.compile(r"[A-Za-z0-9_]+")
@@ -31,6 +37,8 @@ DDL = re.compile(r"\b(?:create|alter|drop)\b", re.I)
 SQL_FILE = re.compile(r"(?:-f|--file)[=\s]+(\S+)")
 BOOTSTRAP = "bootstrap-regression-shard.ts"
 ENV_NAMES = ("DATABASE_URL", "DIRECT_URL")
+STAMP = re.compile(r"Worker role: ([a-z0-9-]+)")
+TEXT_FLAGS = ("--body", "--subject", "--question", "--spec")
 
 
 def pattern_path():
@@ -56,6 +64,35 @@ def refusal(db, verifier):
             f"Use a verifier temp database instead: `createdb {v}`, point DATABASE_URL at it "
             f"(`postgres://.../{v}`), run the migration or `prisma db push` there, then `dropdb {v}`. "
             "A regression shard comes from `bin/bootstrap-regression-shard.ts`. See deploy-facts.md, Verifier schema.")
+
+
+def strip_message_text(cmd):
+    """The command without the values of --body, --subject, --question and --spec: message text is not a schema change."""
+    if not re.search(r"\borca\b", cmd):
+        return cmd
+    try:
+        toks = shlex.split(cmd, posix=True)
+    except ValueError:
+        return cmd
+    kept, skip = [], False
+    for tok in toks:
+        if skip:
+            skip = False
+        elif tok in TEXT_FLAGS:
+            skip = True
+        elif not tok.startswith(tuple(f + "=" for f in TEXT_FLAGS)):
+            kept.append(tok)
+    return " ".join(kept)
+
+
+def is_merged(cwd):
+    """True when HEAD of the checkout at cwd is an ancestor of origin/main (or equal). Any git failure is False."""
+    try:
+        r = subprocess.run(["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"], cwd=cwd or None,
+                           capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
 
 
 def is_ddl(cmd):
@@ -92,7 +129,8 @@ def shared_target(cmd, shared, verifier):
 
 
 def role_of(transcript_path):
-    """The `Worker role:` stamp on the first line of the session's first user message."""
+    """The `Worker role:` stamp of the session's first user message: its first line, or the line right after Orca's
+    `=== TASK ===` marker (Orca puts its own preamble before the brief)."""
     try:
         with open(transcript_path, encoding="utf-8", errors="replace") as fh:
             raw = fh.read(65536)
@@ -112,20 +150,28 @@ def role_of(transcript_path):
                 continue
             content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
         if isinstance(content, str) and content.strip():
-            m = re.fullmatch(r"Worker role: ([a-z0-9-]+)", content.lstrip("﻿").split("\n", 1)[0].rstrip("\r"))
-            return m.group(1) if m else ""
+            lines = [l.rstrip("\r") for l in content.lstrip("﻿").split("\n")]
+            cands = lines[:1] + [lines[i + 1] for i, l in enumerate(lines[:-1]) if l.strip() == "=== TASK ==="]
+            for cand in cands:
+                m = STAMP.fullmatch(cand)
+                if m:
+                    return m.group(1)
+            return ""
     return ""
 
 
-def check(cmd, role="", config=None):
+def check(cmd, role="", config=None, cwd=None):
     """The refusal text, or '' when the command is allowed."""
     config = config or load_config()
-    if not config or not isinstance(cmd, str) or BOOTSTRAP in cmd or role == "release-manager":
+    if not config or not isinstance(cmd, str) or BOOTSTRAP in cmd:
         return ""
+    cmd = strip_message_text(cmd)
     if not is_ddl(cmd):
         return ""
     db = shared_target(cmd, *config)
-    return refusal(db, config[1]) if db else ""
+    if not db or (role == "release-manager" and is_merged(cwd)):
+        return ""
+    return refusal(db, config[1])
 
 
 def main(argv):
@@ -149,7 +195,8 @@ def main(argv):
         data = json.load(sys.stdin)
         if data.get("tool_name") != "Bash":
             return 0
-        msg = check((data.get("tool_input") or {}).get("command"), role_of(data.get("transcript_path")))
+        msg = check((data.get("tool_input") or {}).get("command"), role_of(data.get("transcript_path")),
+                    cwd=data.get("cwd") if isinstance(data.get("cwd"), str) else None)
     except (ValueError, AttributeError):
         return 0
     if msg:
