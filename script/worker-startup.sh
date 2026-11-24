@@ -13,8 +13,8 @@
 # while usage-gate.py pick still returns claude (provider priority: claude, antigravity, grok, cursor).
 # --on ENV over its load limit, or naming the coordinator host, exits 4 unless --force-host REASON
 # is given (the coordinator host accepts only chrome-dev, line-desktop or host-file).
-# A fullstack-dev brief whose Refs issue a merged PR already closed (Closes, Fixes, Resolves, Delivers) is refused
-# unless --allow-delivered REASON is given (#1158).
+# A fullstack-dev brief whose issue (the "#<n>|" title number) a merged PR already closed (Closes, Fixes, Resolves)
+# is refused unless --allow-delivered REASON is given (#1158, #1811).
 # A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label) waits, unless
 # --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
@@ -729,7 +729,8 @@ refuse_merged_backlog_line() { # <spec_file> <title>
   [ -z "$merged" ] || die "refused: $key already merged in PR #$merged; check the backlog before building it again"
 }
 
-# A builder brief whose Refs issue a merged PR already closed or referenced is refused (#1158). A failed gh call lets the start go on.
+# A builder brief whose issue (started_issue_ref) a merged PR already closed with Closes, Fixes or Resolves is refused (#1158, #1811).
+# A Refs link does not count: a spec PR refs its issue without delivering it. A failed gh call lets the start go on.
 refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   local spec_file=$1 title=$2 allow=$3 role kind ref repo num prs btype
   role=$(role_from_title "$title")
@@ -739,13 +740,13 @@ refuse_delivered_issue() { # <spec_file> <title> <allow_reason>
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed 's/^Refs //' || true)
+  ref=$(started_issue_ref "$spec_file" "$title")
   [ -n "$ref" ] || return 0
   num=${ref##*#}
   repo=${ref%%#*}
   command -v gh >/dev/null 2>&1 || return 0
   prs=$(gh pr list ${repo:+-R "$repo"} --state merged --search "$num in:body" --limit 30 --json number,body \
-    --jq "[.[] | select(.body // \"\" | test(\"(?i)(closes|fixes|resolves|delivers|refs)\\\\s+([A-Za-z0-9_./-]+)?#$num\\\\b\")) | .number] | map(\"#\" + tostring) | join(\", \")" 2>/dev/null) || {
+    --jq "[.[] | select(.body // \"\" | test(\"(?i)\\\\b(close[sd]?|fix(e[sd])?|resolve[sd]?):?\\\\s+([A-Za-z0-9_./-]+)?#$num\\\\b\")) | .number] | map(\"#\" + tostring) | join(\", \")" 2>/dev/null) || {
     echo "worker-startup: delivered-issue check skipped: gh failed" >&2
     return 0
   }
@@ -767,8 +768,7 @@ refuse_overlapping_issue() { # <spec_file> <title> <allow_reason>
   [ "$kind" = builder ] || return 0
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(grep -m1 -oE '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec_file" | sed -E 's/^[A-Za-z]+:?[[:space:]]+//' || true)
-  case "$title" in "#"[0-9]*"|"*) [ -n "$ref" ] || { ref=${title#\#}; ref=\#${ref%%|*}; } ;; esac # the title names the issue (with_refs_line)
+  ref=$(started_issue_ref "$spec_file" "$title")
   [ -n "$ref" ] || return 0
   num=${ref##*#}
   repo=${ref%%#*}
@@ -785,12 +785,12 @@ refuse_overlapping_issue() { # <spec_file> <title> <allow_reason>
   die "refused: $ref overlaps other work in flight; bundle it into one issue, or pass --allow-overlap REASON"
 }
 
-# A complex builder start (#1396): a fullstack-dev-strong title, or a Refs issue labelled size:L.
+# A complex builder start (#1396): a fullstack-dev-strong title, or a started issue (started_issue_ref) labelled size:L.
 # Best effort: a missing gh or a failed lookup counts as not complex.
-builder_is_complex() { # <role> <spec_file>
+builder_is_complex() { # <role> <spec_file> <title>
   local ref repo num
   [ "$1" != fullstack-dev-strong ] || return 0
-  ref=$(grep -m1 -oE '^Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$2" | sed 's/^Refs //' || true)
+  ref=$(started_issue_ref "$2" "$3")
   [ -n "$ref" ] || return 1
   num=${ref##*#}
   repo=${ref%%#*}
@@ -805,7 +805,7 @@ enforce_builder_provider() { # <title> <agent> <model> <override> <spec_file>
   [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   kind=$(role_class "$role") || die "cannot classify role $role"
   [ "$kind" = builder ] || return 0
-  if builder_is_complex "$role" "$spec_file"; then
+  if builder_is_complex "$role" "$spec_file" "$title"; then
     strong=1
   elif [ "$agent" = claude ]; then
     return 0
@@ -879,6 +879,22 @@ issue_ref_from_spec() { # <spec_file>
     | sed -E 's/^(Refs|Closes|Fixes|Resolves):?[[:space:]]+//; s/^([^#]*#[0-9]+).*/\1/' || true
 }
 
+# The issue a start works on (#1811): the "#<n>|" title number, with the repo from a brief line that names it, else the
+# repo of the first Refs line. A brief that quotes its parent issue first ("Refs <repo>#<parent>") still checks the child.
+# A title with no number falls back to the first Refs, Closes, Fixes or Resolves line.
+started_issue_ref() { # <spec_file> <title>
+  local first num line repo
+  first=$(issue_ref_from_spec "$1")
+  case "$2" in "#"[0-9]*"|"*) num=${2#\#}; num=${num%%|*} ;; *) printf '%s\n' "$first"; return 0 ;; esac
+  line=$(grep -oE "^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#$num([^0-9]|\$)" "$1" | head -1 || true)
+  if [ -n "$line" ]; then
+    repo=$(sed -E 's/^[A-Za-z]+:?[[:space:]]+//; s/#.*//' <<<"$line")
+  else
+    repo=${first%%#*}
+  fi
+  printf '%s#%s\n' "$repo" "$num"
+}
+
 # Owner 2026-11-24 (#1692): a builder start claims its issue before the worker starts. ready-for-agent comes off and the
 # in-progress status label goes on, so issue_scan never starts a second worker for it (#1192, #1216). claimed_* record what
 # the claim changed, so release_claim puts it back when the start fails. Best effort: a missing gh or a failed edit warns
@@ -898,7 +914,7 @@ claim_issue() { # <spec_file> <title> [<repo_sel> <worktree>]
   [ "$role" = qa-sdet ] && return 0 # a verifier start never edits the issue labels (#1271)
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   case "$btype" in rework|verify) return 0 ;; esac
-  ref=$(issue_ref_from_spec "$spec_file")
+  ref=$(started_issue_ref "$spec_file" "$title")
   [ -n "$ref" ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
   num=${ref##*#}

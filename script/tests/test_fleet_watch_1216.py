@@ -118,9 +118,10 @@ class DoubleStartGuards(unittest.TestCase):
             starts, *_ = run_pass([row(5)], workers=[worker])
         self.assertEqual(len(starts), 1)
 
-    def test_started_set_blocks(self):
+    def test_started_set_no_longer_blocks_without_pr_or_worker(self):
+        # #1811: a started issue that is ready again, with no open PR and no live worker, starts again.
         starts, *_ = run_pass([row(5)], state={'issue_scan_backlog_sweep_at': 1, 'issue_scan_started': {REPO: [5]}})
-        self.assertEqual(starts, [])
+        self.assertEqual(len(starts), 1)
 
     def test_pending_set_blocks(self):
         starts, *_ = run_pass([row(5)], state={'issue_scan_backlog_sweep_at': 1, 'issue_scan_pending': {REPO: [5]}})

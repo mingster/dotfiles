@@ -2366,6 +2366,18 @@ def refusal_token(reason):
     return reason_token(reason)
 
 
+ISSUE_CLAIM_LABEL = 'status:進行中'  # worker-startup.sh claim_issue
+ISSUE_RESTART_GRACE_SECONDS = 1800  # a started issue restarts only this long after its start (#1811)
+
+
+def start_delivered_refusal(reason):
+    """'delivered by merged PR #n' when worker-startup refused the issue as already delivered, else None (#1811)."""
+    match = re.search(r'already delivered by merged PR ((?:#\d+[ ,]*)+)', str(reason or ''))
+    if not match:
+        return None
+    return 'delivered by merged PR %s' % ' '.join(re.findall(r'#\d+', match.group(1)))
+
+
 def start_gate_refusal(reason):
     """True when worker-startup refused on a gate that says nothing about the brief (#1170 follow-up)."""
     text = str(reason or '').lower()
@@ -4191,6 +4203,19 @@ def fetch_ready_issues(repo, run=subprocess.run):
     command = [
         'gh', 'issue', 'list', '--repo', repo, '--label', 'ready-for-agent', '--state', 'open',
         '--limit', '100', '--json', 'number,title,body,labels,comments,createdAt,updatedAt,blockedBy',
+    ]
+    try:
+        output = run(command, capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(output.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def fetch_claimed_issues(repo, run=subprocess.run):
+    """Open issues that carry the in-progress status label worker-startup's claim sets (#1811)."""
+    command = [
+        'gh', 'issue', 'list', '--repo', repo, '--label', ISSUE_CLAIM_LABEL, '--state', 'open',
+        '--limit', '100', '--json', 'number',
     ]
     try:
         output = run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -7758,7 +7783,7 @@ def _issue_scan_pass(
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
     babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None, red_gates=None,
     issue_state=None,
-    deferred=None,
+    deferred=None, list_claimed=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
@@ -8020,6 +8045,9 @@ def _issue_scan_pass(
 
     prune_closed_maps(state, listed, {})
 
+    if list_claimed is None:
+        # A caller that injects the ready list (tests) gets no claimed list unless it injects one too.
+        list_claimed = fetch_claimed_issues if list_issues is None else (lambda _repo: [])
     if list_issues is None:
         list_issues = fetch_ready_issues
     if issue_state is None:
@@ -8030,10 +8058,24 @@ def _issue_scan_pass(
     issue_pending = state.setdefault('issue_scan_pending', {})
 
     def issue_already_claimed(repo, number):
-        return (
-            number in started.get(repo, [])
-            or number in issue_pending.get(repo, [])
-        )
+        return number in issue_pending.get(repo, [])
+
+    started_at = state.setdefault('issue_scan_started_at', {})
+
+    def started_is_stale(repo, number):
+        # A start this recent may not show in the worker inventory or the label yet, so it still blocks (#1216).
+        # An entry from before #1811 has no time and counts as stale.
+        at = started_at.get(repo, {}).get(str(number))
+        return at is None or now - float(at) >= ISSUE_RESTART_GRACE_SECONDS
+
+    def restart_started(repo, number, why):
+        # A started issue with no live worker and no open PR starts again (#1811).
+        started[repo].remove(number)
+        started_at.get(repo, {}).pop(str(number), None)
+        log_bits.append('issue_restart=%d:%s' % (number, why))
+        notices.append('issue %s #%d restarted: no open PR and no live worker' % (repo, number))
+        if persist_state:
+            persist_state()
 
     candidates = []
     ready_queue_count = 0
@@ -8058,6 +8100,13 @@ def _issue_scan_pass(
             if open_pr_for_issue(listed[repo], row['number']):
                 log_bits.append('issue_open_pr=%d' % row['number'])
                 continue
+            restart = row['number'] in started.get(repo, [])
+            if restart and listed[repo] is None:
+                # An unreadable PR list could hide the PR this start opened, so it still blocks.
+                log_bits.append('issue_restart_skipped=%d:pr_list' % row['number'])
+                continue
+            if restart and not started_is_stale(repo, row['number']):
+                continue
             open_blockers, unknown_blockers = issue_open_blockers(row, repo, issue_state, blocker_states)
             if open_blockers or unknown_blockers:
                 # Not ready work, so it does not count as supply either (#1788).
@@ -8073,7 +8122,29 @@ def _issue_scan_pass(
             if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
                 log_bits.append('issue_parked=%d' % row['number'])
                 continue
+            if restart:
+                restart_started(repo, row['number'], 'ready')
             candidates.append((repo, row))
+        listed_numbers = {r['number'] for r in issues}
+        if started.get(repo):
+            for claimed in list_claimed(repo) or []:
+                number = claimed.get('number')
+                if number not in started[repo] or number in listed_numbers or not started_is_stale(repo, number):
+                    continue
+                if issue_has_live_dispatch(workers, number) or number in issue_pending.get(repo, []):
+                    continue
+                if repo not in listed:
+                    listed[repo] = pr_fetch(repo)
+                if listed[repo] is None:
+                    log_bits.append('issue_restart_skipped=%d:pr_list' % number)
+                    continue
+                if open_pr_for_issue(listed[repo], number):
+                    continue
+                # The claim took ready-for-agent off, so put it back: the next pass lists and starts the issue (#1811).
+                # A failed edit keeps the issue in started, so a later pass tries again.
+                if act(['gh', 'issue', 'edit', str(number), '--repo', repo,
+                        '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
+                    restart_started(repo, number, 'orphaned')
 
     supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission, waiting_on_coordinator(state, workers))
     if supply_line:
@@ -8244,6 +8315,12 @@ def _issue_scan_pass(
         if row['number'] in pending_list:
             pending_list.remove(row['number'])
         suffix = ':%s' % reason if reason else ''
+        delivered = start_delivered_refusal(reason) if code != 0 else None
+        if delivered:
+            # Refused as already delivered: elon closes the issue or starts it with --allow-delivered (#1811).
+            log_bits.append('issue_start_delivered=%d' % row['number'])
+            defer_issue(state, now, repo, row['number'], delivered, deferred, notices, log_bits, persist_state)
+            continue
         if code in BABYSIT_DEFERRED_EXITS or (code != 0 and (refusal_token(reason) == 'usage_gate' or start_gate_refusal(reason))):
             if persist_state:
                 persist_state()
@@ -8258,6 +8335,7 @@ def _issue_scan_pass(
             else:
                 extra_starts += 1
             started.setdefault(repo, []).append(row['number'])
+            started_at.setdefault(repo, {})[str(row['number'])] = now
             act(['gh', 'issue', 'edit', str(row['number']), '--repo', repo, '--remove-label', 'ready-for-agent'])
             notices.append('issue %s #%d' % (repo, row['number']))
             log_bits.append('issue_start=%d' % row['number'])

@@ -6,7 +6,7 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
 [ -x "$PYTHON" ] || { echo "missing python3" >&2; exit 1; }
 "$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
-import importlib.util, json, pathlib, subprocess, sys, tempfile, unittest
+import importlib.util, json, os, pathlib, subprocess, sys, tempfile, unittest
 from unittest.mock import patch
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
@@ -28,7 +28,9 @@ class Baseline(unittest.TestCase):
             return {}
         config = state.parent/'config.json'
         config.write_text(json.dumps({'runs': [{'id': 'r', 'terminal': 't', 'waiter_pattern': 'w'}]}))
+        # No real host files: the fleet-pull ship log and the template sync state are not this test's input.
         with redirect_main_log_under(str(state.parent.resolve())), \
+             patch.dict(os.environ, {'SHIP_FLEET_PULL_LOG': str(state.parent/'fleet-pull.log'), 'TEMPLATE_SYNC_STATE': str(state.parent/'template-sync.json')}), \
              patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), patch.object(watch, 'rpc', side_effect=rpc), \
              patch.object(watch.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)):
             watch.main()
