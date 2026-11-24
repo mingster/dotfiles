@@ -17,6 +17,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, `.agents/skills/orca-adapter
 ## Commands
 
 - `/elon <objective>`: run pstack Orchestrate on it, with the `orca-adapter/playbooks/orchestrate.md` overlay.
+- `/elon watch` (the 5 minute watch): run `bash ~/dotfiles/script/elon-tick.sh --run <run_id>` and act on each ACTION line, then end the turn. `OK nothing to do` needs no reply.
 - `/elon status` (Mingster also says "what now"), only when Mingster asks: run `ketchup`, read only; start no workers. Reply as Now, Needs user, Running.
 - A plain "status", "recap" or a question about a worker counts as `/elon status`: read the run's task list and worker list first, then name a worker's state. Never answer from memory or from a fleet-watch log line.
 

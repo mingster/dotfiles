@@ -1,0 +1,1 @@
+elon-tick: `script/elon-tick.sh --run <run_id>` runs every coordinator Wake loop check and the mistake checks in `docs/agents/elon-mistakes.md` (M1 to M8, W1 to W5) read only, and prints one numbered ACTION list or `OK nothing to do` (#1790). M8 flags a live worker on a ready issue that fleet-watch did not start and names the next issue by the fleet-watch queue key.
