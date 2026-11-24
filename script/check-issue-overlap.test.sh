@@ -100,6 +100,13 @@ printf 'x\n\n## Allowed files\n- templates/agent-team/docs/agents/team.md\n- cha
 run 32
 if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "owner-reviewed docs only: no warning"; else bad "docs only (rc=$rc, $out)"; fi
 
+printf 'x\n\n## Allowed files\n- script/foo.sh\n- templates/agent-team/docs/agents/elon-dispatch.md\n' >"$FAKE/issue-33.md"
+run 33
+if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out"; then ok "a template docs/agents file counts as owner-reviewed"; else bad "template docs (rc=$rc, $out)"; fi
+printf 'x\n\n## Allowed files\n- AGENTS.md\n- docs/agents/\n' >"$FAKE/issue-34.md"
+run 34
+if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "a directory entry is not code"; else bad "dir entry (rc=$rc, $out)"; fi
+
 run
 [ "$rc" -eq 2 ] && ok "no arguments is a usage error" || bad "usage (rc=$rc)"
 
