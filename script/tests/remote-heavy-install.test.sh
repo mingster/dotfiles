@@ -67,5 +67,22 @@ if grep -q LOG-B-3 "$tmp/out-lane-b" && ! grep -q LOG-A "$tmp/out-lane-b"; then 
 if [ -z "$(ls -A "$TMPDIR")" ]; then check "no install log is left in the temp dir" ok; else check "no install log is left in the temp dir" bad; fi
 unset TMPDIR
 
+# Schema stamp (#1725): a lockfile in the sub dir is found, an unchanged head skips, a schema only change regenerates.
+mkdir -p "$tmp/lane-s/web/prisma"
+printf 'lock\n' > "$tmp/lane-s/web/bun.lock"; printf 'model A {}\n' > "$tmp/lane-s/web/prisma/schema.prisma"
+printf '#!/bin/sh\necho install >> "$INSTALL_LOG"\nmkdir -p node_modules\n' > "$tmp/bin/bun"
+printf '#!/bin/sh\necho "$@" >> "$GEN_LOG"\n' > "$tmp/bin/bunx"
+chmod +x "$tmp/bin/bun" "$tmp/bin/bunx"
+export GEN_LOG="$tmp/gens"; : > "$INSTALL_LOG"; : > "$GEN_LOG"
+run_sub() { PATH="$tmp/bin:$PATH" bash "$heavy" --host fixture --repo-dir checkout --dir "$tmp/lane-s" --sub web --gate "$tmp/gate" -- true >"$tmp/out" 2>&1; }
+count() { wc -l < "$1" | tr -d ' '; }
+run_sub
+if [ "$(count "$INSTALL_LOG")" = 1 ] && [ "$(count "$GEN_LOG")" = 1 ] && [ -f "$tmp/lane-s/web/.remote-heavy-lock-sha" ]; then check "a lockfile in the sub dir is found: installs and generates once" ok; else check "a lockfile in the sub dir is found: installs and generates once" bad; fi
+run_sub
+if [ "$(count "$INSTALL_LOG")" = 1 ] && [ "$(count "$GEN_LOG")" = 1 ]; then check "an unchanged head skips install and generate" ok; else check "an unchanged head skips install and generate" bad; fi
+printf 'model A {}\nmodel B {}\n' > "$tmp/lane-s/web/prisma/schema.prisma"
+run_sub
+if [ "$(count "$GEN_LOG")" = 2 ] && grep -q generate "$GEN_LOG"; then check "a schema only change regenerates the client" ok; else check "a schema only change regenerates the client" bad; fi
+
 echo "remote-heavy-install: $pass passed, $fail failed"
 [ "$fail" -eq 0  ]

@@ -107,3 +107,11 @@ Before that bound passes, lighter jobs run as usual. Only waits for slots count,
 not waits on the load or free memory checks. Records of dead owners are ignored.
 The slot limit is never exceeded, since every claim still goes through the same
 atomic check.
+
+**Database host install.** `remote-heavy.sh` stamps the lockfile hash plus the
+hash of `prisma/schema.prisma` (both under `--sub`). When either changed, or
+`node_modules` is missing, it runs `bun install --frozen-lockfile` and then
+`bunx prisma generate`, so a schema only change never runs against a stale
+client. `head-checks.sh` passes `--sub` from a `# app-dir: <dir>` line in the
+checks file (default `.`). A failed step also lists its failing test names
+(`Failing tests:`) after the 20 line tail in the receipt.
