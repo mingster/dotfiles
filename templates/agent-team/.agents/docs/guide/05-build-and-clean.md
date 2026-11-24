@@ -40,15 +40,15 @@ Sometimes you want the cause before any fix. For a live symptom, such as a leak,
 /poteto-mode here's a cpuprofile from the slow startup. tell me where the time goes and which source lines own it. no fix yet.
 ```
 
-## Write the failing test first with `/tdd`
+## Write the failing test first with `/tdd-bugfix`
 
 When a bug has a cheap local test path, the whole prompt can be two words:
 
 ```text
-/tdd implement
+/tdd-bugfix implement
 ```
 
-In context, that's enough. [`/tdd`](../../skills/tdd/SKILL.md) writes the smallest test that fails for the intended reason, then the fix, then reruns the test. If a test would need broad harness setup or brittle mocks, the skill says so and uses the closest executable check instead. Don't force a test where a real command is stronger evidence.
+In context, that's enough. [`/tdd-bugfix`](../../skills/tdd-bugfix/SKILL.md) writes the smallest test that fails for the intended reason, then the fix, then reruns the test. If a test would need broad harness setup or brittle mocks, the skill says so and uses the closest executable check instead. Don't force a test where a real command is stronger evidence.
 
 ## Load the TypeScript rules by name
 

@@ -141,7 +141,7 @@ Shortcuts: a typo or config tweak goes straight to `/tdd` or an edit. A bug star
 All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Claude Code, Cursor and Antigravity. Change one here and every tool gets it.
 
 * **Planning:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
-* **Building:** `tdd`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
+* **Building:** `tdd`, `tdd-bugfix`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
 * **Research and docs:** `research`, `retro`, `handoff`, `writing-for-agents`.
 * **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca's own skills come from `orca skills install --all`.
 
