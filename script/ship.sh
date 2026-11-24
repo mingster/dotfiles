@@ -9,6 +9,7 @@
 # unless a later Review: PASS for that head, or a Countersign, covers it. A Verdict does not cover it.
 # A docs only PR needs a cold "Review: PASS head=<head>"
 # or a Verdict PASS or PASS+NOTES at that exact head (same author and builder checks as the verdict lane);
+# a tier 0 PR (script/pr-tier.py: test files and docs only, 150 changed lines or fewer, no protected path) takes the same lane (#1730);
 # --mechanical lands a pure substitution or deletion diff with no Verdict; --verdict-from lands generated team
 # copies on the Verdict of the matching MERGED dotfiles PR. That lane also accepts a pure deletion of a path
 # agent-team.sh check flags as a canonical role file or an unkept shared hook copy. The verdict lane accepts
@@ -719,6 +720,12 @@ else
   while IFS= read -r f; do
     case "$f" in changelog.d/*|*/changelog.d/*|*.md) ;; *) lane=verdict ;; esac
   done < <(jq -r '.[]' <<<"$files")
+  # Tier 0 (#1730): only test files and docs, 150 changed lines or fewer, no protected path. It takes the docs lane:
+  # a cold Review: PASS at the head (or a Verdict) plus the green Checks read above, no separate verifier.
+  if [ "$lane" = verdict ]; then
+    tier=$(jq -s . <<<"$file_pages" | python3 "$ship_dir/pr-tier.py") || tier=2
+    if [ "$tier" = 0 ]; then lane=docs; echo "ship: tier 0 (tests and docs only), Review PASS and green Checks at the head"; fi
+  fi
 fi
 
 case "$lane" in

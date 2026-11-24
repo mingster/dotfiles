@@ -275,6 +275,11 @@ for name, path, pattern in sources:
                 print(f"worker-startup: read from coordinator host {host}")
     print(f"| {name} | {statistics.median(vals) if vals else 'unknown'} | {max(vals) if vals else 'unknown'} | {len(vals)} |")
 REPORT
+  # Tier 0 audit results of the past two weeks (#1730): each picked PR, its Audit result, and the FAIL rate against the 5 percent bar.
+  for proj in "${PROJECTS[@]}"; do
+    repo=$(repo_of "$proj"); [ -n "$repo" ] || continue
+    python3 "$HERE/tier0-audit.py" report --repo "$repo" 2>&1 || echo "WARN tier0-audit: report failed for $repo"
+  done
   bases=""
   for d in "$DOTFILES" "${PROJECTS[@]}"; do
     sha=$(git -C "$d" rev-parse --short HEAD 2>/dev/null) || continue

@@ -537,6 +537,21 @@ h=$(jq -r .headRefOid "$MF_GH_DIR/pr-145.json"); mf_self_review 145 "$h" claude/
 run_ship --repo example/repo --pr 145
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "is the same agent and model as the builder" <<<"$SHIP_OUT"; then ok "a docs Verdict from the builder's own agent and model refuses"; else bad "a docs Verdict from the builder's own agent and model refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
+# 13e. Tier 0 (#1730): test files and docs only, 150 changed lines or fewer, take the docs lane (cold Review: PASS, no Verdict)
+docs_case 1730 feat-t0-pass script/tests/test_t0.py "Review: PASS head=@HEAD@" ship "tier 0 test only PR lands on a cold Review: PASS and green Checks"
+docs_case 1731 feat-t0-none script/tests/test_t0b.py "" refuse "tier 0 PR without Review refuses" "needs a cold 'Review: PASS head="
+docs_case 1732 feat-t0-helper script/tests/lib/t0.sh "Review: PASS head=@HEAD@" refuse "a shared test helper is not tier 0 and needs a Verdict" "missing Verdict comment"
+docs_case 1733 feat-t0-auth script/tests/test_auth.py "Review: PASS head=@HEAD@" refuse "a protected path (auth) is not tier 0" "missing Verdict comment"
+mf_pr_add 1734 feat-t0-big "Body" script/tests/test_big.py
+jq '.files[0].additions = 151' "$MF_GH_DIR/pr-1734.json" > "$MF_GH_DIR/pr-1734.tmp" && mv "$MF_GH_DIR/pr-1734.tmp" "$MF_GH_DIR/pr-1734.json"
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1734.json"); set_checks 1734 "$green_checks"; gh pr comment 1734 --repo example/repo --body "Review: PASS head=$h" >/dev/null
+run_ship --repo example/repo --pr 1734
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "missing Verdict comment" <<<"$SHIP_OUT"; then ok "a test only PR over 150 lines is not tier 0"; else bad "a test only PR over 150 lines is not tier 0" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+mf_pr_add 1735 feat-t0-red "Body" script/tests/test_red.py
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1735.json"); gh pr comment 1735 --repo example/repo --body "Review: PASS head=$h" >/dev/null
+run_ship --repo example/repo --pr 1735
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "checks" <<<"$SHIP_OUT"; then ok "tier 0 still needs green Checks at the head"; else bad "tier 0 still needs green Checks at the head" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+
 # 14-15. Patch-id carry refuses an empty or whitespace-only commit after the verdict head (#771)
 blank_case() { # <pr> <branch> <empty|whitespace>
   local n=$1 b=$2 kind=$3 old new
