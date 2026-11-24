@@ -14,6 +14,7 @@ esac
 { [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = --no-pull ]; }; } || { echo "$usage" >&2; exit 2; }
 here=$(cd "$(dirname "$0")" && pwd)
 state=${AGENT_STATE_DIR:-$HOME/agent-state}
+state_dir_agent=${ELON_STATE_DIR:-$HOME/.local/state/agent-team}
 command -v jq >/dev/null || { echo 'elon-startup requires jq' >&2; exit 1; }
 if [ -n "${FLEET_PULL_CONFIG:-}" ]; then
   cfg=$FLEET_PULL_CONFIG
@@ -121,6 +122,44 @@ except Exception: print("usage gate unreadable")'
 echo "== 5 leftovers (preview only, nothing deleted)"
 if [ -x "$here/wrap-up.sh" ] && [ -d "${PWD}/.git" -o -f "${PWD}/.git" ]; then
   env -u ORCA_CLI_COMMAND "$here/wrap-up.sh" --fleet --repo "$PWD" 2>&1 | grep -E '^(Remove|Delete) |removed worktrees' | cut -c1-140 | head -20
+fi
+
+# The four elon jobs (#1778, owner 2026-11-24): fleet-watch every 5 minutes, a waiter for worker mail, a 5 minute watch of
+# the fleet, and keeping target_workers filled. They start here, on the coordinator host only. The loop is started for real. The
+# waiter and the watch live in the elon session, so this prints the waiter script and the 5 minute interval for the /elon skill.
+echo "== 6 elon jobs"
+if [ "$blocked" = 1 ]; then
+  echo "skip elon jobs: this host may not dispatch"
+else
+  tmpdir=$state_dir_agent
+  mkdir -p "$tmpdir" 2>/dev/null || true
+  export FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.claude/state/fleet-watch-elon.json}
+  export FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
+  loop=${FLEET_WATCH_LOOP_CMD:-$here/fleet-watch-loop.sh}
+  if loop_status=$(bash "$loop" --status 2>&1); then
+    echo "job fleet-watch loop: found running ($loop_status)"
+  elif [ ! -f "$FLEET_WATCH_CONFIG" ]; then
+    flag "fleet-watch loop not started: no config at $FLEET_WATCH_CONFIG"
+  else
+    nohup bash "$loop" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    sleep 1
+    if loop_status=$(bash "$loop" --status 2>&1); then
+      echo "job fleet-watch loop: started ($loop_status)"
+    else
+      flag "fleet-watch loop did not start ($loop)"
+    fi
+  fi
+  run_id=$(jq -r '(.runs // [])[0].id // empty' "$FLEET_WATCH_CONFIG" 2>/dev/null || true)
+  if [ -z "$run_id" ]; then
+    flag "waiter not armed: no run id in $FLEET_WATCH_CONFIG (runs[0].id)"
+  else
+    waiter=$tmpdir/elon-wait.sh
+    printf '#!/usr/bin/env bash\n# One wait for worker mail. 3600000 ms is only the backstop, the 5 minute watch wakes elon on time.\nexec "${ORCA_CLI_COMMAND:-orca}" orchestration check --run %s --wait --timeout-ms 3600000 >"%s/elon-waiter.json"\n' "$run_id" "$tmpdir" >"$waiter"
+    chmod +x "$waiter"
+    echo "job waiter: armed, script $waiter (run $run_id, backstop 3600000 ms); start it with Bash run_in_background"
+  fi
+  echo "job watch: every 5 minutes (300 s) plus on worker mail; set it with CronCreate '*/5 * * * *'"
 fi
 
 echo "== $problems problem(s)"

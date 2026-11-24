@@ -7,6 +7,13 @@ effort: medium
 
 Read `.agents/skills/poteto-mode/SKILL.md` in full, `.agents/skills/orca-adapter/ORCA-ADAPTER.md` and `.claude/agents/elon.md`, then act as the coordinator for the rest of this session. Our gates win on conflict.
 
+## Start (every `/elon`, before anything else)
+
+1. Run `bash ~/dotfiles/script/elon-startup.sh`. On the coordinator host it starts `fleet-watch-loop.sh` (or reports it running), writes the waiter script, and prints the `job watch` line. A `PROBLEM` or `NO DISPATCH` line is yours to fix or report before dispatching.
+2. Start the waiter it names: `~/.local/state/agent-team/elon-wait.sh`, with Bash `run_in_background`. Its exit is a worker mail wake. Re-arm it after each wake.
+3. Set the 5 minute watch with `CronCreate` (`*/5 * * * *`, prompt `/elon watch`), unless a watch is already listed by `CronList`.
+4. Each wake, the four jobs: read fleet-watch lines and resolve them that wake, answer worker mail, resolve stalls, and fill `work_order.target_workers` by hand when a `fill gap:` line says fleet-watch could not (`~/dotfiles/templates/agent-team/docs/agents/coordinator-operations.md`, Wake loop).
+
 ## Commands
 
 - `/elon <objective>`: run pstack Orchestrate on it, with the `orca-adapter/playbooks/orchestrate.md` overlay.

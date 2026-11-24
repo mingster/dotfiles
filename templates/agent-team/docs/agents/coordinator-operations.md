@@ -28,7 +28,7 @@ Read before your first dispatch. Worker accounting follows pstack Orchestrate, S
 
 `script/fleet-watch.py` from dotfiles (`docs/agents/fleet-watch.md`) watches the inbox each minute, independent of your waiter. Schedule it on the coordinators' host and repoint its private config at every new Run (and `leads` whenever a lead restarts); both are explicit activation steps.
 
-Once per coordinator session, start the loop from this terminal so fleet-watch's own worker starts pass the Orca fence: `FLEET_WATCH_CONFIG=<private-json> FLEET_WATCH_STATE=<private-state> nohup bash ~/dotfiles/script/fleet-watch-loop.sh >/dev/null 2>&1 & disown`. Check it with `bash ~/dotfiles/script/fleet-watch-loop.sh --status`; a second start exits at once (`docs/agents/fleet-watch.md`, Loop from the coordinator terminal).
+`/elon` starts the loop for you: its first step, `~/dotfiles/script/elon-startup.sh` (section `== 6 elon jobs`), starts `fleet-watch-loop.sh` on the coordinator host or reports it already running (#1778). By hand, from this terminal so fleet-watch's own worker starts pass the Orca fence: `FLEET_WATCH_CONFIG=<private-json> FLEET_WATCH_STATE=<private-state> nohup bash ~/dotfiles/script/fleet-watch-loop.sh >/dev/null 2>&1 & disown`. Check it with `bash ~/dotfiles/script/fleet-watch-loop.sh --status`; a second start exits at once (`docs/agents/fleet-watch.md`, Loop from the coordinator terminal).
 
 The waiter script and its output live in `~/.local/state/agent-team/` (`elon-wait.sh`, `elon-waiter.json`), never `/tmp`. Briefs tell workers to write temp files only in their scratch dir or worktree.
 
@@ -40,7 +40,7 @@ The waiter script and its output live in `~/.local/state/agent-team/` (`elon-wai
 
 ## Wake loop
 
-Run on every wake. One waiter per delivery, `--timeout-ms 3600000`, re-armed only after it fires; re-arm an empty timeout wake once, then the next wake is whatever fleet-watch or a worker sends.
+Run on every wake. elon wakes every 5 minutes (a recurring watch, `CronCreate` `*/5 * * * *`) and on worker mail. The waiter (`~/.local/state/agent-team/elon-wait.sh`, written by `elon-startup.sh`) runs in the background with `--timeout-ms 3600000` and is only the backstop for mail; re-arm it after it fires. `/elon` sets up the loop, the waiter and the watch at start, so a session that skipped them is a startup failure, not a choice. Each wake covers the four jobs: read the fleet-watch lines (`fill gap:`, deferrals, unowned PRs) and resolve them that wake, answer worker mail, resolve stalls, and top up toward `work_order.target_workers` by hand when fleet-watch could not.
 
 - After every `worker-start`, run `~/.claude/skills/orca-team/worker-start-check.sh <dispatch>`; exit 1 (failed, or not accepted in 2 minutes) means restart once from the same brief. Do not open worker panes.
 - `usage-gate.py show`, `worker-list` on your run, the `ready-for-agent` count, open PRs per project, and the release-manager screen.

@@ -848,6 +848,31 @@ require_grok_host() { # <environment>
     || die "refused: $1 has no grok CLI (list it under grok_hosts in $cfg)"
 }
 
+# owner/repo of the repo a start works in: its worktree or its --repo selector (id:, path:, a path or owner/repo). Empty when unknown.
+start_repo_slug() { # <repo_sel> <worktree>
+  local sel=${1:-} wt=${2:-} src dir slug
+  for src in sel wt; do
+    dir=
+    if [ "$src" = wt ]; then
+      dir=$wt
+    else
+      case "$sel" in
+        id:*) dir=$("$orca" repo list --json 2>/dev/null | jq -r --arg id "${sel#id:}" '.result.repos[]? | select(.id == $id) | .path // empty' 2>/dev/null | head -1) || dir= ;;
+        path:*) dir=${sel#path:} ;;
+        /*|.*|~*) dir=$sel ;;
+        */*) printf '%s' "$sel"; return 0 ;;
+        '') dir= ;;
+        *) dir=$sel ;;
+      esac
+    fi
+    [ -n "$dir" ] || continue
+    # Only remote URLs (git@host:o/r, scheme://host/o/r) name a repo; a local path origin does not.
+    slug=$(git -C "$dir" remote get-url origin 2>/dev/null \
+      | sed -nE 's#^(git@[^:/]+:|[A-Za-z+]+://[^/]+/)([^/]+/[^/]+)$#\2#p; ' | sed -E 's#\.git$##') || slug=
+    [ -z "$slug" ] || { printf '%s' "$slug"; return 0; }
+  done
+}
+
 # The repo issue a brief names: the first Refs, Closes, Fixes or Resolves line, as owner/repo#N or #N. Empty when none.
 issue_ref_from_spec() { # <spec_file>
   grep -m1 -E '^(Refs|Closes|Fixes|Resolves):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$1" \
@@ -863,8 +888,10 @@ claimed_ready=0
 claimed_triage=0
 claimed_status=0
 
-claim_issue() { # <spec_file> <title>
-  local spec_file=$1 title=$2 role btype ref repo num labels
+# A brief that says `Refs: #n` names no repo: the issue lives in the repo of the start (its --repo, or the worktree), not in the
+# directory this script runs from (#1778). <repo_sel> and <worktree> are the start's own values.
+claim_issue() { # <spec_file> <title> [<repo_sel> <worktree>]
+  local spec_file=$1 title=$2 start_repo=${3:-} start_wt=${4:-} role btype ref repo num labels
   claimed_ref=
   role=$(role_from_title "$title")
   [ -n "$role" ] || return 0
@@ -876,6 +903,10 @@ claim_issue() { # <spec_file> <title>
   command -v gh >/dev/null 2>&1 || return 0
   num=${ref##*#}
   repo=${ref%%#*}
+  if [ -z "$repo" ] && { [ -n "$start_repo" ] || [ -n "$start_wt" ]; }; then
+    repo=$(start_repo_slug "$start_repo" "$start_wt")
+    [ -z "$repo" ] || ref="$repo#$num"
+  fi
   if ! labels=$(gh issue view "$num" ${repo:+-R "$repo"} --json labels --jq '.labels[].name' 2>/dev/null); then
     echo "worker-startup: could not read the labels of $ref, not claimed" >&2
     return 0
@@ -931,8 +962,13 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   [ -n "$dot" ] && [ "$dot" != off ] || return 0
   [ "$repo" != "$dot" ] || return 0
   command -v gh >/dev/null 2>&1 || return 0
+  # A dotfiles issue fleet-watch could not start in its last 15 minutes (placement, host cap) cannot go first, so it does not
+  # hold back other repos (#1778). fleet-watch records it in its state file under dotfiles_deferred.
+  local state_file=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json} cant_start='[]'
+  cant_start=$(jq -c --argjson now "$(date +%s)" '(.dotfiles_deferred // {}) | with_entries(select(.value > $now - 900)) | keys' "$state_file" 2>/dev/null) || cant_start='[]'
+  [ -n "$cant_start" ] || cant_start='[]'
   waiting=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels 2>/dev/null \
-    | jq -r '[.[] | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | "#\(.number)"] | join(", ")' 2>/dev/null) || waiting=
+    | jq -r --argjson cant "$cant_start" '[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | "#\(.number)"] | join(", ")' 2>/dev/null) || waiting=
   [ -n "$waiting" ] || return 0
   if [ -n "$skip" ]; then
     echo "worker-startup: --skip-dotfiles-first: $ref starts while dotfiles $waiting wait ($skip)" >&2
@@ -1183,7 +1219,7 @@ run_mode() {
     if [ -n "${WORKER_STARTUP_PLACED_REPO:-}" ]; then
       cursor_repo=$WORKER_STARTUP_PLACED_REPO
     fi
-    claim_issue "$spec" "$title"
+    claim_issue "$spec" "$title" "$repo" "$wt"
     run_captured bash "$here/start-cursor-worker.sh" --run "$run" --spec "$spec" --title "$title" --model "$model" \
       --from "$from" ${environment:+--on "$environment"} \
       ${wt:+--worktree-path "$wt"} ${name:+--name "$name"} ${cursor_repo:+--repo "$cursor_repo"} ${base:+--base-branch "$base"} \
@@ -1290,7 +1326,7 @@ run_mode() {
         --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
     fi
   }
-  claim_issue "$spec" "$title"
+  claim_issue "$spec" "$title" "$repo" "$wt"
   start_agent_worker
   local agy_ec=0
   surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?
