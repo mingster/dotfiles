@@ -119,7 +119,7 @@ class DotfilesFirstDoesNotBlock(Base):
 
         with patch.object(fw, '_host_maps_repo', side_effect=lambda _c, _h, repo: maps(repo)):
             return self.scan(
-                self.remote_config(), state, {APP: [ready(1, 'P0')], DOTS: [ready(2, 'P3')]}, admit=admit,
+                self.remote_config(), state, {APP: [ready(1, 'P2')], DOTS: [ready(2, 'P3')]}, admit=admit,
                 repo_id_lookup=lambda _host, _repo: 'id_remote')
 
     def test_dotfiles_issue_refused_on_placement_does_not_stop_the_other_repo(self):
