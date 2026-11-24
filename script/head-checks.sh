@@ -10,6 +10,8 @@
 # Database steps: a .agents/head-checks.conf line that needs Postgres runs on the head_checks_remote host when this
 # host has no reachable local Postgres (pg_isready finds no server; having the client tools is not enough). Mark it with a trailing "# db" (bash reads it as a comment), e.g. `bash bin/head-checks-db.sh # db`,
 # for a script that calls createdb itself. A line `# app-dir: web` in the checks file names the app sub directory (lockfile, prisma/) the database host installs and regenerates in. A literal createdb/dropdb/psql/pg_dump/pg_restore in the command also counts.
+# Optional preflight (#1745): a "# db-preflight: <command>" line runs once before the first database step. A non-zero exit
+# ends the run as INFRA with "infra: shared database behind main, not this PR", which files "red gate: test-database" (#1746).
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Step output is arbitrary bytes. BSD sed aborts with "illegal byte sequence" when the locale cannot read them (#1633).
@@ -563,6 +565,8 @@ db_lock_acquire() {
 }
 # An asdf shim looks for .tool-versions under the caller's HOME and exits 126 when a test sets its own, so steps get
 # the real python3 and node directories first. Resolved once, from the worktree; without asdf the PATH is unchanged.
+db_preflight=$(sed -n 's/^#[[:space:]]*db-preflight:[[:space:]]*//p' "$config" | head -1)
+db_preflight_done=0
 step_path="$PATH"
 for tool in python3 node; do
   real=$(cd "$worktree" && asdf which "$tool" 2>/dev/null) && [ -x "$real" ] && step_path="$(dirname "$real"):$step_path"
@@ -588,6 +592,24 @@ while IFS= read -r command || [ -n "$command" ]; do
   case "$command" in ''|\#*) continue ;; esac
   count=$((count+1))
   expanded=${command//\{files\}/$files}
+  # The project's database preflight runs once, before the first database step, under its own Command line, so a failure
+  # names the preflight and a later database failure names the database step. A failure is the shared database, not this
+  # PR: the `infra:` line makes the run INFRA and files the red gate through #1746's path.
+  if [ -n "$db_preflight" ] && [ "$db_preflight_done" -eq 0 ] && [[ "$expanded" =~ $db_marker_re || "$expanded" =~ $db_step_re ]]; then
+    db_preflight_done=1
+    printf '\nCommand: %s\n' "$db_preflight" >> "$log"
+    started=$SECONDS; pre_status=0
+    pre_out=$(cd "$worktree" && env -i PATH="$step_path" HOME="$HOME" LANG="${LANG:-C}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" "$bash_bin" -euo pipefail -c "$db_preflight" 2>&1) || pre_status=$?
+    if [ "$pre_status" -ne 0 ]; then
+      check_result=INFRA
+      gate_text=$(printf 'infra: shared database behind main, not this PR\n%s\n' "$(printf '%s\n' "$pre_out" | tail -39)")
+      gate_tool=$(printf '%s\n' "$gate_text" | python3 "$script_dir/red-gate.py" infra-tool) || gate_tool=""
+      printf '%s\n' "$gate_text" >> "$log"
+      printf 'Result: preflight exit %s; remaining checks stopped\nDuration: %ss\n' "$pre_status" "$((SECONDS - started))" >> "$log"
+      exit 1
+    fi
+    printf 'Result: exit 0\nDuration: %ss\n' "$((SECONDS - started))" >> "$log"
+  fi
   printf '\nCommand: %s\n' "$expanded" >> "$log"
   output=$(mktemp); started=$SECONDS
   step_env=(LANG="${LANG:-C}" DOTFILES_DIR="${DOTFILES_DIR:-}" HEAD_CHECK_SHA="$sha" HEAD_CHECK_BASE="$base" HEAD_CHECKS_TSC_CACHE_DIR="$tsc_cache_dir")

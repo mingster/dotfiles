@@ -133,6 +133,49 @@ template_sync_after_merge() { # <pr> <merge sha>
   disown 2>/dev/null || true
 }
 
+# After a merge, run the project's post-merge schema hook when the merged diff touches a watched path (#1745).
+# .agents/head-checks.conf at the PR head names it: "# post-merge-schema: <command>" and "# schema-paths: <glob> ..."
+# (space separated, bash globs on repo relative paths). It runs in this checkout with SHIP_PR and SHIP_MERGE_SHA set,
+# cut off after SHIP_POST_MERGE_TIMEOUT seconds (default 900). One result line goes to the ship output. A failure files
+# or updates the "red gate: test-database" issue and never undoes the merge or changes ship's exit code.
+post_merge_schema_hook() { # <pr> <merge sha> <head sha> <changed files json>
+  local pr_n=$1 sha=$2 head_sha=$3 changed=$4 conf cmd globs path glob hit="" tmp rc=0 limit pid dog issue last
+  conf=$(git -C "$top" show "$head_sha:.agents/head-checks.conf" 2>/dev/null || cat "$top/.agents/head-checks.conf" 2>/dev/null || true)
+  cmd=$(sed -n 's/^#[[:space:]]*post-merge-schema:[[:space:]]*//p' <<<"$conf" | head -1)
+  [ -n "$cmd" ] || return 0
+  globs=$(sed -n 's/^#[[:space:]]*schema-paths:[[:space:]]*//p' <<<"$conf" | head -1)
+  [ -n "$globs" ] || return 0
+  # No file name expansion: a glob must match the changed path, not the files on this disk.
+  set -f
+  while IFS= read -r path; do
+    for glob in $globs; do
+      # shellcheck disable=SC2254
+      case "$path" in $glob) hit=$path; break 2 ;; esac
+    done
+  done < <(jq -r '.[]' <<<"$changed")
+  set +f
+  [ -n "$hit" ] || return 0
+  limit=${SHIP_POST_MERGE_TIMEOUT:-900}
+  [[ "$limit" =~ ^[0-9]+$ ]] || limit=900
+  tmp=$(mktemp) || return 0
+  ( cd "$top" && SHIP_PR=$pr_n SHIP_MERGE_SHA=$sha bash -c "$cmd" ) >"$tmp" 2>&1 &
+  pid=$!
+  ( sleep "$limit"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  dog=$!
+  wait "$pid" || rc=$?
+  kill "$dog" 2>/dev/null || true
+  [ "$rc" -lt 128 ] || rc=124
+  last=$(grep -v '^[[:space:]]*$' "$tmp" | tail -1 | cut -c1-200) || true
+  if [ "$rc" -eq 0 ]; then
+    echo "post-merge schema: ok (${last:-no output})"
+  else
+    issue=$({ printf 'Post-merge schema hook failed after PR %s merged as %s.\nCommand: %s\nExit: %s\n' "$pr_n" "$sha" "$cmd" "$rc"; tail -40 "$tmp"; } \
+      | python3 "$ship_dir/red-gate.py" file --tool test-database --repo "$repo" 2>/dev/null) || issue=""
+    [ -z "$issue" ] || issue="red gate #$issue"
+    echo "post-merge schema: FAILED exit $rc, the merge stands, ${issue:-no red gate issue filed}"
+  fi
+  rm -f "$tmp"
+}
 repo="" pr="" dry_run=false mechanical=false verdict_from="" ship_environment=""
 sync_dir=""
 trap '[ -z "$sync_dir" ] || rm -rf "$sync_dir"' EXIT
@@ -920,6 +963,7 @@ final=$(gh pr view "$pr" --repo "$repo" --json state,mergeCommit) || refuse "can
 merge_sha=$(jq -r '.mergeCommit.oid // empty' <<<"$final")
 [ -n "$merge_sha" ] || refuse "MERGED read-back for PR $pr has no merge commit"
 echo "shipped PR $pr as $merge_sha"
+post_merge_schema_hook "$pr" "$merge_sha" "$head" "$files"
 if [ "$repo" = "${SHIP_FLEET_PULL_REPO:-mingster/dotfiles}" ]; then
   fleet_pull_after_merge "$pr" "$merge_sha"
   if jq -e 'any(.[]; startswith("templates/agent-team/") or . == "script/agent-team.sh")' <<<"$files" >/dev/null; then

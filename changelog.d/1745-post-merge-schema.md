@@ -1,0 +1,1 @@
+Shared database drift is caught earlier: ship.sh runs an optional post-merge schema hook after a merge that touches a watched path, and head-checks.sh runs an optional database preflight before the first database step (#1745).
