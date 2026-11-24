@@ -4657,7 +4657,7 @@ def build_supply_command(config, repos, agent, model):
 
 
 def work_order_supply_line(config, now, workers, supply, host=None, admission=None, waiting=()):
-    """`work order: N live, supply S[, host load L cap C]`, S the ready-for-agent count, or None without a work_order block.
+    """`work order: N live, supply S[, host load L cap C]`, S the ready-for-agent issues this pass could start, or None without a work_order block.
 
     There is no fleet-wide count limit (#1757): starts follow each host's load and cap, so the line shows those, not N of T."""
     if work_order_settings(config, now) is None:
@@ -8146,7 +8146,7 @@ def _issue_scan_pass(
                         '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
                     restart_started(repo, number, 'orphaned')
 
-    supply_line = None if list_failed else work_order_supply_line(config, now, workers, ready_queue_count, host, admission, waiting_on_coordinator(state, workers))
+    supply_line = None if list_failed else work_order_supply_line(config, now, workers, len(candidates), host, admission, waiting_on_coordinator(state, workers))
     if supply_line:
         notices.append(supply_line)
 
@@ -8154,7 +8154,7 @@ def _issue_scan_pass(
         if list_failed:
             return 0
         bits, used = work_order_try_supply(
-            config, state, now, repos, ready_queue_count, host, admission, extra_starts, reserved, workers,
+            config, state, now, repos, len(candidates), host, admission, extra_starts, reserved, workers,
             start_worker, pick_fn, persist_state,
         )
         log_bits.extend(bits)
