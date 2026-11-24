@@ -3412,13 +3412,16 @@ HEAD_CHECKS_INFRA_RERUNS = 2
 
 
 def checks_infra_runs(pr):
-    """How many Checks: INFRA receipts sit at this PR's head. Each is one finished run."""
+    """How many Checks: INFRA receipts sit at this PR's head. Each is one finished run.
+
+    A receipt that names a red gate does not count: the wait on the gate must not use up the reruns (#1746)."""
     head = pr.get('headRefOid') or ''
     count = 0
     for comment in pr.get('comments') or []:
         match = rs.HEAD_RECEIPT_RE.match(_receipt_first_line(comment.get('body')))
         if match and match.group('label') == 'Checks' and match.group('status') == 'INFRA' and match.group('head') == head:
-            count += 1
+            if not _RED_GATE_HOLD_RE.search(comment.get('body') or ''):
+                count += 1
     return count
 
 
@@ -3441,7 +3444,10 @@ def red_gate_hold(pr, open_gates):
         return None
     number = int(named.group(1))
     gates = open_gates()
-    return number if gates and number in gates else None
+    # gh failed (None): keep waiting, the next pass asks again. A rerun would hit the broken gate.
+    if gates is None:
+        return number
+    return number if number in gates else None
 
 
 def fetch_red_gate_numbers(repo, run=subprocess.run):

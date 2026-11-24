@@ -171,7 +171,7 @@ if len(text)>cap:
     failure_duration={i:d for i in failures if (d:=next((j for j in range(i+1,len(lines)) if j in duration_seconds),None)) is not None}
     failure_durations=list(failure_duration.values())
     execution=[i for i,l in enumerate(lines) if l.startswith(("Tests executed: ","Load errors: "))]
-    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: "))]
+    metadata=[i for i,l in enumerate(lines) if l.startswith(("Unchecked paths: ","Checklist: ","blocked by red gate "))]
     results=[i for i,l in enumerate(lines) if l.startswith("Result: exit 0")]
     nice=[i for i,l in enumerate(lines) if l.startswith(("Command: ","Scoped tests: ","Selected: ")) or i>=len(lines)-40]
     cut=lambda l: l if len(l)<=300 else l[:300]+"[... line cut]"

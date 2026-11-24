@@ -81,6 +81,17 @@ class ReceiptHold(unittest.TestCase):
         starts, _log, _asked = self.scan([gate_receipt(HEAD, 41)], set())
         self.assertEqual(len(starts), 1)
 
+    def test_gh_failure_keeps_the_pr_waiting(self):
+        starts, log, _asked = self.scan([gate_receipt(HEAD, 41)], None)
+        self.assertEqual(starts, [])
+        self.assertIn('head_checks_red_gate=', ','.join(log))
+
+    def test_waiting_on_a_red_gate_does_not_spend_the_infra_reruns(self):
+        comments = [gate_receipt(HEAD, 41), gate_receipt(HEAD, 41), gate_receipt(HEAD, 41)]
+        self.assertEqual(fw.checks_infra_runs(base.pr_row(HEAD, comments)), 0)
+        starts, _log, _asked = self.scan(comments, set())
+        self.assertEqual(len(starts), 1, 'the gate closed: the PR reruns even after three gate receipts')
+
     def test_other_infra_receipt_keeps_the_normal_rerun(self):
         starts, _log, asked = self.scan([base.infra(HEAD, 1)], {41})
         self.assertEqual(len(starts), 1)

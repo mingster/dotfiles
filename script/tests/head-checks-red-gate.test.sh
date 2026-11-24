@@ -73,3 +73,13 @@ head -1 "$tmp/state/receipt" | grep -q '^Checks: FAIL head=' || fail "plain fail
 ! grep -q 'blocked by red gate' "$tmp/state/receipt" || fail "plain failure was blamed on a gate"
 [ "$(wc -l < "$tmp/state/creates")" -eq 1 ] && [ "$(wc -l < "$tmp/state/comments")" -eq 1 ] || fail "plain failure touched the red gate issue"
 echo "ok a test failure files nothing"
+
+# A receipt cut to the cap keeps the blocked line, or fleet-watch would rerun the PR against the broken gate.
+export HEAD_CHECKS_RECEIPT_CAP=1500
+# Over 40 log lines sit after the blocked line, so only the metadata group can keep it.
+many=$(for i in $(seq 1 20); do printf 'echo step-%s\n' "$i"; done)
+run_case infra-long "$many
+printf 'infra: run-scoped-tests: usage error (exit 2)\n' >&2; exit 2"
+grep -q 'Receipt cut to fit' "$tmp/state/receipt" || fail "receipt was not cut, the case proves nothing"
+grep -q '^blocked by red gate #41 (run-scoped-tests)$' "$tmp/state/receipt" || fail "the cut receipt lost the blocked line"
+echo "ok a cut receipt keeps the blocked line"

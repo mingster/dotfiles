@@ -104,7 +104,7 @@ def file_gate(tool, output, repo=None, run=subprocess.run):
             try:
                 _gh(['issue', 'comment', str(number), '--body', body] + scope, run)
             except (subprocess.SubprocessError, OSError):
-                return None
+                pass  # the open issue exists; a lost comment must not drop the receipt line
             return number
     command = ['issue', 'create', '--title', title_for(tool), '--body', issue_body(tool, output)]
     for label in LABELS:

@@ -68,6 +68,10 @@ class Dedupe(unittest.TestCase):
         self.assertIsNone(rg.file_gate('head-checks', 'x', 'o/r', FakeGh(fail_on=['issue', 'list'])))
         self.assertIsNone(rg.file_gate('head-checks', 'x', 'o/r', FakeGh(fail_on=['issue', 'create'])))
 
+    def test_failed_comment_still_returns_the_open_issue_number(self):
+        gh = FakeGh({7: 'red gate: head-checks'}, fail_on=['issue', 'comment'])
+        self.assertEqual(rg.file_gate('head-checks', 'again', 'o/r', gh), 7)
+
     def test_database_urls_are_redacted_from_the_issue(self):
         gh = FakeGh()
         rg.file_gate('head-checks', 'connect postgres://u:p@host/db failed', 'o/r', gh)
