@@ -2002,6 +2002,16 @@ class LiteralVariables(GuardTest):
             "H=blue; ssh $H uptime <<EOF\nx\nEOF",
             "for h in blue; do ssh $h uptime; done; ssh $h uptime",
             "for h in blue; do h=prod.example; ssh $h rm -rf /x; done",
+            "H=prod; H+=.example; ssh $H rm -rf /x",
+            "H=blue; H[1,-1]=prod.example; ssh $H rm -rf /x",
+            "H=blue; H[0]=prod.example; ssh $H rm -rf /x",
+            "H=blue; [ 0,H=prod -eq 0 ]; ssh $H rm -rf /x",
+            "H=blue; echo H++; ssh $H rm -rf /x",
+            'D="~"; mkdir -p $D; for f in $D/../*/*/*; do cat $f; done',
+            "for s in bin/deploy-raw.sh; do echo $USER; done",
+            f"for s in {SECRETS}/x.json; do echo $USER; done",
+            "for s in probe-secrets; do .claude/bin/$s.sh; done",
+            "S=probe-secrets; .claude/bin/$S.sh",
         ):
             with self.subTest(command=command):
                 self.assertDenied(command)
