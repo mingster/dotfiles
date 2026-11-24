@@ -1597,7 +1597,7 @@ printf 'Refs acme/app#7880\n\n# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved
 : >"$GH_STUB_LOG"
 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "an issue closed by merged PRs should be refused (ec=$route_ec)"
-grep -q 'already delivered by merged PR #8280, #8288, #8349' "$tmp/route.err" && ok || bad "refusal should name only the closing PRs ($(cat "$tmp/route.err"))"
+grep -q 'already delivered by merged PR #8280, #8288;' "$tmp/route.err" && ok || bad "refusal should name only the closing PRs, not a Refs only PR (#1811) ($(cat "$tmp/route.err"))"
 grep -q '#9\b' "$tmp/route.err" && bad "a longer number must not count" || ok
 grep -q 'worker-start' "$tmp/orca-route.log" && bad "refused delivered issue must not reach worker-start" || ok
 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "follow-up slice"
@@ -1605,6 +1605,15 @@ PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-m
 grep -q 'allow-delivered.*follow-up slice' "$tmp/route.err" && ok || bad "the override reason should be logged ($(cat "$tmp/route.err"))"
 GH_STUB_FAIL=1 PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh call must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
+# A child slice whose brief quotes its delivered parent first is checked as the child, the "#<n>|" title (#1811).
+printf 'Refs acme/app#7880\n\n## Problem\n\nA child slice of the parent.\n\n%s\n' "$spec_saved" >"$spec_file"
+: >"$GH_STUB_LOG"
+PICK_STUB_MODE=sonnet route_run "#10099|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a child slice must not be refused for its delivered parent (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q -- '--search 10099 in:body' "$GH_STUB_LOG" && ok || bad "the delivered check should search the title issue ($(cat "$GH_STUB_LOG"))"
+grep -q -- '-R acme/app' "$GH_STUB_LOG" && ok || bad "the child keeps the repo of the parent Refs line ($(cat "$GH_STUB_LOG"))"
+grep -q 'issue view 10099 ' "$GH_STUB_LOG" && ok || bad "the claim should read the child issue ($(cat "$GH_STUB_LOG"))"
+grep -Eq '(issue (view|edit)|in:body).*\b7880\b|7880 in:body' "$GH_STUB_LOG" && bad "the parent must not be checked or claimed ($(cat "$GH_STUB_LOG"))" || ok
 # A builder start whose Allowed files overlap other work is refused unless --allow-overlap REASON (#1678).
 overlap_cli="$tmp/overlap-cli.sh"
 printf '#!/usr/bin/env bash\necho "overlap: script/a.sh is also in open PR #5" >&2\nexit 1\n' >"$overlap_cli"
