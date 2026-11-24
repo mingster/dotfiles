@@ -29,6 +29,10 @@ inventory = [
 for app, source in [('Cursor', 'cursor'), ('Antigravity IDE', 'antigravity')]:
     inventory.append((support / app / 'User', ['settings*.json', 'keybindings.json', 'environment.json'], 'ide/' + source))
 
+listing = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], capture_output=True)
+if listing.returncode != 0:
+    print('agent-settings-check: %s is not a git checkout (set DOTFILES to the dotfiles repo)' % root)
+    sys.exit(2)
 private = []
 manifest = os.environ.get('AGENT_PRIVATE_BACKUP_MANIFEST')
 failed = False
@@ -51,11 +55,7 @@ else:
             continue
         private.append(Path(live))
 
-listing = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], capture_output=True)
-if listing.returncode != 0:
-    print('agent-settings-check: %s is not a git checkout (set DOTFILES to the dotfiles repo)' % root)
-    sys.exit(2)
-tracked = listing.stdout.decode().split('\0')
+tracked =listing.stdout.decode().split('\0')
 # Scan only public tracked configuration templates, never private backup payloads.
 credential = re.compile(r'''["']?\b[\w.-]*(?:api[_-]?key|token|password|secret)\b["']?\s*[:=]\s*["']([^"']+)["']''', re.I)
 key_value = re.compile(r'\b(?:sk-[A-Za-z0-9_-]{20,}|mk_live_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b')
