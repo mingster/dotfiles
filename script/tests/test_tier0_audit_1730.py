@@ -262,5 +262,47 @@ class Report(unittest.TestCase):
         self.assertIn('no PR picked', text)
 
 
+class AuditFamily(unittest.TestCase):
+    """#1765: the auditor is another model family than the PR builders, or tagged same-family-different-model."""
+
+    def issue(self):
+        prs = [merged(1, TEST_FILES), merged(2, TEST_FILES)]
+        return {'number': 9, 'title': 'tier 0 audit 2023-W46', 'body': fw.tier0_audit_issue_body(prs, REPO),
+                'labels': [{'name': 'role:qa'}, {'name': 'ready-for-agent'}]}
+
+    def pick(self, others):
+        calls = []
+
+        def fn(role, avoid_family=None, tier=None):
+            calls.append((role, avoid_family))
+            sel = {'provider': 'claude', 'model': 'opus', 'eligible': True, 'same_family_fallback': True}
+            if others:
+                sel = {'provider': 'antigravity', 'model': 'gemini-4-argon-high', 'eligible': True}
+            return {'selected': sel, 'candidates': [sel]}
+        return fn, calls
+
+    def test_issue_body_carries_the_builder_line_once(self):
+        self.assertEqual(self.issue()['body'].count('Builder: agent=claude model=sonnet'), 1)
+
+    def test_claude_built_batch_starts_a_non_claude_auditor(self):
+        fn, calls = self.pick(others=True)
+        self.assertEqual(fw.tier0_audit_pick(self.issue(), fn), ('antigravity', 'gemini-4-argon-high', ''))
+        self.assertEqual(calls, [('qa-sdet', 'claude')])
+
+    def test_no_other_family_starts_the_same_family_with_the_tag(self):
+        fn, _calls = self.pick(others=False)
+        self.assertEqual(fw.tier0_audit_pick(self.issue(), fn), ('claude', 'opus', 'same-family-different-model'))
+
+    def test_brief_tells_the_auditor_to_tag_without_asking(self):
+        with tempfile.TemporaryDirectory() as root:
+            cfg = config(root)
+            cfg['issue_scan']['startup'] = '/bin/true'
+            os.makedirs(os.path.join(root, 'script'), exist_ok=True)
+            tagged = fw.build_issue_start_command(cfg, REPO, self.issue(), None, ('qa-sdet', 'claude', 'opus', 'same-family-different-model'))
+            plain = fw.build_issue_start_command(cfg, REPO, self.issue(), None, ('qa-sdet', 'antigravity', 'g', ''))
+        self.assertIn('same-family-different-model', Path(tagged[tagged.index('--spec') + 1]).read_text())
+        self.assertNotIn('same-family-different-model', Path(plain[plain.index('--spec') + 1]).read_text())
+
+
 if __name__ == '__main__':
     unittest.main()

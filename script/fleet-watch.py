@@ -4055,7 +4055,8 @@ def build_issue_start_command(config, repo, issue_row, placement=None, route=Non
         '%s\n\n'
         '## Finish\n'
         'Self-review, push, open the PR, wait until gh pr checks <n> --watch --fail-fast (or gh run list --branch <branch> --limit 3) passes at the final head, run orca worktree set --worktree active --workspace-status in-review, then worker_done.\n'
-        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip(), verify),
+        % (repo, issue_row['number'], issue_scan_brief_text(issue_row).rstrip()
+           + (TIER0_SAME_FAMILY_NOTE if route and len(route) > 3 and route[3] else ''), verify),
         role))
     title = '#%d|%s' % (issue_row['number'], role)
     command = [
@@ -5989,6 +5990,38 @@ def tier0_audit_title(week):
     return 'tier 0 audit %s' % week
 
 
+TIER0_AUDIT_PREFIX = 'tier 0 audit '
+TIER0_SAME_FAMILY_NOTE = (
+    '\n\nNo auditor of another model family is available. Tag each Audit comment with a second line '
+    '`same-family-different-model` and do not ask the coordinator.')
+
+
+def tier0_audit_pick(issue, pick_fn):
+    """(agent, model, tag) for a tier 0 audit issue: an agent of another family than the PR builders (#1765).
+
+    The builders are the `Builder: agent= model=` lines in the issue body. Without another family the pick is the
+    same family and the tag is same-family-different-model. None when nothing can be picked."""
+    pairs = []
+    for line in (issue.get('body') or '').splitlines():
+        match = _BUILDER_LINE_RE.match(line.strip())
+        if match:
+            pairs.append((_AGENT_ALIASES.get(match.group(1).lower(), match.group(1)), match.group(2)))
+    by_family = {}
+    for pair in pairs:
+        family = _avoid_family(pair)
+        if family:
+            by_family.setdefault(family, pair)
+    first = None
+    for family, pair in by_family.items() or [(None, None)]:
+        chosen = choose_pick(pick_fn('qa-sdet', avoid_family=family), pair)
+        if not chosen:
+            continue
+        if _avoid_family(chosen[:2]) not in by_family:
+            return chosen[0], chosen[1], ''
+        first = first or (chosen[0], chosen[1], 'same-family-different-model')
+    return first
+
+
 def tier0_audit_find_issue(repo, title, run=subprocess.run):
     """Number of an issue (open or closed) with this exact title, 0 when there is none, None when gh fails."""
     try:
@@ -6007,6 +6040,9 @@ def tier0_audit_issue_body(prs, repo):
     """Issue body for a qa-sdet verifier: the picked PRs, and one Audit comment per PR."""
     rows = '\n'.join(
         '- #%s `%s`' % (p['number'], (p.get('mergeCommit') or {}).get('oid') or 'unknown') for p in prs)
+    builders = '\n'.join('Builder: agent=%s model=%s' % pair for pair in
+                         dict.fromkeys(pair for pair in (builder_pair(p) for p in prs) if pair))
+    rows += '\n\n' + builders if builders else ''
     return (
         'These tier 0 PRs (test files and docs only) merged on Review PASS and green Checks with no verifier. '
         'Audit each one after the fact. Merge commits:\n\n%s\n\n'
@@ -7712,11 +7748,14 @@ def issue_scan_pass(
         route = None
         labelled = issue_scan_route(row)
         if labelled:
-            chosen = choose_pick((pick_fn or pick_role)(labelled[1], tier=labelled[2]))
+            if labelled[1] == 'qa-sdet' and (row.get('title') or '').startswith(TIER0_AUDIT_PREFIX):
+                chosen = tier0_audit_pick(row, pick_fn or pick_role)
+            else:
+                chosen = choose_pick((pick_fn or pick_role)(labelled[1], tier=labelled[2]))
             if not chosen:
                 log_bits.append('issue_route_blocked=%d:%s' % (row['number'], labelled[1]))
                 continue
-            route = (labelled[0], chosen[0], chosen[1])
+            route = (labelled[0], chosen[0], chosen[1], chosen[2])
         command = build_issue_start_command(config, repo, row, placement, route)
         if command is None:
             log_bits.append('issue_scan_skip')
