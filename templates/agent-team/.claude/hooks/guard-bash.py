@@ -104,8 +104,8 @@ CONFIG_LOADED_FROM: str | None = None
 GRILL_APPROVERS: set[str] = set()
 
 DEFAULT_SECRETS_DIR_PATTERN = r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
-SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
-SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
+SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN, re.IGNORECASE)
+SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*", re.IGNORECASE)
 
 SECRET_FILE = re.compile(
     r"(^|[/=])("
@@ -269,8 +269,8 @@ def load_guard_config(start_dir):
     HOST_DEPLOY_PATTERNS = {}
     PROMOTE_STEPS = None
     REMOTE_READ_ONLY = DEFAULT_REMOTE_READ_ONLY
-    SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
-    SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
+    SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN, re.IGNORECASE)
+    SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*", re.IGNORECASE)
     CONFIG_LOADED_FROM = None
 
     cfg_path = find_guard_config(start_dir)
@@ -402,9 +402,9 @@ def load_guard_config(start_dir):
     if extra_dirs:
         escaped = [re.escape(d) for d in extra_dirs]
         dir_union = "|".join([DEFAULT_SECRETS_DIR_PATTERN] + [rf"(?:^|[/\s='\"<(])(?:{e})(?:/|$|[\s'\"\)])" for e in escaped])
-        SECRETS_DIR = re.compile(dir_union)
+        SECRETS_DIR = re.compile(dir_union, re.IGNORECASE)
         redir_union = "|".join(["secrets/"] + [rf"{e}/?" for e in escaped])
-        SECRETS_WRITE_REDIRECT = re.compile(rf">>?\s*\S*(?:{redir_union})\S*")
+        SECRETS_WRITE_REDIRECT = re.compile(rf">>?\s*\S*(?:{redir_union})\S*", re.IGNORECASE)
 
     raw_sign_in = cfg_expect("sign_in_script", str, "string")
     if raw_sign_in and raw_sign_in.strip():
@@ -3943,6 +3943,9 @@ def _xargs_reaches(words, absolute, relative):
 def _hidden_script_paths(command, cwd, absolute, relative):
     words = _annotate_cwd(_command_words(command), cwd)
     for text, literal, metas, path_cwd in words:
+        # bash expands `~+` to the working directory and `~-` to the previous one: judge both as `./`.
+        if text[:2] in ("~+", "~-") and text[2:3] in ("", "/"):
+            text, literal = "." + text[2:], "." + literal[2:]
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
             _deny_hidden()
     programs = _programs(words)
@@ -4063,6 +4066,38 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# The end of an expansion: a `$name` (greedy, so `$Xaw.sh` is `$Xaw` then `.sh`), a special parameter, or the
+# closing `}`, `)` or backtick of `${...}`, `$(...)` or `...`, or a glob character (#1870).
+EXPANSION_END = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|[}`)*?\]]")
+
+
+def check_built_blocked_names(command):
+    """Deny an expansion followed directly by a 5+ character tail of a blocked script name, read as text."""
+    flat = re.sub(r"[\"'\\]", "", command).lower()
+    tails = {name.lower()[i:] for name in BLOCKED_SCRIPTS for i in range(len(name) - 4)}
+    for match in EXPANSION_END.finditer(flat):
+        rest = flat[match.end():]
+        for tail in tails:
+            if rest.startswith(tail) and not re.match(r"[a-z0-9_./-]", rest[len(tail):len(tail) + 1]):
+                name = next(n for n in sorted(BLOCKED_SCRIPTS) if n.lower().endswith(tail))
+                deny(f"{name} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
+                     "A script name built from `$`, a backtick or a glob is refused even to read; "
+                     "write the name out in full.")
+
+
+def check_secrets_dir_by_variable(command):
+    """Deny a `$` in a reading segment when the command names every component of a configured secrets dir."""
+    folded = command.lower()
+    named = [rel for rel in SECRETS_DIR_RELPATHS
+             if all(part.lower() in folded for part in _path_parts(rel))]
+    if not named:
+        return
+    for seg in segments(command):
+        prog, _args = program_and_args(words(seg))
+        if prog and os.path.basename(prog) not in SECRETS_NONREAD and "$" in seg:
+            _deny_hidden()
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4082,6 +4117,13 @@ def check_command(command):
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
     check_blocked_script_mentions(RAW_COMMAND)
+    try:
+        check_built_blocked_names(command)
+        check_secrets_dir_by_variable(command)
+    except SystemExit:
+        raise
+    except Exception:
+        deny("A built script name or a credential path could not be checked, so the command is denied.")
     if INDIRECT:
         deny(INDIRECT[0])
 

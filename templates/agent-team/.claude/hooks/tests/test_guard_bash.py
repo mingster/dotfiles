@@ -1861,5 +1861,71 @@ class BuilderOwnerPathGate(GuardTest):
         self.assertIsNotNone(self.write(self.HOOK_PATH))
 
 
+class BuiltNamesAndSecretsCase(GuardTest):
+    """Deny only (#1870): blocked script names built from expansions, the secrets dir in another case or
+    named through a leading `$`, and `~+` / `~-` paths."""
+    CONFIG = {"secrets_dir": "fileServer/secrets", "exact_only_scripts": [".claude/bin/probe-secrets.sh"],
+              "blocked_scripts": ["deploy-raw.sh"]}
+    BUILT = "A script name built from `$`, a backtick or a glob is refused even to read"
+
+    def setUp(self):
+        super().setUp()
+        self.project = os.path.join(self.home, "project")
+        for sub in (".claude/hooks", ".claude/bin", "fileServer/secrets"):
+            os.makedirs(os.path.join(self.project, sub))
+        with open(os.path.join(self.project, ".claude", "bin", "probe-secrets.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.project, ".claude", "hooks", "guard-config.json"), "w") as f:
+            json.dump(self.CONFIG, f)
+
+    def bash(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.project}
+        env = dict(os.environ, HOME=self.home)
+        env.pop("GUARD_CONFIG", None)
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=env, cwd=self.project, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        if not out.stdout.strip():
+            return None
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_built_blocked_script_names_denied(self):
+        for command in ("S=deploy; bash bin/$S-raw.sh", "S=deploy; bash bin/${S}-raw.sh", "S=deploy; bin/$S-raw.sh",
+                        'S=deploy; b"a"sh bin/${S}-raw.sh', "S=deploy; b\\ash bin/${S}-raw.sh",
+                        'S=deploy; bash "-e" bin/${S}-raw.sh', "S=deploy; command bin/${S}-raw.sh",
+                        "S=deploy; env bin/${S}-raw.sh", 'S=deploy; "A"=1 bin/${S}-raw.sh',
+                        "S=deploy # <<'E'\nbash bin/$S-raw.sh", "S=deploy; echo \"<<'E'\"\nbash bin/$S-raw.sh"):
+            with self.subTest(command=command):
+                reason = self.assertDenied(command)
+                self.assertTrue(reason.startswith("deploy-raw.sh runs only inside the deploy pipeline"), reason)
+                self.assertIn(self.BUILT, reason)
+
+    def test_built_name_accepted_new_denies(self):
+        for command in ("S=deploy; echo $S-raw.sh", "git commit -m 'fix $S-raw.sh'", "ls bin/*-raw.sh",
+                        "cat bin/*-raw.sh", "grep -n set bin/*-raw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command, self.BUILT)
+
+    def test_secrets_dir_case_variable_and_tilde_plus_denied(self):
+        for command in ("cat fileServer/Secrets/x.json", "cat fileServer/SECRETS/x.json",
+                        "D=fileServer/secrets; cat $D/x.json", "D=fileServer/Secrets; cat $D/x.json",
+                        "D=fileServer; S=secrets; cat $D/$S/x.json",
+                        "for d in fileServer/Secrets; do cat $d/x.json; done",
+                        "cat ~+/fileServer/*/x.json", "D=fileServer; cat ~+/$D/*/x.json",
+                        "cat ~-/fileServer/*/x.json", "echo $HOME; ls fileServer/secrets"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_nearby_commands_still_allowed(self):
+        for command in ("cat bin/deploy-raw.sh", "git commit -m 'fix: deploy-raw.sh exit code'",
+                        "git commit -F - <<'E'\nbash bin/$S-raw.sh\nE", "X=a; cat $X.sh", "X=a; cat $Xaw.sh",
+                        "for f in scripts/*.sh; do shellcheck $f; done", "D=docs; cat $D/x.md", "B=/tmp/b; cat $B/x",
+                        "ls fileServer/Secrets", "cat ~+/docs/x.md",
+                        "cat > /tmp/b.md <<'E'\nnever read $D under fileServer/secrets\nE",
+                        "gh issue create --title t --body-file - <<'E'\nS=deploy; bash bin/$S-raw.sh is allowed\nE"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 if __name__ == "__main__":
     unittest.main()
