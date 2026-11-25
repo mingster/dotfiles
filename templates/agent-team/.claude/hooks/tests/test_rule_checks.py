@@ -155,6 +155,12 @@ class RuleChecksTest(unittest.TestCase):
         result = self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "foo", "new_string": "foo a - b"})
         self.assertIn("line 7", result["additionalContext"])
 
+    def test_edit_ending_in_newline_does_not_flag_the_next_line(self):
+        path = os.path.join(self.dir, "newline.md")
+        with open(path, "w") as f:
+            f.write("# T\n\nedited\nuntouched - dash\n")
+        self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "edited\n"}))
+
     # Row 5: CHANGELOG.md
     def test_changelog_edit_denied_when_fragments_dir_exists(self):
         os.mkdir(os.path.join(self.dir, "changelog.d"))
