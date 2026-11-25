@@ -769,7 +769,7 @@ lint_case "a .spec file counts as a test file" "$tmp/build-spec.md" 0 ""
 # 1840. The new rules on a sample of fleet-watch's generated brief text: each generated brief still passes.
 mkdir -p "$tmp/fw-out" "$tmp/fw-repo/script"
 : >"$tmp/fw-repo/script/checks-local.sh"
-python3 - "$here/../fleet-watch.py" "$tmp/fw-repo" "$tmp/fw-out" <<'PY'
+FLEET_WATCH_LOG_PATH="$tmp/fleet-watch-test.log" python3 - "$here/../fleet-watch.py" "$tmp/fw-repo" "$tmp/fw-out" <<'PY'
 import importlib.util, shutil, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
