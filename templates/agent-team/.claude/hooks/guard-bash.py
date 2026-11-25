@@ -146,7 +146,7 @@ SCOPE_TTL_MAX = {"merge": MERGE_TTL_MAX, "host": HOST_TTL_MAX}
 APPROVE = "bin/owner-approve.sh"
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 VIEWERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "wc", "ls", "stat", "file", "diff",
-           "jq", "test", "[", "shellcheck"} | GREPS
+           "jq", "test", "[", "shellcheck", "shasum", "sha256sum"} | GREPS
 SCRIPT_NAME = re.compile(r"owner-approve(?![A-Za-z0-9_-])")
 GIT_RUNS_PROGRAMS = {"filter-branch", "rebase", "bisect", "submodule", "difftool", "mergetool", "config", "alias"}
 GIT_READ_ONLY = {"log", "diff", "show", "blame", "status", "grep", "ls-files", "cat-file", "shortlog"}
@@ -3244,12 +3244,13 @@ def substitutions(command):
 
 
 # A quoted heredoc whose consumer is a text sink (`cat > f`, `cat <<'EOF' > f`, `git commit -F -`,
-# `gh ... --body-file -`), after plain `&&` steps (those steps are still checked). Its body is data.
+# `gh ... --body-file -`), after plain `&&` or `;` steps, `X=value` included (those steps are still checked).
+# Its body is data.
 QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2")
 _WORD = r"[A-Za-z0-9_./=~-]+"
 _PATH = r"(?:[A-Za-z0-9_./~-]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\"(?:[^\"`$\\<>]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)*\"|'[^'<>]*')+"
 TEXT_SINK = re.compile(
-    rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*&&[ \t]*)*"
+    rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*(?:&&|;)[ \t]*)*"
     rf"(?:cat[ \t]+>>?[ \t]*{_PATH}"
     r"|git[ \t]+commit(?:[ \t]+-[A-Za-z-]+)*[ \t]+(?:-F[ \t]*-|--file[ \t=]-)"
     rf"|gh(?:[ \t]+{_WORD})+[ \t]+(?:--body-file|-F)[ \t=]-)"
