@@ -6,6 +6,10 @@
 # or near full context (LOW_CONTEXT).
 # Heartbeats and a live terminal do not prove progress, so read the screen.
 # Exit 0 all OK, 4 any STOPPED, IDLE, BLOCKED_DIALOG or LOW_CONTEXT, 2 usage or orca error.
+# fleet-watch acts on a stall by itself (#1842): it nudges a stalled worker once after 2 stall
+# windows with no new commit, then after 3 windows stops and releases it, sets its card to archived
+# and puts its issue back in ready-for-agent. A worker with unpushed commits or changed files is
+# never stopped. This script only reports; use it to recover a worker by hand before that.
 set -u
 
 [ $# -eq 1 ] && [ -n "$1" ] || { echo "usage: worker-watch.sh <run_id>" >&2; exit 2; }

@@ -849,3 +849,347 @@ class RemoteWorkerStall(unittest.TestCase):
         self.assertEqual(notices, [])
         self.assertFalse(any(c[:2] == ('orchestration', 'worker-stop') for c in calls))
         self.assertIn('remote_stall_check=disp_fixture:unknown', bits)
+
+
+WINDOW = fw.STALL_IDLE_LIMIT_DEFAULT
+
+
+class StallLadder(unittest.TestCase):
+    """Owner Q6 (#1842): nudge after 2 stall windows, stop and release after 3, never with unpushed work."""
+
+    def setUp(self):
+        self.calls = []
+        self.edits = []
+
+    def rpc(self, *a):
+        self.calls.append(a)
+        return {}
+
+    def act(self, argv):
+        self.edits.append(argv)
+        return 0
+
+    def run_pass(self, state, now, last_s, w, head='sha1', holds=False, pr_rows=()):
+        term = {'term_fix': int(last_s * 1000)}
+        return fw.worker_stall_pass(
+            stall_test_config(), state, now, [w], term, self.rpc, act=self.act,
+            head_of=lambda _w: head, holds_work=lambda _w: holds, pr_list=lambda _repo: list(pr_rows))
+
+    def stops(self):
+        return [c for c in self.calls if c[:2] == ('orchestration', 'worker-stop')]
+
+    def sends(self):
+        return [c for c in self.calls if c[:2] == ('terminal', 'send')]
+
+    def issue_worker(self):
+        return base_worker(dispatchId='disp_ladder', githubPullRequestNumber=None, title='#77|fullstack-dev')
+
+    def climb_to_nudge(self, state, w, **kw):
+        start = T0 - WINDOW - 60
+        self.run_pass(state, T0, start, w, **kw)
+        self.assertEqual(self.sends(), [])
+        _, bits = self.run_pass(state, start + 2 * WINDOW, start, w, **kw)
+        self.assertIn('stall_nudge=disp_ladder', bits)
+        return start
+
+    def test_nudges_once_after_two_windows(self):
+        state, w = {}, self.issue_worker()
+        start = self.climb_to_nudge(state, w)
+        self.assertEqual(len(self.sends()), 1)
+        self.assertIn('no new commit', self.sends()[0][5])
+        self.run_pass(state, start + 2 * WINDOW + 60, start, w)
+        self.assertEqual(len(self.sends()), 1)
+        self.assertEqual(self.stops(), [])
+
+    def test_stops_and_releases_after_third_window(self):
+        state, w = {}, self.issue_worker()
+        start = self.climb_to_nudge(state, w)
+        # The nudge made fresh output; that must not reset the ladder.
+        fresh = start + 3 * WINDOW
+        notices, bits = self.run_pass(state, start + 3 * WINDOW + 1, fresh, w)
+        self.assertIn('stall_release=disp_ladder', bits)
+        self.assertEqual(len(self.stops()), 1)
+        self.assertTrue(any(c[:2] == ('orchestration', 'worker-release') for c in self.calls))
+        board = [c for c in self.calls if c[:2] == ('worktree', 'set')]
+        self.assertEqual(board, [('worktree', 'set', '--worktree', 'path:/p', '--workspace-status', 'archived')])
+        self.assertEqual(self.edits, [['gh', 'issue', 'edit', '77', '--repo', 'o/r', '--add-label', 'ready-for-agent',
+                                       '--remove-label', fw.ISSUE_CLAIM_LABEL]])
+        released = [n for n in notices if 'stopped and released' in n]
+        self.assertEqual(len(released), 1)
+        self.assertIn('#77', released[0])
+        again, _ = self.run_pass(state, start + 5 * WINDOW, start, w)
+        self.assertEqual(len(self.stops()), 1)
+        self.assertFalse(any('stopped and released' in n for n in again))
+
+    def test_unpushed_work_is_never_stopped(self):
+        state, w = {}, self.issue_worker()
+        start = self.climb_to_nudge(state, w, holds=True)
+        notices, bits = self.run_pass(state, start + 3 * WINDOW + 1, start, w, holds=True)
+        self.assertIn('stall_hold=disp_ladder', bits)
+        self.assertEqual(self.stops(), [])
+        self.assertEqual(self.edits, [])
+        self.assertEqual(len([n for n in notices if 'did not stop' in n]), 1)
+        again, _ = self.run_pass(state, start + 4 * WINDOW, start, w, holds=True)
+        self.assertFalse(any('did not stop' in n for n in again))
+
+    def test_unpushed_resource_holds_with_real_checker(self):
+        self.assertTrue(fw.stall_holds_work(base_worker(resource={'worktreeId': 'r::/p', 'retainedReason': 'unpushed'})))
+        self.assertTrue(fw.stall_holds_work(base_worker(resource={'worktreeId': 'r::/no/such/checkout'})))
+
+    def test_new_commit_resets_the_ladder(self):
+        state, w = {}, self.issue_worker()
+        start = self.climb_to_nudge(state, w)
+        _, bits = self.run_pass(state, start + 3 * WINDOW + 1, start, w, head='sha2')
+        self.assertNotIn('stall_release=disp_ladder', bits)
+        self.assertEqual(self.stops(), [])
+
+    def test_open_pr_keeps_the_issue_claimed(self):
+        state, w = {}, self.issue_worker()
+        rows = [{'number': 5, 'state': 'OPEN', 'body': 'Closes #77', 'headRefName': 'b',
+                 'closingIssuesReferences': [{'number': 77}]}]
+        start = self.climb_to_nudge(state, w, pr_rows=rows)
+        _, bits = self.run_pass(state, start + 3 * WINDOW + 1, start, w, pr_rows=rows)
+        self.assertIn('stall_release=disp_ladder', bits)
+        self.assertEqual(self.edits, [])
+
+    def test_waiting_on_coordinator_is_not_nudged(self):
+        state, w = {}, self.issue_worker()
+        start = T0 - 2 * WINDOW - 60
+        fw.worker_stall_pass(stall_test_config(), state, T0, [w], {'term_fix': int(start * 1000)}, self.rpc,
+                             act=self.act, head_of=lambda _w: 'sha1', holds_work=lambda _w: False,
+                             waiting={'disp_ladder'})
+        self.assertEqual(self.sends(), [])
+
+    def test_failed_nudge_never_leads_to_a_stop(self):
+        state, w = {}, self.issue_worker()
+        start = T0 - WINDOW - 60
+        self.run_pass(state, T0, start, w)
+
+        def no_send(*a):
+            self.calls.append(a)
+            if a[:2] == ('terminal', 'send'):
+                raise fw.OrcaReadError('send failed')
+            return {}
+
+        for now in (start + 2 * WINDOW, start + 3 * WINDOW + 1, start + 4 * WINDOW):
+            _, bits = fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, no_send, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+            self.assertNotIn('stall_nudge=disp_ladder', bits)
+        self.assertEqual(self.stops(), [])
+
+    def test_remote_worker_with_clean_local_path_is_not_stopped(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        silent = [tool_message(int((T0 - 10 * WINDOW) * 1000))]
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': silent, 'nextCursor': None}}
+            return {}
+
+        start = T0 - WINDOW - 60
+        notices = []
+        for now in (T0, start + 2 * WINDOW, start + 3 * WINDOW + 1):
+            n, _bits = fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+            notices += n
+        self.assertEqual(self.stops(), [])
+        self.assertTrue(any('did not stop' in str(n) for n in notices), notices)
+
+    def test_remote_worker_that_resumes_leaves_the_ladder(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        start = T0 - WINDOW - 60
+        reads = {'stamp': int((T0 - 2 * WINDOW) * 1000)}
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': [tool_message(reads['stamp'])], 'nextCursor': None}}
+            return {}
+
+        def run(now):
+            return fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)[1]
+
+        run(T0)
+        self.assertEqual(state['stall_ladder']['disp_ladder']['since'], T0 - 2 * WINDOW)
+        reads['stamp'] = int((T0 + WINDOW) * 1000)
+        bits = run(T0 + WINDOW + 60)
+        self.assertIn('remote_stall_check=disp_ladder:active', bits)
+        self.assertNotIn('disp_ladder', state['stall_ladder'])
+        self.assertEqual(self.stops(), [])
+        self.assertEqual(self.sends(), [])
+
+    def test_remote_worker_quiet_one_window_after_an_hour_is_not_nudged(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        # server.asOf is an hour old, but the transcript shows tool activity until one window ago.
+        start = T0 - 3 * WINDOW
+        quiet = T0 - WINDOW - 60
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': [tool_message(int(quiet * 1000))], 'nextCursor': None}}
+            return {}
+
+        for now in (T0, T0 + 120):
+            fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+        self.assertEqual(state['stall_ladder']['disp_ladder']['since'], quiet)
+        self.assertEqual(self.sends(), [])
+
+    def test_settled_worker_leaves_the_ladder(self):
+        state, w = {}, self.issue_worker()
+        self.climb_to_nudge(state, w)
+        settled = dict(w, workerState='succeeded')
+        self.run_pass(state, T0 + 10 * WINDOW, T0 - 2 * WINDOW, settled)
+        self.assertEqual(self.stops(), [])
+        self.assertNotIn('disp_ladder', state['stall_ladder'])
+
+    def test_own_verifier_still_restarts_instead(self):
+        state = mark_own({}, 'disp_ladder')
+        w = self.issue_worker()
+        _, bits = self.run_pass(state, T0, T0 - 4 * WINDOW, w)
+        self.assertNotIn('stall_nudge=disp_ladder', bits)
+        self.assertEqual(len(self.stops()), 1)
+
+
+class RemoteReadRetry(unittest.TestCase):
+    def test_failed_read_is_retried_once(self):
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            if len(calls) == 1:
+                raise fw.OrcaReadError('blip')
+            return {'transcript': {'messages': [tool_message(int((T0 - 60) * 1000))], 'nextCursor': None}}
+
+        self.assertEqual(fw.remote_worker_activity(rpc, 'd', 'env', T0, WINDOW), 'active')
+        self.assertEqual(len(calls), 2)
+
+    def test_two_failed_reads_are_unknown(self):
+        calls = []
+
+        def rpc(*a):
+            calls.append(a)
+            raise fw.OrcaReadError('down')
+
+        self.assertEqual(fw.remote_worker_activity(rpc, 'd', 'env', T0, WINDOW), 'unknown')
+        self.assertEqual(len(calls), 2)
+
+
+def done_message(mid='m1', dispatch='disp_done', body='', outcome='succeeded'):
+    return {'id': mid, 'type': 'worker_done', 'body': body, 'payload': {'dispatchId': dispatch, 'outcome': outcome}}
+
+
+class DoneRelayBoard(unittest.TestCase):
+    def setUp(self):
+        self.set_calls = []
+
+    def set_status(self, worker, status):
+        self.set_calls.append((worker['dispatchId'], status))
+        return True
+
+    def relay(self, worker, board='in-progress', pr_row=None, state=None, messages=None):
+        state = {} if state is None else state
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            return fw.relay_done_board(
+                messages or [done_message()], [worker], stall_test_config(), state,
+                lambda _w: board, self.set_status, lambda _repo, _n: pr_row), state
+
+    def test_open_pr_moves_to_in_review(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [('disp_done', 'in-review')])
+        self.assertEqual(moved, ['disp_done:in-review'])
+        self.relay(base_worker(dispatchId='disp_done'), pr_row={'number': 99, 'state': 'OPEN'}, state=state)
+        self.assertEqual(len(self.set_calls), 1)
+
+    def test_no_pr_moves_to_completed(self):
+        self.relay(base_worker(dispatchId='disp_done', githubPullRequestNumber=None))
+        self.assertEqual(self.set_calls, [('disp_done', 'completed')])
+
+    def test_board_the_worker_set_is_left_alone(self):
+        self.relay(base_worker(dispatchId='disp_done'), board='in-review', pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [])
+
+    def test_unknown_board_or_pr_waits_for_next_pass(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), board=None)
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), pr_row=None)
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
+
+    def test_checkout_missing_from_board_is_marked_handled(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), board='absent',
+                                  pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], ['m1']))
+
+    def test_main_pass_lists_the_board_and_sets_the_card(self):
+        calls = []
+        worker = base_worker(dispatchId='disp_done', githubPullRequestNumber=None,
+                             resource={'worktreeId': 'repo-x::/w/fixture/done'})
+        inventory = {'messages': [done_message()], 'workers': [worker], 'alive': {'run_fixture': True}, 'leads': {}}
+
+        def rpc(*args):
+            calls.append(args)
+            if args[:2] == ('worktree', 'list'):
+                return {'worktrees': [{'path': '/w/fixture/done', 'workspaceStatus': 'in-progress'}]}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({'runs': list(STALL_RUNS), 'worker_stall': {'label_repo': 'o/r'}}))
+            state.write_text('{}')
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw, 'read_orca_inventory', return_value=inventory), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                fw.main()
+                saved = json.loads(state.read_text())
+        sets = [c for c in calls if c[:2] == ('worktree', 'set')]
+        self.assertIn(('worktree', 'set', '--worktree', 'path:/w/fixture/done', '--workspace-status', 'completed'), sets)
+        self.assertEqual(saved.get('board_done'), ['m1'])
+
+    def test_bounced_or_failed_done_is_skipped(self):
+        self.relay(base_worker(dispatchId='disp_done'), state={'bounced_done': ['m1']},
+                   pr_row={'number': 99, 'state': 'OPEN'})
+        self.relay(base_worker(dispatchId='disp_done'), messages=[done_message(outcome='failed')],
+                   pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [])
+
+
+class ReleaseBoardStatus(unittest.TestCase):
+    def run_release(self, pr_state):
+        calls = []
+        pr_row = {'number': 99, 'state': pr_state, 'statusCheckRollup': [
+            {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            freed = fw.release_green_successes(
+                [done_message()], [base_worker(dispatchId='disp_done')], stall_test_config(), {},
+                lambda _d: None, lambda _r, _n: pr_row, set_status=lambda w, s: calls.append(s) or True)
+        return freed, calls
+
+    def test_merged_pr_release_sets_completed(self):
+        freed, calls = self.run_release('MERGED')
+        self.assertEqual(freed, ['disp_done'])
+        self.assertEqual(calls, ['completed'])
+
+    def test_open_pr_release_keeps_the_card(self):
+        freed, calls = self.run_release('OPEN')
+        self.assertEqual(freed, ['disp_done'])
+        self.assertEqual(calls, [])

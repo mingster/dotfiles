@@ -122,7 +122,8 @@ def decide(worktree: dict, workers: list[dict], prs: list[dict], issues: list[di
     """Why this card should become Done, or None to leave it."""
     if worktree.get("isMainWorktree") is True:
         return None
-    if (worktree.get("workspaceStatus") or "") == "completed":
+    # archived is what fleet-watch sets on a worker it stopped for a stall (#1842); it is final too.
+    if (worktree.get("workspaceStatus") or "") in ("completed", "archived"):
         return None
     kinds = [worker_kind(row) for row in workers]
     working = "working" in kinds

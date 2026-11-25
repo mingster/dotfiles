@@ -53,6 +53,8 @@ cat > "$FAKE_LOCAL" <<'JSON'
  {"path":"/w/merged","projectId":"github:acme/app","branch":"refs/heads/feat-merged","workspaceStatus":"in-progress"},
  {"path":"/w/open","projectId":"github:acme/app","branch":"refs/heads/feat-open","workspaceStatus":"in-review"},
  {"path":"/w/released","projectId":"github:acme/app","branch":"refs/heads/feat-released","workspaceStatus":"in-progress"},
+ {"path":"/w/closed","projectId":"github:acme/app","branch":"refs/heads/feat-closed","workspaceStatus":"in-review"},
+ {"path":"/w/archived","projectId":"github:acme/app","branch":"refs/heads/feat-archived","workspaceStatus":"archived"},
  {"path":"/w/main","projectId":"github:acme/app","branch":"refs/heads/main","isMainWorktree":true,"workspaceStatus":"in-progress"}
 ]}}
 JSON
@@ -69,6 +71,8 @@ JSON
 cat > "$FAKE_PRS" <<'JSON'
 [{"number":12,"state":"MERGED","headRefName":"feat-merged","closingIssuesReferences":[]},
  {"number":9,"state":"OPEN","headRefName":"feat-open","closingIssuesReferences":[]},
+ {"number":14,"state":"CLOSED","headRefName":"feat-closed","closingIssuesReferences":[]},
+ {"number":15,"state":"MERGED","headRefName":"feat-archived","closingIssuesReferences":[]},
  {"number":20,"state":"MERGED","headRefName":"feat-remote","closingIssuesReferences":[]}]
 JSON
 echo '[]' > "$FAKE_ISSUES"
@@ -84,7 +88,9 @@ grep -Fq '[dry-run] would set /w/merged completed (PR #12 merged) environment=lo
 grep -Fq '[dry-run] would set /w/released completed (worker released, no PR) environment=local' <<<"$out" && ok 'released worker with no PR would move' || bad 'released worker with no PR would move' "$out"
 grep -Fq '/w/open' <<<"$out" && bad 'open PR stays' "$out" || ok 'open PR stays'
 grep -Fq '/w/main' <<<"$out" && bad 'main stays' "$out" || ok 'main stays'
-grep -Fq 'dry-run: moved=2 unchanged=2 skipped_hosts=0' <<<"$out" && ok 'dry run counts' || bad 'dry run counts' "$out"
+grep -Fq '[dry-run] would set /w/closed completed (PR #14 closed) environment=local' <<<"$out" && ok 'closed PR with no live task would move' || bad 'closed PR with no live task would move' "$out"
+grep -Fq '/w/archived' <<<"$out" && bad 'archived card stays' "$out" || ok 'archived card stays'
+grep -Fq 'dry-run: moved=3 unchanged=3 skipped_hosts=0' <<<"$out" && ok 'dry run counts' || bad 'dry run counts' "$out"
 [ ! -e "$BOARD_DONE_STAMP" ] && ok 'dry run records no Done time' || bad 'dry run records no Done time' "$(cat "$BOARD_DONE_STAMP" 2>/dev/null)"
 
 : > "$ORCA_LOG"
@@ -92,7 +98,7 @@ out=$(python3 "$here/board-done.py" --apply 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok '--apply exits 0' || bad '--apply exits 0' "rc=$rc $out"
 grep -Fxq 'worktree set --worktree path:/w/merged --workspace-status completed' "$ORCA_LOG" && ok 'apply sets the merged card' || bad 'apply sets the merged card' "$(cat "$ORCA_LOG")"
 grep -Fxq 'worktree set --worktree path:/w/released --workspace-status completed' "$ORCA_LOG" && ok 'apply sets the released card' || bad 'apply sets the released card' "$(cat "$ORCA_LOG")"
-grep -Fq 'applied: moved=2 unchanged=2 skipped_hosts=0' <<<"$out" && ok 'apply counts' || bad 'apply counts' "$out"
+grep -Fq 'applied: moved=3 unchanged=3 skipped_hosts=0' <<<"$out" && ok 'apply counts' || bad 'apply counts' "$out"
 python3 -c 'import json,sys; stamps=json.load(open(sys.argv[1])); raise SystemExit(0 if any(k.endswith("/w/merged") for k in stamps) else 1)' "$BOARD_DONE_STAMP" \
   && ok 'apply records when the card became Done' || bad 'apply records when the card became Done' "$(cat "$BOARD_DONE_STAMP" 2>/dev/null)"
 
