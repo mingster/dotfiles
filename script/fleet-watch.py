@@ -4617,9 +4617,9 @@ def brief_lint_missing(spec_path, run=subprocess.run):
     try:
         proc = run(
             ['bash', _brief_lint_script(), spec_path],
-            capture_output=True, text=True, timeout=30, check=False,
+            capture_output=True, text=True, errors='replace', timeout=30, check=False,
         )
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError, UnicodeDecodeError):
         return ['brief-lint failed']
     if proc.returncode == 0:
         return []
