@@ -27,7 +27,7 @@ PATCH = 'patches/10143-test-fixture.patch'
 INCIDENT = (
     'Wrote the fixture fix for test_production_scripts.py (copies install-pg-backup-r2.sh, adds bin/pg_backup_r2.sh '
     'to the fixture commit, strips ssh -o options in the mock, answers the backup checksum read, and allows that '
-    'read in the guard check) and saved it as ~/agent-state/%s (on niteking, copied to mini6). git apply --check '
+    'read in the guard check) and saved it as ~/agent-state/%s (on remote-host, copied to the coordinator). git apply --check '
     'passes on PR head 7218491294 and the pytest file gives 68 passed.' % PATCH
 )
 PLAIN = 'Fixed the parser and opened PR #99 at head 7218491294; checks pass.'
@@ -40,6 +40,7 @@ def concise(body):
 
 
 def accepted(mid, dispatch, body):
+    """The captured concise payload has no outcome; it is added here so release_green_successes can act."""
     return {'id': mid, 'type': 'worker_done', 'from': 'term_w', 'to': 'run:run_fixture', 'subject': 'done',
             'handled': True, 'body': concise(body),
             'payload': {'taskId': 'task_x', 'dispatchId': dispatch, 'outcome': 'succeeded'}}
@@ -67,14 +68,14 @@ def local_row(dispatch, pr=99, handle='term_w'):
 
 def remote_live_row(dispatch, handle='term_remote'):
     row = local_row(dispatch, pr=None, handle=handle)
-    row['projection'] = dict(row['projection'], host={'id': 'niteking'})
+    row['projection'] = dict(row['projection'], host={'id': 'remote-host'})
     return row
 
 
 def remote_settled_row(dispatch):
     return {'dispatchId': dispatch, 'taskId': 'task_x', 'runId': 'run_fixture', 'workerState': 'succeeded',
             'dispatchStatus': 'completed', 'agentTerminalHandle': None, 'terminalState': None, 'resource': None,
-            'server': {'environmentId': 'env-1', 'name': 'niteking'}}
+            'server': {'environmentId': 'env-1', 'name': 'remote-host'}}
 
 
 GREEN = {'number': 99, 'state': 'OPEN', 'headRefOid': 'abc',
@@ -200,7 +201,7 @@ class DoneHoldPasses(unittest.TestCase):
         sends = self.fleet.sends()
         self.assertEqual(len(sends), 1)
         self.assertEqual(sends[0][3], 'term_remote')
-        self.assertEqual(sends[0][-2:], ('--environment', 'niteking'))
+        self.assertEqual(sends[0][-2:], ('--environment', 'remote-host'))
         self.assertEqual(state['done_hold_notified'], ['msg_inc'])
 
     def assert_reconcile_held(self, state):
@@ -217,7 +218,7 @@ class DoneHoldPasses(unittest.TestCase):
 
     def test_5_reconcile_row_from_worker_show_is_not_synthesized_or_released(self):
         self.fleet.shown['ctx_inc'] = {'dispatchId': 'ctx_inc', 'state': 'succeeded', 'status': 'completed',
-                                       'server': 'niteking', 'stage': 'server_record'}
+                                       'server': 'remote-host', 'stage': 'server_record'}
         state = self.incident_pass([], message=rejected('msg_inc', 'ctx_inc', INCIDENT))
         self.assertIn(('orchestration', 'worker-show', '--dispatch', 'ctx_inc'), self.fleet.calls)
         self.assert_reconcile_held(state)
@@ -307,14 +308,53 @@ class StallLadderSkipsHeld(unittest.TestCase):
         self.assertEqual(state.get('stall_ladder'), {})
 
 
+class VerifierReleasesSkipHeld(unittest.TestCase):
+    """The babysit verifier releases call release_held too; only a verifier that failed at startup is exempt."""
+
+    HELD = {'done_hold': {'ctx_v': {'reason': 'x', 'message_id': 'm', 'since': T0}}}
+
+    def verifier(self):
+        return {'dispatchId': 'ctx_v', 'terminal': 'term_v', 'workerState': 'ready', 'dispatchStatus': 'dispatched',
+                'terminalState': 'active', '_task_title': 'qa-sdet - verify PR #7',
+                'projection': {'role': 'worker', 'outcome': 'in_progress', 'liveness': {'verdict': 'live'},
+                               'stage': {'worker': 'ready', 'dispatch': 'dispatched'}}}
+
+    def pr(self, **kw):
+        return dict({'number': 7, 'state': 'MERGED', 'headRefOid': 'b' * 40, 'headRefName': 'b', 'comments': []}, **kw)
+
+    def test_closed_pr_verifier_is_not_released(self):
+        released = []
+        state = json.loads(json.dumps(self.HELD))
+        self.assertFalse(fw.release_closed_verifier(self.pr(), [self.verifier()], state, 'o/r', released.append))
+        self.assertEqual(released, [])
+        self.assertTrue(fw.release_closed_verifier(self.pr(), [self.verifier()], {}, 'o/r', released.append))
+        self.assertEqual(released, ['ctx_v'])
+
+    def test_idle_rework_verifier_is_not_released(self):
+        released = []
+        state = dict(json.loads(json.dumps(self.HELD)), verifier_head={'o/r': {'7': 'a' * 40}})
+        result = fw.route_rework_head(self.pr(state='OPEN'), [self.verifier()], state, 'o/r', T0, {'term_v': T0 - 2 * fw.VERIFIER_REWORK_IDLE_SECONDS},
+                                      released.append, lambda *_a: None)
+        self.assertEqual((result, released), ('live', []))
+
+    def test_standing_verifier_is_not_retired(self):
+        calls, log_bits = [], []
+        state = dict(json.loads(json.dumps(self.HELD)), standing_verifiers={'h': {'dispatch_id': 'ctx_v'}})
+        io = type('IO', (), {'stop': lambda _self, did, host: calls.append(('stop', did))})()
+        fw.standing_retire(state, 'h', state['standing_verifiers']['h'], 'max_prs', io,
+                           lambda *a: calls.append(('release',) + a), T0, log_bits)
+        self.assertEqual(calls, [])
+        self.assertIn('h', state['standing_verifiers'])
+
+
 class AgentStateHold(unittest.TestCase):
     def hold(self, body, exists=(), shas=()):
         return fw.agent_state_hold({'type': 'worker_done', 'body': body, 'payload': {'dispatchId': 'd'}},
                                    path_exists=lambda p: p in exists, sha_exists=lambda s: s in shas)
 
     def test_forms_of_the_path(self):
-        for prefix in ('~', '$HOME', '/Users/mtsai', '/home/agent'):
-            reason = self.hold('saved %s/agent-state/audits/a.md (on niteking).' % prefix)
+        for prefix in ('~', '$HOME', '/Users/agent', '/home/agent'):
+            reason = self.hold('saved %s/agent-state/audits/a.md (on remote-host).' % prefix)
             self.assertIn('~/agent-state/audits/a.md,', reason)
 
     def test_rejected_copy_reads_the_original_body(self):

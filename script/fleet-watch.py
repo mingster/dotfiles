@@ -6294,7 +6294,7 @@ def _verifier_head_bucket(state, repo):
 def release_closed_verifier(pr, workers, state, repo, release):
     """Release a live verifier on a merged or closed pull request. True when released."""
     worker = live_verifier_worker(pr, workers)
-    if worker is None:
+    if worker is None or release_held(state, worker.get('dispatchId')):
         return False
     release(worker.get('dispatchId') or '')
     _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
@@ -6304,7 +6304,7 @@ def release_closed_verifier(pr, workers, state, repo, release):
 def release_idle_rework_verifier(pr, workers, state, repo, now, term_times, release):
     """Release a verifier that has waited out a rework for an hour. True when released."""
     worker = live_verifier_worker(pr, workers)
-    if worker is None or not rework_needed_at_head(pr):
+    if worker is None or not rework_needed_at_head(pr) or release_held(state, worker.get('dispatchId')):
         return False
     if verifier_idle_seconds(worker, term_times, now) < VERIFIER_REWORK_IDLE_SECONDS:
         return False
@@ -6328,6 +6328,8 @@ def route_rework_head(pr, workers, state, repo, now, term_times, release, notify
     idle = verifier_idle_seconds(worker, term_times, now)
     if tracked and tracked != head:
         if idle >= VERIFIER_REWORK_IDLE_SECONDS:
+            if release_held(state, worker.get('dispatchId')):
+                return 'live'
             release(worker.get('dispatchId') or '')
             bucket.pop(str(number), None)
             return 'released'
@@ -7431,6 +7433,9 @@ def standing_idle(rec, open_prs):
 def standing_retire(state, host, rec, reason, io, release_worker, now, log_bits, event='retire'):
     """Stop and release a standing verifier, clear its record, and log the retirement."""
     did = rec.get('dispatch_id') or ''
+    if did and release_held(state, did):
+        log_bits.append('standing_retire_held=%s:%s' % (did, reason))
+        return
     if did:
         io.stop(did, host)
         release_worker(did, None if rec.get('local') else host)
