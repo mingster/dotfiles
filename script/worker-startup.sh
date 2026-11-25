@@ -4,6 +4,7 @@
 # Usage:
 #   worker-startup.sh --host-check
 #   worker-startup.sh --pick-host-only --spec FILE
+#   worker-startup.sh --close-after-fails --repo owner/name --pr N --comment-file FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
 #         [--route-override REASON] [--allow-delivered REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
@@ -17,6 +18,11 @@
 # is refused unless --allow-delivered REASON is given (#1158, #1811).
 # A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label) waits, unless
 # --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
+# A start whose issue (the title issue, or any #N on the brief's Issues: or Refs: lines) already has a live worker of the same
+# role class in the run exits 2, and so does an unreadable task list (#1839). --allow-overlap REASON overrides on a hand start;
+# with FLEET_WATCH=1 an unreadable list always refuses. A builder start whose issue's last closed PR has two FAILs exits 2 until
+# ready-for-agent is added again. --close-after-fails closes such a PR and relabels its issues needs-triage.
+# A start whose dispatch exists although a later step failed prints the dispatch id and exits 0.
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 # WORKER_STARTUP_AGY_SIGNIN=exit (fleet watch issue starts only, #1832): an antigravity start that lands on the sign-in screen after
@@ -794,6 +800,145 @@ refuse_overlapping_issue() { # <spec_file> <title> <allow_reason>
   die "refused: $ref overlaps other work in flight; bundle it into one issue, or pass --allow-overlap REASON"
 }
 
+# One live worker per (repo, issue, role class) (#1839, owner Q4 A). A start covers its "#<n>|" title issue plus every #N on
+# its brief's Issues: and Refs: lines, so a bundle covers each issue in it. It is refused (exit 2) when a live task of the run
+# (worker-list joined to task-list by taskId) has the same role class and either side's title issue is in the other's set.
+# The role class is builder for every builder role, else the role name. Fails closed: an unreadable task or worker list
+# refuses; a hand start may pass --allow-overlap REASON, a FLEET_WATCH=1 start cannot. --allow-overlap also starts a duplicate.
+refuse_live_duplicate() { # <spec_file> <title> <run> <allow_reason>
+  local spec_file=$1 title=$2 run=$3 allow=$4 role kind tasks='' workers='' hit=''
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || kind=other
+  [ "$kind" = builder ] || kind=$role
+  if ! tasks=$("$orca" orchestration task-list --run "$run" --full --json) \
+    || ! workers=$("$orca" orchestration worker-list --run "$run" --include-remote --json) \
+    || ! hit=$("$python3" - "$here/usage-gate.py" "$spec_file" "$title" "$kind" "$role" <<'PY' 3<<<"$tasks" 4<<<"$workers"
+import importlib.util, json, os, re, sys
+gate, spec_file, title, kind, role = sys.argv[1:6]
+spec = importlib.util.spec_from_file_location("usage_gate_dup", gate)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+REF = re.compile(r'([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#([0-9]+)')
+def klass(r):
+    try:
+        return "builder" if r == "builder" or mod.is_builder_role(r) else r
+    except Exception:
+        return r
+def parse(t, text):
+    """(title issue, its repo, set of (repo, n)) from a title and brief text."""
+    m = re.match(r'^#([0-9]+)\|', t or '')
+    lines = [l for l in (text or '').splitlines() if re.match(r'^(Issues|Refs):?\s', l)]
+    pairs = [(r or '', n) for l in lines for r, n in REF.findall(l)]
+    first = next((r for r, _ in pairs if r), '')
+    refs = {(r or first, n) for r, n in pairs}
+    if not m:
+        return None, '', refs
+    n = m.group(1)
+    repo = next((r for r, x in pairs if x == n and r), first)
+    return n, repo, refs | {(repo, n)}
+def covers(refs, repo, n):
+    return any(x == n and (not r or not repo or r.lower() == repo.lower()) for r, x in refs)
+def load(fd, key):
+    """The list under result.<key>; anything else (bad JSON, ok false, no list) exits 3: unreadable."""
+    try:
+        with os.fdopen(fd) as f:
+            d = json.load(f)
+        if not isinstance(d, dict) or d.get('ok') is False:
+            raise ValueError
+        v = (d.get('result') if isinstance(d.get('result'), dict) else d).get(key)
+        if not isinstance(v, list):
+            raise ValueError
+        return v
+    except Exception:
+        print('worker-startup: the %s list is not readable JSON' % key, file=sys.stderr)
+        sys.exit(3)
+tasks = load(3, 'tasks')
+workers = load(4, 'workers')
+by_id = {t.get('id'): t for t in tasks}
+num, repo, mine = parse(title, open(spec_file, encoding='utf-8').read())
+dead_state = re.compile(r'^(completed|succeeded|failed|stopped|cancelled|abandoned|released|rejected)$')
+for w in workers:
+    if dead_state.match(str(w.get('dispatchStatus') or w.get('workerState') or w.get('state') or '').lower()):
+        continue
+    if re.match(r'^(exited|sleep|settled)$', str(w.get('liveness') or 'live')):
+        continue
+    if re.match(r'^(released|release_unknown)$', str(w.get('terminalState') or 'active')):
+        continue
+    t = by_id.get(w.get('taskId')) or {}
+    ttitle = t.get('title') or t.get('task_title') or t.get('display_name') or ''
+    tm = re.match(r'^#[0-9]+\|([A-Za-z0-9_-]+)', ttitle)
+    if not tm:
+        continue
+    trole = tm.group(1)
+    if klass(trole) != kind:
+        continue
+    tnum, trepo, theirs = parse(ttitle, t.get('spec') or '')
+    if (num and covers(theirs, repo, num)) or (tnum and covers(mine, trepo, tnum)):
+        label = (repo or trepo or '') + '#' + (num or tnum)
+        print('%s\t%s\t%s' % (label, trole, w.get('dispatchId') or w.get('taskId') or '?'))
+        break
+PY
+  ); then
+    [ -z "${workers:-$tasks}" ] || printf '%s\n' "${workers:-$tasks}" | head -5 >&2 # orca prints its error as JSON on stdout
+    if [ -n "$allow" ] && [ "${FLEET_WATCH:-}" != 1 ]; then
+      echo "worker-startup: --allow-overlap: cannot read the live task list, starting anyway ($allow)" >&2
+      return 0
+    fi
+    echo "worker-startup: refused: cannot read the live task list of $run; pass --allow-overlap REASON on a hand start" >&2
+    exit 2
+  fi
+  [ -n "$hit" ] || return 0
+  local ref live_role dispatch
+  IFS=$'\t' read -r ref live_role dispatch <<<"$hit"
+  if [ -n "$allow" ]; then
+    echo "worker-startup: --allow-overlap: $ref already has live $live_role worker $dispatch, starting anyway ($allow)" >&2
+    return 0
+  fi
+  echo "worker-startup: refused: $ref already has live $live_role worker $dispatch" >&2
+  exit 2
+}
+
+# After two failed Reviews and a close the issue goes to needs-triage, never back to a builder (#1839, owner Q5 A).
+# A builder start is refused (exit 2) when the issue's most recent closed, unmerged PR (one whose body Closes, Fixes,
+# or Resolves it) has two or more comments that open with "Review: FAIL" or "Verdict: FAIL" (pr-review.sh counts the same),
+# unless ready-for-agent was added to the issue after that close. A missing gh or a failed lookup lets the start go on.
+refuse_after_two_fails() { # <spec_file> <title>
+  local spec_file=$1 title=$2 role kind ref repo num last pr closed fails relabeled api_repo
+  role=$(role_from_title "$title")
+  [ -n "$role" ] || return 0
+  kind=$(role_class "$role") || return 0
+  [ "$kind" = builder ] || return 0
+  ref=$(started_issue_ref "$spec_file" "$title")
+  [ -n "$ref" ] || return 0
+  num=${ref##*#}
+  repo=${ref%%#*}
+  command -v gh >/dev/null 2>&1 || return 0
+  last=$(gh pr list ${repo:+-R "$repo"} --state closed --search "$num in:body" --limit 30 --json number,closedAt,mergedAt,body \
+    --jq "[.[] | select((.mergedAt // \"\") == \"\" and (.closedAt // \"\") != \"\" and (.body // \"\" | test(\"(?i)\\\\b(close[sd]?|fix(e[sd])?|resolve[sd]?):?\\\\s+([A-Za-z0-9_./-]+)?#$num\\\\b\")))] | sort_by(.closedAt) | last | if . then \"\\(.number) \\(.closedAt)\" else empty end" 2>/dev/null) || {
+    echo "worker-startup: two-FAIL check skipped: gh failed" >&2
+    return 0
+  }
+  [ -n "$last" ] || return 0
+  pr=${last%% *}
+  closed=${last#* }
+  fails=$(gh pr view "$pr" ${repo:+-R "$repo"} --json comments \
+    --jq '[.comments[] | (.body // "" | split("\n")[0]) | select(test("^(Review|Verdict): FAIL(\\s|$)"))] | length' 2>/dev/null) || {
+    echo "worker-startup: two-FAIL check skipped: gh failed" >&2
+    return 0
+  }
+  [ "${fails:-0}" -ge 2 ] 2>/dev/null || return 0
+  api_repo=${repo:-"{owner}/{repo}"} # gh fills these from the current checkout
+  relabeled=$(gh api "repos/$api_repo/issues/$num/events" --paginate \
+    --jq ".[] | select(.event == \"labeled\" and .label.name == \"ready-for-agent\" and .created_at > \"$closed\") | .created_at" 2>/dev/null) || {
+    echo "worker-startup: two-FAIL check skipped: gh failed" >&2
+    return 0
+  }
+  [ -z "$relabeled" ] || return 0
+  echo "worker-startup: refused: last PR #$pr closed after two FAILs; relabel needs-triage" >&2
+  exit 2
+}
+
 # A complex builder start (#1396): a fullstack-dev-strong title, or a started issue (started_issue_ref) labelled size:L.
 # Best effort: a missing gh or a failed lookup counts as not complex.
 builder_is_complex() { # <role> <spec_file> <title>
@@ -1145,6 +1290,8 @@ run_mode() {
   refuse_merged_backlog_line "$spec" "$title"
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
   refuse_overlapping_issue "$spec" "$title" "$allow_overlap"
+  refuse_live_duplicate "$spec" "$title" "$run" "$allow_overlap"
+  refuse_after_two_fails "$spec" "$title"
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"
   claim_repo_sel=$repo # the caller's own selector, before a remote placement rewrites it (#1778)
@@ -1233,9 +1380,10 @@ run_mode() {
   "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
     || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
 
-  # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at<TAB>owner/repo); never blocks a start.
+  # Dispatch point for team-audit-metrics.ts stage times (issue<TAB>dispatched_at<TAB>owner/repo<TAB>role, #1839); never blocks
+  # a start. Older files keep their 3 column header and rows; readers take both.
   dispatch_log=${TEAM_AUDIT_DISPATCHES:-$agent_state_dir/team-dispatches.tsv}
-  [ -s "$dispatch_log" ] || printf 'issue\tdispatched_at\trepo\n' 2>/dev/null >"$dispatch_log" || true
+  [ -s "$dispatch_log" ] || printf 'issue\tdispatched_at\trepo\trole\n' 2>/dev/null >"$dispatch_log" || true
   local ref ref_issue ref_repo dir origin
   ref=$(grep -oE 'Refs ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' "$spec" | head -1 | sed 's/^Refs //') || true
   ref_issue=${ref##*#}
@@ -1257,7 +1405,8 @@ run_mode() {
       ref_repo=$(printf '%s' "$origin" | sed -nE 's#^(git@[^:/]+:|[A-Za-z+]+://[^/]+/)([^/]+/[^/]+)$#\2#p; ' | sed -E 's#\.git$##')
     fi
   fi
-  [ -z "$ref_issue" ] || printf '%s\t%s\t%s\n' "$ref_issue" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ref_repo" 2>/dev/null >>"$dispatch_log" || true
+  [ -z "$ref_issue" ] || printf '%s\t%s\t%s\t%s\n' "$ref_issue" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$ref_repo" "$(role_from_title "$title")" \
+    2>/dev/null >>"$dispatch_log" || true
 
   if [ "$agent" = cursor ]; then
     # Placement's remote repo selector is the one Cursor must create. The caller's local id is not on that host.
@@ -1380,17 +1529,43 @@ run_mode() {
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
   board_status_set "path:$wt" in-progress "$environment"
   board_display_name_set "path:$wt" "$title" "$environment"
+  # A start that failed after Orca created its dispatch (the brief submit, #10098) did start: a retry would make a second
+  # worker. So a failed start whose dispatch is live in this worktree prints the dispatch and exits 0 (#1839).
+  # Only a dispatch that was not already in the worktree counts: a reused worktree may hold an older live worker.
+  wt_dispatches() { # prints the live dispatch ids whose workspace is this worktree
+    local workers
+    workers=$("$orca" orchestration worker-list --run "$run" --include-remote --json 2>/dev/null) || return 0
+    jq -r --arg wt "$wt" '(.result.workers // .workers // [])[]
+        | select(((.dispatchStatus // .workerState // .state // "") | ascii_downcase | test("^(completed|succeeded|failed|stopped|cancelled|abandoned|released|rejected)$")) | not)
+        | select((.liveness // "live" | tostring) | test("^(exited|sleep|settled)$") | not)
+        | select((.terminalState // "active") | test("^(released|release_unknown)$") | not)
+        | select((.workspace // "") | endswith("::" + $wt) or . == $wt) | .dispatchId // empty' <<<"$workers" 2>/dev/null || true
+  }
+  local pre_dispatches=''
+  [ "$created_wt" = 1 ] || pre_dispatches=$(wt_dispatches)
+  started_despite_failure() { # <exit code>
+    local ec=$1 dispatch
+    dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)
+    if [ -z "$dispatch" ]; then
+      dispatch=$(wt_dispatches | grep -vxF -e "${pre_dispatches:-^none^}" | head -1 || true)
+    fi
+    [ -n "$dispatch" ] || return 1
+    echo "worker-startup: dispatch $dispatch exists although a later start step failed (exit $ec); not starting again" >&2
+    printf '%s\n' "$dispatch"
+    exit 0
+  }
   start_agent_worker() { # starts the worker for the current agent, model and brief
+    local ec
     if [ "$agent" = grok ] && [ -z "$environment" ]; then
       grok_trust_worktree "$wt" || { echo "worker-startup: could not pre-trust $wt for grok (#1312)" >&2; start_failed 1; }
     fi
     if [ -n "$environment" ]; then
       start_with_startup_retry bash "$here/start-remote-worker.sh" --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-        --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || start_failed $?
+        --on "$environment" --worktree "path:$wt" --task-title "$title" --from "$from" --json || { ec=$?; started_despite_failure "$ec" || start_failed "$ec"; }
     else
       start_with_startup_retry pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt" -- \
         --run "$run" --spec "$brief" --agent "$agent" --model "$model" \
-        --worktree "path:$wt" --task-title "$title" --from "$from" || start_failed $?
+        --worktree "path:$wt" --task-title "$title" --from "$from" || { ec=$?; started_despite_failure "$ec" || start_failed "$ec"; }
     fi
   }
   claim_issue "$spec" "$title" "${claim_repo_sel:-$repo}" "$wt"
@@ -1419,6 +1594,38 @@ run_mode() {
   return 0
 }
 
+# The close helper for a PR after two failed Reviews (#1839, owner Q5 A): close it with the lesson comment, then move every
+# issue its body Closes, Fixes or Resolves (not a Refs parent) from ready-for-agent to needs-triage, so no builder restarts it.
+close_after_fails() { # --repo owner/name --pr N --comment-file FILE
+  local repo='' pr='' comment='' body ref num irepo rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --repo|--pr|--comment-file)
+        [ $# -ge 2 ] || die "$1 needs a value"
+        case "$1" in --repo) repo=$2 ;; --pr) pr=$2 ;; --comment-file) comment=$2 ;; esac
+        shift 2 ;;
+      *) die "usage: worker-startup.sh --close-after-fails --repo owner/name --pr N --comment-file FILE" ;;
+    esac
+  done
+  [ -n "$repo" ] && [ -n "$pr" ] && [ -f "$comment" ] \
+    || die "usage: worker-startup.sh --close-after-fails --repo owner/name --pr N --comment-file FILE"
+  body=$(gh pr view "$pr" -R "$repo" --json body --jq '.body // ""') || die "cannot read PR #$pr in $repo"
+  gh pr close "$pr" -R "$repo" --comment "$(cat "$comment")" >/dev/null || die "cannot close PR #$pr in $repo"
+  while read -r ref; do
+    [ -n "$ref" ] || continue
+    num=${ref##*#}
+    irepo=${ref%%#*}
+    if gh issue edit "$num" -R "${irepo:-$repo}" --remove-label ready-for-agent --add-label needs-triage >/dev/null; then
+      echo "worker-startup: ${irepo:-$repo}#$num relabeled needs-triage"
+    else
+      echo "worker-startup: could not relabel ${irepo:-$repo}#$num needs-triage" >&2
+      rc=1
+    fi
+  done < <(grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+' <<<"$body" \
+    | sed -E 's/^[A-Za-z]+:?[[:space:]]+//' | sort -u)
+  return "$rc"
+}
+
 # One line per successful start: duration_s feeds team-audit.sh --report (#1330).
 log_startup_duration() { # <run id> <seconds>
   local line
@@ -1441,6 +1648,10 @@ case "${1:-}" in
     run_mode "$@" || startup_rc=$?
     [ "$startup_rc" -ne 0 ] || log_startup_duration "${2:-}" "$((SECONDS - startup_began))"
     exit "$startup_rc"
+    ;;
+  --close-after-fails)
+    shift
+    close_after_fails "$@"
     ;;
   -h|--help)
     echo "Usage: worker-startup.sh --host-check | --run ..." >&2
