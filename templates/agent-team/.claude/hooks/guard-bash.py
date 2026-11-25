@@ -486,11 +486,43 @@ def load_guard_config(start_dir):
             GRILL_APPROVERS.add(login.strip().lower())
 
 
+KEYWORD_BREAK = re.compile(r"(?:do|then|else|elif|!|time(?:[ \t]+-p)?)(?=[\s;&|(){]|\Z)")
+
+
+def join_continuations(command):
+    """Drop a backslash newline outside single quotes, as bash does before it parses."""
+    out, quote, i = [], None, 0
+    while i < len(command):
+        c = command[i]
+        if c == "\\" and i + 1 < len(command) and quote != "'":
+            if command[i + 1] != "\n":
+                out.append(c + command[i + 1])
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+        elif c in "'\"":
+            quote = c
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def segments(command):
-    """Split a command line on control operators, keeping quoted text intact."""
+    """Split a command line on control operators, keeping quoted text intact. A keyword that starts a command
+    (do, then, else, elif, !, time [-p]) is a break too, so a command after it is judged as its own segment (#1810)."""
+    command = join_continuations(command)
     out, buf, quote, i = [], [], None, 0
     while i < len(command):
         c = command[i]
+        if not quote and not "".join(buf).strip() and not c.isspace():
+            keyword = KEYWORD_BREAK.match(command, i)
+            if keyword:
+                out.append("".join(buf))
+                buf = []
+                i = keyword.end()
+                continue
         if quote:
             buf.append(c)
             if c == "\\" and quote == '"' and i + 1 < len(command):
