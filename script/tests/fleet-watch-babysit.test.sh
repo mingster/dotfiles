@@ -8,6 +8,11 @@ root=$(cd "$here/../.." && pwd)
 . "$root/script/tests/lib/asdf-pin.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# Keep fixture lines out of ~/.orca/logs/fleet-watch.log (#1864).
+if [ -z "$(printf %s "${FLEET_WATCH_LOG_PATH:-}" | tr -d '[:space:]')" ]; then
+  FLEET_WATCH_LOG_PATH="$tmp/fleet-watch-test.log"
+  export FLEET_WATCH_LOG_PATH
+fi
 
 export PATH="$tmp/bin:$PATH"
 # The scheduled fleet-watch run has no coordinator terminal in its environment (#1640).

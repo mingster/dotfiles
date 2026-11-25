@@ -10,6 +10,11 @@ export ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}"
 HOME=$(mktemp -d)
 export HOME
 trap 'rm -rf "$HOME"' EXIT
+# Keep fixture lines out of ~/.orca/logs/fleet-watch.log (#1864).
+if [ -z "$(printf %s "${FLEET_WATCH_LOG_PATH:-}" | tr -d '[:space:]')" ]; then
+  FLEET_WATCH_LOG_PATH="$HOME/fleet-watch-test.log"
+  export FLEET_WATCH_LOG_PATH
+fi
 path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
 PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"

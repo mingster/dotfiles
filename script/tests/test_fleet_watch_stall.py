@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -1193,3 +1194,58 @@ class ReleaseBoardStatus(unittest.TestCase):
         freed, calls = self.run_release('OPEN')
         self.assertEqual(freed, ['disp_done'])
         self.assertEqual(calls, [])
+
+
+# A test loads fleet-watch.py when it execs the module or runs it with python. A mere mention does not count.
+LOADS_FLEET_WATCH = re.compile(
+    r"spec_from_file_location\([^)]*fleet-watch\.py|load\('fleet_watch', 'fleet-watch\.py'\)"
+    r"|\$\{?PYTHON\b[^\n]*fleet-watch\.py|\bpython3?\b[^\n]*(?<![\w-])fleet-watch\.py")
+ISOLATION_CHILD = 'FLEET_WATCH_LOG_ISOLATION_CHILD'
+# Load fleet-watch.py without logging, and sit outside the fleet-watch test globs (#1864).
+LOG_EXEMPT = frozenset({'agy-signin.test.sh', 'worker-startup.test.sh',
+                        'test_pr_body_gate_builder.py', 'test_tier0_audit_1730.py'})
+
+
+class TestLogIsolation(unittest.TestCase):
+    """#1864: no fleet-watch test writes its fixture lines to ~/.orca/logs/fleet-watch.log."""
+    TESTS = Path(__file__).resolve().parent
+    RUNS = ('fleet-watch-babysit.test.sh', 'fleet-watch-wake.test.sh', 'test_fleet_watch_1016.py',
+            'test_fleet_watch_1199.py', 'test_fleet_watch_1706.py', 'test_fleet_watch_986.py',
+            'test_fleet_watch_stall.py')
+
+    def test_every_file_that_loads_fleet_watch_isolates_the_log(self):
+        missing = []
+        for path in sorted(self.TESTS.iterdir()):
+            if path.suffix not in ('.py', '.sh') or path.name in LOG_EXEMPT or path == Path(__file__).resolve():
+                continue
+            text = path.read_text()
+            if not LOADS_FLEET_WATCH.search(text):
+                continue
+            if 'FLEET_WATCH_LOG_PATH' not in text and 'fleet_watch_test_env' not in text:
+                missing.append(path.name)
+        self.assertEqual(missing, [])
+
+    def test_blank_log_path_gets_a_temp_file(self):
+        code = ('import os, fleet_watch_test_env; p = os.environ["FLEET_WATCH_LOG_PATH"]; '
+                'print(p); print(os.path.isdir(os.path.dirname(p)))')
+        for blank in (None, '', '  '):
+            env = {k: v for k, v in os.environ.items() if k != 'FLEET_WATCH_LOG_PATH'}
+            if blank is not None:
+                env['FLEET_WATCH_LOG_PATH'] = blank
+            out = subprocess.run(['python3', '-c', code], cwd=self.TESTS, env=env,
+                                 capture_output=True, text=True, check=True).stdout.split()
+            self.assertEqual(out[1], 'True')
+            self.assertNotIn('.orca', out[0])
+            self.assertFalse(os.path.exists(os.path.dirname(out[0])), 'temp dir not removed at exit')
+
+    @unittest.skipIf(os.environ.get(ISOLATION_CHILD), 'child run of the isolation check')
+    def test_runs_with_log_path_unset_write_no_default_log_line(self):
+        with tempfile.TemporaryDirectory() as home:
+            env = {k: v for k, v in os.environ.items() if k != 'FLEET_WATCH_LOG_PATH'}
+            env.update({'HOME': home, ISOLATION_CHILD: '1',
+                        'ASDF_DATA_DIR': os.environ.get('ASDF_DATA_DIR') or str(Path.home() / '.asdf')})
+            for name in self.RUNS:
+                cmd = ['bash', str(self.TESTS / name)] if name.endswith('.sh') else ['python3', str(self.TESTS / name)]
+                result = subprocess.run(cmd, cwd=self.TESTS, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, '%s failed:\n%s' % (name, result.stderr[-2000:]))
+            self.assertFalse((Path(home) / '.orca' / 'logs' / 'fleet-watch.log').exists())

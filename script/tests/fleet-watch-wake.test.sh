@@ -2,6 +2,12 @@
 # #970: the coordinator waits up to 60 minutes per waiter, so fleet-watch must not alarm on a live waiter,
 # must still alarm on a dead one after 10 minutes, and must reach the run terminal as inbox mail (which wakes `check --wait`).
 set -euo pipefail
+# Keep fixture lines out of ~/.orca/logs/fleet-watch.log (#1864).
+if [ -z "$(printf %s "${FLEET_WATCH_LOG_PATH:-}" | tr -d '[:space:]')" ]; then
+  FLEET_WATCH_LOG_PATH="$(mktemp -d "${TMPDIR:-/tmp}/fleet-watch-test-log.XXXXXX")/fleet-watch-test.log"
+  export FLEET_WATCH_LOG_PATH
+  trap 'rm -rf "${FLEET_WATCH_LOG_PATH%/*}"' EXIT
+fi
 path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | paste -sd: -)
 PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"

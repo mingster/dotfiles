@@ -8,6 +8,11 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 # #1737: a stub gh heads PATH and logs every call. Any call fails the test, so a fixture can never reach the real gh.
 GUARD_DIR=$(mktemp -d)
 trap 'rm -rf "$GUARD_DIR"' EXIT
+# Keep fixture lines out of ~/.orca/logs/fleet-watch.log (#1864).
+if [ -z "$(printf %s "${FLEET_WATCH_LOG_PATH:-}" | tr -d '[:space:]')" ]; then
+  FLEET_WATCH_LOG_PATH="$GUARD_DIR/fleet-watch-test.log"
+  export FLEET_WATCH_LOG_PATH
+fi
 printf '%s\n' '#!/bin/sh' 'echo "$*" >> "$GH_GUARD_LOG"' 'exit 99' > "$GUARD_DIR/gh"
 chmod +x "$GUARD_DIR/gh"
 : > "$GUARD_DIR/calls.log"

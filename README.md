@@ -13,7 +13,7 @@ An **agent team** is a small set of AI agents that share one delivery playbook. 
 * **Grill:** a round of pointed questions that fills the gaps in an idea before anyone builds it.
 * **Verifier:** a second AI model, from a different model family than the author, that checks a finished change and gives a pass or fail.
 * **Unit:** one ticket sized piece of work. **PR owner:** the worker that writes its branch.
-* **Babysit:** a check every five minutes on open pull requests. It starts one verifier when head-checks passed and that head has no Verdict. A failing head still starts a fix worker, and a head that already has a passing Verdict can still start a shipping run.
+* **Babysit:** a check every five minutes on open pull requests. It starts one verifier when head-checks passed, the head has a cold `Review: PASS` (or the repo has no online review runner) and no Verdict. A failing head still starts a fix worker, and a head that already has a passing Verdict can still start a shipping run.
 * **Fleet:** the group of computers that run the agents.
 
 One **coordinator agent** holds the CEO role. It reads the issue tracker, plans work, and **dispatches** tasks. A dispatch is a single start command that gives one worker a complete assignment.
