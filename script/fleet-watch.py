@@ -5003,13 +5003,17 @@ _SUPPLY_BRIEF = Path(__file__).resolve().parent.parent / 'docs/agents/supply-wor
 _SUPPLY_TITLE = '#0|architect-pm|supply'
 
 
-def build_supply_command(config, repos, agent, model):
-    """One supply worker for all watched repos, started in the first repo that has a local root (#1689)."""
+def build_supply_command(config, repos, agent, model, claimed=()):
+    """One supply worker for all watched repos, started in the first repo that has a local root (#1689).
+
+    `claimed` is (repo, number) for open issues labeled ISSUE_CLAIM_LABEL with no live worker (#1876)."""
     scan = config['issue_scan']
     root = next((r for r in (_issue_scan_repo_root(config, repo) for repo in repos) if r), None)
     if not root:
         return None
     text = _SUPPLY_BRIEF.read_text(encoding='utf-8') + ''.join('- %s\n' % repo for repo in repos)
+    if claimed:
+        text += '\n## Claimed with no live worker\n\n' + ''.join('- %s#%d\n' % pair for pair in claimed)
     spec_path = _write_issue_scan_spec(_with_preamble(text, 'architect-pm'))
     command = [
         'bash', _issue_scan_startup_script(config),
@@ -5050,48 +5054,160 @@ def _architect_pm_making_work(workers):
     )
 
 
+SUPPLY_FORCE_PASSES = 3
+
+
 def work_order_try_supply(
     config, state, now, repos, supply, host, admission, extra_starts, reserved, workers,
-    start_worker, pick_fn=None, persist_state=None,
+    start_worker, pick_fn=None, persist_state=None, count_open=None, clear_blocked=None, stale_claimed=None,
 ):
     """Free capacity under target_workers above the ready-for-agent supply: start one architect-pm to make work (#1689).
 
     At most one runs: a live #0|architect-pm worker blocks it, and it starts at most once per
-    triage_interval_hours. `reserved` local seats stay free for the ready issues of this pass."""
+    triage_interval_hours. `reserved` local seats stay free for the ready issues of this pass.
+    From the SUPPLY_FORCE_PASSES-th short pass in a row, while the repos still have an open issue, the interval
+    is skipped and `clear_blocked(repos)` runs. supply_enough or a supply start resets the count (#1876)."""
     order = work_order_settings(config, now)
     if order is None:
         return [], 0
     free = order[1] - active_worker_count(workers) - extra_starts
     if free <= supply:
+        state['work_order_short_passes'] = 0
         return ['supply_enough=%d:%d' % (free, supply)], 0
+    try:
+        short = int(state.get('work_order_short_passes') or 0) + 1
+    except (TypeError, ValueError):
+        short = 1
+    state['work_order_short_passes'] = short
     if _architect_pm_making_work(workers):
+        # Checked before the forced pass, so its gh reads wait until the live supply worker ends.
         return ['supply_skip_live'], 0
+    bits = []
+    forced = False
+    if short >= SUPPLY_FORCE_PASSES:
+        opened = sum_open_issues(repos, count_open or fetch_open_issue_count)
+        if opened is None:
+            bits.append('supply_force_unknown')
+        elif opened == 0:
+            bits.append('supply_force_no_issues')
+        else:
+            forced = True
+            bits.append('supply_force=%d' % short)
+            bits.extend((clear_blocked or clear_stale_blocked)(repos))
     scan = config.get('issue_scan') or {}
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     try:
-        if now - float(state.get('work_order_supply_at')) < interval:
-            return ['supply_skip_recent'], 0
+        if not forced and now - float(state.get('work_order_supply_at')) < interval:
+            return bits + ['supply_skip_recent'], 0
     except (TypeError, ValueError):
         pass
     if not admission.get('admitted') or not _issue_scan_has_slot(host, config, admission, extra_starts + reserved):
-        return ['supply_skip_no_seat'], 0
+        return bits + ['supply_skip_no_seat'], 0
     builder = (scan.get('agent') or 'claude', scan.get('model') or '')
     chosen = choose_pick((pick_fn or pick_role)('architect-pm', avoid_family=_avoid_family(builder)), builder)
     if not chosen:
-        return ['supply_pick_blocked'], 0
-    command = build_supply_command(config, repos, chosen[0], chosen[1])
+        return bits + ['supply_pick_blocked'], 0
+    claimed = list(stale_claimed(repos)) if stale_claimed else []
+    command = build_supply_command(config, repos, chosen[0], chosen[1], claimed)
     if command is None:
-        return ['supply_skip_root'], 0
+        return bits + ['supply_skip_root'], 0
     if not start_allowed(start_cost(command)):
-        return ['supply_budget=%d:%d' % (free, supply)], 0
+        return bits + ['supply_budget=%d:%d' % (free, supply)], 0
     if start_worker(command) != 0:
         count_failed()
-        return ['supply_fail'], 0
+        return bits + ['supply_fail'], 0
     state['work_order_supply_at'] = now
+    state['work_order_short_passes'] = 0
     if persist_state:
         persist_state()
     count_started()
-    return ['supply_start=%d:%d' % (free, supply)], 1
+    if claimed:
+        bits.append('supply_claimed=%s' % ','.join(_blocker_label(pair, repos[0]) for pair in claimed))
+    return bits + ['supply_start=%d:%d' % (free, supply)], 1
+
+
+def fetch_open_issue_count(repo, run=subprocess.run):
+    """Open issues in the repo, read up to 1 since the gate only needs zero or not (#1876), or None when gh fails."""
+    try:
+        proc = run(['gh', 'issue', 'list', '--repo', repo, '--state', 'open', '--limit', '1', '--json', 'number'],
+                   capture_output=True, text=True, timeout=30, check=True)
+        return len(json.loads(proc.stdout))
+    except (subprocess.SubprocessError, OSError, ValueError, TypeError):
+        return None
+
+
+def sum_open_issues(repos, count_open):
+    """Open issues across the repos, or None when any count failed (a failure never reads as zero)."""
+    total = 0
+    for repo in repos:
+        count = count_open(repo)
+        if count is None:
+            return None
+        total += count
+    return total
+
+
+def fetch_blocked_issues(repo, run=subprocess.run):
+    """Open issues labeled blocked, with the body and the native blockedBy, or None when gh fails."""
+    try:
+        proc = run(['gh', 'issue', 'list', '--repo', repo, '--label', 'blocked', '--state', 'open', '--limit', '100',
+                    '--json', 'number,body,blockedBy'], capture_output=True, text=True, timeout=30, check=True)
+        return json.loads(proc.stdout)
+    except (subprocess.SubprocessError, OSError, ValueError, TypeError):
+        return None
+
+
+def fetch_ref_state(repo, number, run=subprocess.run):
+    """OPEN or CLOSED for an issue or a PR (merged reads CLOSED), or None when gh fails. The REST issues route serves both."""
+    try:
+        proc = run(['gh', 'api', 'repos/%s/issues/%d' % (repo, number), '--jq', '.state'],
+                   capture_output=True, text=True, timeout=30, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    state = proc.stdout.strip().upper() if proc.returncode == 0 else ''
+    return state if state in ('OPEN', 'CLOSED') else None
+
+
+def _blocked_by_line_unparseable(issue):
+    """True when a Blocked by line has text but names no issue or PR."""
+    for line in (issue.get('body') or '').splitlines():
+        match = _BLOCKED_BY_LINE_RE.match(line) or _BLOCKED_BY_HEADING_RE.match(line.strip())
+        if match and match.group(1).strip(' :') and not _ISSUE_REF_RE.search(match.group(1)):
+            return True
+    return False
+
+
+def clear_stale_blocked(repos, list_blocked=None, ref_state=None, act=None):
+    """Take blocked off each open issue whose Blocked by refs are all closed or merged, and comment which (#1876).
+
+    Left alone: no Blocked by ref, a Blocked by line with no ref, an open or unreadable blocker, an open native blocker."""
+    list_blocked = list_blocked or fetch_blocked_issues
+    ref_state = ref_state or fetch_ref_state
+    act = act or run_gh
+    bits = []
+    cache = {}
+    for repo in repos:
+        rows = list_blocked(repo)
+        if rows is None:
+            bits.append('unblock_list_failed')
+            continue
+        for row in rows:
+            number = row.get('number')
+            refs = issue_blocker_refs(row, repo)
+            if not refs or _blocked_by_line_unparseable(row) or issue_scan_blocked(row):
+                continue
+            open_refs, unknown = issue_open_blockers(row, repo, ref_state, cache)
+            if open_refs or unknown:
+                continue
+            # Comment only after the label came off, so a failing edit does not comment every pass.
+            if act(['gh', 'issue', 'edit', str(number), '--repo', repo, '--remove-label', 'blocked']) != 0:
+                bits.append('unblock_fail=%s' % number)
+                continue
+            names = ', '.join(_blocker_label(ref, repo) for ref in refs)
+            act(['gh', 'issue', 'comment', str(number), '--repo', repo, '--body',
+                 'fleet-watch removed the blocked label: every blocker is closed or merged (%s) (#1876).' % names])
+            bits.append('unblock=%s' % number)
+    return bits
 
 
 def work_order_settings(config, now=None):
@@ -8330,7 +8446,7 @@ def _issue_scan_pass(
     start_detached=None, checks_lock_live=None, workflow_watch_prior=None,
     babysit_repos=None, repo_id_lookup=None, pick_fn=None, list_backlog=None, red_gates=None,
     issue_state=None,
-    deferred=None, list_claimed=None,
+    deferred=None, list_claimed=None, count_open=None, list_blocked=None, ref_state=None,
 ):
     """Start every eligible ready issue the host caps and the usage gate allow, and one rework worker per new failing review head."""
     notices = []
@@ -8605,6 +8721,10 @@ def _issue_scan_pass(
     if list_claimed is None:
         # A caller that injects the ready list (tests) gets no claimed list unless it injects one too.
         list_claimed = fetch_claimed_issues if list_issues is None else (lambda _repo: [])
+    if list_issues is not None:
+        # A caller that injects the ready list (tests) sees no open issue and no blocked issue unless it injects them (#1876).
+        count_open = count_open or (lambda _repo: 0)
+        list_blocked = list_blocked or (lambda _repo: [])
     if list_issues is None:
         list_issues = fetch_ready_issues
     if issue_state is None:
@@ -8709,12 +8829,26 @@ def _issue_scan_pass(
     if supply_line:
         notices.append(supply_line)
 
+    def stale_claimed(supply_repos):
+        # Claimed issues with no live worker, past the start grace, go to the supply worker (#1876).
+        out = []
+        for repo in supply_repos:
+            for claimed in list_claimed(repo) or []:
+                number = claimed.get('number')
+                if not isinstance(number, int) or issue_has_live_dispatch(workers, number):
+                    continue
+                if number in issue_pending.get(repo, []) or not started_is_stale(repo, number):
+                    continue
+                out.append((repo, number))
+        return out
+
     def try_supply(reserved):
         if list_failed:
             return 0
         bits, used = work_order_try_supply(
             config, state, now, repos, len(candidates), host, admission, extra_starts, reserved, workers,
-            start_worker, pick_fn, persist_state,
+            start_worker, pick_fn, persist_state, count_open,
+            lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act), stale_claimed,
         )
         log_bits.extend(bits)
         return used

@@ -34,7 +34,8 @@ def spent():
 def norm(value):
     """State without its empty containers: a pass creates empty maps with setdefault, which is not a state change."""
     if isinstance(value, dict):
-        out = {k: norm(v) for k, v in value.items() if k != 'work_order_no_work_day'}  # a status notice marker, not a start
+        # A status notice marker and the short pass count (#1876) are not starts.
+        out = {k: norm(v) for k, v in value.items() if k not in ('work_order_no_work_day', 'work_order_short_passes')}
         return {k: v for k, v in out.items() if v not in ({}, [], None)}
     if isinstance(value, list):
         return [norm(v) for v in value]
