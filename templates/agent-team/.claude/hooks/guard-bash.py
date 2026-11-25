@@ -1795,8 +1795,11 @@ def check_hidden_hosts(segment, base, args):
     if len(raw) != len(tokens):
         deny(f"The guard cannot read the words of this {base} command, so it is refused. Write it with plain words.")
     raw_args = raw[len(tokens) - len(args):]
+    lift = _LV_LIFT.get(_LV_SEG) if _LV_SEG is not None else None
+    lifted = lift[1] if lift and lift[0] == raw else set()
     for i in [ssh_argv(args)[1]] if base == "ssh" else operands_indices(base, args):
-        if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
+        if (i is not None and i < len(raw_args) and hidden_host(raw_args[i])
+                and len(raw) - len(raw_args) + i not in lifted):
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
                  "approval covers it. Write the host literally.")
@@ -2948,6 +2951,221 @@ def proven_python_stdin_body(command):
         return None
 
 
+def shell_script_index(args):
+    """The index of the script a shell runs: the first operand after its options and their arguments."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in SHELL_OPTS_WITH_ARG:
+            i += 2
+        elif a == "--":
+            return i + 1 if i + 1 < len(args) else None
+        elif a.startswith(("-", "+")) and len(a) > 1:
+            i += 1
+        else:
+            return i
+    return None
+
+
+def _expansion_end(word, i):
+    """The end of the expansion that starts with `$` at word[i], or None when that `$` is a plain character."""
+    span = _expansion_span(word, i)
+    return span and span[0]
+
+
+def _expansion_span(word, i):
+    """(end, closed) for the expansion that starts with `$` at word[i], or None when that `$` is plain."""
+    n = len(word)
+    nxt = word[i + 1] if i + 1 < n else ""
+    if nxt and nxt in "{(":
+        close, depth, j = "}" if nxt == "{" else ")", 1, i + 2
+        while j < n and depth:
+            if word[j] == "\\":
+                j += 1
+            elif word[j] == "'":
+                k = word.find("'", j + 1)
+                j = n - 1 if k < 0 else k
+            elif word[j] == '"':
+                k = j + 1
+                while k < n and word[k] != '"':
+                    k += 2 if word[k] == "\\" else 1
+                j = min(k, n - 1)
+            elif word[j] == nxt:
+                depth += 1
+            elif word[j] == close:
+                depth -= 1
+            j += 1
+        return j, depth == 0
+    if nxt and nxt in "'\"":
+        j = i + 2
+        while j < n and word[j] != nxt:
+            j += 2 if word[j] == "\\" else 1
+        return min(j + 1, n), j < n
+    if nxt and (nxt.isalpha() or nxt == "_"):
+        j = i + 2
+        while j < n and (word[j].isalnum() or word[j] == "_"):
+            j += 1
+        return j, True
+    if nxt and (nxt.isdigit() or nxt in "?#@*!$-"):
+        return i + 2, True
+    return None
+
+
+def _span_is_open(word):
+    """True when `word` ends inside a $(...), ${...} or backtick span that never closes."""
+    i, n = 0, len(word)
+    while i < n:
+        c = word[i]
+        if c == "\\":
+            i += 2
+        elif c == "'":
+            k = word.find("'", i + 1)
+            i = n if k < 0 else k + 1
+        elif c == "`":
+            k = word.find("`", i + 1)
+            if k < 0:
+                return True
+            i = k + 1
+        elif c == "$" and i + 1 < n and word[i + 1] in "({":
+            end, closed = _expansion_span(word, i)
+            if not closed:
+                return True
+            i = end
+        else:
+            i += 1
+    return False
+
+
+def shell_script_candidates(segment, base, parsed):
+    """The script words a shell head could run in `segment`, as raw text: the parser's word, plus the word after
+    each word named `base`. segments() cuts a word at `)`, so a word that ends in an open span is read from the
+    whole command when the segment appears there once, else it is any name (#1795)."""
+    out = [] if _span_is_open(parsed) else [parsed]  # the parser cut an open span: read it from the raw words
+    ew = expansion_words(segment)
+    for k, w in enumerate(ew):
+        if os.path.basename(w.strip("'\"")) != base:
+            continue
+        j = shell_script_index(ew[k + 1:])
+        if j is None:
+            continue
+        out.append(_whole_word(segment, ew, k + 1 + j))
+    return out
+
+
+def _whole_word(segment, ew, idx):
+    """ew[idx], the raw word at that index of expansion_words(segment), read from the whole command when it ends in
+    an open span (segments() cut it at `)`) and the segment appears there once; else any name."""
+    word = ew[idx]
+    if not _span_is_open(word):
+        return word
+    if CODE_COMMAND and CODE_COMMAND.count(segment) == 1:
+        whole = expansion_words(CODE_COMMAND[CODE_COMMAND.index(segment):])
+        if idx < len(whole) and whole[idx].startswith(word):
+            return whole[idx]
+    return "$?"
+
+
+def expansion_words(segment):
+    """The raw words of `segment`, quotes kept, with each $(...), ${...} and backtick span kept whole. A word ends
+    at blank space and at an unquoted `;`, `&`, `|`, `<`, `>`, `(` or `)` outside a span."""
+    s, out, buf, i = strip_comment(segment), [], "", 0
+    while i < len(s):
+        c = s[i]
+        if c == "$" and i + 1 < len(s) and s[i + 1] in "({":
+            j = _expansion_end(s, i)
+            buf, i = buf + s[i:j], j
+            continue
+        if c == "`":
+            j = s.find("`", i + 1)
+            j = len(s) if j < 0 else j + 1
+            buf, i = buf + s[i:j], j
+            continue
+        if c in "'\"":
+            j = s.find(c, i + 1) if c == "'" else i + 1
+            if c == '"':
+                while j < len(s) and s[j] != '"':
+                    j += 2 if s[j] == "\\" else 1
+            j = len(s) if j < 0 else min(j + 1, len(s))
+            buf, i = buf + s[i:j], j
+            continue
+        if c == "\\" and i + 1 < len(s):
+            buf, i = buf + s[i:i + 2], i + 2
+            continue
+        if c in " \t\n;&|<>()":
+            if buf:
+                out.append(buf)
+            buf = ""
+        else:
+            buf += c
+        i += 1
+    if buf:
+        out.append(buf)
+    return out
+
+
+def _only_quoted_heredoc_text(segment):
+    """True when every copy of `segment` in the command sits inside a quoted heredoc body (`<<'E'`), text the
+    shell neither runs nor expands. A segment the split changed is not found, so it is checked (#1795)."""
+    lines, bodies, i = RAW_COMMAND.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        for m in HEREDOC.finditer(line):
+            body = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            if m.group(1):
+                bodies.append("\n".join(body))
+    inside = sum(b.count(segment) for b in bodies)
+    return inside > 0 and RAW_COMMAND.count(segment) == inside
+
+
+def blocked_script_by_expansion(word):
+    """The blocked script a raw script word could name once the shell expands it (#1795), else None. Each
+    expansion ($NAME, ${...}, $(...), $'...', a backtick) is any text, a slash included, so only the
+    characters after the last plain `/` are kept, and the match is on the whole name from the first expansion."""
+    if not BLOCKED_SCRIPTS or not re.search(r"[$`]", word):
+        return None
+    pieces, quote, i, n = [], None, 0, len(word)
+    while i < n:
+        c = word[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            else:
+                pieces.append(("lit", c))
+            i += 1
+        elif c == "\\" and i + 1 < n:
+            pieces.append(("lit", word[i + 1]))
+            i += 2
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+            i += 1
+        elif c == "'" and quote is None:
+            quote = "'"
+            i += 1
+        elif c == "`":
+            j = word.find("`", i + 1)
+            pieces.append(("any", ""))
+            i = n if j < 0 else j + 1
+        elif c == "$" and _expansion_end(word, i) is not None:
+            pieces.append(("any", ""))
+            i = _expansion_end(word, i)
+        else:
+            pieces.append(("sep" if c == "/" else "lit", c))
+            i += 1
+    last = max((k for k, (kind, _) in enumerate(pieces) if kind == "sep"), default=-1)
+    tail = pieces[last + 1:]
+    first = next((k for k, (kind, _) in enumerate(tail) if kind == "any"), None)
+    if first is None:
+        return None
+    name = re.compile(".*" + "".join(".*" if kind == "any" else re.escape(c) for kind, c in tail[first:]),
+                      re.I | re.S)
+    return next((b for b in sorted(BLOCKED_SCRIPTS) if name.fullmatch(os.path.basename(b))), None)
+
+
 def check_indirection(base, args):
     if base in SHELLS:
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
@@ -3074,6 +3292,15 @@ def check_segment(segment, depth=0, cwd=None):
     if base in BLOCKED_SCRIPTS:
         deny(f"{base} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
              "Reading, grepping, editing or committing the file is fine; running it is not.")
+    if re.search(r"[$`]", prog) and not _only_quoted_heredoc_text(segment):
+        ew = expansion_words(segment)
+        k = next((n for n, w in enumerate(ew) if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w)), None)
+        words_ = ([] if _span_is_open(prog) else [prog]) + ([_whole_word(segment, ew, k)] if k is not None else [])
+        for word in words_:
+            hit = blocked_script_by_expansion(word)
+            if hit:
+                deny(f"`{word}` could name {hit}, which runs only inside the deploy pipeline (the deploy wrapper "
+                     "through /deploy). Write the script name literally.")
     if base == "eval":
         for text in [" ".join(args), *substitutions(" ".join(args))]:
             check_hidden_script_paths(text, transfer_cwd)
@@ -3103,9 +3330,18 @@ def check_segment(segment, depth=0, cwd=None):
                             if dest:
                                 cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
         else:
-            script = next((a for a in args if not a.startswith("-")), None)
+            idx = shell_script_index(args)
+            script = args[idx] if idx is not None else None
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
                 deny(f"{os.path.basename(script)} runs only inside the deploy pipeline (the deploy wrapper).")
+            known = _LV_SEG is not None and _LV_LIFT.get(("script", _LV_SEG)) == raw_words(segment)
+            if (script is not None and re.search(r"[$`]", segment) and not known
+                    and not _only_quoted_heredoc_text(segment)):
+                for word in shell_script_candidates(segment, base, script):
+                    hit = blocked_script_by_expansion(word)
+                    if hit:
+                        deny(f"`{word}` could name {hit}, which runs only inside the deploy pipeline (the deploy "
+                             "wrapper). Write the script name literally.")
 
     # 3. PayPal with the read only credentials: GET requests and the token request only.
     if base in {"curl", "wget", "http", "https", "xh"} and any("paypal.com/" in a for a in args):
@@ -4063,16 +4299,285 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# ---------------------------------------------------------------- Literal host variables (#1795)
+# A command that fits a closed shape (a prelude of NAME=literal statements, flat statements, at most one trailing
+# `for NAME in WORD...; do ...; done`) has known variable values. Only the hidden host deny is lifted, and only
+# for one word at one position: (segment index, word index), when every value of that word is a plain host. The
+# raw command keeps every other check, and each copy with the values filled in is checked too, so a copy can add
+# a deny but never remove one. Anything outside the shape returns no copies and is judged exactly as before.
+
+_LV_LIFT: dict = {}  # segment index -> (raw words of that segment, word indexes whose hidden host deny is lifted)
+_LV_SEG = None  # the index of the raw command segment check_command is judging, else None
+_LV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_LV_VAR = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+_LV_VAR_RE = r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
+_LV_TOKEN = re.compile(r"(?P<sp>[ \t]+)|(?P<redir>2>&1|2>/dev/null|>/dev/null)(?=[ \t;\n|]|\Z)"
+                       r"|(?P<op>&&|\|\||[;\n|])|(?P<sqword>'[^'\n]*')"
+                       r"|(?P<uword>(?:[A-Za-z0-9_./:@%+,=~*?\[\]-]|" + _LV_VAR_RE + r")+)"
+                       r"|(?P<qword>\"(?:[A-Za-z0-9_./:@%+,=-]|[ ]|" + _LV_VAR_RE + r")*\")")
+_LV_VALUE = re.compile(r"[A-Za-z0-9_./:@%+,-]+\Z")
+_LV_HEADS = {"echo", "ls", "cat", "head", "tail", "stat", "file", "wc", "ssh", "scp", "bash", "sh"}
+_LV_LOOP_MAX = 16
+_LV_SPECIAL = {
+    "IFS", "PATH", "HOME", "CDPATH", "REPLY", "ENV", "SHELLOPTS", "BASHOPTS", "PWD", "OLDPWD", "OPTIND",
+    "OPTARG", "GLOBIGNORE", "HISTFILE", "ZDOTDIR", "TMPDIR", "SHELL", "FPATH", "MAILPATH", "MAIL", "TERM",
+    "USER", "LOGNAME", "SECONDS", "RANDOM", "LINENO", "HOSTNAME", "PPID", "UID", "EUID", "TMOUT", "NULLCMD",
+    "READNULLCMD", "WORDCHARS", "KEYTIMEOUT", "FIGNORE", "POSIXLY_CORRECT", "PROMPT_COMMAND", "MAILCHECK",
+    "path", "cdpath", "fpath", "manpath", "module_path", "mailpath", "psvar", "status", "argv", "pipestatus",
+    "prompt", "options", "commands", "functions", "aliases", "builtins", "parameters", "reply", "match",
+    "mbegin", "mend", "signals", "history", "historywords", "jobstates", "jobtexts", "jobdirs", "dirstack",
+    "funcstack", "widgets", "termcap", "terminfo", "modules", "nameddirs", "userdirs", "sysparams", "_",
+    "COLUMNS", "LINES", "SHLVL", "ERRNO", "GID", "EGID", "SAVEHIST", "LISTMAX", "ARGC", "FUNCNEST", "GROUPS",
+    "FUNCNAME", "DIRSTACK", "EPOCHSECONDS", "EPOCHREALTIME", "SRANDOM",
+}
+_LV_SPECIAL_PREFIX = ("LC_", "BASH", "LD_", "DYLD_", "ZSH", "GIT_", "PS", "PROMPT", "HIST", "SSH_", "SUDO")
+
+
+_LV_WORDS = ("uword", "qword", "sqword", "redir")
+_LV_LITERAL = ("sqword", "redir")  # a single quoted argument or a fixed redirect: never filled in, never a name
+_LV_OPTION = re.compile(r"(?:BatchMode|ConnectTimeout|ServerAliveInterval|ServerAliveCountMax)=[A-Za-z0-9]+\Z")
+
+
+class _LVMiss(Exception):
+    """The command is outside the closed shape: judge it exactly as before."""
+
+
+def _lv_tokens(command):
+    out, pos, prev = [], 0, "op"
+    while pos < len(command):
+        m = _LV_TOKEN.match(command, pos)
+        if not m:
+            raise _LVMiss
+        kind = m.lastgroup
+        if kind in _LV_WORDS:
+            if prev in _LV_WORDS:  # a quote in the middle of a word
+                raise _LVMiss
+            out.append((kind, m.group()))
+        elif kind == "op":
+            out.append(("op", m.group()))
+        prev = kind
+        pos = m.end()
+    return out
+
+
+def _lv_statements(tokens):
+    """[(separator before, [(kind, text), ...])]. Blank lines drop out; any other empty statement is a miss."""
+    out, cur, sep = [], [], "\n"
+    for kind, text in tokens:
+        if kind != "op":
+            cur.append((kind, text))
+        elif cur:
+            out.append((sep, cur))
+            cur, sep = [], text
+        elif text != "\n":
+            raise _LVMiss
+    if cur:
+        out.append((sep, cur))
+    elif sep not in (";", "\n"):
+        raise _LVMiss
+    return out
+
+
+def _lv_name(name, bound):
+    if not _LV_NAME.match(name) or name in bound or name in _LV_SPECIAL or name.startswith(_LV_SPECIAL_PREFIX):
+        raise _LVMiss
+    return name
+
+
+def _lv_vars(text):
+    """The names in `text`. A `[`, `$` or `{` after a variable (a subscript or a joined name) is a miss, and so is
+    a `:` after a bare `$NAME` unless `/` follows it: zsh reads `$h:r` or `$h:tmp` as a modifier (#1795).
+    `${NAME}:` and `$NAME:/` mean the same text in bash and zsh, the host:path form of scp."""
+    names = []
+    for m in _LV_VAR.finditer(text):
+        after = text[m.end():m.end() + 2]
+        if after[:1] in ("[", "$", "{") or (after[:1] == ":" and m.group(1) and after != ":/"):
+            raise _LVMiss
+        names.append(m.group(1) or m.group(2))
+    return names
+
+
+def _lv_sub(text, values):
+    return _LV_VAR.sub(lambda m: values[m.group(1) or m.group(2)], text)
+
+
+def _lv_literal(word):
+    """A plain word as the shell keeps it: `~` only alone or before `/`, no `..` component, a closed charset."""
+    if word == "~" or word.startswith("~/"):
+        word = os.path.expanduser("~") + word[1:]
+    if "/../" in f"/{word}/" or "++" in word or "--" in word or not _LV_VALUE.match(word):
+        raise _LVMiss
+    return word
+
+
+def _lv_check_statement(stmt, names, bound):
+    texts = [t for _, t in stmt]
+    for kind, t in stmt:
+        if kind in _LV_LITERAL:
+            continue
+        if any(n not in names for n in _lv_vars(t)):
+            raise _LVMiss
+        if t in bound:
+            raise _LVMiss
+    if texts[0] == "[":
+        if (len(stmt) != 4 or texts[1] not in ("-d", "-f", "-e") or texts[3] != "]" or stmt[2][0] != "uword"
+                or any(c in texts[2] for c in "=[]")):
+            raise _LVMiss
+        return
+    if stmt[0][0] != "uword" or texts[0] not in _LV_HEADS:
+        raise _LVMiss
+    for j, (kind, t) in enumerate(stmt):
+        if kind in _LV_LITERAL and j:
+            continue
+        if kind == "qword" and texts[0] == "echo":
+            continue
+        if texts[0] in ("ssh", "scp") and j > 1 and texts[j - 1] == "-o" and _LV_OPTION.match(t):
+            continue  # `-o Key=Value`, an ssh option
+        if any(c in t for c in "=[]") or "++" in t or "--" in t:
+            raise _LVMiss
+
+
+def literal_variable_copies(command):
+    """Fill _LV_LIFT and return the copies of `command` with the values filled in, or [] outside the shape."""
+    _LV_LIFT.clear()
+    stmts = _lv_statements(_lv_tokens(command))
+    prelude, i = {}, 0
+    while i < len(stmts) and len(stmts[i][1]) == 1 and stmts[i][0] in (";", "\n"):
+        kind, text = stmts[i][1][0]
+        name, eq, value = text.partition("=")
+        if kind != "uword" or not eq or not _LV_NAME.match(name):
+            break
+        if "$" in value or "=" in value or any(c in value for c in "*?[]"):
+            raise _LVMiss
+        if i + 1 < len(stmts) and stmts[i + 1][0] not in (";", "\n"):
+            raise _LVMiss
+        prelude[_lv_name(name, prelude)] = _lv_literal(value)
+        i += 1
+    if not prelude and not any(s[1][0][1] == "for" for s in stmts):
+        return []
+    # Each statement as the segment check_command judges, with `do` dropped (#1810 breaks a segment there).
+    layout = [[t for _, t in s] for _, s in stmts[:i]]
+    flat, loop = stmts[i:], None
+    k = next((j for j, s in enumerate(flat) if s[1][0] == ("uword", "for")), None)
+    if k is not None:
+        flat, rest = flat[:k], flat[k:]
+        sep, header = rest[0]
+        if sep not in (";", "\n") or len(header) < 4 or header[2] != ("uword", "in"):
+            raise _LVMiss
+        if any(kind != "uword" for kind, _ in header):
+            raise _LVMiss
+        var = _lv_name(header[1][1], prelude)
+        words_ = [t for _, t in header[3:]]
+        if any(w in ("for", "do", "done") for w in words_):
+            raise _LVMiss
+        body = rest[1:]
+        if len(body) < 2 or body[-1][1] != [("uword", "done")] or body[-1][0] not in (";", "\n"):
+            raise _LVMiss
+        body = body[:-1]
+        first_sep, first = body[0]
+        if first_sep not in (";", "\n") or first[0] != ("uword", "do"):
+            raise _LVMiss
+        body = ([(first_sep, first[1:])] if len(first) > 1 else []) + body[1:]
+        if not body or any(t[1] in ("for", "do", "done") for _, s in body for t in s):
+            raise _LVMiss
+        values = []
+        for w in words_:  # every word is checked, also the words after a glob word (#1824 Review 2)
+            if any(n not in prelude for n in _lv_vars(w)) or "=" in w or "[" in w or "]" in w:
+                raise _LVMiss
+            w = _lv_sub(w, prelude)
+            if "*" in w or "?" in w:
+                _lv_literal(w.replace("*", "x").replace("?", "x"))
+                values = None
+            else:
+                value = _lv_literal(w)
+                if values is not None:
+                    values.append(value)
+        loop = (var, values, [(sep, [("uword", _lv_sub(t, prelude)) for _, t in header])], body)
+        layout += [[t for _, t in s] for _, s in flat] + [[t for _, t in header]]
+        layout += [[t for _, t in s] for _, s in body] + [["done"]]
+    else:
+        layout += [[t for _, t in s] for _, s in flat]
+    bound = set(prelude) | ({loop[0]} if loop else set())
+    for part, names in ((flat, set(prelude)), (loop[3] if loop else [], bound)):
+        for _, stmt in part:
+            _lv_check_statement(stmt, names, bound)
+    if loop and len(loop[2][0][1]) - 3 > _LV_LOOP_MAX:
+        deny(f"A loop over {len(loop[2][0][1]) - 3} words is more than the guard follows ({_LV_LOOP_MAX}), so it "
+             "is refused: split the loop into smaller loops.")
+
+    def values_of(name):
+        return loop[1] if loop and name == loop[0] else [prelude[name]]
+
+    # segments() cuts `2>&1` at `&`, so the layout does too.
+    cut = []
+    for texts in layout:
+        while "2>&1" in texts:
+            at = texts.index("2>&1")
+            cut.append(texts[:at] + ["2>"])
+            texts = ["1"] + texts[at + 1:]
+        cut.append(texts)
+    layout = cut
+    # The lift is keyed by segment index, so it holds only when check_command sees these same segments.
+    if [raw_words(s) for s in segments(command)] == layout:
+        for n, texts in enumerate(layout):
+            names_ = [m for t in texts for m in _lv_vars(t)]
+            if any(values_of(m) is None for m in names_):
+                continue  # a glob loop word could be an option: lift nothing in this statement
+            if texts[0] in ("bash", "sh") and names_:
+                _LV_LIFT[("script", n)] = texts  # every value is known: the copies judge the script name literally
+            if texts[0] not in ("ssh", "scp"):
+                continue
+            lifted = set()
+            for j, text in enumerate(texts[1:], 1):
+                if text.startswith("'"):
+                    continue  # single quoted: the local shell fills in nothing
+                names = _lv_vars(text)
+                if not names:
+                    continue
+                if texts[0] == "ssh" and ":" in text:
+                    continue  # `$h:...` on an ssh destination: no lift
+                quoted = text.startswith('"')
+                if quoted and any(":" in v for m in names for v in values_of(m)):
+                    continue  # a quoted remote path: the value must not add a host
+                if loop and loop[0] in names:
+                    choices = [_lv_sub(text, {**prelude, loop[0]: v}) for v in loop[1]]
+                else:
+                    choices = [_lv_sub(text, prelude)]
+                if not any(hidden_host(c[1:-1] if quoted else c) for c in choices):
+                    lifted.add(j)
+            if lifted:
+                _LV_LIFT[n] = (texts, lifted)
+
+    def render(stmts_, values):
+        out = []
+        for sep, stmt in stmts_:
+            text = " ".join(t if kind in _LV_LITERAL else _lv_sub(t, values) for kind, t in stmt)
+            out.append(text if not out else f"{sep} {text}")
+        return " ".join(out)
+
+    if not loop:
+        return [render(flat, prelude)] if flat else []
+    var, vals, head, body = loop
+    if vals is None:
+        return [render(flat + head + body, {**prelude, var: "$" + var})]
+    return [render(flat + head + body, {**prelude, var: v}) for v in vals]
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
+    global _LV_SEG
     for text in texts:
         cur_cwd = GATE_CWD
-        for seg in segments(text):
-            check_segment(seg, cwd=cur_cwd)
+        for n, seg in enumerate(segments(text)):
+            _LV_SEG = n if text is texts[0] else None
+            try:
+                check_segment(seg, cwd=cur_cwd)
+            finally:
+                _LV_SEG = None
             prog, args = program_and_args(words(seg))
             if prog in ("cd", "pushd") and args:
                 dest = next((a for a in args if not a.startswith("-")), None)
@@ -4118,11 +4623,32 @@ def main():
     RAW_COMMAND = command
     check_background_wait(command)
     try:
+        copies = literal_variable_copies(command)
+    except SystemExit:
+        raise
+    except Exception:  # _LVMiss, or a shape the resolver cannot read: judge the command exactly as before
+        _LV_LIFT.clear()
+        copies = []
+    try:
         check_command(command)
+        _LV_LIFT.clear()
+        for copy in copies:  # each copy can only add a deny
+            RAW_COMMAND = copy
+            check_command(copy)
+        RAW_COMMAND = command
     except SystemExit:
         raise
     except Exception:
-        return
+        RAW_COMMAND = command
+        if not _LV_LIFT and not copies:
+            return
+        _LV_LIFT.clear()  # a lifted or copy check failed: judge the raw command as before, with no lift
+        try:
+            check_command(command)
+        except SystemExit:
+            raise
+        except Exception:
+            return
 
 
 if __name__ == "__main__":
