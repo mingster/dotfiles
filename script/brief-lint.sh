@@ -93,25 +93,33 @@ function note_installer(cmd,    path, base) {
 
 # A run is a command in backticks or alone on a line, or "run <installer>" in prose (also "run `<name>`").
 # Out of scope, Allowed files and context sections (Problem, Background ...) never run anything.
-function harvest_installers(line,    rest, chunk, pre, prose, low, cmd, bare) {
+function harvest_installers(line,    rest, chunk, pre, prose, low, cmd, bare, rstart, rlen) {
   if (sec == "Out of scope" || sec == "Allowed" || sec == "Context" || line ~ /^(\*\*)?Allowed files:/) return
   rest = line
   prose = ""
   while (match(rest, /`[^`]+`/)) {
-    pre = substr(rest, 1, RSTART - 1)
-    chunk = substr(rest, RSTART + 1, RLENGTH - 2)
+    # note_installer runs installer_run, which overwrites the awk globals RSTART and RLENGTH, so save them first.
+    rstart = RSTART
+    rlen = RLENGTH
+    pre = substr(rest, 1, rstart - 1)
+    chunk = substr(rest, rstart + 1, rlen - 2)
     prose = prose pre " "
-    note_installer((tolower(pre) ~ /(^|[^a-z])(run|runs|rerun|re-run)[[:space:]]+$/) ? "bash " chunk : chunk)
-    rest = substr(rest, RSTART + RLENGTH)
+    cmd = chunk
+    # "run `bash x.sh`" already names its interpreter, so only a bare "run `x.sh`" gets one added.
+    if (tolower(pre) ~ /(^|[^a-z])(run|runs|rerun|re-run)[[:space:]]+$/ && cmd !~ /^(bash|sh|zsh)[[:space:]]/) cmd = "bash " cmd
+    note_installer(cmd)
+    rest = substr(rest, rstart + rlen)
   }
   prose = prose rest
   low = tolower(prose)
   while (match(low, /(^|[^a-z])(run|runs|rerun|re-run)[[:space:]]+[^[:space:]]*(install-fleet-automations|setup-[a-z0-9_-]+|install)\.sh([[:space:]]+-[^[:space:],;]+)*/)) {
-    cmd = substr(prose, RSTART, RLENGTH)
+    rstart = RSTART
+    rlen = RLENGTH
+    cmd = substr(prose, rstart, rlen)
     sub(/^[^A-Za-z]*[A-Za-z-]+[[:space:]]+/, "", cmd)
     note_installer("bash " cmd)
-    prose = substr(prose, RSTART + RLENGTH)
-    low = substr(low, RSTART + RLENGTH)
+    prose = substr(prose, rstart + rlen)
+    low = substr(low, rstart + rlen)
   }
   if (index(line, "`") > 0) return
   bare = line

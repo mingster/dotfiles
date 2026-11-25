@@ -812,5 +812,26 @@ mb_a=$(LC_ALL=en_US.UTF-8 bash "$lint" "$tmp/mb-ascii.md" 2>&1); mb_ae=$?
 mb_z=$(LC_ALL=en_US.UTF-8 bash "$lint" "$tmp/mb-zh.md" 2>&1); mb_ze=$?
 if [ "$mb_ze" -eq "$mb_ae" ] && [ "$mb_z" = "$mb_a" ] && [ "$mb_a" = "brief-lint: missing Out of scope" ]; then ok; else bad "Chinese brief should lint like its ASCII twin (zh ec=$mb_ze out=$mb_z; ascii ec=$mb_ae out=$mb_a)"; fi
 
+# 1901. A multi-backtick line whose last backtick span runs an installer: note_installer clobbered RSTART and
+# RLENGTH, so the harvest loop sliced the wrong offset and hung in awk. It must finish fast and lint clean.
+mkdir -p "$tmp/inst-repo/script"
+printf '#!/usr/bin/env bash\n# supports --dry-run\n' >"$tmp/inst-repo/script/setup-demo.sh"
+cat >"$tmp/rstart.md" <<'EOF'
+Refs #1901
+
+## Acceptance
+- [ ] A test in `bin/run-privacy-journal-export.test.sh` with `PATH` `/usr/bin:/bin` and a fake `runuser` only under a sbin dir fails on main, then run `bash script/setup-demo.sh --dry-run`.
+
+## Out of scope
+Nothing else.
+
+## Verify
+Run bash script/tests/brief-lint.test.sh.
+
+Side effects: none.
+EOF
+rs_out=$(timeout 5 bash "$lint" "$tmp/rstart.md" "$tmp/inst-repo" 2>&1); rs_ec=$?
+if [ "$rs_ec" -eq 0 ] && [ -z "$rs_out" ]; then ok; else bad "multi-backtick installer line should lint in under 5s with no output (ec=$rs_ec, out=$rs_out)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
