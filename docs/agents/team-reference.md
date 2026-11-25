@@ -345,6 +345,7 @@ All team tools live under `script/`, `.agents/skills/orca-team/`, and `bin/`.
 | `script/apply-ide-overlay.py` | Prints an IDE settings file with list items (such as `cSpell.userWords`) added from an untracked overlay. Called by `setup-antigravity.sh` and `link-cursor-user.sh`. |
 | `script/receipt-state.py` | Finds the newest Checks, Review or Verdict comment at an exact head. Called by `fleet-watch.py` and `coordinator-publication.sh`. |
 | `script/worker-preamble.py` | Resolves the `poteto-mode`, `ORCA-ADAPTER` and role file paths for a worker brief. Called by `worker-startup.sh`, `fleet-watch.py` and `select-changed-script-tests.sh`. |
+| `script/dotfiles-unblocked.py` | Drops issues whose body says `Blocked by #N` with #N still open or unreadable, using fleet-watch's own blocker parser. Called by the dotfiles first gate in `worker-startup.sh`. |
 | `script/agy-signin.py` | Matches the Antigravity sign-in screen and keeps the per host `agy-unavailable` mark. Called by `worker-startup.sh` and `fleet-watch.py`. |
 | `script/fleet-watch-record.py` | Records the Orca and `gh` replies that the fleet watch tests replay. Run by hand, `--dry` first. |
 | `script/install_asdf.sh`, `script/install_node.sh`, `script/install_java_dev.sh` | Install `asdf`, Node.js (version from `.tool-versions`) and Java through `asdf`. Called by the `system_setup.sh` of each platform and `weekly-update.sh` (Node). |
