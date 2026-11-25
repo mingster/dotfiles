@@ -1,0 +1,1 @@
+fleet-watch: a start refused because the issue already has a live worker, or its live task list cannot be read, defers the issue and keeps ready-for-agent instead of parking it as needs-triage (#1839).
