@@ -965,6 +965,14 @@ release_claim() { # a failed start: put back the labels claim_issue changed
   return 0
 }
 
+# A ready issue whose body says `Blocked by #N` with #N still open (or unreadable) is not startable, so it cannot hold other
+# repos back (#1823). Uses fleet-watch's own blocker parser. Any failure returns the list unchanged.
+drop_blocked_issues() { # <repo> <issues_json>
+  local out
+  out=$("$python3" "$here/dotfiles-unblocked.py" "$here/fleet-watch.py" "$1" "$2" 2>/dev/null) || { printf '%s' "$2"; return 0; }
+  printf '%s' "$out"
+}
+
 # Owner rule 2026-11-20: every dotfiles issue starts before any other repo's. The hand dispatch path obeys it too.
 # A builder brief that Refs another repo is refused while a ready dotfiles issue waits. Rework and verify briefs, a brief
 # with no explicit repo, and a failed gh call go on. A start takes the free seat, so a ready issue plus a start request is the seat test.
@@ -989,14 +997,15 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   command -v gh >/dev/null 2>&1 || return 0
   # A dotfiles issue fleet-watch could not start in its last 15 minutes (placement, host cap) cannot go first, so it does not
   # hold back other repos (#1778). fleet-watch records it in its state file under dotfiles_deferred.
-  local state_file=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json} cant_start='[]' startable dot_tier ref_tier
+  local state_file=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json} cant_start='[]' ready_json startable dot_tier ref_tier
   cant_start=$(jq -c --argjson now "$(date +%s)" '(.dotfiles_deferred // {}) | with_entries(select(.value > $now - 900)) | keys' "$state_file" 2>/dev/null) || cant_start='[]'
   [ -n "$cant_start" ] || cant_start='[]'
   # The three tiers of issue_scan_queue_key in fleet-watch.py (#1791): 0 a main red or red gate fixer, 1 a P0 or bug issue,
   # 2 the rest. A lower tier in any repo starts first; within a tier dotfiles goes first.
   local tier_def='def tier: if ((.title // "") | startswith("main red: ") or startswith("red gate: ")) then 0 elif ([.labels[].name] | index("P0") != null or index("bug") != null) then 1 else 2 end; '
-  startable=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels,title 2>/dev/null \
-    | jq -c --argjson cant "$cant_start" "$tier_def"'[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | {number, tier: tier}]' 2>/dev/null) || startable=
+  ready_json=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels,title,body 2>/dev/null) || ready_json=
+  ready_json=$(drop_blocked_issues "$dot" "$ready_json")
+  startable=$(printf '%s' "$ready_json" | jq -c --argjson cant "$cant_start" "$tier_def"'[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | {number, tier: tier}]' 2>/dev/null) || startable=
   waiting=$(printf '%s' "$startable" | jq -r 'map("#\(.number)") | join(", ")' 2>/dev/null) || waiting=
   [ -n "$waiting" ] || return 0
   dot_tier=$(printf '%s' "$startable" | jq -r 'map(.tier) | min' 2>/dev/null) || dot_tier=0

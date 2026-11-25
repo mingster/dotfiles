@@ -2357,7 +2357,8 @@ printf '%s\n' "$*" >>"$GH_STUB_LOG"
 view_default='{"labels":[],"title":"feat: x"}'
 case "$1 $2" in
   "issue list") printf '%s\n' "$GH_STUB_ISSUES" ;;
-  "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1; printf '%s\n' "${GH_STUB_VIEW:-$view_default}" ;;
+  "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1
+    case "$*" in *"--json state"*) printf '%s\n' "${GH_STUB_BLOCKER_STATE:-CLOSED}" ;; *) printf '%s\n' "${GH_STUB_VIEW:-$view_default}" ;; esac ;;
   "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
 esac
 EOS
@@ -2375,6 +2376,12 @@ grep -Fq 'skip-dotfiles-first' "$tmp/route.err" && grep -Fq 'owner asked for thi
 held='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"blocked"}]},{"number":6,"labels":[{"name":"needs-triage"}]}]'
 GH_STUB_ISSUES=$held DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a held or unready dotfiles issue must not block a start (ec=$route_ec) $(cat "$tmp/route.err")"
+# 1823: a ready dotfiles issue whose `Blocked by #N` is open does not hold a start back; a closed blocker still does.
+blocked='[{"number":5,"body":"Blocked by #4","labels":[{"name":"ready-for-agent"},{"name":"P2"}]}]'
+GH_STUB_BLOCKER_STATE=OPEN GH_STUB_ISSUES=$blocked DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a ready issue with an open blocker must not refuse a start (ec=$route_ec) $(cat "$tmp/route.err")"
+GH_STUB_BLOCKER_STATE=CLOSED GH_STUB_ISSUES=$blocked DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a ready issue whose blocker is closed must still refuse (ec=$route_ec)"
 GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "no ready dotfiles issue should let the start go on (ec=$route_ec) $(cat "$tmp/route.err")"
 GH_STUB_VIEW='{"labels":[{"name":"P0"}],"title":"fix: x"}' GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
