@@ -2,8 +2,10 @@
 # shellcheck source=lib/asdf-pin.sh
 . "$(cd "$(dirname "$0")" && pwd)/lib/asdf-pin.sh"
 # #1533: the daily disk cleanup (wrap-up.sh --daily). A dry run lists what it would delete; --apply keeps every worktree with
-# uncommitted or unpushed work, an open PR, a live terminal or a change in the last 3 hours, removes a squash merged one, and
-# clears build caches, old logs and package caches. Disposable repos, fake orca, gh, brew and bun; never the real HOME.
+# uncommitted work, an open PR, a live terminal or a change in the last 3 hours, removes the rest, and clears build caches, old
+# logs and package caches. #1853: the daily prune keeps only main, production, staging and active work, logs every delete for
+# restore first, and only the coordinator host deletes origin branches. Disposable repos and a fake remote, fake orca, gh, brew
+# and bun; never the real HOME.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 tmp=$(mktemp -d)
@@ -16,7 +18,8 @@ case "$*" in
   'repo view --json defaultBranchRef') echo '{"defaultBranchRef":{"name":"main"}}' ;;
   'api repos/{owner}/{repo}/pages') echo '{"source":null}' ;;
   'api --paginate repos/{owner}/{repo}/branches?protected=true&per_page=100') echo '[]' ;;
-  'pr list '*) cat "$FAKE_DIR/prs.json" ;;
+  'pr list --state open '*) [ -z "${FAKE_GH_PR_FAIL:-}" ] || exit 1; jq '[.[] | select(.state == "OPEN")]' "$FAKE_DIR/prs.json" ;;
+  'pr list '*) [ -z "${FAKE_GH_PR_FAIL:-}" ] || exit 1; cat "$FAKE_DIR/prs.json" ;;
   *) exit 1 ;;
 esac
 FAKE
@@ -26,6 +29,9 @@ case "$*" in
   'terminal list --json') cat "$FAKE_DIR/terminals.json" ;;
   'status --json') echo '{"ok":true,"result":{"runtime":{"state":"ready"}}}' ;;
   'repo list --json') jq -n --arg p "$ROUND_REPO" '{ok:true,result:{repos:[{path:$p,kind:"git"}]}}' ;;
+  'environment list --json') cat "$FAKE_DIR/envs.json" ;;
+  'worktree list --environment peer --json') cat "$FAKE_DIR/peer-worktrees.json" ;;
+  'orchestration worker-list --json') [ -z "${FAKE_ORCA_WORKERS_FAIL:-}" ] || exit 1; echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
   *) echo '{"ok":true,"result":{"workers":[],"worktrees":[],"page":{"hasMore":false}}}' ;;
 esac
 FAKE
@@ -55,6 +61,7 @@ export WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_EXTRA_BIN= WRAP_UP_ORCA_APP_BIN="$
 export WRAP_UP_DAILY_LOG="$tmp/round.log" WRAP_UP_WORKSPACES_ROOT="$tmp/workspaces" AGENT_STATE_DIR="$tmp/agent-state"
 export WRAP_UP_SCHEDULED_LOAD_CMD='echo 0.1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' WRAP_UP_DAILY_BIG_LOG_KB=1
 echo '[]' > "$tmp/prs.json"
+echo '{"ok":true,"result":{"environments":[]}}' > "$tmp/envs.json"
 echo '{"ok":true,"result":{"terminals":[]}}' > "$tmp/terminals.json"
 
 git init -q --bare "$tmp/origin"
@@ -77,6 +84,7 @@ g worktree add -q -b b-held "$tmp/wt-held" main
 printf '%s\n' "$tmp/wt-held" > "$tmp/open-files" # a process whose cwd is the worktree
 g worktree add -q -b b-unpushed "$tmp/wt-unpushed" main
 git -C "$tmp/wt-unpushed" -c user.name=Test -c user.email=test@example.invalid commit -qm 'only here' --allow-empty
+unpushed_sha=$(git -C "$tmp/wt-unpushed" rev-parse HEAD)
 g worktree add -q -b b-openpr "$tmp/wt-openpr" main
 git -C "$tmp/wt-openpr" -c user.name=Test -c user.email=test@example.invalid commit -qm 'in review' --allow-empty
 git -C "$tmp/wt-openpr" push -q origin b-openpr
@@ -140,7 +148,9 @@ check 'a round reports ok with free space before and after' grep -Eq 'wrap-up-da
 check 'removes the merged worktree' gone "$tmp/wt-merged"
 check 'removes the squash merged worktree (PR head not on any remote branch)' gone "$tmp/wt-squash"
 check 'keeps a worktree with uncommitted work' present "$tmp/wt-dirty"
-check 'keeps a worktree with unpushed commits' present "$tmp/wt-unpushed"
+# #1853 replaced these two keeps: the prune removes work that is not active, and the restore log holds its sha.
+check 'removes a worktree with unpushed commits (not active work, #1853)' gone "$tmp/wt-unpushed"
+check 'logs the unpushed branch with its sha before the delete' grep -Fq "$(printf 'local\tb-unpushed\t%s' "$unpushed_sha")" "$tmp/agent-state/branch-prune/$(date +%F).tsv"
 check 'keeps a worktree with an open PR' present "$tmp/wt-openpr"
 check 'keeps a worktree with a live terminal' present "$tmp/wt-live"
 check 'keeps a worktree a process holds a file open in' present "$tmp/wt-held"
@@ -148,8 +158,8 @@ check 'says a process holds it' grep -Fq "Kept worktree $tmp/wt-held (held open 
 check 'never runs the slow recursive lsof +D scan' bash -c '! grep -Fq -- "+D" "$1"' _ "$tmp/lsof.log"
 check 'asks lsof for the whole listing' grep -Fq -- '-Fn' "$tmp/lsof.log"
 check 'keeps a worktree changed in the last 3 hours' present "$tmp/wt-fresh"
-check 'keeps a merged PR branch that moved on after the merge' present "$tmp/wt-moved"
-check 'says why for each kept one' bash -c 'for r in "uncommitted changes" "commits not on any remote" "open PR" "active or unknown Orca terminal" "changed in the last 180 minutes"; do grep -Fq -- "$r" "$1" || exit 1; done' _ "$tmp/round-detail.log"
+check 'removes a merged PR branch that moved on after the merge (not active work, #1853)' gone "$tmp/wt-moved"
+check 'says why for each kept one' bash -c 'for r in "uncommitted changes" "open PR" "active or unknown Orca terminal" "changed in the last 180 minutes"; do grep -Fq -- "$r" "$1" || exit 1; done' _ "$tmp/round-detail.log"
 check 'drops build caches in a kept worktree, top level and one level down' bash -c '! test -e "$1/node_modules/.cache" && ! test -e "$1/web/.next" && ! test -e "$1/web/node_modules/.cache"' _ "$tmp/wt-dirty"
 check 'keeps node_modules itself' present "$tmp/wt-dirty/node_modules"
 check 'removes an old app log' gone "$tmp/home/Library/Logs/old.log"
@@ -219,6 +229,105 @@ check 'a board-clean timeout is logged' grep -Fq 'board-clean exit 124' "$tmp/ro
 check 'a board-clean timeout is named in the round line' bash -c 'tail -n1 "$1" | grep -Fq "round ok" && tail -n1 "$1" | grep -Fq "board-clean timed out"' _ "$tmp/round.log"
 check 'a board-clean timeout leaves no failure streak' test ! -s "$tmp/state/wrap-up-daily.failures"
 check 'the repo child leaves the board reserve out of its limit' test "$(head -n1 "$tmp/child-limits")" -le 180
+
+# #1853: the prune, in a repo of its own with a fake remote. Keep set: main, production, staging, an open PR head, a live
+# worker's worktree, a dirty worktree, and (origin only) a branch checked out on a paired host. Everything else goes.
+export ROUND_REPO="$tmp/p" BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-stub"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+plog="$tmp/agent-state/branch-prune/$(date +%F).tsv"
+rm -f "$plog"
+git init -q --bare -b main "$tmp/p-origin"
+git init -q -b main "$tmp/p"
+pg() { git -C "$tmp/p" -c user.name=Test -c user.email=test@example.invalid "$@"; }
+pg commit -qm p1 --allow-empty
+pg remote add origin "$tmp/p-origin"
+mkdir -p "$tmp/p/.agents"; : > "$tmp/p/.agents/head-checks.conf"
+mkbr() { # <name> [push]: a branch with one commit of its own
+  pg branch "$1" main; pg checkout -q "$1"; pg commit -qm "work on $1" --allow-empty; pg checkout -q main
+  [ -z "${2:-}" ] || pg push -q origin "$1"
+}
+for b in staging production; do pg branch "$b" main; done
+pg push -q origin main staging production
+mkbr gone-local; mkbr gone-pushed push; mkbr master push; mkbr open-pr push; mkbr on-peer push
+pg worktree add -q -b p-live "$tmp/p-wt-live" main
+pg worktree add -q -b p-dirty "$tmp/p-wt-dirty" main; echo wip > "$tmp/p-wt-dirty/wip.txt"
+pg worktree add -q -b p-old "$tmp/p-wt-old" main
+gd=$(git -C "$tmp/p-wt-old" rev-parse --absolute-git-dir); find "$tmp/p-wt-old" "$gd" -exec touch -t "$old" {} +
+git -C "$tmp/p-wt-old" status --porcelain >/dev/null; touch -t "$old" "$gd/HEAD" "$gd/index"
+gone_local_sha=$(pg rev-parse gone-local)
+jq -n --arg o "$(pg rev-parse open-pr)" '[{headRefName:"open-pr",headRefOid:$o,state:"OPEN"}]' > "$tmp/prs.json"
+jq -n --arg p "$tmp/p-wt-live" '{ok:true,result:{terminals:[{handle:"t-live",cwd:$p}]}}' > "$tmp/terminals.json"
+echo '{"ok":true,"result":{"environments":[{"id":"peer","name":"peer"}]}}' > "$tmp/envs.json"
+echo '{"ok":true,"result":{"worktrees":[{"branch":"refs/heads/on-peer","path":"/elsewhere/on-peer"}],"hostScope":{"omittedHostIds":[]}}}' > "$tmp/peer-worktrees.json"
+local_has() { git -C "$tmp/p" show-ref --verify --quiet "refs/heads/$1"; }
+local_gone() { ! local_has "$1"; }
+origin_has() { git -C "$tmp/p-origin" show-ref --verify --quiet "refs/heads/$1"; }
+origin_gone() { ! origin_has "$1"; }
+both_have() { local_has "$1" && origin_has "$1"; }
+
+bash "$root/script/wrap-up.sh" --daily --dry-run > "$tmp/output" 2>&1 || true
+check 'prune dry run lists a local branch with no PR' detail_has 'Delete local gone-local (not active work)'
+check 'prune dry run lists an origin branch with no PR' detail_has 'Delete remote gone-pushed (not active work)'
+check 'prune dry run deletes no branch' both_have gone-pushed
+check 'prune dry run removes no worktree' present "$tmp/p-wt-old"
+check 'prune dry run writes no restore log' gone "$plog"
+
+rc=0; bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+check 'a prune with nothing failing exits 0' test "$rc" -eq 0
+for b in main staging production open-pr; do check "keeps $b, local and origin" both_have "$b"; done
+check 'keeps a live worker worktree' present "$tmp/p-wt-live"
+check 'keeps the live worker branch' local_has p-live
+check 'keeps a dirty worktree' present "$tmp/p-wt-dirty/wip.txt"
+check 'keeps the dirty worktree branch' local_has p-dirty
+check 'lists the dirty worktree it kept' detail_has "Kept worktree $tmp/p-wt-dirty (uncommitted changes)"
+check 'keeps an origin branch checked out on a paired host' origin_has on-peer
+check 'removes an idle clean worktree' gone "$tmp/p-wt-old"
+check 'deletes a local branch with no PR, even unpushed' local_gone gone-local
+check 'deletes an origin branch with no PR' origin_gone gone-pushed
+check 'deletes master: not in the keep set' origin_gone master
+check 'logs the local delete with its sha' grep -Fq "$(printf '\t%s\tlocal\tgone-local\t%s' "$tmp/p" "$gone_local_sha")" "$plog"
+check 'logs the origin delete' grep -Fq "$(printf '\tremote\tgone-pushed\t')" "$plog"
+check 'logs the removed worktree with its HEAD' grep -Fq "$(printf '\tworktree\t%s\t' "$tmp/p-wt-old")" "$plog"
+check 'a logged branch restores from its sha' pg branch gone-local "$gone_local_sha"
+
+# A delete that fails is listed and the run goes on: the other branches still go, and the round ends non-zero (#1726).
+pg branch -D -q gone-local; mkbr stuck push; mkbr after-stuck push
+printf '#!/usr/bin/env bash\nwhile read -r o n r; do [ "$r" != refs/heads/stuck ] || { echo no; exit 1; }; done\n' > "$tmp/p-origin/hooks/pre-receive"
+chmod +x "$tmp/p-origin/hooks/pre-receive"
+rc=0; bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+check 'a failed origin delete keeps that branch' origin_has stuck
+check 'the run goes on past a failed delete' origin_gone after-stuck
+check 'the failed delete is listed in the summary' detail_has 'remote stuck: delete failed'
+check 'a failed delete ends the round non-zero' test "$rc" -ne 0
+rm -f "$tmp/p-origin/hooks/pre-receive"; pg push -q origin --delete stuck; pg branch -D -q stuck 2>/dev/null || true
+
+# Fail closed: a lookup it cannot read deletes nothing in the repo.
+fail_closed() { # <branch> <label> [env assignment]
+  mkbr "$1" push
+  env ${3:+"$3"} bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+  check "$2: deletes nothing" both_have "$1"
+  check "$2: says the prune stopped" detail_has 'prune stopped in this repo'
+}
+fail_closed fc-pr 'a failed PR lookup' FAKE_GH_PR_FAIL=1
+fail_closed fc-workers 'a failed worker inventory' FAKE_ORCA_WORKERS_FAIL=1
+mkdir -p "$(dirname "$plog")"; chmod 500 "$(dirname "$plog")"
+fail_closed fc-log 'an unwritable restore log'
+chmod 700 "$(dirname "$plog")"
+
+# A paired host the coordinator cannot read stops origin deletes, not local ones.
+echo '{"ok":false}' > "$tmp/peer-worktrees.json"
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'an unreadable paired host keeps every origin branch' origin_has fc-pr
+check 'an unreadable paired host still prunes local branches' local_gone fc-pr
+
+# A fleet host (not the coordinator) prunes local branches and leaves origin to the coordinator.
+echo '{"ok":true,"result":{"worktrees":[],"hostScope":{"omittedHostIds":[]}}}' > "$tmp/peer-worktrees.json"
+printf 'coordinator someone-else\n' > "$board_conf"
+mkbr fleet-only push
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'a fleet host deletes its local branch' local_gone fleet-only
+check 'a fleet host leaves the origin branch to the coordinator' origin_has fleet-only
+unset BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE WRAP_UP_BOARD_CLEAN
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
