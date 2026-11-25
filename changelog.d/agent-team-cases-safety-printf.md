@@ -1,0 +1,1 @@
+agent-team safety test: the skill frontmatter fixture now writes with `printf --`, so a `---` line is no longer read as an option (`printf: --: invalid option`), and the test asserts the skill file still has `name: local-only` after project, sync and check (#1855).
