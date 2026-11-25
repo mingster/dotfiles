@@ -201,7 +201,7 @@ Other project files tell the team how this repo works:
 | File | What to set or read |
 | --- | --- |
 | `.claude/model-routing.md` | Provider and model choices, worker launch rules, fail-closed usage gate and publication/merge authority. |
-| `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards (`guard-bash.py`), fail-closed usage gate (`usage-gate-hook.py`), repeated test failure limits (`strikes.py`) and turn budget (`worker-budget.py`). |
+| `.claude/settings.json`, `.claude/hooks/` | Claude session setup, Bash safeguards (`guard-bash.py`), fail-closed usage gate (`usage-gate-hook.py`), repeated test failure limits (`strikes.py`), turn budget (`worker-budget.py`) and the mechanical CLAUDE.md and AGENTS.md rules (`rule-checks.py`: PR and issue text, dashes in docs, AGENTS.md length, `CHANGELOG.md` edits). |
 | `docs/agents/team.md` | Team roles, 2026-11-06 process, role changes (owner only when a safety limit loosens), orchestration, the verification rule and Opening a PR, handoffs, Bug fix, urgent (fast mode), rules and gated actions. |
 | `docs/agents/team-facts.md` | Repository, check commands, review rules and project shortcuts. |
 | `docs/agents/deploy-facts.md` | Components, hosts, stage commands, production approval and rollback steps. |

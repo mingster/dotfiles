@@ -10,7 +10,7 @@ Prefer using browser agent skill over using playwright directly.
 
 ## Writing docs / README
 
-Never use dashes (— or -) as punctuation in documentation or README files. Rephrase sentences using periods, commas, or parentheses instead.
+No dashes as punctuation in docs or README files (hook `rule-checks.py` warns). Use periods, commas, or parentheses.
 
 ## Coding Standards
 
@@ -23,14 +23,13 @@ For `.xlsx` updates, use the Mescius SpreadJS XLSX Editor when available. Use pr
 ## Using GitHub
 
 For questions about GitHub, use the gh tool
-Never mention Claude Code in PR descriptions, PR comments, or issue comments
-Do not include a "Test plan" section in PR descriptions
+PR and issue text rules (no assistant product name, no "Test plan" section) are enforced by the `rule-checks.py` hook.
 
 ## Agent instruction files
 
 `AGENTS.md` at the repo root is the single source. `CLAUDE.md` beside it holds one line, `@AGENTS.md`, because Claude Code does not read `AGENTS.md`. Same in a subdirectory: `web/CLAUDE.md` is `@../AGENTS.md`, and `web/AGENTS.md` is a symlink to `../AGENTS.md`.
 
-Keep `AGENTS.md` under 200 lines. It loads into every session, so it holds the map and the rules that are always true: layout, commands, constraints, pointers. Anything that only matters in one area goes in `docs/<area>/<topic>.md` behind a pointer that names when to read it ("Read it before changing X"). Anything derivable from the codebase goes in neither. More `@` imports do not help, since imported files load at launch too.
+Keep `AGENTS.md` short (the `rule-checks.py` hook warns over the limit). It loads into every session, so it holds the map and the rules that are always true: layout, commands, constraints, pointers. Anything that only matters in one area goes in `docs/<area>/<topic>.md` behind a pointer that names when to read it ("Read it before changing X"). Anything derivable from the codebase goes in neither. More `@` imports do not help, since imported files load at launch too.
 
 Never accumulate learnings in `AGENTS.md`. Auto memory owns those.
 
