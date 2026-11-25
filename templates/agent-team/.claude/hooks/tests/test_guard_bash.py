@@ -1945,6 +1945,38 @@ class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command)
 
+    # PR #1874 second cold review, one test per finding.
+    def test_comment_with_quote_does_not_hide_next_line(self):
+        for command in ("D=fileServer/secrets # don't\ncat $D/x.json",
+                        "D=fileServer/secrets # <<'E'\ncat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_continuations_and_dollar_quotes_denied(self):
+        for command in ("S=deploy; bash bin/$S\\\n-raw.sh", "S=deploy; bash bin/$S-\\\nraw.sh",
+                        "S=deploy; bash bin/$\\\nS-raw.sh", "D=file\\\nServer/secrets; cat $D/x.json",
+                        "S=deploy; bash bin/$S$'-raw.sh'", 'S=deploy; bash bin/$S$"-raw.sh"',
+                        "S=deploy; bash bin/$S$'\\x2draw.sh'", "D=file$'Server'/secrets; cat $D/x.json",
+                        "D=file$'\\x53erver'/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_reader_behind_pipe_process_substitution_or_quoted_paren_denied(self):
+        for command in ("D=fileServer; S=secrets; ls $D/$S/x.json | xargs cat",
+                        "D=fileServer/secrets; ls <(cat $D/x.json >&2)",
+                        "D=fileServer/secrets; test -s <(cat $D/x.json >&2)",
+                        "D=fileServer/secrets; ls \"$(echo ')'; cat $D/x.json)\"",
+                        "D=fileServer/secrets; X=\"$(echo ')'; cat $D/x.json >&2)\""):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_glob_or_brace_in_assignment_denied(self):
+        for command in ("D=fileServer/*; cat $D/x.json", "D=fileServer/sec*; cat $D/x.json",
+                        "D=file*/secrets; cat $D/x.json", "D=fileServer/se[c]rets; cat $D/x.json",
+                        "D=file{Server,x}/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
 
 class DenyMessagesNameRewrite(ProjectConfigGuardTest):
     """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""

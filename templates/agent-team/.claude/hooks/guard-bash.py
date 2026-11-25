@@ -4080,11 +4080,24 @@ def check_blocked_script_mentions(command):
 # `)` or backtick of `${...}`, `$(...)` or `...`, and a glob character (#1870).
 PARAMETER = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
 EXPANSION_END = re.compile(r"[}`)*?\]]")
+ANSI_C_QUOTE = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.DOTALL)
+
+
+def _unquoted_text(command, end_parameters=False):
+    """The command as one plain text for the two checks below, never split into commands, so a comment, pipe
+    or substitution cannot hide a line from them (#1870): backslash newlines joined, `$'..'` decoded and
+    `$"..."` read as a quote, then quotes and backslashes dropped. A bad escape raises, and the caller denies."""
+    text = command.replace("\\\n", "")
+    text = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
+                            .decode("unicode_escape") + "'", text).replace('$"', '"')
+    if end_parameters:
+        text = PARAMETER.sub("}", text)
+    return re.sub(r"[\"'\\]", "", text).lower()
 
 
 def check_built_blocked_names(command):
     """Deny an expansion followed directly by a 5+ character tail of a blocked script name, read as text."""
-    flat = re.sub(r"[\"'\\]", "", PARAMETER.sub("}", command)).lower()
+    flat = _unquoted_text(command, end_parameters=True)
     tails = {name.lower()[i:] for name in BLOCKED_SCRIPTS for i in range(len(name) - 4)}
     for match in EXPANSION_END.finditer(flat):
         rest = flat[match.end():]
@@ -4096,17 +4109,25 @@ def check_built_blocked_names(command):
                      "write the name out in full.")
 
 
+def _part_named(part, tokens):
+    """True when a token holds the path component, or is a glob or brace pattern that could match it."""
+    return any(part in token or (re.search(r"[*?\[{]", token)
+                                 and fnmatch.fnmatchcase(part, re.sub(r"\{[^}]*\}?", "*", token)))
+               for token in tokens)
+
+
 def check_secrets_dir_by_variable(command):
-    """Deny a `$` in a reading segment when the command names every component of a configured secrets dir."""
-    folded = re.sub(r"[\"'\\]", "", command).lower()
-    named = [rel for rel in SECRETS_DIR_RELPATHS
-             if all(part.lower() in folded for part in _path_parts(rel))]
-    if not named:
+    """Deny any `$` or backtick in a command that names every component of a configured secrets dir, written
+    out or through a glob. No split into reading and non reading commands: that parse lost text to comments,
+    pipes, `<(...)` and quoted parens, so this check fails closed instead (#1870)."""
+    flat = _unquoted_text(command)
+    if "$" not in flat and "`" not in flat:
         return
-    for seg in (seg for text in (command, *substitutions(command)) for seg in segments(text)):
-        prog, _args = program_and_args(words(seg))
-        if prog and os.path.basename(prog) not in SECRETS_NONREAD and "$" in seg:
-            _deny_hidden()
+    # `$?`, `$*` and `${?}` are parameters, not globs; a `${...}` with more inside stays in, as a possible glob.
+    plain = PARAMETER.sub(" ", re.sub(r"\$\{(?:[a-z_][a-z0-9_]*|[0-9@*#?$!-])\}", " ", flat))
+    tokens = [t for t in re.split(r"[^a-z0-9_.*?\[\]{},-]+", plain) if t]
+    if any(all(_part_named(part.lower(), tokens) for part in _path_parts(rel)) for rel in SECRETS_DIR_RELPATHS):
+        _deny_hidden()
 
 
 def check_command(command):
