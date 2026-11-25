@@ -1851,6 +1851,13 @@ agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 grep -q 'agy-signin' "$tmp/agy.out" && bad "normal antigravity screen must not fall back" || ok
 [ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "normal antigravity screen starts once"
 grep -q 'worker-stop' "$tmp/orca-agy.log" && bad "normal antigravity screen must not stop the worker" || ok
+# 1820: WORKER_STARTUP_AGY_DEFER=1 skips the screen wait. The sign in screen is not read, nothing is stopped, one start.
+WORKER_STARTUP_AGY_DEFER=1 agy_run "$tmp/agy-login.txt" "$tmp/agy-defer.err"
+[ "$agy_ec" = 0 ] && ok || bad "deferred antigravity start exits 0 ($agy_ec) $(cat "$tmp/agy-defer.err")"
+grep -q 'worker-stop' "$tmp/orca-agy.log" && bad "deferred antigravity start must not stop the worker" || ok
+grep -q 'terminal read' "$tmp/orca-agy.log" && bad "deferred antigravity start must not read the screen" || ok
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "deferred antigravity start starts once"
+grep -q 'agy-signin' "$tmp/agy.out" && bad "deferred antigravity start must not fall back" || ok
 # A host already marked agy-unavailable starts on claude without the first antigravity start.
 agy_unavailable_run() {
   : >"$tmp/orca-agy.log"

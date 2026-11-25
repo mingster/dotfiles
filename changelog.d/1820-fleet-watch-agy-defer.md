@@ -1,0 +1,1 @@
+- Fleet watch issue starts on antigravity skip the 60 second sign in wait. The next pass reads the screen and, for a signed out issue worker, stops it, releases it on its host and the coordinator, and restarts the issue on claude without the 30 minute grace (#1820).

@@ -17,6 +17,7 @@ Counts every active Dispatch, including descendants. Restarts a stalled worker o
 """
 import argparse
 import calendar
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -29,6 +30,7 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import statistics
 import subprocess
 import sys
@@ -5720,6 +5722,26 @@ def start_allowed(cost):
     return time.time() - _PASS_BEGAN + cost <= START_FINISH_BY
 
 
+AGY_DEFER_ENV = 'WORKER_STARTUP_AGY_DEFER'
+
+
+@contextlib.contextmanager
+def agy_signin_deferred():
+    """Set WORKER_STARTUP_AGY_DEFER=1 around one issue start, so worker-startup skips its 60 s antigravity screen wait.
+
+    The next pass reads the screen and stops the worker (agy_signin_notices). Only issue starts use this;
+    verifier, fixer, rework and hand starts keep the wait. The variable is put back as it was (#1820)."""
+    prior = os.environ.get(AGY_DEFER_ENV)
+    os.environ[AGY_DEFER_ENV] = '1'
+    try:
+        yield
+    finally:
+        if prior is None:
+            os.environ.pop(AGY_DEFER_ENV, None)
+        else:
+            os.environ[AGY_DEFER_ENV] = prior
+
+
 def with_coordinator_handle(config, start):
     """Wrap a worker start so worker-startup sees the coordinator's ORCA_TERMINAL_HANDLE.
 
@@ -8443,7 +8465,8 @@ def _issue_scan_pass(
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
             persist_state()
-        started_worker = start_worker(command)
+        with agy_signin_deferred():
+            started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         pending_list = issue_pending.setdefault(repo, [])
         if row['number'] in pending_list:
@@ -9505,55 +9528,158 @@ def _agy_signin():
     return _sibling('agy_signin', 'agy-signin.py')
 
 
-def agy_signin_notices(config, workers, read=None, now=None):
+AGY_RELEASED_KEY = 'agy_released'
+AGY_RELEASED_KEEP = 200
+_ISSUE_TITLE_RE = re.compile(r'^#(\d+)\|([a-z][a-z-]*)(?:\|.*)?$', re.I)
+
+
+def _agy_local_host(config):
+    """The host name worker-startup marks and checks for a local start: `hostname -s`, lower case (agy_host_label)."""
+    name = config.get('local_host')
+    if not (isinstance(name, str) and name.strip()):
+        name = socket.gethostname().split('.')[0]
+    return name.strip().lower()
+
+
+def apply_agy_released(workers, state):
+    """Mark the rows of dispatches an earlier pass stopped for the agy sign in screen as released (#1820).
+
+    Runs right after the inventory, before anything counts the rows as live or reports them gone."""
+    ids = {r for r in (state or {}).get(AGY_RELEASED_KEY) or () if isinstance(r, str)}
+    if not ids:
+        return
+    for w in workers or []:
+        if isinstance(w, dict) and w.get('dispatchId') in ids:
+            _mark_worker_released(w)
+
+
+def _agy_issue_number(worker, state):
+    """Issue number when this row is a builder fleet-watch started from an issue, else None.
+
+    A verifier, fixer or rework row is never one: the dispatch must be recorded as an issue start. Every issue start
+    carries WORKER_STARTUP_AGY_DEFER, whatever its title role (a tier 0 audit issue starts as qa-sdet), so every one is stopped."""
+    own = _own_row(state or {}, worker.get('dispatchId'))
+    if not own or own.get('kind') != 'issue':
+        return None
+    title = str(worker.get('_task_title') or worker.get('title') or '').strip()
+    match = _ISSUE_TITLE_RE.match(title)
+    return int(match.group(1)) if match else None
+
+
+def _agy_allow_restart(config, state, worker, number):
+    """Forget the issue's start time so the issue scan restarts it now, not after ISSUE_RESTART_GRACE_SECONDS."""
+    stamps = state.get('issue_scan_started_at')
+    if not isinstance(stamps, dict):
+        return
+    try:
+        repo = repo_for_worker(worker, config)
+    except Exception:
+        repo = None
+    for name, rows in stamps.items():
+        if isinstance(rows, dict) and (repo is None or name == repo):
+            rows.pop(str(number), None)
+
+
+def _agy_stop_and_release(config, state, worker, host, remote, rpc_call):
+    """Stop the signed out issue worker, release it on its host and on the coordinator, and record it once.
+
+    False when the stop failed, so the next pass tries again. A failed release does not undo the stop."""
+    dispatch = worker['dispatchId']
+    env = ['--environment', host] if remote else []
+    try:
+        rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch, *env)
+    except SEND_ERRORS as error:
+        print('fleet-watch: agy sign-in stop of %s failed: %s' % (dispatch, repr(error)), file=sys.stderr)
+        return False
+    try:
+        if remote:
+            rpc_call('orchestration', 'worker-release', '--dispatch', dispatch, '--environment', host)
+        rpc_call('orchestration', 'worker-release', '--dispatch', dispatch)
+    except SEND_ERRORS:
+        pass
+    _mark_worker_released(worker)
+    released = state.setdefault(AGY_RELEASED_KEY, [])
+    if not isinstance(released, list):
+        released = []
+    released.append(dispatch)
+    state[AGY_RELEASED_KEY] = released[-AGY_RELEASED_KEEP:]
+    return True
+
+
+def agy_signin_notices(config, workers, read=None, now=None, state=None, rpc_call=None, persist_state=None):
     """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
 
     One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
     A plain `agy -p` probe over ssh cannot tell, so the worker screen is the check.
+
+    With `state`, an issue builder fleet-watch started (its start skipped worker-startup's screen wait, #1820) on
+    the sign in screen is also stopped, released on its host and the coordinator, marked released, recorded in
+    state['agy_released'] and freed for a restart without the 30 minute grace. A dispatch on that list is never
+    read again. Any other antigravity row is only marked and noticed.
     """
     agy = _agy_signin()
+    rpc_call = rpc_call or rpc
     notices = []
     seen = set()
+    released = {r for r in (state or {}).get(AGY_RELEASED_KEY) or () if isinstance(r, str)}
     for w in workers or []:
         if not isinstance(w, dict) or worker_agent_id(w) not in ('antigravity', 'agy'):
             continue
         if worker_settled_kind(w) is not None or worker_terminal_released(w):
             continue
-        terminal = worker_terminal_handle(w)
-        if not terminal:
+        if w.get('dispatchId') in released:
             continue
         remote = worker_is_remote(w, config)
-        host = remote_environment(w) if remote else (config.get('local_host') or 'local')
-        if not host or host in seen:
+        host = remote_environment(w) if remote else _agy_local_host(config)
+        if not host:
+            continue
+        number = _agy_issue_number(w, state) if state is not None else None
+        if host in seen and number is None:
+            continue
+        terminal = worker_terminal_handle(w)
+        if not terminal and remote and number is not None:
+            try:
+                shown = rpc_call('orchestration', 'worker-show', '--dispatch', w.get('dispatchId'), '--environment', host)
+            except SEND_ERRORS:
+                shown = None
+            if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+                shown = shown['worker']
+            terminal = worker_terminal_handle(shown if isinstance(shown, dict) else {})
+        if not terminal:
             continue
         try:
             if read is not None:
                 screen = read(terminal, host if remote else '')
             else:
-                screen = json.dumps(rpc('terminal', 'read', '--terminal', terminal, '--screen',
-                                        *(['--environment', host] if remote else [])))
+                screen = json.dumps(rpc_call('terminal', 'read', '--terminal', terminal, '--screen',
+                                             *(['--environment', host] if remote else [])))
         except SEND_ERRORS:
             continue
         if not agy.is_sign_in_screen(screen):
             continue
-        seen.add(host)
-        try:
-            due = agy.mark(host, now=now)
-        except OSError as error:
-            print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
-            continue
-        if due:
-            notices.append(Urgent(
-                'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
-                'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host)))
+        if host not in seen:
+            seen.add(host)
+            try:
+                due = agy.mark(host, now=now)
+            except OSError as error:
+                print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
+                due = False
+            if due:
+                notices.append(Urgent(
+                    'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
+                    'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host)))
+        if number is not None and _agy_stop_and_release(config, state, w, host, remote, rpc_call):
+            _agy_allow_restart(config, state, w, number)
+            if persist_state:
+                persist_state()
     return notices
 
 
 def persisted_released_ids(state_path):
-    """Dispatch ids that earlier passes released (auto_released, remote_reconciled, followup_released) (#1273)."""
+    """Dispatch ids that earlier passes released (auto_released, remote_reconciled, followup_released, agy_released) (#1273)."""
     state = _read_json_object(state_path) if state_path else None
     ids = set()
-    for key in ('auto_released', 'remote_reconciled', 'followup_released'):
+    for key in ('auto_released', 'remote_reconciled', 'followup_released', AGY_RELEASED_KEY):
         rows = (state or {}).get(key)
         if isinstance(rows, list):
             ids.update(r for r in rows if isinstance(r, str))
@@ -9748,6 +9874,7 @@ def _main():
     try:
         inv = read_orca_inventory(config)
         workers = inv['workers']
+        apply_agy_released(workers, state)
         notices = alerts(
             config, state, now,
             inv['messages'], workers, inv['alive'], inv['leads'],
@@ -9771,6 +9898,13 @@ def _main():
         if not state.get('orca_inventory_skip_latched'):
             notices.append(ORCA_SKIP_NOTICE)
             state['orca_inventory_skip_latched'] = True
+    if inventory_ok:
+        try:
+            notices += agy_signin_notices(
+                config, workers, now=now, state=state,
+                persist_state=lambda: save_state(args.state, state))
+        except Exception as error:
+            print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
     if inventory_ok:
         def _notify_bounce(terminal, text):
             if not terminal:
@@ -9890,11 +10024,6 @@ def _main():
     if status:
         notices.append(status)
     notices += usage_gate_notices(state, now)
-    if inventory_ok:
-        try:
-            notices += agy_signin_notices(config, workers, now=now)
-        except Exception as error:
-            print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
     pass_phase('stall')
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,

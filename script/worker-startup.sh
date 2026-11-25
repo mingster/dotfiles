@@ -17,6 +17,10 @@
 # is refused unless --allow-delivered REASON is given (#1158, #1811).
 # A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label) waits, unless
 # --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
+# WORKER_STARTUP_AGY_DEFER=1 (set by fleet-watch on its issue starts only) skips the 60 s antigravity sign in screen wait.
+# The start returns at once, and fleet-watch's next pass reads the screen: on the sign in screen it stops and releases the
+# worker, marks the host, and restarts the issue on claude (docs/agents/fleet-watch.md, #1820). Verifier, fixer, rework
+# and hand starts keep the wait.
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 set -euo pipefail
@@ -674,7 +678,7 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
   return "$ec"
 }
 
-# About a minute after an antigravity start, read the worker screen. The sign-in screen stops the dispatch and
+# About a minute after an antigravity start, read the worker screen (not when WORKER_STARTUP_AGY_DEFER=1). The sign-in screen stops the dispatch and
 # returns 10 so the caller restarts the same brief on claude (#1240). Fleet watch marks the host and tells the owner.
 AGY_SIGNIN_EXIT=10
 surface_antigravity_screen() { # <agent> <worker-start json> [environment]
@@ -682,6 +686,7 @@ surface_antigravity_screen() { # <agent> <worker-start json> [environment]
   [ "$agent" = antigravity ] || return 0
   dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_json" 2>/dev/null || true)
   [ -n "$dispatch" ] || die "antigravity start returned no dispatch"
+  [ "${WORKER_STARTUP_AGY_DEFER:-}" = 1 ] && return 0 # fleet-watch reads the screen on its next pass (#1820)
   sleep "${WORKER_STARTUP_AGY_WAIT:-60}"
   handle=$(jq -r '.result.terminal | if type == "object" then (.handle // .id // empty) else (. // empty) end' <<<"$start_json" 2>/dev/null || true)
   if [ -z "$handle" ]; then
