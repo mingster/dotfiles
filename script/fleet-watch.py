@@ -3011,8 +3011,9 @@ def _report_foreign_stall(state, dispatch_id, notices, log_bits):
     reported[dispatch_id] = True
     log_bits.append('stall_report=%s' % dispatch_id)
     notices.append(Urgent(
-        'stalled worker %s is not one fleet-watch started; coordinator recovers it with '
-        '~/dotfiles/.agents/skills/orca-team/worker-watch.sh' % dispatch_id))
+        'stalled worker %s is not one fleet-watch started; fleet-watch nudges it after %d stall windows with '
+        'no new commit and stops and releases it after %d, unless it holds unpushed work; recover it by hand with '
+        '~/dotfiles/.agents/skills/orca-team/worker-watch.sh' % (dispatch_id, STALL_NUDGE_WINDOWS, STALL_RELEASE_WINDOWS)))
 
 
 REMOTE_READ_PAGE = 100
@@ -3024,10 +3025,12 @@ def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit)
     """'active', 'silent' or 'unknown' for a remote dispatch, from the newest tool activity in its transcript.
 
     worker-read pages oldest first, so every page is read until the cursor ends. A transcript longer
-    than the page cap, or a failed read, is 'unknown' and the worker is neither flagged nor stopped.
+    than the page cap, or a read that fails twice, is 'unknown' and the worker is neither flagged nor stopped.
+    A failed read is tried once more before that (#1842); the page cap is not, since a retry cannot pass it.
     """
     newest = None
     cursor = ''
+    retry_left = 1
     for _ in range(REMOTE_READ_MAX_PAGES):
         args = ['orchestration', 'worker-read', '--dispatch', dispatch_id, '--limit', str(REMOTE_READ_PAGE)]
         if environment:
@@ -3037,7 +3040,13 @@ def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit)
         try:
             result = rpc_call(*args)
         except SEND_ERRORS:
-            return 'unknown'
+            if not retry_left:
+                return 'unknown'
+            retry_left = 0
+            try:
+                result = rpc_call(*args)
+            except SEND_ERRORS:
+                return 'unknown'
         transcript = result.get('transcript') if isinstance(result, dict) else None
         transcript = transcript if isinstance(transcript, dict) else {}
         messages = [m for m in (transcript.get('messages') or []) if isinstance(m, dict)]
@@ -3161,8 +3170,53 @@ def _defer_stall_restart(pending, w, did, run_for_start, reason, repo, pr_num):
     }
 
 
+STALL_NUDGE_WINDOWS = 2  # nudge once a stall has lasted this many windows with no new commit
+STALL_RELEASE_WINDOWS = 3  # stop and release after this many, and at least one window after the nudge
+STALL_NUDGE_TEXT = ('fleet-watch: no new commit for %d minutes. Commit and push your progress, or send '
+                    'worker_done or an ask. With no new commit in %d minutes this worker is stopped and released.')
+
+
+def set_board_status(rpc_call, worker, status, environment=''):
+    """Move the worker's Orca card. Board trouble never breaks the caller."""
+    path = worker_checkout_path(worker)
+    if not path.startswith('/'):
+        return False
+    args = ['worktree', 'set', '--worktree', 'path:%s' % path, '--workspace-status', status]
+    if environment:
+        args += ['--environment', environment]
+    try:
+        rpc_call(*args)
+    except SEND_ERRORS:
+        return False
+    return True
+
+
+def worktree_head(worker):
+    """HEAD sha of a worker checkout on this machine, or '' when it cannot be read."""
+    path = safe_workspace_path(worker_checkout_path(worker))
+    if not path or not os.path.isdir(path):
+        return ''
+    try:
+        proc = subprocess.run(['git', '-C', path, 'rev-parse', 'HEAD'], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return proc.stdout.strip() if proc.returncode == 0 else ''
+
+
+def stall_holds_work(worker):
+    """False only for a checkout on this machine with no unpushed commits and no changed files.
+    A remote or unreadable checkout counts as holding work, so it is never stopped."""
+    if _unpushed_resource(worker):
+        return True
+    path = safe_workspace_path(worker_checkout_path(worker))
+    if not path or not os.path.isdir(path):
+        return True
+    return worktree_has_unpushed_commits(path) or worktree_disposition(path) != 'clean'
+
+
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
-                     terminal_branches=None, inventory_ok=True):
+                     terminal_branches=None, inventory_ok=True, head_of=None, holds_work=None, pr_list=None,
+                     waiting=()):
     """Restart our own silent workers once; report every other stalled worker once and do not stop it.
 
     A failed restart is parked with the recorded message. A usage-gate or host-cap refusal is retried.
@@ -3377,6 +3431,104 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         _record_stall_restart(state, did, result, now, log_bits, pending)
         log_bits.append('startup_retry=%s' % did)
 
+    head_of = head_of or worktree_head
+    holds_work = holds_work or stall_holds_work
+    ladder = state.setdefault('stall_ladder', {})
+    laddered = set()
+
+    def release_issue(w, repo):
+        """Put the issue back in the queue. Only an issue builder with no open PR has one to give back."""
+        number = _worker_issue_number(w)
+        if not number or not repo or worker_pr_number(w):
+            return None
+        if pr_list is not None:
+            rows = pr_list(repo)
+            if rows is None:
+                log_bits.append('stall_issue_skipped=%d:pr_list' % number)
+                return None
+            if open_pr_for_issue(rows, number):
+                return None
+        edit = act or run_gh
+        if edit(['gh', 'issue', 'edit', str(number), '--repo', repo,
+                 '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) != 0:
+            log_bits.append('stall_issue_label_failed=%d' % number)
+            return None
+        return number
+
+    def climb_ladder(w, did, last_s, is_stalled):
+        """Nudge once after 2 stall windows with no new commit; stop and release after 3 (owner Q6, #1842).
+
+        Terminal output after the nudge does not reset the count, since the nudge itself makes output.
+        Only a new commit does. A worker that holds unpushed commits or changed files is never stopped.
+        """
+        laddered.add(did)
+        if did in waiting:
+            ladder.pop(did, None)
+            return
+        head = head_of(w) or ''
+        rec = ladder.get(did)
+        if isinstance(rec, dict) and head and rec.get('head') and head != rec['head']:
+            ladder.pop(did, None)
+            rec = None
+        if not isinstance(rec, dict):
+            if not is_stalled or last_s is None:
+                return
+            # The first pass only records the stall, so a lost state file never nudges on sight.
+            ladder[did] = {'since': last_s, 'head': head}
+            return
+        if not rec.get('nudged_at') and not is_stalled:
+            ladder.pop(did, None)
+            return
+        if head and not rec.get('head'):
+            rec['head'] = head
+        if rec.get('done') or stall_limit <= 0:
+            return
+        windows = (now - float(rec['since'])) / stall_limit
+        environment = remote_environment(w) if worker_is_remote(w, config) else ''
+        if not rec.get('nudged_at'):
+            if windows < STALL_NUDGE_WINDOWS:
+                return
+            rec['nudged_at'] = now
+            term = worker_terminal_handle(w)
+            if term:
+                text = STALL_NUDGE_TEXT % (int(now - float(rec['since'])) // 60, stall_limit // 60)
+                try:
+                    rpc_call('terminal', 'send', '--terminal', term, '--text', text, '--enter',
+                             *(('--environment', environment) if environment else ()))
+                except SEND_ERRORS as error:
+                    log_send_failed(term, error)
+            log_bits.append('stall_nudge=%s' % did)
+            return
+        if windows < STALL_RELEASE_WINDOWS or now - float(rec['nudged_at']) < stall_limit:
+            return
+        rec['done'] = True
+        if holds_work(w):
+            log_bits.append('stall_hold=%s' % did)
+            notices.append(Urgent(
+                'stalled worker %s: no new commit for %d windows after a nudge, but it holds unpushed commits '
+                'or changed files (or its checkout is on another host), so fleet-watch did not stop it'
+                % (did, STALL_RELEASE_WINDOWS)))
+            return
+        try:
+            rpc_call('orchestration', 'worker-stop', '--dispatch', did)
+        except SEND_ERRORS as exc:
+            log_bits.append('stall_stop_failed=%s:%s' % (did, orchestration_failure_log_code(exc) or 'error'))
+            rec.pop('done', None)
+            return
+        # A remote dispatch is released on its host first, then on the coordinator.
+        for where in ((('--environment', environment),) if environment else ()) + ((),):
+            try:
+                rpc_call('orchestration', 'worker-release', '--dispatch', did, *where)
+            except SEND_ERRORS:
+                pass
+        _mark_worker_released(w)
+        set_board_status(rpc_call, w, 'archived', environment)
+        number = release_issue(w, label_target(w))
+        log_bits.append('stall_release=%s' % did)
+        notices.append(Urgent(
+            'stalled worker %s stopped and released: no new commit for %d windows after a nudge%s'
+            % (did, STALL_RELEASE_WINDOWS, '; issue #%d is back in ready-for-agent' % number if number else '')))
+
     local_handles = set(term_times.keys())
     for w in workers:
         did = w.get('dispatchId')
@@ -3395,26 +3547,34 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         else:
             last_s = _normalize_terminal_time_ms(term_times.get(term))
         is_stalled = worker_should_restart_for_terminal_stall(w, now, last_s, stall_limit)
+        own = _own_row(state, did)
+        # Verifier and rework workers are restarted on the same worktree; issue builders and
+        # foreign workers climb the nudge, stop and release ladder.
+        use_ladder = own is None or own.get('kind') == 'issue'
         if host_id != 'local':
             # The terminal clock is not visible for a remote worker, so its transcript decides.
-            if is_stalled and not (state.get('stall_reported') or {}).get(did):
-                activity = remote_worker_activity(rpc_call, did, remote_environment(w), now, stall_limit)
-                log_bits.append('remote_stall_check=%s:%s' % (did, activity))
-                if activity == 'silent':
-                    if _own_row(state, did):
-                        restart_own(w, did)
-                    else:
-                        _report_foreign_stall(state, did, notices, log_bits)
+            if use_ladder and did in ladder:
+                climb_ladder(w, did, last_s, is_stalled)
+                continue
+            if not is_stalled:
+                continue
+            activity = remote_worker_activity(rpc_call, did, remote_environment(w), now, stall_limit)
+            log_bits.append('remote_stall_check=%s:%s' % (did, activity))
+            if activity != 'silent':
+                continue
+        elif term not in local_handles:
             continue
-        if term not in local_handles:
+        if not use_ladder:
+            if is_stalled:
+                restart_own(w, did)
             continue
-        if not is_stalled:
-            continue
-        if _own_row(state, did):
-            restart_own(w, did)
-        else:
+        if is_stalled and own is None:
             _report_foreign_stall(state, did, notices, log_bits)
+        climb_ladder(w, did, last_s, is_stalled)
 
+    for did in list(ladder):
+        if did not in laddered:
+            ladder.pop(did, None)
     return notices, log_bits
 
 
@@ -9987,7 +10147,7 @@ def _main():
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
-        inventory_ok=inventory_ok)
+        inventory_ok=inventory_ok, pr_list=fetch_once, waiting=waiting_on_coordinator(state, workers))
     notices += stall_extra
     pass_phase('signal')
     signal_extra, signal_log = worker_signal_pass(
