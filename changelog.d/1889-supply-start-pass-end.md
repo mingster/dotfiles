@@ -1,0 +1,1 @@
+- fleet-watch: the forced supply worker now starts when it fits PASS_HARD_END (250 s) instead of START_FINISH_BY (140 s), so an antigravity pick late in the pass is no longer refused with `supply_budget` (#1889).

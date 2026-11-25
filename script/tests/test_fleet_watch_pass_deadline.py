@@ -17,6 +17,9 @@ spec.loader.exec_module(fw)
 from test_fleet_watch_1730 import BIG_CODE, PICK, pr as tier_pr, scan_config as tier_config  # noqa: E402
 from test_fleet_watch_scan import pr as plain_pr  # noqa: E402
 from test_fleet_watch_standing import FakeIO  # noqa: E402
+from test_fleet_watch_1204 import fake_rpc  # noqa: E402
+from test_fleet_watch_park import scan_config as park_config  # noqa: E402
+from test_fleet_watch_triage import NOW as TRIAGE_NOW  # noqa: E402
 
 T0 = 1_800_000_000.0
 
@@ -96,6 +99,35 @@ class PassDeadline(unittest.TestCase):
         self.assertIn('start_deadline=2', bits)
         starts, bits = self.babysit_at(fw.PASS_HARD_END - fw.START_COST_AGY - 1)
         self.assertEqual(len(starts), 1, bits)
+
+    def supply_at(self, elapsed):
+        # The forced-supply shape of #1889: free seats above the ready supply, an antigravity pick (START_COST_AGY).
+        starts = []
+        config = park_config('/work/app')
+        config['work_order'] = {'min_active': 3, 'target_workers': 10}
+        state = {'issue_scan_backlog_sweep_at': TRIAGE_NOW}
+        agy = lambda _role, **_kw: {'selected': {'provider': 'antigravity', 'model': 'm'}}  # noqa: E731
+        with patch.object(fw.time, 'time', Clock(elapsed)), patch.object(fw, 'rpc', side_effect=fake_rpc):
+            fw.begin_pass_clock(now=T0)
+            _n, bits = fw.issue_scan_pass(
+                config, state, TRIAGE_NOW, [], pr_fetch=lambda _r: [], list_issues=lambda _r: [],
+                gate_check=lambda _c: True, admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
+                start_worker=lambda cmd: (starts.append(cmd), 0)[1], act=lambda _c: 0,
+                repo_id_lookup=lambda _h, _r: 'repo-id', pick_fn=agy, list_backlog=lambda _r: 3,
+            )
+        return starts, bits
+
+    def test_a_supply_start_with_an_agy_pick_runs_at_60_seconds_and_stops_at_the_pass_end(self):
+        # #1889: supply used START_FINISH_BY (140 s), so 60 + START_COST_AGY (105) never started. It now uses
+        # PASS_HARD_END like verifier and fixer starts.
+        starts, bits = self.supply_at(60.0)
+        self.assertEqual(len(starts), 1, bits)
+        self.assertFalse([b for b in bits if b.startswith('supply_budget')], bits)
+        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_COST_AGY - 1)
+        self.assertEqual(len(starts), 1, bits)
+        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_COST_AGY + 1)
+        self.assertEqual(starts, [], bits)
+        self.assertTrue([b for b in bits if b.startswith('supply_budget')], bits)
 
     def test_issue_scan_stops_at_the_deadline_before_any_pr_row(self):
         starts = []
