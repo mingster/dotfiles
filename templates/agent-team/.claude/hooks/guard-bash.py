@@ -674,8 +674,10 @@ def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     else:
         exception = (f" The only exception is `{SIGN_IN_SCRIPT}`, which reads the file itself without printing it."
                      if SIGN_IN_SCRIPT else "")
+    message = (" When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
+               "`gh ... --body-file -` and a quoted heredoc." if base in {"git", "gh"} else "")
     deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
-         f"secrets dir.{exception} Anything else, ask Elon.")
+         f"secrets dir.{exception} Anything else, ask Elon.{message}")
 
 
 KILL_FORMS = ("Stop a port owner with kill $(lsof -ti tcp:<port> -sTCP:LISTEN), or a job you started "
@@ -1799,7 +1801,9 @@ def check_hidden_hosts(segment, base, args):
         if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
-                 "approval covers it. Write the host literally.")
+                 "approval covers it. Write the host literally. Write each host out, one ssh or scp per host, for "
+                 "example `ssh blueDevil uptime; ssh niteking uptime`; a path variable in an scp operand also goes "
+                 "literal.")
 
 
 GIT_REMOTE_OPS = {"fetch", "pull", "push", "clone", "ls-remote", "remote", "submodule", "archive"}
@@ -2966,7 +2970,9 @@ def check_indirection(base, args):
             glued = [" ".join([m[1], *args[i + 1:]]) for i, a in enumerate(args) if (m := GLUED_PERL_CODE.match(a))]
             if any(STARTS_PROCESS.search(code) or "`" in code for code in glued):
                 INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process "
-                                "...) hides the command from the guard. Run the command directly.")
+                                "...) hides the command from the guard. Run the command directly. To edit text "
+                                "that names one of these words, use `sed`, or write the code to a file with a "
+                                "quoted heredoc and run that file.")
         idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
         if idx is not None:
@@ -2979,7 +2985,9 @@ def check_indirection(base, args):
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
-                            "hides the command from the guard. Run the command directly.")
+                            "hides the command from the guard. Run the command directly. To edit text that names "
+                            "one of these words, use `sed`, or write the code to a file with a quoted heredoc and "
+                            "run that file.")
 
 
 def check_segment(segment, depth=0, cwd=None):
@@ -3973,7 +3981,8 @@ def _deny_hidden():
     deny("A glob, brace, variable, substitution, find -exec, find -execdir or xargs could build a path under "
          + ", ".join(listed)
          + " without that path appearing as text. The guard cannot see the path the shell would produce, "
-         "so the command is denied.")
+         "so the command is denied. Write the path out in full, for example `ls /tmp/p/.claude/skills/*/SKILL.md` "
+         "instead of `$P/...`.")
 
 
 def check_hidden_script_paths(command, cwd):

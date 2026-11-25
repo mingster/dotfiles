@@ -1861,12 +1861,10 @@ class BuilderOwnerPathGate(GuardTest):
         self.assertIsNotNone(self.write(self.HOOK_PATH))
 
 
-class BuiltNamesAndSecretsCase(GuardTest):
-    """Deny only (#1870): blocked script names built from expansions, the secrets dir in another case or
-    named through a leading `$`, and `~+` / `~-` paths."""
+class ProjectConfigGuardTest(GuardTest):
+    """Runs the hook in a project whose guard-config.json is found from the working directory."""
     CONFIG = {"secrets_dir": "fileServer/secrets", "exact_only_scripts": [".claude/bin/probe-secrets.sh"],
               "blocked_scripts": ["deploy-raw.sh"]}
-    BUILT = "A script name built from `$`, a backtick or a glob is refused even to read"
 
     def setUp(self):
         super().setUp()
@@ -1888,6 +1886,12 @@ class BuiltNamesAndSecretsCase(GuardTest):
         if not out.stdout.strip():
             return None
         return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
+    """Deny only (#1870): blocked script names built from expansions, the secrets dir in another case or
+    named through a leading `$`, and `~+` / `~-` paths."""
+    BUILT = "A script name built from `$`, a backtick or a glob is refused even to read"
 
     def test_built_blocked_script_names_denied(self):
         for command in ("S=deploy; bash bin/$S-raw.sh", "S=deploy; bash bin/${S}-raw.sh", "S=deploy; bin/$S-raw.sh",
@@ -1923,6 +1927,40 @@ class BuiltNamesAndSecretsCase(GuardTest):
                         "ls fileServer/Secrets", "cat ~+/docs/x.md",
                         "cat > /tmp/b.md <<'E'\nnever read $D under fileServer/secrets\nE",
                         "gh issue create --title t --body-file - <<'E'\nS=deploy; bash bin/$S-raw.sh is allowed\nE"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
+class DenyMessagesNameRewrite(ProjectConfigGuardTest):
+    """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""
+    CONFIG = dict(ProjectConfigGuardTest.CONFIG, production_hosts=["prod.example"])
+    HOSTS = "Write each host out, one ssh or scp per host, for example `ssh blueDevil uptime; ssh niteking uptime`"
+    PATH = "Write the path out in full, for example `ls /tmp/p/.claude/skills/*/SKILL.md` instead of `$P/...`."
+    MESSAGE = ("When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
+               "`gh ... --body-file -` and a quoted heredoc.")
+    CODE = ("To edit text that names one of these words, use `sed`, or write the code to a file with a quoted "
+            "heredoc and run that file.")
+
+    def test_denies_name_the_rewrite(self):
+        for command, needle in (("for h in blueDevil niteking; do ssh $h uptime; done", self.HOSTS),
+                                ('S=/tmp/sp; scp -q niteking:x.patch "$S/"', self.HOSTS),
+                                ("P=/tmp/p; for f in $P/.claude/skills/*/SKILL.md; do echo $f; done", self.PATH),
+                                ("for w in a b; do [ -d ../$w ] && echo $w; done", self.PATH),
+                                ('git commit -m "docs: mention the secrets dir"', self.MESSAGE),
+                                ("python3 -c \"s=open('a').read(); s=s.replace('subprocess','x')\"", self.CODE),
+                                ("perl -esystem+q:ls:", self.CODE)):
+            with self.subTest(command=command):
+                self.assertDenied(command, needle)
+
+    def test_reader_deny_has_no_message_sentence(self):
+        reason = self.assertDenied("cat secrets/x.json")
+        self.assertNotIn(self.MESSAGE, reason)
+
+    def test_rewrites_allowed(self):
+        for command in ("ssh blueDevil uptime; ssh niteking uptime", "scp -q niteking:x.patch /tmp/sp/",
+                        "ls /tmp/p/.claude/skills/*/SKILL.md", "ls -d ../a ../b",
+                        "git commit -F - <<'E'\ndocs: mention the secrets dir\nE",
+                        "sed -i '' 's/subprocess/x/g' a"):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
