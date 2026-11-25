@@ -8,17 +8,22 @@
 #                           root's authorized_keys (restrict,command=...). No sudoers entry, no argument, no caller option.
 #   deploy-read <name>      print one file from the DEPLOY allow list, for a deploy step
 #   check-path <path>       exit 0 when the path and every parent is root controlled (setup uses it), prints why not
+#   run <helper> [args...]  run one fixed helper from helpers/ next to the config (root owned, no group or other write,
+#                           no link) in an empty environment with SECRETS_GATE_FOLDER set to the folder, plus
+#                           SECRETS_GATE_CALLER_UID, _USER and _HOME from sudo when present. Its arguments go to the helper.
 # Config (root owned, KEY=value lines): DIR (absolute), HOSTS (space separated names), DEPLOY (space separated file names).
 # Next to the config (root owned): id_ed25519 (the only key sync's ssh uses) and known_hosts.
 # A non root caller may point SECRETS_GATE_CONF, SG_RSYNC and SG_TRUST_UID elsewhere (tests); under root they are
 # ignored. Under root the first thing that runs is a re-exec with an empty environment and a PATH of system
-# folders only (no user writable folder), so nothing the calling account sets can steer a command here.
+# folders only (no user writable folder), so nothing the calling account sets can steer a command here. Only the
+# SUDO_UID and SUDO_USER that sudo sets cross it, and `run` checks them before passing them on.
 # Usage: secrets-gate.sh <command> [args]   (-h and --help print this text)
 if [ -z "${SG_CLEAN:-}" ] && [ "$(/usr/bin/id -u)" -eq 0 ]; then
-  exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash "$0" "$@"
+  exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin SUDO_UID="${SUDO_UID:-}" SUDO_USER="${SUDO_USER:-}" /bin/bash "$0" "$@"
 fi
 print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
-for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --) break ;; esac; done
+# the arguments after `run <helper>` belong to the helper, so its --help is not the gate's
+for a in ${1+"$@"}; do case "$a" in -h|--help) print_usage; exit 0 ;; --|run) break ;; esac; done
 set -u
 set -f # no globbing anywhere: a name with a star is a name
 
@@ -225,12 +230,39 @@ cmd_receive() {
   done < <(cd "$stage" && find -P . -type f -print0)
 }
 
-[ "$#" -ge 1 ] || refuse "usage: secrets-gate fingerprint|sync|receive|deploy-read"
+# The helper must be a plain name for a regular executable file in helpers/ next to the config, owned by the trusted
+# uid with no group or other write bit, in a trusted path with no link. It runs in an empty environment.
+cmd_run() {
+  [ "$#" -ge 1 ] || refuse "run takes a helper name"
+  local name=$1 hdir=$gate_dir/helpers h why ids mode
+  shift
+  case $name in ''|[.-]*|*[!A-Za-z0-9._-]*) refuse "run: bad helper name" ;; esac
+  why=$(path_trusted "$hdir") || refuse "run: helpers folder not trusted: $why"
+  h=$hdir/$name
+  [ ! -L "$h" ] || refuse "run: $name is a symlink"
+  [ -f "$h" ] && [ -x "$h" ] || refuse "run: $name is not an executable file in $hdir"
+  ids=$(stat_of "$h") || refuse "run: cannot stat $name"
+  [ "${ids% *}" = "$trust_uid" ] || refuse "run: $name is not owned by uid $trust_uid"
+  mode=$(printf '%04d' "$((10#${ids#* }))")
+  [ "$(( (8#${mode:2:1} & 2) | (8#${mode:3:1} & 2) ))" -eq 0 ] || refuse "run: $name is writable by group or others"
+  local env=(SECRETS_GATE_FOLDER="$DIR") uid=${SUDO_UID:-} user=${SUDO_USER:-} home=
+  case $uid in ''|*[!0-9]*) ;; *) env+=(SECRETS_GATE_CALLER_UID="$uid") ;; esac
+  case $user in ''|-*|*[!A-Za-z0-9._-]*) ;; *)
+    env+=(SECRETS_GATE_CALLER_USER="$user")
+    if command -v getent >/dev/null; then home=$(getent passwd "$user" | cut -d: -f6)
+    else home=$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: //p'); fi
+    case $home in /?*) env+=(SECRETS_GATE_CALLER_HOME="$home") ;; esac ;;
+  esac
+  exec /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin "${env[@]}" "$h" "$@"
+}
+
+[ "$#" -ge 1 ] || refuse "usage: secrets-gate fingerprint|sync|receive|deploy-read|run"
 cmd=$1; shift
 case $cmd in
   fingerprint) cmd_fingerprint "$@" ;;
   deploy-read) cmd_deploy_read "$@" ;;
   sync) cmd_sync "$@" ;;
   receive) cmd_receive "$@" ;;
+  run) cmd_run "$@" ;;
   *) refuse "unknown command" ;;
 esac

@@ -90,6 +90,56 @@ sed 's#^DEPLOY=.*#DEPLOY=*#' "$TMP/send.conf" >"$TMP/glob.conf"
 out=$(SECRETS_GATE_CONF="$TMP/glob.conf" timeout "$TMO" bash "$GATE" deploy-read c.key 2>&1); rc=$?
 [[ "$rc" -eq 2 ]] && ok "a star on the deploy list matches no file" || bad "glob deploy list: rc $rc $out"
 
+# run <helper>: a fixed helper in <gate dir>/helpers reads the folder through SECRETS_GATE_FOLDER
+H="$TMP/helpers"
+mkdir -p "$H"; chmod 755 "$H"
+printf '%s\n' '#!/bin/sh' 'f="${SECRETS_GATE_FOLDER:-}/a.key"' '[ -n "${SECRETS_GATE_FOLDER:-}" ] && [ -r "$f" ] || { echo "no folder" >&2; exit 3; }' \
+  'echo "a.key lines=$(wc -l <"$f" | tr -d " ") args=$*"' >"$H/peek"
+printf '%s\n' '#!/bin/sh' 'echo "folder=${SECRETS_GATE_FOLDER:-} uid=${SECRETS_GATE_CALLER_UID:-} user=${SECRETS_GATE_CALLER_USER:-} home=${SECRETS_GATE_CALLER_HOME:-} leak=${SG_LEAK:-}"' >"$H/env"
+chmod 755 "$H/peek" "$H/env"
+expect_rc "run executes a trusted helper" 0 g run peek x y
+[[ "$LAST_OUT" == "a.key lines=1 args=x y" ]] && ok "run prints only the helper's safe output" || bad "run output: $LAST_OUT"
+[[ "$LAST_OUT" != *fake-value* ]] && ok "run output holds no credential content" || bad "run printed content"
+expect_rc "run passes --help to the helper, not the gate usage" 0 g run peek --help
+[[ "$LAST_OUT" == "a.key lines=1 args=--help" ]] && ok "the helper got --help" || bad "run --help output: $LAST_OUT"
+out=$(SG_LEAK=1 SUDO_UID=4242 SUDO_USER="$(id -un)" SECRETS_GATE_CONF="$TMP/send.conf" timeout "$TMO" bash "$GATE" run env 2>&1)
+[[ "$out" == "folder=$D uid=4242 user=$(id -un) home=/"*" leak=" && "$out" != *"home=/ "* ]] && ok "the helper gets the folder and caller ids in a clean environment" || bad "helper env: $out"
+out=$(SUDO_UID='1;x' SUDO_USER='-x' SECRETS_GATE_CONF="$TMP/send.conf" timeout "$TMO" bash "$GATE" run env 2>&1)
+[[ "$out" == "folder=$D uid= user= home= leak=" ]] && ok "caller ids that are not plain are not passed" || bad "bad caller ids passed: $out"
+expect_rc "the helper alone, without the gate, has no folder" 3 sh "$H/peek"
+if [ "$(id -u)" -ne 0 ]; then
+  chmod 000 "$D"
+  expect_rc "a direct read fails when the folder is closed to the caller" 1 cat "$D/a.key"
+  chmod 700 "$D"
+fi
+expect_rc "run without a helper name is refused" 2 g run
+expect_rc "run of a missing helper is refused" 2 g run nope
+for name in .. ../peek sub/peek /bin/sh .peek -peek 'pe ek' 'pe*'; do
+  expect_rc "run refuses the name '$name'" 2 g run "$name"
+done
+ln -s "$H/peek" "$H/linked"
+expect_rc "run refuses a symlinked helper" 2 g run linked
+rm -f "$H/linked"
+cp "$H/peek" "$H/gw"; chmod 775 "$H/gw"
+expect_rc "run refuses a group writable helper" 2 g run gw
+chmod 757 "$H/gw"
+expect_rc "run refuses a world writable helper" 2 g run gw
+chmod 644 "$H/gw"
+expect_rc "run refuses a helper that is not executable" 2 g run gw
+rm -f "$H/gw"
+mkdir "$H/adir"
+expect_rc "run refuses a directory" 2 g run adir
+rmdir "$H/adir"
+chmod 775 "$H"
+expect_rc "run refuses a helpers folder others can write" 2 g run peek
+chmod 755 "$H"
+mv "$H" "$TMP/helpers.real"; ln -s "$TMP/helpers.real" "$H"
+expect_rc "run refuses a symlinked helpers folder" 2 g run peek
+rm -f "$H"; mv "$TMP/helpers.real" "$H"
+chmod 755 "$D"
+expect_rc "run checks the folder first" 1 g run peek
+chmod 700 "$D"
+
 # The folder is checked on every use: root controlled path, mode 700, no link inside
 chmod 755 "$D"
 expect_rc "a folder with mode 755 is refused" 1 g fingerprint a.key
@@ -232,7 +282,10 @@ rm -f "$R/linkdir"
 [[ "$(head -1 "$GATE")" == "#!/bin/bash" ]] && ok "shebang is /bin/bash" || bad "shebang: $(head -1 "$GATE")"
 first_cmd=$(grep -vE '^[[:space:]]*(#|$)' "$GATE" | head -1)
 if [[ "$first_cmd" == *'/usr/bin/id -u'* && "$first_cmd" == *SG_CLEAN* ]]; then ok "the first command is the root re-exec"; else bad "first command: $first_cmd"; fi
-if grep -qF 'exec /usr/bin/env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin /bin/bash' "$GATE"; then ok "root re-exec has an empty environment and a system PATH"; else bad "no env -i re-exec"; fi
+reexec=$(grep -E '^[[:space:]]*exec /usr/bin/env -i ' "$GATE" | head -1)
+if [[ "$reexec" == *'env -i SG_CLEAN=1 PATH=/usr/bin:/bin:/usr/sbin:/sbin SUDO_UID="${SUDO_UID:-}" SUDO_USER="${SUDO_USER:-}" /bin/bash "$0" "$@"' ]]; then
+  ok "root re-exec has an empty environment, a system PATH and only the sudo caller ids"
+else bad "re-exec line: $reexec"; fi
 if ! grep -qE '(^|[^/A-Za-z_])id -u' "$GATE"; then ok "id is called by absolute path"; else bad "bare id call"; fi
 # a fake id first on PATH that claims root must not change what the gate believes
 mkdir -p "$TMP/fakebin"; printf '%s\n' '#!/bin/sh' 'echo 0' >"$TMP/fakebin/id"; chmod +x "$TMP/fakebin/id"

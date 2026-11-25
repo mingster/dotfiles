@@ -1,12 +1,12 @@
 # Credential folder: root owned, one gate, receivers never trust the worker account
 
-Read this before changing `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-sync.sh`, `script/secrets-refs.sh`, or anything that reads the credential folder. Decision: issue 922 (owner answers Q1 A, Q2 A, Q3 B). This is the second design, after two FAIL Verdicts on PR 936.
+Read this before changing `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-sync.sh`, `script/secrets-refs.sh`, or anything that reads the credential folder. Decision: issue 922 (owner answers Q1 A, Q2 A, Q3 B). This is the second design, after two FAIL Verdicts on PR 936. The fixed helper runner (`run`) is issue 1888 (owner answer Q1 A).
 
 ## The rule
 
 On every host, no process running as the worker account can read the folder or write as root. The daily sync still runs unattended from the source host.
 
-Workers and the owner share one OS account, so anything that logs in as that account, or runs through a passwordless sudo entry that takes input, is reachable by a worker. The first design let each receiver accept the push as that account and then raise to root with a passwordless entry. Both reviews broke it. The fix is not a better receive script. The fix is that a receiver never involves the shared account at all.
+Workers and the owner share one OS account, so anything that logs in as that account, or runs through a passwordless sudo entry, is reachable by a worker. A passwordless entry is safe only when what it runs is fixed by root: `sync` takes no input, and `run` starts only helpers root installed. The first design let each receiver accept the push as that account and then raise to root with a passwordless entry. Both reviews broke it. The fix is not a better receive script. The fix is that a receiver never involves the shared account at all.
 
 ## Design
 
@@ -14,12 +14,13 @@ Workers and the owner share one OS account, so anything that logs in as that acc
 |---|---|---|
 | The folder | A path only root controls, default `/opt/secrets-gate/folder`. Owner root, mode 700. | root |
 | The gate | `/opt/secrets-gate/secrets-gate` with `secrets-gate.conf` (folder, hosts, deploy list) beside it | root |
-| Source host: sync | `sudo -n /opt/secrets-gate/secrets-gate sync`, the only passwordless sudoers entry anywhere (exact command, no wildcard) | root |
+| Source host: sync | `sudo -n /opt/secrets-gate/secrets-gate sync`, passwordless (exact command, no wildcard) | root |
+| Every host: helpers | `/opt/secrets-gate/helpers/<name>`, root mode 755, run by `sudo -n /opt/secrets-gate/secrets-gate run <name> [args]` (passwordless, `run *`) | root |
 | Source host: ssh | Root's own key `/opt/secrets-gate/id_ed25519` and root owned `known_hosts`. ssh runs with `-F /dev/null`, strict host keys, `root@<host>` | root |
 | Receiver host: login | `root@<host>` with the gate key. Root's `authorized_keys` holds one line: `restrict,command="/opt/secrets-gate/secrets-gate receive" <gate key>` | root |
 | Receiver host: sshd | Drop in with `PermitRootLogin forced-commands-only` | root |
 
-A receiver has no sudoers entry and no step that runs as the worker account. A worker on a receiver cannot start `receive`: only the holder of the gate key can, and that key is mode 600 root on the source. A worker on the source can start `sync`, which takes no input except `--dry-run` (not passwordless) and pushes only to the hosts in the root owned config.
+A receiver's only sudoers entry is `run *`, and `receive` never runs as the worker account. A worker on a receiver cannot start `receive`: only the holder of the gate key can, and that key is mode 600 root on the source. A worker on the source can start `sync`, which takes no input except `--dry-run` (not passwordless) and pushes only to the hosts in the root owned config. A worker on any host can start a helper, but only one root installed in the helpers folder.
 
 The gate commands (anything else is refused with exit 2):
 
@@ -31,6 +32,9 @@ The gate commands (anything else is refused with exit 2):
 | `receive` | The rsync server side. Only as the forced command. Takes no argument. Ignores the client's command line. | Forced command only |
 | `deploy-read <name>` | Prints one file named on the config's deploy list. | Touch ID or password |
 | `check-path <path>` | Exit 0 when the path is root controlled. Setup uses it. | none, prints no content |
+| `run <helper> [args...]` | Runs `/opt/secrets-gate/helpers/<helper>` with the args, in an empty environment holding `PATH`, `SECRETS_GATE_FOLDER` (the folder) and, from sudo, `SECRETS_GATE_CALLER_UID`, `SECRETS_GATE_CALLER_USER` and `SECRETS_GATE_CALLER_HOME`. The helper prints what it chooses. | Passwordless (`run *`, every host) |
+
+`run` refuses with exit 2 a name that is not plain (`[A-Za-z0-9._-]`, no leading dot or dash, so no `..` or `/`), a helper that is missing, a link, not a regular executable file, not owned by root, or writable by group or others, and a helpers folder that is a link or sits in a path that is not root controlled. The folder check runs first, as for every command.
 
 ## Why the gate stays safe
 
@@ -42,6 +46,8 @@ The gate commands (anything else is refused with exit 2):
 ## Limits to know
 
 - A worker can run the passwordless `sync`. It prints file names, never contents, and sends only to the configured hosts with the pinned host keys.
+- A worker can run any installed helper as root with arguments, stdin and a working directory it chooses. Each helper must be safe on its own: check its arguments, print only safe output (a fingerprint, a yes or no, a result), and never print a credential or write where the caller points. Review a helper like a sudoers entry before installing it.
+- Setup adds and updates helpers but never removes one. A helper dropped from `--helpers <dir>` stays runnable until the owner removes it with `sudo rm /opt/secrets-gate/helpers/<name>`.
 - The sync no longer deletes. A rotated or retired credential stays on every receiver until the owner removes it there with `sudo rm`.
 - Every sync resends all files (the receiver stages into an empty folder). The folder is small.
 - Setup cannot undo a copy a worker already made before it ran. If a worker could read the folder before setup, rotate the credentials.
@@ -73,7 +79,11 @@ A receiver that is not set up yet is skipped with a warning by the push, so the 
 
 Optional on the source host: `--deploy "name1 name2"` sets the file names `deploy-read` may print.
 
-Undo on a host: `sudo chown -R "$USER" <folder> && sudo chmod -R u+rwX,go-rwx <folder>`, remove `/opt/secrets-gate`, `/etc/sudoers.d/secrets-gate`, `/etc/ssh/sshd_config.d/100-secrets-gate.conf` and the gate line in root's `authorized_keys`.
+Both roles write the sudoers drop in `/etc/sudoers.d/secrets-gate` (checked with `visudo -cf` before install): `run *` on every host, plus `sync` on the source. `receive` stays in root's `authorized_keys` only.
+
+Helpers (any host, after the steps above): put the helper scripts in one folder, then run the same setup command with `--helpers <that folder>`, for example `bash script/secrets-gate-setup.sh --dry-run --role receiver --pubkey "<gate key line>" --helpers <folder>`, read the plan, and run it again without `--dry-run`. Each regular file becomes `/opt/secrets-gate/helpers/<name>` (root, 755). A link, a name with a leading dot or dash, or anything that is not a regular file stops setup before any sudo. Check: `sudo -n /opt/secrets-gate/secrets-gate run <name>` runs with no prompt.
+
+Undo on a host: `sudo chown -R "$USER" <folder> && sudo chmod -R u+rwX,go-rwx <folder>`, remove `/opt/secrets-gate` (helpers included), `/etc/sudoers.d/secrets-gate`, `/etc/ssh/sshd_config.d/100-secrets-gate.conf` and the gate line in root's `authorized_keys`.
 
 ## Scripts moved onto the gate
 
