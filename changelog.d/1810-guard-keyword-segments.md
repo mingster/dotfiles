@@ -1,0 +1,1 @@
+guard-bash now host-checks a command after `do`, `then`, `else`, `elif`, `!` or `time`, and joins a backslash newline before parsing. A loop with a variable ssh host, such as `for h in blueDevil niteking; do ssh $h uptime; done`, is refused until the #1795 resolver lands.

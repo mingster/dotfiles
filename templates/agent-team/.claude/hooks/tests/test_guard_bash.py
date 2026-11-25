@@ -492,6 +492,57 @@ class HostWindow(GuardTest):
         self.assertDenied(self.SSH, "longer window")
 
 
+class HostCheckInsideKeywordSegments(GuardTest):
+    """ssh to a production host is host-checked after do, then, else, elif, !, time and a backslash newline (#1810)."""
+    SSH = "ssh prod.example rm -rf /x"
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"production_hosts": ["prod.example"]}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg, "GUARD_APPROVAL_FILE": os.path.join(self.home, "none.json")}
+
+    def test_ssh_after_a_keyword_is_denied(self):
+        s = self.SSH
+        for command in (
+                f"for h in prod.example; do {s}; done",
+                f"for h in a; do ({s}); done",
+                f"for h in a; do {{ {s}; }}; done",
+                f"for h in a; do\\\n {s}; done",
+                f"for h in a; do \\\n{s}; done",
+                f"for h in a; do time ({s}); done",
+                f"for h in a; do time -p {s}; done",
+                f"if true; then ({s}); fi",
+                f"if true; then {s}; fi",
+                f"if false; then true; else {s}; fi",
+                f"if false; then true; elif true; then {s}; fi",
+                f"! ({s})",
+                f"! {s}",
+                f"time {s}",
+                f"if true; then time ({s}); fi",
+                f"for h in a; do ! ({s}); done"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "production host")
+
+    def test_a_variable_host_after_a_keyword_is_refused_as_not_plain(self):
+        for command in ("for h in prod.example; do ssh $h rm -rf /x; done",
+                        "for h in $(cat /tmp/hosts); do ssh $h uptime; done",
+                        "if true; then ssh $h uptime; fi"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "not a plain host name")
+
+    def test_backslash_newline_joins_a_split_word(self):
+        self.assertDenied("ss\\\nh prod.example rm -rf /x", "production host")
+        self.assertDenied("ssh pr\\\nod.example rm -rf /x", "production host")
+
+    def test_plain_commands_in_keyword_segments_stay_allowed(self):
+        for command in ("for h in a b; do echo $h; done", "if true; then echo ok; else echo no; fi",
+                        "time ls", "! false", "echo 'do (x)' 'then {y}'", "ssh blue uptime"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 class ShellIndirection(GuardTest):
     """A command fed to a shell or interpreter indirectly is gated like the direct command (#872)."""
     GATED = ("gh pr merge 3 --admin", "git push origin HEAD:production", "ssh prod.example rm -rf /x")
