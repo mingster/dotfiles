@@ -28,6 +28,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -2069,6 +2070,7 @@ def template_pin_notices(config, state, now, dotfiles=None, sync_state=None, ori
 
 
 TEMPLATE_SYNC_RETRY = 6 * 3600
+TEMPLATE_SYNC_CLEAN_RECHECK = 1800
 TEMPLATE_SYNC_LOG_DEFAULT = os.path.expanduser('~/.claude/state/template-sync-reconcile.log')
 
 
@@ -2117,6 +2119,7 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
     check = check or (lambda path: _default_template_check(path, dotfiles))
     launch = launch or (lambda path, verdict_from: _default_template_launch(path, verdict_from, dotfiles))
     tried = state.setdefault('template_sync_run', {})
+    clean = state.setdefault('template_sync_clean', {})
     last = _git_out(dotfiles, 'log', '-1', '--format=%H %s', 'origin/main', '--', *TEMPLATE_PATHS)
     head, _, subject = (last or '').partition(' ')
     found = re.search(r'\(#(\d+)\)\s*$', subject)
@@ -2132,9 +2135,15 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
         entry = tried.get(repo) or {}
         if entry.get('sha') == head and now - entry.get('at', 0) < TEMPLATE_SYNC_RETRY:
             continue
+        # A clean check is trusted for TEMPLATE_SYNC_CLEAN_RECHECK seconds at the same template commit (#1820).
+        seen_clean = clean.get(repo) or {}
+        if seen_clean.get('sha') == head and now - seen_clean.get('at', 0) < TEMPLATE_SYNC_CLEAN_RECHECK:
+            continue
         if not check(path):
             tried.pop(repo, None)
+            clean[repo] = {'sha': head, 'at': now}
             continue
+        clean.pop(repo, None)
         try:
             launch(path, verdict_from)
         except (OSError, subprocess.SubprocessError) as error:
@@ -2174,8 +2183,19 @@ def changelog_fragment_notices(config, state, origin_of=None):
     return notices
 
 
-def stale_worktree_notices(config, run=None):
-    """One notice per stale worktree in each repo_roots checkout on this host (#1188), from check-stale-worktrees.sh."""
+STALE_WORKTREE_EVERY = 1800
+
+
+def stale_worktree_notices(config, state=None, now=None, run=None):
+    """One notice per stale worktree in each repo_roots checkout on this host (#1188), from check-stale-worktrees.sh.
+
+    The check takes 6 to 9 s per checkout, so with `state` it runs once per STALE_WORKTREE_EVERY seconds (#1820)."""
+    if state is not None:
+        now = time.time() if now is None else now
+        last = state.get('stale_worktree_at')
+        if last is not None and now - float(last) < STALE_WORKTREE_EVERY:
+            return []
+        state['stale_worktree_at'] = now
     run = run or subprocess.run
     script = str(Path(__file__).with_name('check-stale-worktrees.sh'))
     notices = []
@@ -2300,6 +2320,31 @@ class PassCounts:
         self.sent = 0
         self.send_failed = 0
         self.reasons = {}
+        self.phases = []
+        self._phase_name = None
+        self._phase_started = None
+        self.starts = []
+
+    def phase(self, name, now=None):
+        """Close the running phase and open `name` (None closes only)."""
+        now = time.time() if now is None else now
+        if self._phase_name is not None:
+            self.phases.append((self._phase_name, now - self._phase_started))
+        self._phase_name = name
+        self._phase_started = now if name is not None else None
+
+    def phases_line(self, now=None):
+        """`phases a=1.2,b=0.3`, with the phase still running last, so a killed pass names where it stopped."""
+        rows = list(self.phases)
+        if self._phase_name is not None:
+            now = time.time() if now is None else now
+            rows.append((self._phase_name, now - self._phase_started))
+        if not rows:
+            return ''
+        line = 'phases ' + ','.join('%s=%.1f' % (name, seconds) for name, seconds in rows)
+        if self.starts:
+            line += ' starts=' + ','.join('%.1f' % seconds for seconds in self.starts)
+        return line
 
     def line(self):
         fields = ' '.join('%s=%d' % (name, getattr(self, name)) for name in (
@@ -2320,6 +2365,23 @@ def begin_pass_counts():
     _ENV_PASS_ID = id(_PASS)
     _ENV_NAMES_CACHE = None
     return _PASS
+
+
+def pass_phase(name):
+    """Mark the start of a pass phase; the previous phase ends here."""
+    if _PASS is not None:
+        _PASS.phase(name)
+
+
+def pass_phases_line():
+    return _PASS.phases_line() if _PASS is not None else ''
+
+
+def log_killed_pass(started, now=None):
+    """The wrapper's TERM at its timeout: log the phases so far, so a killed pass names its slow phase."""
+    now = time.time() if now is None else now
+    phases = pass_phases_line()
+    log_fleet_watch('pass killed %.1fs; %s' % (now - started, phases or 'phases none'))
 
 
 def pass_counts_line():
@@ -4541,6 +4603,9 @@ def issue_scan_try_backlog_sweep(
     if not repo:
         log_bits.append('backlog_sweep_skip_root')
         return log_bits
+    if not start_allowed(agent_start_cost(scan.get('sweep_agent') or scan.get('agent') or 'claude')):
+        log_bits.append('backlog_sweep_budget=%s' % repo)
+        return log_bits
     state['issue_scan_backlog_sweep_pending'] = True
     if persist_state:
         persist_state()
@@ -4550,6 +4615,9 @@ def issue_scan_try_backlog_sweep(
         if command is None:
             log_bits.append('backlog_sweep_skip=%s' % role)
             continue
+        if not start_allowed(start_cost(command)):
+            log_bits.append('backlog_sweep_budget=%s' % role)
+            break
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
@@ -4714,6 +4782,8 @@ def work_order_try_supply(
     command = build_supply_command(config, repos, chosen[0], chosen[1])
     if command is None:
         return ['supply_skip_root'], 0
+    if not start_allowed(start_cost(command)):
+        return ['supply_budget=%d:%d' % (free, supply)], 0
     if start_worker(command) != 0:
         count_failed()
         return ['supply_fail'], 0
@@ -4850,6 +4920,9 @@ def issue_scan_try_triage(
             continue
         if live_start_title(command, workers):
             log_bits.append('triage_skip_live')
+            continue
+        if not start_allowed(start_cost(command)):
+            log_bits.append('triage_budget=%s' % repo)
             continue
         if start_worker(command) == 0:
             last_starts[repo] = now
@@ -5609,6 +5682,44 @@ def babysit_settings(config):
     return startup, run_id, from_terminal, roots
 
 
+START_FINISH_BY = 140.0  # a start may begin only if it can end before this many seconds into the pass (#1820)
+START_COST_AGY = 105.0  # an antigravity start that keeps worker-startup's 60 s sign in screen wait
+START_COST_OTHER = 45.0  # any other start
+_PASS_BEGAN = None
+
+
+def begin_pass_clock(now=None):
+    """Start the start budget clock. main() calls it; with no call (tests, direct use) there is no budget."""
+    global _PASS_BEGAN
+    _PASS_BEGAN = time.time() if now is None else now
+
+
+def end_pass_clock():
+    global _PASS_BEGAN
+    _PASS_BEGAN = None
+
+
+def agent_start_cost(agent):
+    return START_COST_AGY if _AGENT_ALIASES.get(agent, agent) == 'antigravity' else START_COST_OTHER
+
+
+def start_cost(command):
+    """Cost of a start command by its --agent. A command with no --agent (the ship script) is the cheap kind."""
+    if isinstance(command, (list, tuple)) and '--agent' in command:
+        index = command.index('--agent') + 1
+        if index < len(command):
+            return agent_start_cost(command[index])
+    return START_COST_OTHER
+
+
+def start_allowed(cost):
+    """True while elapsed + cost fits START_FINISH_BY. Each start site calls it once, after it picks the agent
+    and before it writes any state. with_coordinator_handle does not call it: a start a site let through runs."""
+    if _PASS_BEGAN is None:
+        return True
+    return time.time() - _PASS_BEGAN + cost <= START_FINISH_BY
+
+
 def with_coordinator_handle(config, start):
     """Wrap a worker start so worker-startup sees the coordinator's ORCA_TERMINAL_HANDLE.
 
@@ -5620,9 +5731,12 @@ def with_coordinator_handle(config, start):
         set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
         if set_handle:
             os.environ['ORCA_TERMINAL_HANDLE'] = handle
+        began = time.time()
         try:
             return start(command)
         finally:
+            if _PASS is not None:
+                _PASS.starts.append(time.time() - began)
             if set_handle:
                 os.environ.pop('ORCA_TERMINAL_HANDLE', None)
     return start_with_handle
@@ -6208,6 +6322,54 @@ def _babysit_closed(pr_row):
         return False
     state_name = str(pr_row.get('state') or '').upper()
     return state_name in ('MERGED', 'CLOSED') or bool(pr_row.get('mergedAt') or pr_row.get('closedAt'))
+
+
+def live_verifier_claims(workers):
+    """PR numbers and branch names that live verifier workers name, the keys live_verifier_worker matches on."""
+    numbers, branches = set(), set()
+    for worker in workers or []:
+        if not isinstance(worker, dict) or not worker_row_is_live(worker):
+            continue
+        numbers.update(verifier_title_prs(worker))
+        if _worker_titled_verifier(worker):
+            if worker_pr_number(worker) is not None:
+                numbers.add(worker_pr_number(worker))
+            if worker_branch_name(worker):
+                branches.add(worker_branch_name(worker))
+    return numbers, branches
+
+
+UNKNOWN_BUILDER_REFUSALS = 3  # refusals on one head before one notice and a skip until the head changes (#1841)
+
+
+def _unknown_builder_book(state, repo):
+    return state.setdefault('babysit_unknown_builder', {}).setdefault(repo, {})
+
+
+def unknown_builder_refused(state, repo, number, head):
+    """Count one unknown builder refusal on this head. True on the refusal that parks it, once per head."""
+    book = _unknown_builder_book(state, repo)
+    entry = book.get(str(number))
+    if not isinstance(entry, dict) or entry.get('head') != head:
+        entry = book[str(number)] = {'head': head, 'refusals': 0}
+    entry['refusals'] = int(entry.get('refusals') or 0) + 1
+    return entry['refusals'] == UNKNOWN_BUILDER_REFUSALS
+
+
+def unknown_builder_parked(state, repo, number, head):
+    entry = ((state.get('babysit_unknown_builder') or {}).get(repo) or {}).get(str(number))
+    return isinstance(entry, dict) and entry.get('head') == head \
+        and int(entry.get('refusals') or 0) >= UNKNOWN_BUILDER_REFUSALS
+
+
+def unknown_builder_prune(state, repo, open_numbers):
+    """Drop records for PRs that are no longer open."""
+    book = (state.get('babysit_unknown_builder') or {}).get(repo)
+    if not isinstance(book, dict):
+        return
+    keep = {str(n) for n in open_numbers}
+    for key in [k for k in book if k not in keep]:
+        book.pop(key)
 
 
 def _babysit_line(repo, number, head, action, detail=''):
@@ -7151,7 +7313,7 @@ def standing_route(
 ):
     """Send an eligible PR to an idle standing verifier, starting one when none exists.
 
-    Returns 'assigned', 'started', or 'fallback' (the caller starts a fresh one-shot verifier).
+    Returns 'assigned', 'started' or 'fallback' (the caller starts a fresh one-shot verifier).
     """
     cfg = standing_settings(config)
     if not cfg['enabled']:
@@ -7382,44 +7544,44 @@ def babysit_pass(
                 picks[key] = pick(role)
         return picks[key]
 
+    # A closed PR gets per PR work only when a live verifier names it, so a pass does not walk every closed PR (#1841).
+    verifier_numbers, verifier_branches = live_verifier_claims(workers)
     rows = []
     for index, repo in enumerate(repos):
         prs = pr_fetch(repo)
-        if prs is None:
+        fetch_failed = prs is None
+        if fetch_failed:
             log_bits.append('fetch_fail')
             prs = []
-        seen = set()
-
-        def note_closed(pr_row, repo_name=repo):
-            number = pr_row.get('number')
-            if number in seen:
-                return
-            seen.add(number)
-            detail = 'closed'
-            if not dry_run and release_closed_verifier(
-                pr_row, workers, state, repo_name, release_worker,
-            ):
-                detail = 'verifier-released'
-                if persist_state:
-                    persist_state()
-            lines.append(_babysit_line(
-                repo_name, number or 0, pr_row.get('headRefOid') or '', 'skip', detail,
-            ))
-
+        closed = []
+        open_numbers = set()
         for pr_row in prs:
             if not isinstance(pr_row, dict):
                 continue
-            if not pr_open_for_dispatch(pr_row):
-                if _babysit_closed(pr_row):
-                    note_closed(pr_row)
+            if pr_open_for_dispatch(pr_row):
+                open_numbers.add(pr_row.get('number'))
+                rows.append((index, pr_row.get('number') or 0, repo, pr_row))
+            elif _babysit_closed(pr_row):
+                closed.append(pr_row)
+        if verifier_numbers - open_numbers or verifier_branches:
+            closed_rows = closed_fetch(repo)
+            if isinstance(closed_rows, list):
+                closed += [r for r in closed_rows if isinstance(r, dict) and _babysit_closed(r)]
+        released = set()
+        for pr_row in closed:
+            number = pr_row.get('number')
+            if number in open_numbers or number in released:
                 continue
-            seen.add(pr_row.get('number'))
-            rows.append((index, pr_row.get('number') or 0, repo, pr_row))
-        closed_rows = closed_fetch(repo)
-        if isinstance(closed_rows, list):
-            for pr_row in closed_rows:
-                if isinstance(pr_row, dict) and _babysit_closed(pr_row):
-                    note_closed(pr_row)
+            if number not in verifier_numbers and (pr_row.get('headRefName') or '') not in verifier_branches:
+                continue
+            if dry_run or not release_closed_verifier(pr_row, workers, state, repo, release_worker):
+                continue
+            released.add(number)
+            lines.append(_babysit_line(repo, number or 0, pr_row.get('headRefOid') or '', 'skip', 'verifier-released'))
+            if persist_state:
+                persist_state()
+        if not fetch_failed and not dry_run:
+            unknown_builder_prune(state, repo, open_numbers)
     # Tier 1 verifiers start before the rest (#1730).
     rows.sort(key=lambda item: (0 if pr_tier(item[3]) == 1 else 1, item[0], item[1]))
 
@@ -7442,6 +7604,9 @@ def babysit_pass(
             continue
         if not re.fullmatch(r'[0-9a-f]{40}', head):
             lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
+            continue
+        if unknown_builder_parked(state, repo, number, head):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-parked'))
             continue
         record = babysit_record(state, repo, number)
         reported = record.get('head') == head and record.get('action') == 'report'
@@ -7563,6 +7728,12 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-family'))
             log_bits.append('unknown_builder=%s' % number)
             count_refused('builder')
+            if not dry_run and unknown_builder_refused(state, repo, number, head):
+                notices.append(Urgent(
+                    '%s#%s head %s: no builder agent and model, so no verifier family can be chosen; '
+                    'skipped until the head changes (add a Builder: line to the PR body and push)' % (repo, number, head[:8])))
+                if persist_state:
+                    persist_state()
             continue
         picked = cached_pick(role, avoid_fam)
         chosen = choose_pick(picked, avoid=avoid)
@@ -7608,6 +7779,7 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
+        # No start_allowed hold here: a verifier starts on Review PASS within the usage gate and host caps (owner 2026-11-25, #1838).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)
@@ -7929,10 +8101,13 @@ def _issue_scan_pass(
                 if verdict_age_seconds(pr_row, now) < SHIP_FALLBACK_AFTER:
                     log_bits.append('ship_wait=%d' % pr_num)
                     continue
+                command = build_ship_command(repo, pr_row, root)
+                if not start_allowed(start_cost(command)):
+                    log_bits.append('ship_budget=%d' % pr_num)
+                    continue
                 shipped[head] = True
                 if persist_state:
                     persist_state()
-                command = build_ship_command(repo, pr_row, root)
                 code, reason = start_result_parts(start_worker(command))
                 if code == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
@@ -8003,6 +8178,9 @@ def _issue_scan_pass(
                 continue
             if live_start_title(command, workers):
                 log_bits.append('rework_live=%d' % pr_num)
+                continue
+            if not start_allowed(start_cost(command)):
+                log_bits.append('rework_budget=%d' % pr_num)
                 continue
             pending[head] = True
             if persist_state:
@@ -8305,6 +8483,9 @@ def _issue_scan_pass(
                 count_refused('usage_gate')
                 log_bits.append('issue_scan_gate=%s' % gate_reason)
                 break
+        if not start_allowed(start_cost(command)):
+            log_bits.append('issue_start_budget=%d' % row['number'])
+            continue
         attempts += 1
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
@@ -9470,6 +9651,14 @@ def format_seat_report(report):
 
 
 def main():
+    begin_pass_clock()
+    try:
+        return _main()
+    finally:
+        end_pass_clock()
+
+
+def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
     parser.add_argument('--state', type=Path, required=False)
@@ -9593,9 +9782,16 @@ def main():
         return 0
     pass_start = time.time()
     now = pass_start
+
+    def on_term(_signum, _frame):
+        log_killed_pass(pass_start)
+        os._exit(143)
+
+    signal.signal(signal.SIGTERM, on_term)
     workers = []
     notices = []
     inventory_ok = True
+    pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
         workers = inv['workers']
@@ -9645,6 +9841,7 @@ def main():
     term_times = {}
     term_branches = {}
     terminal_list_ok = True
+    pass_phase('terminals')
     try:
         term_out = rpc('terminal', 'list', '--json')
         term_times = terminal_last_output_map(term_out)
@@ -9664,6 +9861,7 @@ def main():
             return None
         return [row for row in rows if _babysit_closed(row)]
 
+    pass_phase('release')
     if inventory_ok:
         try:
             env_of = {
@@ -9686,7 +9884,9 @@ def main():
         except Exception as error:
             print('fleet-watch: auto-release skipped: %s' % (repr(error),), file=sys.stderr)
 
+    pass_phase('pr_notices')
     notices += pr_notices(config, state, now, fetch=fetch_once)
+    pass_phase('notices')
     notices += usage_notices(config)
     workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
@@ -9701,11 +9901,12 @@ def main():
     notices += template_pin_notices(config, state, now)
     notices += template_sync_reconcile(config, state, now)
     notices += changelog_fragment_notices(config, state)
-    notices += stale_worktree_notices(config)
+    notices += stale_worktree_notices(config, state, now)
 
     def persist_scan_state():
         save_state(args.state, state)
 
+    pass_phase('babysit')
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
         now=now, term_times=term_times, pr_fetch=fetch_once, closed_fetch=closed_from_pass,
@@ -9714,6 +9915,7 @@ def main():
     for line in babysit_lines:
         print(line)
     notices += babysit_notices
+    pass_phase('audit')
     try:
         audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
         for line in audit_lines:
@@ -9721,6 +9923,7 @@ def main():
         babysit_log = list(babysit_log) + audit_log
     except Exception as error:
         print('fleet-watch: tier 0 audit skipped: %s' % (repr(error),), file=sys.stderr)
+    pass_phase('issue_scan')
     scan_extra, scan_log = issue_scan_pass(
         config, state, now, workers,
         pr_fetch=fetch_once,
@@ -9739,15 +9942,18 @@ def main():
             notices += agy_signin_notices(config, workers, now=now)
         except Exception as error:
             print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
+    pass_phase('stall')
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
         inventory_ok=inventory_ok)
     notices += stall_extra
+    pass_phase('signal')
     signal_extra, signal_log = worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok)
     notices += signal_extra
+    pass_phase('nudge')
     nudge_log = []
     if inventory_ok and terminal_list_ok:
         try:
@@ -9756,6 +9962,7 @@ def main():
             print('fleet-watch: unread nudge skipped: %s' % (repr(error),), file=sys.stderr)
     notices += coordinator
     notices += drain_notices(config)
+    pass_phase('deliver')
 
     duration = time.time() - pass_start
     parts = []
@@ -9794,7 +10001,10 @@ def main():
             print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))
         save_state(args.state, state)
     finally:
-        finish_pass('; '.join(parts))
+        pass_phase(None)
+        phases = pass_phases_line()
+        # Counts go before the phases so the line ends with them (finish_pass appends counts that are missing).
+        finish_pass('; '.join(parts + ([pass_counts_line(), phases] if phases else [])))
     return 0
 
 
