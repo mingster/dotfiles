@@ -1978,6 +1978,51 @@ class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
                 self.assertDenied(command)
 
 
+class TextCheckBypassClasses(ProjectConfigGuardTest):
+    """Deny only (#1887): the four bypass classes the PR #1874 third review found, one test per class."""
+
+    def test_variable_glued_to_dir_name_denied(self):
+        for command in ('D="$u"fileServer/secrets; cat $D/x.json', 'D=$u"fileServer"/secrets; cat $D/x.json',
+                        "D=$u'fileServer'/secrets; cat $D/x.json", "D=$u\\fileServer/secrets; cat $D/x.json",
+                        'S=file; D="$S"Server/secrets; cat $D/x.json', "S=file; D=${S}Server/secrets; cat $D/x.json",
+                        "S=sec; D=fileServer/${S}rets; cat $D/x.json", "D=file$(echo Server)/secrets; cat $D/x.json",
+                        "D=$(echo file)Server/secrets; cat $D/x.json", "D=file`echo Server`/secrets; cat $D/x.json",
+                        'D=fileServer/sec"$u"rets; cat $D/x.json', "D=fileServer/sec${u}rets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_negated_bracket_glob_denied(self):
+        for command in ("D=fileServer/se[!x]rets; cat $D/x.json", "D=fileServer/se[^x]rets; cat $D/x.json",
+                        "D=file[!x]erver/secrets; cat $D/x.json",
+                        "D=fileServer/se[[:alpha:]]rets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_dollar_quote_span_and_escaped_dollar_denied(self):
+        for command in ("S=deploy- # $'\nbash bin/$S\\raw.sh # '",
+                        "S=deploy-; X=\"$'\"; bash bin/$S\\raw.sh; Y=\"'\"",
+                        "# $'\nD=fileServer/sec\\rets\ncat $D/x.json # '",
+                        "# $'\nD=\\fileServer/secrets\ncat $D/x.json # '",
+                        'S=deploy; eval "bash bin/\\$"S-raw.sh', "S=deploy; eval 'bash bin/$'S-raw.sh",
+                        "S=deploy bash -c 'bash bin/$'S-raw.sh", "S=deploy; sh -c 'bash bin/$'S-raw.sh",
+                        'D=fileServer/secrets; eval "cat \\$"D/x.json', 'D=fileServer/secrets; bash -c "cat \\$"D/x.json'):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_tilde_minus_is_previous_dir_denied(self):
+        for command in ("cd /tmp && find ~- -exec cat {} +", "cd /tmp && cd ~-/fileServer && cat */x.json",
+                        "cd fileServer && cd /tmp && cd ~- && cat */x.json", "cd fileServer && cd /tmp && cd - && cat */x.json",
+                        "cd /tmp; cat ~-/fileServer/*/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_nearby_commands_still_allowed(self):
+        for command in ("cd /tmp && ls ~-", "cd /tmp && cat ~-/docs/x.md", 'X="$u"docs; cat $X/a.md',
+                        "ls docs/[!x]*.md", "eval 'echo hi'", "S=a; echo \"$S\"raw"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 class DenyMessagesNameRewrite(ProjectConfigGuardTest):
     """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""
     CONFIG = dict(ProjectConfigGuardTest.CONFIG, production_hosts=["prod.example"])
