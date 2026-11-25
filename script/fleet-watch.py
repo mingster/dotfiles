@@ -5111,7 +5111,8 @@ def work_order_try_supply(
     command = build_supply_command(config, repos, chosen[0], chosen[1], claimed)
     if command is None:
         return bits + ['supply_skip_root'], 0
-    if not start_allowed(start_cost(command)):
+    # PASS_HARD_END, not START_FINISH_BY: supply runs late in the pass, so an agy pick never fit 140 s (#1889).
+    if not start_fits_pass(start_cost(command)):
         return bits + ['supply_budget=%d:%d' % (free, supply)], 0
     if start_worker(command) != 0:
         count_failed()

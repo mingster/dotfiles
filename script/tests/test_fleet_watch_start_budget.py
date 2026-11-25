@@ -92,10 +92,11 @@ def backlog_sweep(held):
 
 
 def supply(held):
+    # Supply is held by start_fits_pass (PASS_HARD_END), not start_allowed (#1889).
     starts, state = [], {'issue_scan_backlog_sweep_at': TRIAGE_NOW}
     before = copy.deepcopy(state)
     order = {'min_active': 3, 'target_workers': 10}
-    with spent() if held else patch.object(fw, 'start_allowed', return_value=True):
+    with patch.object(fw, 'start_fits_pass', return_value=not held):
         _t, bits, state = triage_run([], backlog=3, state=state, order=order, supply_recent=False, starts_out=starts)
     return starts, bits, before, state
 
@@ -166,7 +167,6 @@ BUDGET_TABLE = {
     'issue start': (issue_start, 'issue_start_budget=1'),
     'auto ship': (auto_ship, 'ship_budget=1'),
     'backlog sweep': (backlog_sweep, 'backlog_sweep_budget='),
-    'supply': (supply, 'supply_budget='),
     'triage': (triage, 'triage_budget='),
     'rework': (rework, 'rework_budget=1'),
 }
@@ -240,8 +240,18 @@ class StartBudget(unittest.TestCase):
                 self.assertEqual((fw._PASS.started, fw._PASS.failed, fw._PASS.parked), (0, 0, 0), site)
                 self.assertFalse([b for b in bits if ('_fail' in b and 'list_failed' not in b) or 'deferred' in b or 'parked' in b], (site, bits))
 
+    def test_supply_holds_on_the_pass_end_not_the_start_line(self):  # #1889
+        fw.begin_pass_counts()
+        starts, bits = supply(True)[:2]
+        self.assertTrue(any(b.startswith('supply_budget=') for b in bits), bits)
+        self.assertFalse([c for c in starts if 'supply' in ' '.join(map(str, c))], starts)
+        with spent():  # START_FINISH_BY spent does not hold it
+            bits = triage_run([], backlog=3, state={'issue_scan_backlog_sweep_at': TRIAGE_NOW},
+                              order={'min_active': 3, 'target_workers': 10}, starts_out=[])[1]
+        self.assertFalse(any(b.startswith('supply_budget=') for b in bits), bits)
+
     def test_every_site_starts_when_the_budget_allows(self):
-        for site, (scenario, _bit) in BUDGET_TABLE.items():
+        for site, (scenario, _bit) in {**BUDGET_TABLE, 'supply': (supply, '')}.items():
             with self.subTest(site=site):
                 fw.begin_pass_counts()
                 starts, bits = scenario(False)[:2]
