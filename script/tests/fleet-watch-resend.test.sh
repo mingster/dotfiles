@@ -296,7 +296,7 @@ class SendRetry(unittest.TestCase):
         def run(cmd, **kw):
             attempts.append(cmd)
             if len(attempts) == 1:
-                raise OSError(35, 'Resource temporarily unavailable')
+                raise OSError('fork failed')
             return orca_ok()
         state = {}
         with patch.object(watch.subprocess, 'run', side_effect=run), contextlib.redirect_stderr(io.StringIO()):
@@ -305,7 +305,7 @@ class SendRetry(unittest.TestCase):
         self.assertEqual(attempts[0], attempts[1])
         self.assertEqual(state['notice_queue'], {})
         log = LOG.read_text()
-        self.assertIn('send retry for run:r1 after BlockingIOError', log)
+        self.assertIn('send retry for run:r1 after OSError', log)
         self.assertNotIn('send failed', log)
 
     def test_two_spawn_failures_log_one_failure_after_the_retry(self):
