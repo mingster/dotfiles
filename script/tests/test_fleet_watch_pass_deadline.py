@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'
 spec = importlib.util.spec_from_file_location('fleet_watch_deadline', SCRIPT)
