@@ -1000,6 +1000,32 @@ class StallLadder(unittest.TestCase):
         self.assertEqual(self.stops(), [])
         self.assertTrue(any('did not stop' in str(n) for n in notices), notices)
 
+    def test_remote_worker_that_resumes_leaves_the_ladder(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        start = T0 - WINDOW - 60
+        reads = {'stamp': int((T0 - 2 * WINDOW) * 1000)}
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': [tool_message(reads['stamp'])], 'nextCursor': None}}
+            return {}
+
+        def run(now):
+            return fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)[1]
+
+        run(T0)
+        self.assertEqual(state['stall_ladder']['disp_ladder']['since'], T0 - 2 * WINDOW)
+        reads['stamp'] = int((T0 + WINDOW) * 1000)
+        bits = run(T0 + WINDOW + 60)
+        self.assertIn('remote_stall_check=disp_ladder:active', bits)
+        self.assertNotIn('disp_ladder', state['stall_ladder'])
+        self.assertEqual(self.stops(), [])
+
     def test_settled_worker_leaves_the_ladder(self):
         state, w = {}, self.issue_worker()
         self.climb_to_nudge(state, w)
@@ -1168,8 +1194,22 @@ class AgentStateRefusal(unittest.TestCase):
         state = {} if state is None else state
         refused = fw.refuse_agent_state_dones(
             [done_message(body=body)], [base_worker(dispatchId='disp_done')],
-            lambda term, text: sent.append((term, text)), state, directory=self.dir)
+            lambda worker, text: sent.append((worker['dispatchId'], text)), state, directory=self.dir)
         return refused, sent, state
+
+    def test_failed_send_is_tried_again_next_pass(self):
+        state = {}
+
+        def fail(_worker, _text):
+            raise fw.OrcaReadError('send failed')
+
+        refused = fw.refuse_agent_state_dones(
+            [done_message(body='Report in ~/agent-state/audits/gone.md.')], [base_worker(dispatchId='disp_done')],
+            fail, state, directory=self.dir)
+        self.assertEqual(refused, {'m1'})
+        self.assertEqual(state['refused_done'], [])
+        _, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md.', state)
+        self.assertEqual(len(sent), 1)
 
     def test_missing_path_is_refused_once(self):
         refused, sent, state = self.refuse('Report in ~/agent-state/audits/gone.md.')

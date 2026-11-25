@@ -3018,7 +3018,12 @@ _ACTIVITY_BLOCK_TYPES = ('tool-call', 'tool-result')
 
 
 def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit):
-    """'active', 'silent' or 'unknown' for a remote dispatch, from the newest tool activity in its transcript.
+    """'active', 'silent' or 'unknown' for a remote dispatch; see remote_last_activity."""
+    return remote_last_activity(rpc_call, dispatch_id, environment, now, stall_limit)[0]
+
+
+def remote_last_activity(rpc_call, dispatch_id, environment, now, stall_limit):
+    """('active' | 'silent' | 'unknown', newest tool activity in epoch seconds or None) for a remote dispatch.
 
     worker-read pages oldest first, so every page is read until the cursor ends. A transcript longer
     than the page cap, or a read that fails twice, is 'unknown' and the worker is neither flagged nor stopped.
@@ -3037,12 +3042,12 @@ def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit)
             result = rpc_call(*args)
         except SEND_ERRORS:
             if not retry_left:
-                return 'unknown'
+                return 'unknown', None
             retry_left = 0
             try:
                 result = rpc_call(*args)
             except SEND_ERRORS:
-                return 'unknown'
+                return 'unknown', None
         transcript = result.get('transcript') if isinstance(result, dict) else None
         transcript = transcript if isinstance(transcript, dict) else {}
         messages = [m for m in (transcript.get('messages') or []) if isinstance(m, dict)]
@@ -3057,12 +3062,12 @@ def remote_worker_activity(rpc_call, dispatch_id, environment, now, stall_limit)
         if not cursor or not messages:
             break
     else:
-        return 'unknown'
+        return 'unknown', None
     if cursor:
-        return 'unknown'
+        return 'unknown', None
     if newest is None:
-        return 'silent'
-    return 'active' if now - newest < stall_limit else 'silent'
+        return 'silent', None
+    return ('active' if now - newest < stall_limit else 'silent'), newest
 
 
 def _stall_notice_reason(reason, code):
@@ -3553,16 +3558,20 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         # foreign workers climb the nudge, stop and release ladder.
         use_ladder = own is None or own.get('kind') == 'issue'
         if host_id != 'local':
-            # The terminal clock is not visible for a remote worker, so its transcript decides.
-            if use_ladder and did in ladder:
-                climb_ladder(w, did, last_s, is_stalled)
+            # The terminal clock is not visible for a remote worker, so its transcript decides on every
+            # pass, and the ladder counts from its last tool activity.
+            on_ladder = use_ladder and did in ladder
+            if not is_stalled and not on_ladder:
                 continue
-            if not is_stalled:
-                continue
-            activity = remote_worker_activity(rpc_call, did, remote_environment(w), now, stall_limit)
+            activity, newest = remote_last_activity(rpc_call, did, remote_environment(w), now, stall_limit)
             log_bits.append('remote_stall_check=%s:%s' % (did, activity))
+            if activity == 'unknown' and on_ladder:
+                laddered.add(did)
             if activity != 'silent':
                 continue
+            is_stalled = True
+            if newest is not None:
+                last_s = newest
         elif term not in local_handles:
             continue
         if not use_ladder:
@@ -9761,20 +9770,24 @@ def _done_body(message, payload):
     return '\n'.join(str(v) for v in (message.get('body'), payload.get('body')) if isinstance(v, str) and v)
 
 
-def refuse_agent_state_dones(messages, workers, notify, state, directory=None):
+def refuse_agent_state_dones(messages, workers, send, state, directory=None):
     """Send one notice back to a worker whose worker_done names an agent-state file the coordinator lacks.
 
-    Returns the refused message ids; the rest of the pass treats those dones as not sent.
+    send(worker, text) delivers to the worker's terminal on its own host and raises SEND_ERRORS on failure.
+    A refusal is kept only once its notice is delivered (or the worker is released, so no notice can land);
+    a failed send is tried again next pass. Returns the refused message ids; the rest of the pass treats
+    those dones as not sent. A done Orca rejected is checked too, since a remote relay can reject one.
     """
     refused = state.setdefault('refused_done', [])
     if not isinstance(refused, list):
         refused = state['refused_done'] = []
     by_dispatch = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
+    pending = set()
     for message in messages or []:
-        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
+        if not isinstance(message, dict) or message.get('type') != 'worker_done':
             continue
         message_id = message.get('id')
-        if not isinstance(message_id, str) or not message_id or message_id in refused:
+        if not isinstance(message_id, str) or not message_id or message_id in refused or message_id in pending:
             continue
         payload = _message_payload(message)
         worker = by_dispatch.get(payload.get('dispatchId') or payload.get('dispatch_id') or '')
@@ -9783,10 +9796,16 @@ def refuse_agent_state_dones(messages, workers, notify, state, directory=None):
         missing = missing_agent_state_path(_done_body(message, payload), directory)
         if not missing:
             continue
-        mail_worker(notify, worker, AGENT_STATE_REFUSAL % missing, allow_settled=True)
+        try:
+            mail_worker(lambda _term, text: send(worker, text), worker, AGENT_STATE_REFUSAL % missing,
+                        allow_settled=True)
+        except SEND_ERRORS as error:
+            log_send_failed(worker_terminal_handle(worker), error)
+            pending.add(message_id)
+            continue
         refused.append(message_id)
     del refused[:-200]
-    return set(refused)
+    return set(refused) | pending
 
 
 def relay_done_board(messages, workers, config, state, board_of, set_status, pr_of):
@@ -10081,6 +10100,15 @@ def _main():
     workers = []
     notices = []
     inventory_ok = True
+
+    def _send_to_worker(worker, text):
+        terminal = worker_terminal_handle(worker)
+        if not terminal:
+            return
+        environment = remote_environment(worker) if worker_is_remote(worker, config) else ''
+        rpc('terminal', 'send', '--terminal', terminal, '--text', text, '--enter',
+            *(('--environment', environment) if environment else ()))
+
     pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
@@ -10095,6 +10123,12 @@ def _main():
             notices += unanswered_ask_notices(state, now, inv['messages'], workers)
         except Exception as error:
             print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
+        try:
+            refused = refuse_agent_state_dones(inv['messages'], workers, _send_to_worker, state)
+            if refused:
+                inv['messages'] = [m for m in inv['messages'] if not (isinstance(m, dict) and m.get('id') in refused)]
+        except Exception as error:
+            print('fleet-watch: agent-state check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
             notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
             for failed in workers:
@@ -10117,12 +10151,6 @@ def _main():
             except SEND_ERRORS as error:
                 log_send_failed(terminal, error)
 
-        try:
-            refused = refuse_agent_state_dones(inv['messages'], workers, _notify_bounce, state)
-            if refused:
-                inv['messages'] = [m for m in inv['messages'] if not (isinstance(m, dict) and m.get('id') in refused)]
-        except Exception as error:
-            print('fleet-watch: agent-state check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
             for line in bounce_builder_dones(
                 inv['messages'], workers, fetch_pr_body, _notify_bounce, state, config,
