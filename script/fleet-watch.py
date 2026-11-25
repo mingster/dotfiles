@@ -10069,7 +10069,6 @@ def _main():
     workers = []
     notices = []
     inventory_ok = True
-
     pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)

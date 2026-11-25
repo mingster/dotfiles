@@ -1025,6 +1025,7 @@ class StallLadder(unittest.TestCase):
         self.assertIn('remote_stall_check=disp_ladder:active', bits)
         self.assertNotIn('disp_ladder', state['stall_ladder'])
         self.assertEqual(self.stops(), [])
+        self.assertEqual(self.sends(), [])
 
     def test_remote_worker_quiet_one_window_after_an_hour_is_not_nudged(self):
         state = {}
