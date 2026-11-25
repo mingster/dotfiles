@@ -430,7 +430,7 @@ builder_record() { # <body>; sets builder_agent and builder_model, or leaves the
 model_family() { # <agent> <model>
   python3 "$ship_dir/usage-gate.py" family --agent "$1" --model "$2"
 }
-same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-family tag]
+same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-family tag] [PR diff]
   builder_record "$1"
   [ -n "$builder_agent" ] || refuse "$4 has no 'Builder: agent=<agent> model=<model>' line, so the verifier cannot be compared with the builder"
   [ "$(tr '[:upper:]' '[:lower:]' <<<"$2/$3")" != "$(tr '[:upper:]' '[:lower:]' <<<"$builder_agent/$builder_model")" ] \
@@ -442,7 +442,15 @@ same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-fami
       && [ "${5:-}" != same-family-different-model ]; then
     refuse "verifier $2/$3 is the same model family as the builder; verify with a different family or tag the Verdict same-family-different-model"
   fi
-  body_reason=$(python3 "$ship_dir/pr-body-gate.py" <<<"$1") || refuse "$4 $body_reason"
+  # #1882: a sixth argument (the PR's own diff) turns on the Readers: rule. --verdict-from checks a merged
+  # source PR's body, which never saw this diff, so it passes none.
+  local gate_diff=""
+  if [ -n "${6:-}" ]; then
+    gate_diff=$(mktemp) || refuse "cannot create a temp file"
+    printf '%s\n' "$6" >"$gate_diff"
+  fi
+  body_reason=$(python3 "$ship_dir/pr-body-gate.py" ${gate_diff:+--diff "$gate_diff"} <<<"$1") || { rm -f "$gate_diff"; refuse "$4 $body_reason"; }
+  rm -f "$gate_diff"
 }
 verdict_re='^Verdict: (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40}) verifier=([a-zA-Z0-9_-]+) author=([a-zA-Z0-9_-]+)( agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+))?$'
 
@@ -906,7 +914,7 @@ docs)
       case "$verdict_status" in
         PASS|PASS+NOTES)
           [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
-          same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag" ;;
+          same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag" "$diff" ;;
         *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head' comment or a Verdict: PASS at that head" ;;
       esac ;;
   esac
@@ -920,7 +928,7 @@ verdict)
     *) refuse "newest Verdict on PR $pr is $verdict_status" ;;
   esac
   [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
-  same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag"
+  same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag" "$diff"
 
   # Verdict head equals current head, or git patch-id --stable of merge-base(origin/main, head)..head matches.
   if [ "$verdict_head" != "$head" ] && ! verdict_carry "$verdict_head" "$head" && ! wording_only_carry "$verdict_head" "$head"; then

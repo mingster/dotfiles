@@ -181,10 +181,15 @@ current=$(jq -r .headRefOid <<<"$pr_head_json")
 [ "$current" = "$head" ] || { echo "stale head, a newer run reviews this PR"; exit 0; }
 
 # #1480: a body that fails pr-body-gate stops here, so the builder fixes it before worker_done, not at ship.sh.
-if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py"); then
+# #1882: the PR diff turns on the Readers: rule.
+gate_diff=$(mktemp)
+gh pr diff "$pr" --repo "$repo" >"$gate_diff"
+if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py" --diff "$gate_diff"); then
+  rm -f "$gate_diff"
   echo "PR body fails pr-body-gate: ${body_reason:-no reason given}. Fix the PR body, then rerun." >&2
   exit 1
 fi
+rm -f "$gate_diff"
 # #1688: a title that names issues the body does not close or refer to, or a body closing numbers missing from this repo.
 pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq .title)
 pr_body_file=$(mktemp)

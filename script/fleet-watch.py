@@ -912,7 +912,7 @@ def read_full_inbox_bodies():
 
 def read_orca_inventory(config):
     """Read inbox, workers, lead terminals, and pgrep in one pass; validate JSON shapes. Raises OrcaReadError."""
-    inbox = rpc('orchestration', 'inbox', '--limit', '5000')
+    inbox = rpc('orchestration', 'inbox', '--limit', str(INBOX_LIMIT))
     if not isinstance(inbox, dict) or 'messages' not in inbox or not isinstance(inbox['messages'], list):
         raise OrcaReadError('malformed inbox reply')
     for m in inbox['messages']:
@@ -2519,6 +2519,7 @@ def _normalize_terminal_time_ms(value):
 GONE_REMOTE_KEY = '_remote_gone'
 ASK_REPLY_SECONDS = 15 * 60
 ASK_TYPES = ('question', 'escalation')
+INBOX_LIMIT = 5000  # one inbox read; a reply this long may have cut older messages, such as an ask
 
 
 def _remote_ready_record(w):
@@ -10238,8 +10239,33 @@ def answered_owner_asks(messages, workers, state, config, run=subprocess.run):
     return lines
 
 
-def bounce_builder_dones(messages, workers, body_of, notify, state, config):
-    """Tell a builder its worker_done does not count when the PR body fails the finish gate."""
+def fetch_pr_diff(repo, number, run=subprocess.run):
+    """The PR diff, or None when it cannot be read (the Readers: rule then stays off)."""
+    try:
+        output = run(['gh', 'pr', 'diff', str(number), '--repo', repo],
+                     capture_output=True, text=True, timeout=60, check=True)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return output.stdout
+
+
+def _dispatch_asked(messages, dispatch, worker):
+    """True when the inbox holds an ask (question or escalation) from this dispatch or its terminal. False only when
+    there is none and the inbox was not cut at its limit; None (unknown) otherwise (#1882)."""
+    handle = worker_terminal_handle(worker)
+    for m in messages:
+        if not isinstance(m, dict) or m.get('type') not in ASK_TYPES:
+            continue
+        if _message_payload(m).get('dispatchId') == dispatch or (handle and m.get('from') == handle):
+            return True
+    return False if len(messages) < INBOX_LIMIT else None
+
+
+def bounce_builder_dones(messages, workers, body_of, notify, state, config, diff_of=None):
+    """Tell a builder its worker_done does not count when the PR body fails the finish gate.
+
+    diff_of(repo, number) gives the PR diff for the Readers: rule, and the dispatch's ask record turns on the
+    Decisions: rule (#1882)."""
     lines = []
     bounced = state.setdefault('bounced_done', [])
     if not isinstance(bounced, list):
@@ -10277,7 +10303,9 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
         body = body_of(repo, number)
         if body is None:
             continue
-        reason = gate.finish_block_reason(body, issue=_worker_issue_number(worker))
+        reason = gate.finish_block_reason(
+            body, issue=_worker_issue_number(worker), diff=diff_of(repo, number) if diff_of else None,
+            asked=_dispatch_asked(messages, dispatch, worker))
         if not reason:
             continue
         mail_worker(notify, worker, 'worker_done bounced: ' + reason, allow_settled=True)
@@ -10629,7 +10657,7 @@ def _main():
 
         try:
             for line in bounce_builder_dones(
-                inv['messages'], workers, fetch_pr_body, _notify_bounce, state, config,
+                inv['messages'], workers, fetch_pr_body, _notify_bounce, state, config, diff_of=fetch_pr_diff,
             ):
                 print('fleet-watch: ' + line)
         except Exception as error:

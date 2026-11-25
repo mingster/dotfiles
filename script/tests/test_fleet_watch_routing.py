@@ -659,7 +659,7 @@ class Bounce(unittest.TestCase):
         self.assertEqual(sent, [])
 
     def test_issue_builder_without_closes_or_refs_bounces(self):
-        body = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\n'
+        body = '## Acceptance\n- [x] done\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\nBuilder: agent=claude model=sonnet\nDecisions: none\n'
         lines, sent, _state = self.bounce(body, worker=self.worker('fullstack-dev - #42'))
         self.assertIn('PR body needs Closes #42 or Refs #42', lines[0])
         self.assertTrue(sent)

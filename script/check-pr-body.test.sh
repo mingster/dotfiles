@@ -90,10 +90,10 @@ g() { git -C "$TMP/repo" -c user.name=t -c user.email=t@example.test "$@" >/dev/
 git init -q --bare "$TMP/origin.git"
 git init -q -b main "$TMP/repo"
 mkdir "$TMP/repo/lib"
-printf 'def shared(x):\n    return x\n' >"$TMP/repo/lib/shared.py"
+printf 'def shared(x):\n    a = x\n    b = a\n    c = b\n    return c\n' >"$TMP/repo/lib/shared.py"
 g add -A; g commit -m base; g remote add origin "$TMP/origin.git"; g push origin main; g fetch origin
 g checkout -b feat
-printf 'def shared(x):\n    return x + 1\n' >"$TMP/repo/lib/shared.py"
+printf 'def shared(x):\n    a = x\n    b = a\n    c = b\n    return c + 1\n' >"$TMP/repo/lib/shared.py"
 g commit -am change
 out=$(cd "$TMP/repo" && bash "$SCRIPT" "$TMP/good.md" 2>&1); rc=$?
 if [ "$rc" -eq 1 ] && grep -qF "Readers:" <<<"$out"; then ok "no --diff: the branch diff against origin/main turns on Readers:"; else bad "git default diff (rc=$rc, $out)"; fi
