@@ -67,6 +67,18 @@ class StartBudget(unittest.TestCase):
         self.assertFalse(fw.start_budget_spent(now=1000.0 + fw.START_BUDGET_SECONDS - 1))
         self.assertTrue(fw.start_budget_spent(now=1000.0 + fw.START_BUDGET_SECONDS))
 
+    def test_the_wrapper_allows_a_start_a_caller_just_let_through(self):
+        # 1820 review: a caller checks at 90 s; the wrapper's own check must not refuse that same start.
+        fw.PASS_STARTED = 1000.0
+        ran = []
+        start = fw.with_coordinator_handle({}, lambda command: ran.append(command) or 0)
+        with patch.object(fw.time, 'time', return_value=1000.0 + fw.START_BUDGET_SECONDS + 1):
+            self.assertTrue(fw.start_budget_spent())
+            self.assertEqual(start(['worker-startup.sh']), 0)
+        with patch.object(fw.time, 'time', return_value=1000.0 + fw.START_BUDGET_SECONDS + fw.START_BUDGET_GRACE):
+            self.assertEqual(fw.start_result_parts(start(['worker-startup.sh']))[1], fw.START_BUDGET_REASON)
+        self.assertEqual(len(ran), 1)
+
     def test_spent_budget_defers_the_start_without_running_it(self):
         ran = []
         start = fw.with_coordinator_handle({}, lambda command: ran.append(command) or 0)
@@ -115,7 +127,7 @@ class IssueScanBudget(unittest.TestCase):
             starts.append(command)
             return 0
 
-        with patch.object(fw, 'start_budget_spent', side_effect=lambda now=None: len(starts) >= spent_after):
+        with patch.object(fw, 'start_budget_spent', side_effect=lambda now=None, grace=0: len(starts) >= spent_after):
             _notices, log = fw.issue_scan_pass(
                 self.config, state, now, [],
                 list_issues=lambda repo: issues, pr_fetch=lambda repo: [], gate_check=lambda _cfg: True,
@@ -135,6 +147,19 @@ class IssueScanBudget(unittest.TestCase):
         fw.begin_pass_counts()
         log, starts = self.scan(state, [ready(2)], spent_after=99, now=NOW + 300)
         self.assertIn('issue_start=2', log)
+
+    def test_only_the_issue_start_skips_the_agy_screen_wait(self):
+        # 1820 review: verifier, fixer and rework state would hold a stopped start as done, so they keep the wait.
+        seen = []
+        self.assertNotIn('WORKER_STARTUP_AGY_DEFER', fw.os.environ)
+        fw.start_issue_worker(lambda command: seen.append(fw.os.environ.get('WORKER_STARTUP_AGY_DEFER')) or 0, ['x'])
+        self.assertEqual(seen, ['1'])
+        self.assertNotIn('WORKER_STARTUP_AGY_DEFER', fw.os.environ)
+        state = {'issue_scan_backlog_sweep_at': NOW}
+        flags = []
+        with patch.object(fw, 'start_issue_worker', side_effect=lambda start, command: flags.append(1) or start(command)):
+            self.scan(state, [ready(1)], spent_after=99, now=NOW)
+        self.assertEqual(flags, [1])
 
 
 def check_result(calls):

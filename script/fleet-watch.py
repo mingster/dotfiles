@@ -2371,15 +2371,18 @@ def begin_pass_counts():
 # so a pass ends well under the wrapper's 280 s timeout; the rest wait for the next pass (#1820).
 # main() sets PASS_STARTED; a direct call (tests, one off tools) has no budget.
 START_BUDGET_SECONDS = 90
+# The start wrapper checks again for starts no caller checked. It allows this much more, so a start a caller
+# just let through is never refused there and logged as a failure (#1820).
+START_BUDGET_GRACE = 15
 START_BUDGET_REASON = 'start_budget'
 PASS_STARTED = None
 
 
-def start_budget_spent(now=None):
+def start_budget_spent(now=None, grace=0):
     if PASS_STARTED is None:
         return False
     now = time.time() if now is None else now
-    return now - PASS_STARTED >= START_BUDGET_SECONDS
+    return now - PASS_STARTED >= START_BUDGET_SECONDS + grace
 
 
 def pass_phase(name):
@@ -5703,7 +5706,7 @@ def with_coordinator_handle(config, start):
 
     def start_with_handle(command):
         # Past the budget the start waits for the next pass, the same as a host placement refusal (#1820).
-        if start_budget_spent():
+        if start_budget_spent(grace=START_BUDGET_GRACE):
             return BabysitStartResult(4, START_BUDGET_REASON)
         set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
         if set_handle:
@@ -5717,6 +5720,21 @@ def with_coordinator_handle(config, start):
             if set_handle:
                 os.environ.pop('ORCA_TERMINAL_HANDLE', None)
     return start_with_handle
+
+
+def start_issue_worker(start_worker, command):
+    """Start a scanned issue without worker-startup's 60 s antigravity screen wait (#1820).
+
+    Only issue starts skip it: agy_signin_notices stops a signed out worker on the next pass, and the orphaned
+    start restart (#1811) lists the issue again. Verifier, fixer and rework starts keep the wait, because their
+    state would hold a stopped start as already done."""
+    had = 'WORKER_STARTUP_AGY_DEFER' in os.environ
+    os.environ['WORKER_STARTUP_AGY_DEFER'] = '1'
+    try:
+        return start_worker(command)
+    finally:
+        if not had:
+            os.environ.pop('WORKER_STARTUP_AGY_DEFER', None)
 
 
 def babysit_cap(config):
@@ -8408,7 +8426,7 @@ def _issue_scan_pass(
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
             persist_state()
-        started_worker = start_worker(command)
+        started_worker = start_issue_worker(start_worker, command)
         code, reason = start_result_parts(started_worker)
         pending_list = issue_pending.setdefault(repo, [])
         if row['number'] in pending_list:
@@ -9470,13 +9488,14 @@ def _agy_signin():
     return _sibling('agy_signin', 'agy-signin.py')
 
 
-def agy_signin_notices(config, workers, read=None, now=None, stop=None):
+def agy_signin_notices(config, workers, read=None, now=None, stop=None, show=None):
     """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
 
     One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
     A plain `agy -p` probe over ssh cannot tell, so the worker screen is the check.
-    Fleet watch's own starts skip worker-startup's screen wait (#1820), so a signed out worker is also stopped
-    here; its work starts again by the usual paths, on claude, since the host is now marked.
+    Fleet watch's issue starts skip worker-startup's screen wait (#1820), so a signed out worker is also stopped
+    here; the orphaned start restart lists the issue again, on claude, since the host is now marked.
+    A remote server record row has no terminal handle, so worker-show supplies it, as worker-startup does.
     """
     agy = _agy_signin()
     notices = []
@@ -9484,17 +9503,29 @@ def agy_signin_notices(config, workers, read=None, now=None, stop=None):
     if stop is None:
         def stop(dispatch, host):
             rpc('orchestration', 'worker-stop', '--dispatch', dispatch, *(['--environment', host] if host else []))
+    if show is None:
+        def show(dispatch, host):
+            return rpc('orchestration', 'worker-show', '--dispatch', dispatch, *(['--environment', host] if host else []))
     for w in workers or []:
         if not isinstance(w, dict) or worker_agent_id(w) not in ('antigravity', 'agy'):
             continue
         if worker_settled_kind(w) is not None or worker_terminal_released(w):
             continue
-        terminal = worker_terminal_handle(w)
-        if not terminal:
-            continue
         remote = worker_is_remote(w, config)
         host = remote_environment(w) if remote else (config.get('local_host') or 'local')
         if not host:
+            continue
+        terminal = worker_terminal_handle(w)
+        dispatch = w.get('dispatchId')
+        if not terminal and isinstance(dispatch, str) and dispatch:
+            try:
+                shown = show(dispatch, host if remote else '')
+            except SEND_ERRORS:
+                shown = None
+            if isinstance(shown, dict) and isinstance(shown.get('worker'), dict):
+                shown = shown['worker']
+            terminal = worker_terminal_handle(shown if isinstance(shown, dict) else {})
+        if not terminal:
             continue
         try:
             if read is not None:
@@ -9506,7 +9537,6 @@ def agy_signin_notices(config, workers, read=None, now=None, stop=None):
             continue
         if not agy.is_sign_in_screen(screen):
             continue
-        dispatch = w.get('dispatchId')
         if isinstance(dispatch, str) and dispatch:
             try:
                 stop(dispatch, host if remote else '')
@@ -9707,8 +9737,6 @@ def main():
         return 0
     pass_start = time.time()
     now = pass_start
-    # worker-startup skips its 60 s antigravity screen wait; agy_signin_notices reads the screen instead (#1820).
-    os.environ['WORKER_STARTUP_AGY_DEFER'] = '1'
 
     def on_term(_signum, _frame):
         log_killed_pass(pass_start)

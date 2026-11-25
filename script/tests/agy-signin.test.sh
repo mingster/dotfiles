@@ -89,6 +89,19 @@ class Pass(unittest.TestCase):
         self.assertFalse(agy.is_unavailable('hostc', 1000))
         self.assertEqual(len(notices), 2)
 
+    def test_a_remote_row_without_a_terminal_is_read_through_worker_show(self):
+        # 1820 review: a remote server record row carries no terminal handle.
+        row = worker('d1', '', host='hostb')
+        shown = []
+        notices = watch.agy_signin_notices(
+            self.config, [row], read=lambda term, host: SIGN_IN if term == 't9' else WORKING, now=1000,
+            stop=lambda dispatch, host: self.stopped.append((dispatch, host)),
+            show=lambda dispatch, host: shown.append((dispatch, host)) or {'worker': {'terminal': 't9'}})
+        self.assertEqual(shown, [('d1', 'hostb')])
+        self.assertEqual(self.stopped, [('d1', 'hostb')])
+        self.assertTrue(agy.is_unavailable('hostb', 1000))
+        self.assertEqual(len(notices), 1)
+
     def test_a_failed_stop_still_marks_the_host(self):
         def stop(_dispatch, _host):
             raise OSError('orca down')
