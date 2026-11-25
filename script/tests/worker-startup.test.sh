@@ -425,6 +425,10 @@ case " \$* " in
     printf '%s\n' '{"ok":true,"result":{}}'
     exit 0
     ;;
+  *" orchestration task-list "*|*" orchestration worker-list "*)
+    printf '%s\n' '{"ok":true,"result":{"tasks":[],"workers":[]}}'
+    exit 0
+    ;;
 esac
 exit 99
 EOS
@@ -686,8 +690,8 @@ set -e
 export WORKER_STARTUP_STATE="$launch_state"
 pair=$(pr_review_gates_worker_agent_model ctx_9495d9c62de4) || true
 [ "$pair" = $'claude\tclaude-sonnet-5-5-medium' ] && ok || bad "claude --run writes dispatch launch record ($pair)"
-grep -qE '^1'$'\t''[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z'$'\t''$' "$TEAM_AUDIT_DISPATCHES" && [ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo' ] \
-  && ok || bad "claude --run appends issue<TAB>dispatched_at<TAB>repo to the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+grep -qE '^1'$'\t''[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z'$'\t\t''fullstack-dev$' "$TEAM_AUDIT_DISPATCHES" && [ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo\trole' ] \
+  && ok || bad "claude --run appends issue<TAB>dispatched_at<TAB>repo<TAB>role to the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 
 # Dispatch log scoping: owner/repo from the Refs line, and no blank row when no issue number parses
 dispatch_run() { # <spec_file> [repo selector]
@@ -702,7 +706,7 @@ dispatch_run() { # <spec_file> [repo selector]
 }
 sed 's#^Refs \#1#Refs mingster/dotfiles\#816#' "$spec_file" >"$tmp/spec-repo.txt"
 dispatch_run "$tmp/spec-repo.txt"
-grep -qE '^816'$'\t''[0-9T:Z-]+'$'\t''mingster/dotfiles$' "$TEAM_AUDIT_DISPATCHES" \
+grep -qE '^816'$'\t''[0-9T:Z-]+'$'\t''mingster/dotfiles'$'\t''fullstack-dev$' "$TEAM_AUDIT_DISPATCHES" \
   && ok || bad "Refs owner/repo#N records owner/repo in the dispatch log ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 # 1411: a placed start binds its recent-start claim to the dispatch it created, before the readiness wait:
 # the first worker-show read already finds the claim tied to the dispatch, so the live worker is not counted twice.
@@ -724,17 +728,25 @@ git -C "$tmp/gh-repo" init -q
 git -C "$tmp/gh-repo" remote add origin git@github.com:acme/widgets.git
 sed 's#^Refs \#1#Refs \#817#' "$spec_file" >"$tmp/spec-short.txt"
 dispatch_run "$tmp/spec-short.txt" id:repo_gh
-grep -qE '^817'$'\t''[0-9T:Z-]+'$'\t''acme/widgets$' "$TEAM_AUDIT_DISPATCHES" \
+grep -qE '^817'$'\t''[0-9T:Z-]+'$'\t''acme/widgets'$'\t''fullstack-dev$' "$TEAM_AUDIT_DISPATCHES" \
   && ok || bad "short Refs #N with --repo id:<id> resolves owner/repo ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 sed 's#^Refs \#1#Refs \#818#' "$spec_file" >"$tmp/spec-short2.txt"
 dispatch_run "$tmp/spec-short2.txt" "$tmp/gh-repo"
-grep -qE '^818'$'\t''[0-9T:Z-]+'$'\t''acme/widgets$' "$TEAM_AUDIT_DISPATCHES" \
+grep -qE '^818'$'\t''[0-9T:Z-]+'$'\t''acme/widgets'$'\t''fullstack-dev$' "$TEAM_AUDIT_DISPATCHES" \
   && ok || bad "short Refs #N with a bare directory --repo resolves owner/repo ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
 # An existing zero byte log still gets the header
 : >"$TEAM_AUDIT_DISPATCHES"
 dispatch_run "$tmp/spec-repo.txt"
-[ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo' ] \
+[ "$(head -1 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo\trole' ] \
   && ok || bad "zero byte dispatch log gets the header ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+# 1839: an older 3 column log keeps its header and rows; a new start appends a 4 column row after them.
+printf 'issue\tdispatched_at\trepo\n815\t2026-11-01T00:00:00Z\tmingster/dotfiles\n' >"$TEAM_AUDIT_DISPATCHES"
+dispatch_run "$tmp/spec-repo.txt"
+[ "$(head -2 "$TEAM_AUDIT_DISPATCHES")" = $'issue\tdispatched_at\trepo\n815\t2026-11-01T00:00:00Z\tmingster/dotfiles' ] \
+  && grep -qE '^816'$'\t''[0-9T:Z-]+'$'\t''mingster/dotfiles'$'\t''fullstack-dev$' "$TEAM_AUDIT_DISPATCHES" \
+  && ok || bad "1839: a 3 column log keeps its rows and gets a 4 column row ($(cat "$TEAM_AUDIT_DISPATCHES" 2>&1))"
+: >"$TEAM_AUDIT_DISPATCHES"
+dispatch_run "$tmp/spec-repo.txt"
 rows_before=$(wc -l <"$TEAM_AUDIT_DISPATCHES")
 # brief-lint accepts a multi-slash ref the dispatch parser does not read: no issue number, so no row
 sed 's#^Refs \#1#Refs a/b/c\#5#' "$spec_file" >"$tmp/spec-noref.txt"
@@ -997,6 +1009,10 @@ case " \$* " in
     ;;
   *" terminal list "*)
     printf '%s\n' '{"ok":true,"result":{"terminals":[{"handle":"term_rem_worker","worktreePath":"$wt_proof"},{"handle":"term_rem_extra","worktreePath":"$wt_proof"},{"handle":"term_rem_other","worktreePath":"/elsewhere/other"}]}}'
+    exit 0
+    ;;
+  *" orchestration task-list "*|*" orchestration worker-list "*)
+    printf '%s\n' '{"ok":true,"result":{"tasks":[],"workers":[]}}'
     exit 0
     ;;
 esac
@@ -1771,6 +1787,7 @@ case " $* " in
   *" orchestration worker-start "*)
     printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_link","taskId":"task_link","runId":"run_x","state":"ready","agent":"claude","model":"sonnet"}}'
     exit 0 ;;
+  *" orchestration task-list "*|*" orchestration worker-list "*) printf '%s\n' '{"ok":true,"result":{"tasks":[],"workers":[]}}'; exit 0 ;;
 esac
 exit 99
 EOS
@@ -1807,6 +1824,9 @@ case "$*" in
     ;;
   *"orchestration worker-stop"*)
     printf '%s\n' '{"ok":true,"result":{"stopped":true}}'
+    ;;
+  *"orchestration task-list"*|*"orchestration worker-list"*)
+    printf '%s\n' '{"ok":true,"result":{"tasks":[],"workers":[]}}'
     ;;
   *"terminal read"*)
     python3 -c '
@@ -1891,6 +1911,7 @@ case "$*" in
     [ -z "${AGY_REMOTE_RELEASE_FAIL:-}" ] || { echo "remote release refused" >&2; exit 1; }
     printf '%s\n' '{"ok":true}' ;;
   *"orchestration worker-release"*) printf '%s\n' '{"ok":true}' ;;
+  *"orchestration task-list"*|*"orchestration worker-list"*) printf '%s\n' '{"ok":true,"result":{"tasks":[],"workers":[]}}' ;;
   *"terminal read"*)
     python3 -c '
 import json, os
@@ -2051,6 +2072,7 @@ case "$*" in
     fi
     ;;
   *"orchestration worker-release"*) echo '{"ok":true,"result":{}}' ;;
+  *"orchestration task-list"*|*"orchestration worker-list"*) echo '{"ok":true,"result":{"tasks":[],"workers":[]}}' ;;
   *"terminal read"*) echo '{"ok":true,"result":{"terminal":{"tail":[]}}}' ;;
   *) printf 'unexpected orca: %s\n' "$*" >&2; exit 99 ;;
 esac
@@ -2317,19 +2339,25 @@ live_verifier_run() { # <title> [extra args...]
   live_ec=$?
   set -e
 }
+# #1839 (owner Q4 A) replaces #1222's warn-and-go for the same issue: a second live qa-sdet on #9 is refused with exit 2.
 live_verifier_run "#9|qa-sdet|verify PR 77" --name verify-77
+[ "$live_ec" = 2 ] && ok || bad "1839: a second live qa-sdet on the same issue exits 2 (ec=$live_ec) $(cat "$tmp/live.err")"
+grep -Fq 'refused: #9 already has live qa-sdet worker ctx_live1' "$tmp/live.err" && ok || bad "1839: refusal names the live dispatch ($(cat "$tmp/live.err"))"
+grep -q 'worker-start' "$tmp/orca-live.log" && bad "1839: a refused duplicate must not reach worker-start" || ok
+# A verifier under another issue for the same PR still only warns (#1222).
+live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77
 [ "$live_ec" = 0 ] && ok || bad "a duplicate verifier start still goes on (ec=$live_ec) $(cat "$tmp/live.err")"
 grep -Fq 'worker-startup: warning: live verifier ctx_live1 (#9|qa-sdet|verify PR 77) is already running for PR #77' "$tmp/live.err" && ok || bad "duplicate verifier should warn naming the live dispatch ($(cat "$tmp/live.err"))"
 grep -q 'ctx_live2' "$tmp/live.err" && bad "a live builder must not be named" || ok
 grep -q 'worker-start' "$tmp/orca-live.log" && ok || bad "the duplicate verifier should still reach worker-start"
-live_verifier_run "#9|qa-sdet|standing" --name verify-78
+live_verifier_run "#99|qa-sdet|standing" --name verify-78
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a verifier for another PR must not warn ($(cat "$tmp/live.err"))" || ok
 live_verifier_run "#79|fullstack-dev" --name verify-77
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a builder start must not warn" || ok
 
 # 1271: a remote live verifier (terminalState null) titled with a bare "verify <pr>" warns, a finished one does not.
 : >"$tmp/live-list.log"
-live_verifier_run "#1262|qa-sdet|verify 1263" --name verify-1263
+live_verifier_run "#1264|qa-sdet|verify 1263" --name verify-1263
 grep -Fq 'worker-startup: warning: live verifier ctx_rem1 (#1262|qa-sdet|verify 1263) is already running for PR #1263' "$tmp/live.err" && ok || bad "remote live verifier with a bare verify title should warn ($(cat "$tmp/live.err"))"
 grep -- '--run' "$tmp/live-list.log" | grep -q -- '--terminal-state'  && bad "warn_live_verifier must not filter by --terminal-state" || ok
 live_verifier_run "#1300|qa-sdet|verify 1301" --name verify-1301
@@ -2344,7 +2372,7 @@ printf '%s\n' "\$*" >>"$tmp/gh.log"
 EOS
 chmod +x "$bin/gh"
 : >"$tmp/gh.log"
-live_verifier_run "#9|qa-sdet|verify PR 77" --name verify-77
+live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77
 grep -q 'issue edit' "$tmp/gh.log" && bad "qa-sdet start must not edit issue labels ($(cat "$tmp/gh.log"))" || ok
 rm -f "$bin/gh"
 
@@ -2547,6 +2575,148 @@ env -u BASH_ENV TMPDIR="$leak_tmp" \
   --model claude-sonnet-5-5-medium --from term_coord --name n1 --repo "path:$clean" >/dev/null 2>&1
 grep -q 'orchestration worker-start' "$tmp/orca-leak.log" && ok || bad "leak: the start reached worker-start"
 [ -z "$(ls -A "$leak_tmp")" ] && ok || bad "leak: TMPDIR is empty after a start (left: $(ls "$leak_tmp" | tr '\n' ' '))"
+
+# 1839: one live worker per (repo, issue, role class). A bundle covers every #N on its Issues: and Refs: lines.
+dup_gh="$tmp/dup-gh"
+mkdir -p "$dup_gh"
+cat >"$dup_gh/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+case "$1 $2" in
+  "pr list")
+    case "$*" in
+      *"--state closed"*) printf '%s\n' "${DUP_CLOSED:-[]}" | jq -r "${@: -1}" ;;
+      *) printf '[]\n' | jq -r "${@: -1}" ;;
+    esac ;;
+  "pr view") printf '%s\n' "${DUP_COMMENTS:-{\"comments\":[]}}" | jq -r "${@: -1}" ;;
+  "api "*) printf '%s\n' "${DUP_EVENTS:-[]}" | jq -r "${@: -1}" ;;
+esac
+exit 0
+EOS
+chmod +x "$dup_gh/gh"
+cat >"$tmp/orca-dup" <<EOS
+#!/usr/bin/env bash
+case " \$* " in
+  *" orchestration task-list "*)
+    [ -z "\${DUP_LIST_FAIL:-}" ] || { echo '{"ok":false,"error":{"message":"runtime unavailable"}}'; exit 1; }
+    [ -z "\${DUP_LIST_GARBAGE:-}" ] || { echo 'warning: slow runtime'; echo '{"ok":true}'; exit 0; }
+    [ -z "\${DUP_LIST_NOTOK:-}" ] || { echo '{"ok":false,"error":{"message":"no such run"}}'; exit 0; }
+    printf '%s\n' '{"ok":true,"result":{"tasks":[{"id":"task_a","status":"dispatched","task_title":"#1745|fullstack-dev|bundle","spec":"Refs acme/app#1745\nIssues: #1745 #1746\n"},{"id":"task_old","status":"ready","task_title":"#1800|fullstack-dev"}]}}'
+    exit 0 ;;
+  *" orchestration worker-list "*)
+    printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_dup1","taskId":"task_a","state":"ready","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_gone","taskId":"task_old","state":"failed","liveness":"exited","terminalState":"released"}]}}'
+    exit 0 ;;
+esac
+exec "$tmp/orca" "\$@"
+EOS
+chmod +x "$tmp/orca-dup"
+dup_spec_saved=$(cat "$spec_file")
+run_path_dup_saved=$run_path
+run_path="$dup_gh:$run_path_dup_saved"
+export GH_STUB_LOG="$tmp/dup-gh.log"
+dup_run() { # <title> [extra args...]
+  printf 'Refs acme/app#%s\n\n# %s\n\n%s\n' "$(printf '%s' "$1" | sed -E 's/^#([0-9]+).*/\1/')" "$1" "$dup_spec_saved" >"$spec_file"
+  : >"$GH_STUB_LOG"
+  orca_stub="$tmp/orca-dup" PICK_STUB_MODE=sonnet route_run "$1" claude claude-sonnet-5-5-medium "${@:2}"
+}
+# (a) a live #1745 bundle that also covers #1746 refuses a second fullstack-dev on #1746.
+dup_run "#1746|fullstack-dev"
+[ "$route_ec" = 2 ] && ok || bad "1839a: a second live builder on a bundled issue exits 2 (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq 'refused: acme/app#1746 already has live fullstack-dev worker ctx_dup1' "$tmp/route.err" && ok || bad "1839a: refusal names the live worker ($(cat "$tmp/route.err"))"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "1839a: a refused start must not reach worker-start" || ok
+grep -q '^issue edit' "$GH_STUB_LOG" && bad "1839a: a refused start must not claim the issue" || ok
+dup_run "#1745|fullstack-dev-strong" --route-override "test"
+[ "$route_ec" = 2 ] && ok || bad "1839a: every builder role is one class (ec=$route_ec) $(cat "$tmp/route.err")"
+# A live task whose title issue is in the new start's Issues: line is a duplicate too.
+printf 'Refs acme/app#1747\nIssues: #1747 #1745\n\n# bundle\n\n%s\n' "$dup_spec_saved" >"$spec_file"
+orca_stub="$tmp/orca-dup" PICK_STUB_MODE=sonnet route_run "#1747|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 2 ] && ok || bad "1839a: a new bundle that covers a live issue exits 2 (ec=$route_ec) $(cat "$tmp/route.err")"
+# (b) the same issue with role qa-sdet is another role class and starts.
+dup_run "#1746|qa-sdet"
+[ "$route_ec" = 0 ] && ok || bad "1839b: qa-sdet on a live builder's issue starts (ec=$route_ec) $(cat "$tmp/route.err")"
+# A sibling with no overlap starts; a released worker does not count; another repo with the same number starts.
+dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1839: an unrelated issue starts (ec=$route_ec) $(cat "$tmp/route.err")"
+dup_run "#1800|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1839: a released worker is not live (ec=$route_ec) $(cat "$tmp/route.err")"
+printf 'Refs other/repo#1746\n\n# other\n\n%s\n' "$dup_spec_saved" >"$spec_file"
+orca_stub="$tmp/orca-dup" PICK_STUB_MODE=sonnet route_run "#1746|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "1839: the same number in another repo starts (ec=$route_ec) $(cat "$tmp/route.err")"
+# --allow-overlap REASON starts a duplicate on a hand start.
+dup_run "#1746|fullstack-dev" --allow-overlap "owner asked"
+[ "$route_ec" = 0 ] && grep -Fq 'allow-overlap: acme/app#1746 already has live fullstack-dev worker ctx_dup1' "$tmp/route.err" \
+  && ok || bad "1839: --allow-overlap starts a duplicate and says so (ec=$route_ec) $(cat "$tmp/route.err")"
+# (d) an unreadable task list fails closed: FLEET_WATCH=1 exits 2 even with --allow-overlap; a hand start needs --allow-overlap.
+DUP_LIST_FAIL=1 FLEET_WATCH=1 dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -q 'refused: cannot read the live task list' "$tmp/route.err" && ok || bad "1839d: fleet-watch start exits 2 on an unreadable list (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_LIST_FAIL=1 FLEET_WATCH=1 dup_run "#1748|fullstack-dev" --allow-overlap x
+[ "$route_ec" = 2 ] && ok || bad "1839d: fleet-watch cannot override an unreadable list (ec=$route_ec)"
+DUP_LIST_FAIL=1 dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -q 'runtime unavailable' "$tmp/route.err" && ok || bad "1839d: a hand start prints the error and exits 2 (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_LIST_GARBAGE=1 dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -q 'refused: cannot read the live task list' "$tmp/route.err" && ok || bad "1839d: a list that is not JSON fails closed (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_LIST_NOTOK=1 dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && ok || bad "1839d: an ok:false reply with exit 0 fails closed (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_LIST_FAIL=1 dup_run "#1748|fullstack-dev" --allow-overlap x
+[ "$route_ec" = 0 ] && grep -q 'worker-start' "$tmp/orca-route.log" && ok || bad "1839d: a hand start with --allow-overlap starts (ec=$route_ec) $(cat "$tmp/route.err")"
+# (c) a builder start whose last closed PR has two Review FAILs and no newer ready-for-agent label exits 2.
+two_fails='{"comments":[{"body":"Review: FAIL head=a model=x\nbad"},{"body":"Verdict: FAIL head=b\nworse"},{"body":"Review: PASS"}]}'
+closed_prs='[{"number":1760,"closedAt":"2026-11-25T03:00:00Z","mergedAt":null,"body":"Closes acme/app#1748"},{"number":1700,"closedAt":"2026-11-20T03:00:00Z","mergedAt":null,"body":"Closes #1748"},{"number":1761,"closedAt":"2026-11-25T04:00:00Z","mergedAt":"2026-11-25T04:00:00Z","body":"Closes #1748"}]'
+DUP_CLOSED=$closed_prs DUP_COMMENTS=$two_fails DUP_EVENTS='[{"event":"labeled","label":{"name":"needs-triage"},"created_at":"2026-11-25T03:00:05Z"}]' dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && ok || bad "1839c: two FAILs then a close refuses a builder (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -Fq 'refused: last PR #1760 closed after two FAILs; relabel needs-triage' "$tmp/route.err" && ok || bad "1839c: refusal names the PR and needs-triage ($(cat "$tmp/route.err"))"
+grep -Fq 'pr view 1760 -R acme/app' "$GH_STUB_LOG" && ok || bad "1839c: reads the latest closed unmerged PR ($(cat "$GH_STUB_LOG"))"
+DUP_CLOSED=$closed_prs DUP_COMMENTS=$two_fails DUP_EVENTS='[{"event":"labeled","label":{"name":"ready-for-agent"},"created_at":"2026-11-25T05:00:00Z"}]' dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1839c: ready-for-agent added after the close lets it start (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_CLOSED=$closed_prs DUP_COMMENTS='{"comments":[{"body":"Review: FAIL head=a"}]}' dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1839c: one FAIL does not refuse (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_CLOSED='[{"number":1762,"closedAt":"2026-11-25T03:00:00Z","mergedAt":null,"body":"Closes #1700\nRefs #1748"}]' DUP_COMMENTS=$two_fails dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1839c: a PR that only Refs the issue does not refuse it (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_CLOSED=$closed_prs DUP_COMMENTS=$two_fails dup_run "#1748|qa-sdet"
+[ "$route_ec" = 0 ] && ok || bad "1839c: a verifier is not refused for two FAILs (ec=$route_ec) $(cat "$tmp/route.err")"
+
+# 1839: a start whose dispatch exists although a later step failed prints the dispatch and exits 0 (#10098).
+sed 's#^  \*" orchestration task-list "\*|\*" orchestration worker-list "\*)#  *" orchestration worker-list "*) printf "%s\\n" "{\\"ok\\":true,\\"result\\":{\\"workers\\":[{\\"dispatchId\\":\\"ctx_late\\",\\"state\\":\\"ready\\",\\"liveness\\":\\"live\\",\\"terminalState\\":\\"active\\",\\"workspace\\":\\"repo::$WT_PROOF\\"}]}}"; exit 0 ;;\n  *" orchestration task-list "*)#' \
+  "$orca_fail_stub" >"$tmp/orca-late"
+chmod +x "$tmp/orca-late"
+run_path=$run_path_dup_saved
+orca_fail_stub="$tmp/orca-late" fail_start "$tmp/orca-late.log" --name n1 --repo "path:$clean"
+[ "$fail_ec" = 0 ] && ok || bad "1839: a failed start with a live dispatch exits 0 ($fail_ec) $(cat "$tmp/orca-late.log")"
+grep -Fq 'worktree rm' "$tmp/orca-late.log" && bad "1839: a started dispatch keeps its worktree" || ok
+late_out=$(env -u BASH_ENV PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-late" ORCA_STUB_LOG=/dev/null \
+  FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" WORKER_STARTUP_STATE="$launch_state" \
+  bash --noprofile --norc "$script" --run run_x --spec "$spec_file" --title "#1|fullstack-dev" --agent claude --model claude-sonnet-5-5-medium \
+  --from term_coord --name n1 --repo "path:$clean" 2>&1) || true
+grep -Fq 'dispatch ctx_late exists although a later start step failed (exit 7)' <<<"$late_out" && ok || bad "1839: names the dispatch ($late_out)"
+# A reused worktree whose live worker was there before the start is not this start's dispatch: the failure stands.
+orca_fail_stub="$tmp/orca-late" fail_start "$tmp/orca-late.log" --worktree-path "$wt_proof"
+[ "$fail_ec" = 7 ] && ok || bad "1839: an older live worker in a reused worktree does not turn a failed start into success ($fail_ec)"
+
+# 1839: --close-after-fails closes the PR with the lesson and relabels every linked issue needs-triage.
+close_gh="$tmp/close-gh"
+mkdir -p "$close_gh"
+cat >"$close_gh/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+case "$1 $2" in
+  "pr view") printf '%s\n' '{"body":"Closes #1748\nFixes acme/other#13\nRefs #1700\nBuilder: x"}' | jq -r "${@: -1}" ;;
+  "pr close") [ -z "${CLOSE_FAIL:-}" ] || exit 1 ;;
+esac
+exit 0
+EOS
+chmod +x "$close_gh/gh"
+printf 'Two failed Reviews; redesign.\n' >"$tmp/lesson.md"
+: >"$GH_STUB_LOG"
+close_out=$(PATH="$close_gh:$run_path" bash "$script" --close-after-fails --repo acme/app --pr 1760 --comment-file "$tmp/lesson.md" 2>&1); close_ec=$?
+[ "$close_ec" = 0 ] && ok || bad "1839: close helper exits 0 ($close_ec) $close_out"
+grep -Fxq 'pr close 1760 -R acme/app --comment Two failed Reviews; redesign.' "$GH_STUB_LOG" && ok || bad "1839: close helper closes the PR with the lesson ($(cat "$GH_STUB_LOG"))"
+grep -Fxq 'issue edit 1748 -R acme/app --remove-label ready-for-agent --add-label needs-triage' "$GH_STUB_LOG" && ok || bad "1839: the closed issue goes to needs-triage ($(cat "$GH_STUB_LOG"))"
+grep -Fxq 'issue edit 13 -R acme/other --remove-label ready-for-agent --add-label needs-triage' "$GH_STUB_LOG" && ok || bad "1839: a Fixes issue in another repo is relabeled there ($(cat "$GH_STUB_LOG"))"
+grep -q '^issue edit 1700 ' "$GH_STUB_LOG" && bad "1839: a Refs parent is not relabeled ($(cat "$GH_STUB_LOG"))" || ok
+: >"$GH_STUB_LOG"
+CLOSE_FAIL=1 PATH="$close_gh:$run_path" bash "$script" --close-after-fails --repo acme/app --pr 1760 --comment-file "$tmp/lesson.md" >/dev/null 2>&1 && bad "1839: a failed close exits non-zero" || ok
+grep -q '^issue edit' "$GH_STUB_LOG" && bad "1839: a failed close relabels nothing" || ok
+printf '%s\n' "$dup_spec_saved" >"$spec_file"
 
 rm -f "$bin/hostname"
 

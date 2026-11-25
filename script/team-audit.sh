@@ -29,7 +29,8 @@
 #             A repo with none falls back to commits since 2026-11-03.
 #
 # --report runs the checks, then script/team-audit-metrics.ts per project (two gh calls each, stage
-# times from the dispatch log TEAM_AUDIT_DISPATCHES, default ~/agent-state/team-dispatches.tsv) and
+# times from the dispatch log TEAM_AUDIT_DISPATCHES, default ~/agent-state/team-dispatches.tsv, rows of
+# issue, dispatched_at, repo and, since #1839, role; 3 column rows still read) and
 # prints three sections: problems with evidence (FINDING and WARN lines plus the observation log),
 # proposals with a recommended option, and stage times (median, p75, max, samples, fully verified).
 # On a host with no worker-startup durations log, --report reads the coordinator's over ssh (host from

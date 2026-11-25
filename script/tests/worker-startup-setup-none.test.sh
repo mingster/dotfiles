@@ -27,6 +27,7 @@ cat >"$tmp/orca" <<'EOS'
 printf '%s\n' "$*" >>"$ORCA_LOG"
 case "$*" in
   "orchestration worker-list"*) printf '{"result":{"workers":[]}}'; exit 0 ;;
+  "orchestration task-list"*) printf '{"ok":true,"result":{"tasks":[]}}'; exit 0 ;; # #1839: an unreadable list refuses the start
   "worktree create"*) printf '{"result":{"worktree":{"path":"%s"}}}' "$WT_PATH"; exit 0 ;;
   "worktree list"*) printf '{"result":{"worktrees":[{"path":"%s","isMainWorktree":true}]}}' "$WT_PATH"; exit 0 ;;
   "terminal create"*--git-only*) printf '{"result":{"terminal":{"handle":"term_git"}}}'; exit 0 ;;
