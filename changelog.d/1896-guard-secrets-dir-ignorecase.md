@@ -1,0 +1,1 @@
+agent-team.sh sync again migrates a kept guard-bash.py whose SECRETS_DIR line is re.compile(<pattern>, re.IGNORECASE), as the template writes it since #1874. Before, sync refused the migration with "unsupported expression in SECRETS_DIR". Any other flag still fails closed.

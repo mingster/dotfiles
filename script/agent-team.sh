@@ -769,6 +769,10 @@ def eval_guard_ast(node, errors, ctx, env=None):
         if node.keywords or any(isinstance(a, ast.Starred) for a in node.args):
             errors.append(f"unsupported call in {ctx}")
             return None
+        # The template compiles secrets_dir with IGNORECASE itself, so that flag adds nothing to migrate (#1896).
+        if (ctx.split(" ")[0] == "SECRETS_DIR" and func == "re.compile" and len(node.args) == 2
+                and ast.unparse(node.args[1]) in ("re.IGNORECASE", "re.I")):
+            node = ast.Call(func=node.func, args=node.args[:1], keywords=[])
         args = [eval_guard_ast(a, errors, ctx, env) for a in node.args]
         if func == "set" and not args:
             return []
