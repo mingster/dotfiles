@@ -58,6 +58,132 @@ class BuilderGateTests(unittest.TestCase):
                          'unchecked Acceptance items')
 
 
+GOOD = body('Builder: agent=claude model=sonnet')
+SHARED_DIFF = """diff --git a/script/fleet-watch.py b/script/fleet-watch.py
+--- a/script/fleet-watch.py
++++ b/script/fleet-watch.py
+@@ -10,7 +10,8 @@ def classify_worker(row):
+     state = row.get('state')
+-    if state in ('dispatched', 'running'):
++    if row.get('released'):
++        return 'released'
+diff --git a/web/src/lib/loader.ts b/web/src/lib/loader.ts
+--- a/web/src/lib/loader.ts
++++ b/web/src/lib/loader.ts
+@@ -3,3 +3,3 @@ export interface Store {
+-  plan: string;
++  plan?: string;
+"""
+NEW_ONLY_DIFF = """diff --git a/script/x.py b/script/x.py
+--- a/script/x.py
++++ b/script/x.py
+@@ -1,2 +1,5 @@
+ import os
++def brand_new(x):
++    return x
+diff --git a/script/tests/test_x.py b/script/tests/test_x.py
+--- a/script/tests/test_x.py
++++ b/script/tests/test_x.py
+@@ -1,2 +1,3 @@ def test_old(self):
+-    self.assertTrue(True)
++    self.assertTrue(1)
+"""
+READERS = """
+## Readers
+- classify_worker: fleet-watch issue scan, covered by script/tests/test_fleet_watch_1841.py
+- classify_worker: status digest, no test because it only prints the label (reason: display only)
+- plan: billing loader, covered by web/src/lib/loader.test.ts
+"""
+
+
+class ReadersGateTests(unittest.TestCase):
+    """#1840 item 8(a): a changed shared function or field lists its readers."""
+
+    def test_changed_definitions_from_hunk_headers_and_removed_lines(self):
+        self.assertEqual(gate.changed_definitions(SHARED_DIFF), ['classify_worker', 'plan'])
+
+    def test_new_definitions_and_test_files_are_not_changes(self):
+        self.assertEqual(gate.changed_definitions(NEW_ONLY_DIFF), [])
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=NEW_ONLY_DIFF))
+
+    def test_body_without_readers_fails(self):
+        reason = gate.finish_block_reason(GOOD, diff=SHARED_DIFF)
+        self.assertIn('Readers:', reason or '')
+        self.assertIn('classify_worker, plan', reason)
+
+    def test_readers_with_a_test_or_reason_each_pass(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD + READERS, diff=SHARED_DIFF))
+
+    def test_inline_readers_label_passes(self):
+        inline = GOOD + '\nReaders:\n- classify_worker: reason: only caller is issue scan, tested in test_fleet_watch.py\n- plan: test web/src/lib/loader.test.ts\n'
+        self.assertIsNone(gate.finish_block_reason(inline, diff=SHARED_DIFF))
+
+    def test_one_line_readers_passes(self):
+        one = GOOD + '\nReaders: classify_worker and plan have no other callers (reason: grep finds none)\n'
+        self.assertIsNone(gate.finish_block_reason(one, diff=SHARED_DIFF))
+
+    def test_reader_with_no_test_or_reason_fails(self):
+        bare = GOOD + READERS.replace('covered by web/src/lib/loader.test.ts', 'billing page')
+        self.assertIn('Readers:', gate.finish_block_reason(bare, diff=SHARED_DIFF) or '')
+
+    def test_readers_missing_a_changed_name_fails(self):
+        partial = GOOD + '\n## Readers\n- classify_worker: tested in test_fleet_watch.py\n'
+        self.assertIn('Readers:', gate.finish_block_reason(partial, diff=SHARED_DIFF) or '')
+
+    def test_no_diff_keeps_the_old_behavior(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD))
+
+
+class DecisionsGateTests(unittest.TestCase):
+    """#1840 Part 3 item 3: a worker that sent no ask lists its choices under Decisions:."""
+
+    def test_no_ask_and_no_decisions_fails(self):
+        self.assertIn('Decisions:', gate.finish_block_reason(GOOD, asked=False) or '')
+
+    def test_decisions_none_passes(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD + '\nDecisions: none\n', asked=False))
+
+    def test_decisions_heading_passes(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD + '\n## Decisions\n- Picked option A (recommended).\n', asked=False))
+
+    def test_empty_decisions_label_fails(self):
+        self.assertIn('Decisions:', gate.finish_block_reason(GOOD + '\nDecisions:\n', asked=False) or '')
+
+    def test_a_worker_that_asked_needs_none(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD, asked=True))
+        self.assertIsNone(gate.finish_block_reason(GOOD))
+
+
+class CliTests(unittest.TestCase):
+    def run_cli(self, args, text):
+        import io
+        from contextlib import redirect_stdout
+        old = gate.sys.stdin
+        gate.sys.stdin = io.StringIO(text)
+        out = io.StringIO()
+        try:
+            with redirect_stdout(out):
+                rc = gate.main(args)
+        finally:
+            gate.sys.stdin = old
+        return rc, out.getvalue()
+
+    def test_cli_diff_and_asked(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.diff', delete=False) as handle:
+            handle.write(SHARED_DIFF)
+        rc, out = self.run_cli(['--diff', handle.name, '--asked', 'no'], GOOD)
+        self.assertEqual((rc, 'Readers:' in out), (1, True))
+        rc, out = self.run_cli(['--diff', handle.name, '--asked', 'no'], GOOD + READERS + '\nDecisions: none\n')
+        self.assertEqual((rc, out), (0, ''))
+        Path(handle.name).unlink()
+
+    def test_cli_rejects_unknown_options(self):
+        self.assertEqual(self.run_cli(['--asked', 'maybe'], GOOD)[0], 2)
+        self.assertEqual(self.run_cli(['--bogus', 'x'], GOOD)[0], 2)
+        self.assertEqual(self.run_cli([], GOOD)[0], 0)
+
+
 class BuilderPairTests(unittest.TestCase):
     def pair(self, line):
         return fw.builder_pair({'number': 1, 'headRefName': 'b', 'body': 'text\n' + line + '\nmore'}, [])

@@ -5,6 +5,7 @@ Copy this into a worker brief for a dotfiles issue and replace `123` and `<issue
 ```markdown
 Refs mingster/dotfiles#123
 Type: build
+Tests: script/tests/<name>.test.sh (the test files this change adds or edits)
 
 Read the issue in full (`gh issue view <issue> --repo mingster/dotfiles`) and build its "Proposed change".
 
