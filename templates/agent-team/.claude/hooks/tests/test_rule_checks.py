@@ -161,6 +161,12 @@ class RuleChecksTest(unittest.TestCase):
             f.write("# T\n\nedited\nuntouched - dash\n")
         self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "edited\n"}))
 
+    def test_edit_without_dash_on_line_that_already_has_one_is_allowed(self):
+        path = os.path.join(self.dir, "sameline.md")
+        with open(path, "w") as f:
+            f.write("# T\n\nold - dash fresh\n")
+        self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "fresh"}))
+
     # Row 5: CHANGELOG.md
     def test_changelog_edit_denied_when_fragments_dir_exists(self):
         os.mkdir(os.path.join(self.dir, "changelog.d"))

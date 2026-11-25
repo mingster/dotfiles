@@ -105,13 +105,13 @@ def edited_dash_lines(path, tool_input):
     for piece in pieces:
         if not piece:
             continue
+        piece_dashes = [i for i, line in enumerate(piece.splitlines()) if DASH.search(INLINE_CODE.sub("", line))]
         starts = [m.start() for m in re.finditer(re.escape(piece), full)]
         if not starts:
             lines.extend(dash_lines(piece))
         for start in starts:
             first = full.count("\n", 0, start) + 1
-            last = first + piece.rstrip("\n").count("\n")
-            lines.extend(n for n in range(first, last + 1) if n in file_dashes)
+            lines.extend(first + i for i in piece_dashes if first + i in file_dashes)
     return sorted(set(lines))
 
 
