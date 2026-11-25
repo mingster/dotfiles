@@ -82,6 +82,15 @@ class TemplateSync(unittest.TestCase):
         h.run(state, 1000 + watch.TEMPLATE_SYNC_RETRY + 1)
         self.assertEqual(len(h.launched), 2)
 
+    def test_a_clean_project_is_rechecked_only_after_the_recheck_window(self):
+        # 1820: the check takes about 6 s; a clean result at the same template commit is reused.
+        h, state = Harness(), {}
+        h.run(state, 1000)
+        h.run(state, 1000 + 300)
+        self.assertEqual(h.checked.count('clean'), 1)
+        h.run(state, 1000 + watch.TEMPLATE_SYNC_CLEAN_RECHECK)
+        self.assertEqual(h.checked.count('clean'), 2)
+
     def test_a_failed_launch_is_reported_and_retried_next_pass_window(self):
         h = Harness()
         h.fail_launch = True
