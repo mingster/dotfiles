@@ -1,0 +1,1 @@
+- `post-verdict.sh --ship` run from a dotfiles checkout now runs `ship.sh` in the other repo's local checkout (found via `POST_VERDICT_REPO_DIR`, the fleet configs, or the usual project folders), so a PASS on that repo ships instead of being refused (Refs #1836).

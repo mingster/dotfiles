@@ -166,5 +166,34 @@ out=$(bash "$here/post-verdict.sh" --repo example/dotfiles --pr 63 --result PASS
 grep -qx 'fleet-pull' "$ship_log" && ok "--ship: dotfiles runs git pull then fleet-pull.sh" || bad "--ship dotfiles ($code): $out / $(cat "$ship_log")"
 unset POST_VERDICT_SHIP_SH POST_VERDICT_DOTFILES
 
+# Issue 1836: run from a dotfiles checkout, --ship runs ship.sh in the example/repo checkout, not in cwd.
+# The fake ship refuses from a checkout whose origin is not --repo, as the real one does.
+repo_co="$MF_DIR/checkouts/repo"; df_co="$MF_DIR/checkouts/dotfiles"
+mkdir -p "$repo_co" "$df_co"
+git init -q -b main "$repo_co"; git -C "$repo_co" remote add origin https://github.com/example/repo.git
+git init -q -b main "$df_co"; git -C "$df_co" remote add origin https://github.com/example/dotfiles.git
+cwd_ship_log="$MF_DIR/cwd-ship.log"; : > "$cwd_ship_log"
+cwd_ship="$MF_DIR/cwd-ship.sh"
+cat > "$cwd_ship" <<'EOF'
+#!/usr/bin/env bash
+slug=$(git remote get-url origin 2>/dev/null | sed -E 's#.*github\.com[:/]##; s#\.git$##')
+echo "ship cwd=$(pwd -P) origin=$slug" >> "$CWD_SHIP_LOG"
+[ "$slug" = "$2" ] || { echo "ship: refused: run from inside the ${2##*/} checkout (cwd origin is $slug)" >&2; exit 1; }
+EOF
+h=$(new_pr 64)
+out=$(cd "$df_co" && CWD_SHIP_LOG="$cwd_ship_log" POST_VERDICT_SHIP_SH="$cwd_ship" POST_VERDICT_REPO_DIR="$repo_co" \
+  bash "$here/post-verdict.sh" --repo example/repo --pr 64 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship 2>&1); code=$?
+repo_co_real=$(cd "$repo_co" && pwd -P)
+[ "$code" -eq 0 ] && [[ "$out" == *"post-verdict: shipped PR 64"* ]] && [ "$(wc -l < "$cwd_ship_log" | tr -d ' ')" = 1 ] \
+  && grep -qxF "ship cwd=$repo_co_real origin=example/repo" "$cwd_ship_log" \
+  && ok "--ship from a dotfiles checkout runs ship.sh in the example/repo checkout" || bad "--ship from dotfiles cwd: $code $out / $(cat "$cwd_ship_log")"
+
+# No local example/repo checkout: ship.sh runs from cwd, so its own refusal is printed
+: > "$cwd_ship_log"; h=$(new_pr 65)
+out=$(cd "$df_co" && CWD_SHIP_LOG="$cwd_ship_log" POST_VERDICT_SHIP_SH="$cwd_ship" \
+  bash "$here/post-verdict.sh" --repo example/repo --pr 65 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship 2>&1); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *"post-verdict: SHIP REFUSED: ship: refused: run from inside the repo checkout (cwd origin is example/dotfiles)"* ]] \
+  && ok "--ship with no example/repo checkout falls back to cwd and prints ship.sh's refusal" || bad "--ship no checkout: $code $out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
