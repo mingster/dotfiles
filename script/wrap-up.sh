@@ -243,14 +243,14 @@ scheduled_round() {
   rotate_log "$log_file"; rotate_log "$detail_file"
   take_round_lock || exit 0
   trap release_round_lock EXIT
-  local free_before='' daily_env=() repo_pipe=0
+  local free_before='' daily_env=() repo_env=() prune_mode='' repo_pipe=0
   if [ "$round_kind" = daily ]; then
     free_before=$(free_kb)
     printf '%s free space before: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$(kb_gb "$free_before")" >> "$detail_file"
     # The strict child: no worktree with uncommitted work or an open PR goes, and nothing changed in the last 3 hours.
     daily_env=("WRAP_UP_STRICT_KEEP=1" "WRAP_UP_LSOF_SNAPSHOT=1" "WRAP_UP_RECENT_MIN=${WRAP_UP_DAILY_RECENT_MIN:-180}" "WRAP_UP_BUILD_CACHE_DIRS=${WRAP_UP_DAILY_BUILD_CACHE_DIRS:-.next node_modules/.cache}")
     # The prune (#1853): only the coordinator host deletes origin branches; every other host prunes its worktrees and local branches.
-    if coordinator_runs_board_done; then daily_env+=("WRAP_UP_DAILY_PRUNE=remote"); else daily_env+=("WRAP_UP_DAILY_PRUNE=local"); fi
+    if coordinator_runs_board_done; then prune_mode=remote; else prune_mode=local; fi
     [ "${scheduled_dry:-0}" = 1 ] && repo_pipe=1
   fi
   guarded_round_rm f "$round_state/$round_name.terminals"
@@ -299,6 +299,11 @@ scheduled_round() {
     printf '%s repo %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" >> "$detail_file"
     # The child stops itself at its budget; the grace only kills a run hung outside its bounded calls.
     # Each slow step has its own cap so one fetch, release, pane sweep or main update cannot spend the round.
+    repo_env=(${daily_env[@]+"${daily_env[@]}"})
+    if [ -z "$prune_mode" ]; then :
+    elif daily_prune_listed "$repo_path"; then repo_env+=("WRAP_UP_DAILY_PRUNE=$prune_mode")
+    else daily_detail=$detail_file daily_say "prune off in $repo_path (not a prune-repo in coordinator.conf)"
+    fi
     repo_mark=$SECONDS
     WRAP_UP_SCHEDULED_CHILD=1 WRAP_UP_SKIP_HOST_WIDE=$host_wide_done WRAP_UP_TOTAL_TIMEOUT=$child_limit \
       WRAP_UP_TERMINALS_SNAPSHOT=$round_state/$round_name.terminals \
@@ -308,7 +313,7 @@ scheduled_round() {
       WRAP_UP_RELEASE_BUDGET=${WRAP_UP_SCHEDULED_RELEASE_BUDGET:-25} \
       WRAP_UP_WORKTREE_BUDGET=${WRAP_UP_SCHEDULED_WORKTREE_BUDGET:-120} \
       WRAP_UP_OPTIONAL_STEP=${WRAP_UP_SCHEDULED_OPTIONAL_STEP:-20} \
-      daily_child "$kill_limit" "$wrap_up" "$child_mode" "$repo_path" "$detail_file" "$repo_pipe" ${daily_env[@]+"${daily_env[@]}"}
+      daily_child "$kill_limit" "$wrap_up" "$child_mode" "$repo_path" "$detail_file" "$repo_pipe" ${repo_env[@]+"${repo_env[@]}"}
     code=$?
     printf '%s repo %s seconds=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$repo_path" "$((SECONDS-repo_mark))" >> "$detail_file"
     printf 'repo %s seconds=%s\n' "$repo_path" "$((SECONDS-repo_mark))"
@@ -361,13 +366,26 @@ scheduled_round() {
   round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note$board_note"
   exit 0
 }
+coordinator_conf() { printf '%s' "${BOARD_DONE_COORDINATOR_CONF:-${AGENT_STATE_DIR:-$HOME/agent-state}/coordinator.conf}"; }
 coordinator_runs_board_done() {
   local conf name here_name
-  conf=${BOARD_DONE_COORDINATOR_CONF:-${AGENT_STATE_DIR:-$HOME/agent-state}/coordinator.conf}
+  conf=$(coordinator_conf)
   [ -f "$conf" ] || return 1
   name=$(awk '$1 == "coordinator" { print $2; exit }' "$conf")
   here_name=$(hostname -s 2>/dev/null || true)
   [ -n "$name" ] && [ "$name" = "$here_name" ]
+}
+# The daily prune (#1853) runs only in a repo the private coordinator.conf lists as "prune-repo <path>" (absolute, or under
+# $HOME). No line, no prune: the repo still gets the strict cleanup. The repo names stay out of this public repo.
+daily_prune_listed() { # <repo path>
+  local conf want entry
+  conf=$(coordinator_conf)
+  [ -f "$conf" ] && want=$(cd -P "$1" 2>/dev/null && pwd) || return 1
+  while IFS= read -r entry; do
+    case "$entry" in /*) ;; *) entry=$HOME/$entry ;; esac
+    [ "$(cd -P "$entry" 2>/dev/null && pwd)" != "$want" ] || return 0
+  done < <(awk '$1 == "prune-repo" { sub(/^[ \t]*prune-repo[ \t]+/, ""); print }' "$conf")
+  return 1
 }
 
 # --branch: cleanup after ship.sh reads MERGED. Run from a checkout of the repo.
@@ -2488,7 +2506,8 @@ flush_remote() {
   batch=()
 }
 # Every branch checked out in an Orca worktree on this host or a paired one (the fleet), into $tmp/fleet-checkouts. A worktree
-# this run removed does not count. Any host the lists do not cover makes the answer unreadable.
+# this run removed does not count. Any host the local list does not cover makes the answer unreadable. A paired host's own
+# omitted hosts are its peers, not this host's (#1853): this host reads each of its environments directly, so they are ignored.
 prune_fleet_checkouts() {
   local env scope
   : > "$tmp/fleet-checkouts"
@@ -2499,8 +2518,8 @@ prune_fleet_checkouts() {
   while IFS= read -r env; do
     scope=(); [ -z "$env" ] || scope=(--environment "$env")
     orca_call worktree list ${scope[@]+"${scope[@]}"} --json > "$tmp/prune-wt" 2>/dev/null \
-      && jq -e --slurpfile envs "$tmp/prune-env-ids" '.ok != false and (.result.worktrees | type == "array") and (.result.truncated != true)
-        and all((.result.hostScope.omittedHostIds // [])[]; . as $h | $envs[0] | index($h))' "$tmp/prune-wt" >/dev/null 2>&1 || return 1
+      && jq -e --slurpfile envs "$tmp/prune-env-ids" --arg remote "$env" '.ok != false and (.result.worktrees | type == "array") and (.result.truncated != true)
+        and ($remote != "" or all((.result.hostScope.omittedHostIds // [])[]; . as $h | $envs[0] | index($h)))' "$tmp/prune-wt" >/dev/null 2>&1 || return 1
     jq -r --slurpfile gone "$tmp/prune-removed" --arg local "$([ -z "$env" ] && echo 1)" '.result.worktrees[]
       | select($local != "1" or ((.path // "") as $p | $gone[0] | index($p) | not)) | .branch // empty | sub("^refs/heads/"; "")' "$tmp/prune-wt" >> "$tmp/fleet-checkouts"
   done < <(printf '\n'; jq -r '.result.environments[] | .id // .name // empty' "$tmp/prune-envs")

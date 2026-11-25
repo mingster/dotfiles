@@ -76,7 +76,7 @@ and terminal close runs before those steps.
 What a round does, in order:
 
 1. Logs the free space of the home volume before.
-2. For each Orca git repo, runs `wrap-up.sh --apply` as the prune (issue #1853, see "Daily prune" below): every worktree, local branch and (on the coordinator host only) origin branch goes unless it is `main`, `production`, `staging` or active work.
+2. For each Orca git repo, runs `wrap-up.sh --apply`, as the prune in each `prune-repo` listed repo (issue #1853, see "Daily prune" below): every worktree, local branch and (on the coordinator host only) origin branch goes unless it is `main`, `production`, `staging` or active work.
 3. Deletes `.next` and `node_modules/.cache` (top level and one level down) in every worktree it kept, unless a process uses it.
 4. Deletes logs: files older than 7 days (`WRAP_UP_DAILY_LOG_DAYS`) among `~/Library/Logs` (`*.log`, `*.log.*`, `*.ips`), rotated `~/.orca/logs/*.log.N`, and untracked `*.log` under agent-state; and any `*.log` over 100 MB (`WRAP_UP_DAILY_BIG_LOG_KB`) under `~/orca/workspaces` that nothing wrote in the last 3 hours. A live Orca log, a tracked file and a symlink are never touched.
 5. Runs `brew cleanup -s` and `bun pm cache rm` when the tool is installed (each at most 120 s).
@@ -86,7 +86,7 @@ A worktree whose PR was squash merged used to stay for ever: its head is on no r
 
 ### Daily prune
 
-The owner's rule (#1853): keep only `main`, `production`, `staging` and active work; everything else goes, in every repo on every host. The daily child gets `WRAP_UP_DAILY_PRUNE` (`remote` on the coordinator host named in `agent-state/coordinator.conf`, `local` elsewhere).
+The owner's rule (#1853): keep only `main`, `production`, `staging` and active work; everything else goes, on every host, in the repos the private `agent-state/coordinator.conf` lists as `prune-repo <path>` (absolute, or under `$HOME`), one line each. A repo with no such line (or no `coordinator.conf`) gets the strict cleanup only, and the detail log says `prune off in <repo>`. The listed repos stay out of this public repo. The daily child of a listed repo gets `WRAP_UP_DAILY_PRUNE` (`remote` on the coordinator host named in `coordinator.conf`, `local` elsewhere).
 
 Kept, with the reason printed on a `Kept` line:
 
@@ -97,7 +97,7 @@ Kept, with the reason printed on a `Kept` line:
 
 Dropped for the prune: the merged proof, the last copy and unpushed commit guards, `archive/*`, `master`, `web2/*`, `lead-*`, Orca pins and open board cards.
 
-Fail closed: a failed fetch, open PR list (also one that reaches its 1000 row limit), Orca worker or terminal inventory, branch protection lookup, or an unwritable restore log stops every delete in that repo for the day. An unreadable worktree list on any paired host stops origin deletes only. Each stop is a failure in the round log.
+Fail closed: a failed fetch, open PR list (also one that reaches its 1000 row limit), Orca worker or terminal inventory, branch protection lookup, or an unwritable restore log stops every delete in that repo for the day. An unreadable worktree list on any paired host stops origin deletes only, and so does a host the local list omits that is not one of this host's environments. The hosts a paired host omits are its own peers and are ignored, since this host reads each of its environments directly. Each stop is a failure in the round log.
 
 Before each delete the restore log `~/agent-state/branch-prune/<date>.tsv` gets a line (time, host, repo, scope `worktree`, `local` or `remote`, name or path, commit), synced to disk. Restore a branch with `git branch <name> <sha>` (origin: `git push origin <sha>:refs/heads/<name>`). This works only while the commit is still in that host's git store: a local only commit lasts until `git gc` prunes it, about 2 weeks. A delete that fails is listed in the summary, the run goes on, and the round ends non-zero.
 

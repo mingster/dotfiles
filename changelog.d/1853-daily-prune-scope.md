@@ -1,0 +1,1 @@
+The daily prune no longer fails in every repo with "Orca worktree list of the fleet unreadable" when a paired host reports its own paired hosts as omitted; only the local list must cover every host. The prune now runs only in the repos the private `agent-state/coordinator.conf` lists as `prune-repo <path>`; any other repo gets the strict cleanup only.
