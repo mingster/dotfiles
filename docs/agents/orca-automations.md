@@ -33,7 +33,7 @@ Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall 
 | Name | Schedule (cron) | Enabled where | What the precheck does | Who reads the result | Pause |
 |------|-----------------|---------------|------------------------|----------------------|-------|
 | `fleet-watch` | `*/5 * * * *` | Coordinator only | `script/automation-precheck-wrapper.sh` runs `script/fleet-watch.py` once | `~/.orca/logs/fleet-watch.log` (override `FLEET_WATCH_AUTOMATION_LOG`) | Same |
-| `wrap-up-daily` | `0 4 * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --daily`: the strict worktree cleanup per repo, build caches, old logs, `brew cleanup -s`, `bun pm cache rm`, free space before and after (see "Daily disk cleanup") | `~/.orca/logs/wrap-up-daily.log` (override `WRAP_UP_DAILY_LOG`); detail in `wrap-up-daily-detail.log` | Same |
+| `wrap-up-daily` | `0 4 * * *` | Every Orca host | Wrapper runs `script/wrap-up.sh --daily`: the prune per repo (#1853), build caches, old logs, `brew cleanup -s`, `bun pm cache rm`, free space before and after (see "Daily disk cleanup") | `~/.orca/logs/wrap-up-daily.log` (override `WRAP_UP_DAILY_LOG`); detail in `wrap-up-daily-detail.log` | Same |
 | `sync-team-skills-drift` | `0 6 * * *` | Coordinator only | Wrapper runs `script/automation-precheck-sync-drift.sh`, which runs `script/agent-team.sh check <project>` for each project root | `SYNC_DRIFT_LOG` (default `~/.local/state/agent-team/sync-team-skills-drift.log`) | Same |
 | `team-audit-weekly` | `0 7 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-team-audit-weekly.sh`: `script/team-audit.sh` (which calls `agent-team.sh check` per project) with `TEAM_AUDIT_RUN_METRICS=1`, so `script/team-audit-metrics.ts --repo <owner/name>` runs for each project's origin repo | `TEAM_AUDIT_WEEKLY_LOG` (report only; the full `/team-audit` skill still runs only when the user asks) | Same |
 | `weekly-update` | `0 8 * * 1` | Coordinator only | Wrapper runs `script/automation-precheck-weekly-update.sh` | `WEEKLY_UPDATE_LOG` | Same |
@@ -76,13 +76,30 @@ and terminal close runs before those steps.
 What a round does, in order:
 
 1. Logs the free space of the home volume before.
-2. For each Orca git repo, runs `wrap-up.sh --apply` in a stricter mode. It reuses the existing guards, so a worktree stays when it has uncommitted work (other than screenshot dirt), commits no remote holds, an open PR, a live or unknown Orca terminal, a running process, a pin, an open board card, or any change in the last 3 hours (`WRAP_UP_DAILY_RECENT_MIN`, default 180; the 10 minute round uses 30 and archives a dirty worktree instead of keeping it). It removes finished worktrees (a merged branch, a PR merged at the worktree head, or a closed PR whose commits a remote still holds) and deletes merged or closed local branches.
+2. For each Orca git repo, runs `wrap-up.sh --apply` as the prune (issue #1853, see "Daily prune" below): every worktree, local branch and (on the coordinator host only) origin branch goes unless it is `main`, `production`, `staging` or active work.
 3. Deletes `.next` and `node_modules/.cache` (top level and one level down) in every worktree it kept, unless a process uses it.
 4. Deletes logs: files older than 7 days (`WRAP_UP_DAILY_LOG_DAYS`) among `~/Library/Logs` (`*.log`, `*.log.*`, `*.ips`), rotated `~/.orca/logs/*.log.N`, and untracked `*.log` under agent-state; and any `*.log` over 100 MB (`WRAP_UP_DAILY_BIG_LOG_KB`) under `~/orca/workspaces` that nothing wrote in the last 3 hours. A live Orca log, a tracked file and a symlink are never touched.
 5. Runs `brew cleanup -s` and `bun pm cache rm` when the tool is installed (each at most 120 s).
 6. Logs the free space after. The round line reads `round ok: repos=2 seconds=40 logs=3 (1.2G) free 152.0G->162.0G`.
 
 A worktree whose PR was squash merged used to stay for ever: its head is on no remote branch and not an ancestor of main, so the last copy guard kept it. A merged PR that ended at exactly the worktree's head (and has no open PR on that branch) now counts as published. This applies to the 10 minute round too. Commits made after the merge still keep the worktree, and so does a closed PR that was never merged.
+
+### Daily prune
+
+The owner's rule (#1853): keep only `main`, `production`, `staging` and active work; everything else goes, in every repo on every host. The daily child gets `WRAP_UP_DAILY_PRUNE` (`remote` on the coordinator host named in `agent-state/coordinator.conf`, `local` elsewhere).
+
+Kept, with the reason printed on a `Kept` line:
+
+- Named: `main`, `production`, `staging`, plus the default branch, GitHub protected branches and the Pages branch (GitHub refuses those deletes).
+- Active work: the head of an open PR (by name or head commit), a worktree with a live or unknown Orca worker or terminal, the main checkout, and a worktree with uncommitted changes (never deleted, always listed).
+- Not yet safe, retried the next day: a locked worktree, a `_` script owned worktree, one a process holds open, or one changed in the last 3 hours.
+- Origin only: a branch checked out in an Orca worktree on this host or any paired host.
+
+Dropped for the prune: the merged proof, the last copy and unpushed commit guards, `archive/*`, `master`, `web2/*`, `lead-*`, Orca pins and open board cards.
+
+Fail closed: a failed fetch, open PR list (also one that reaches its 1000 row limit), Orca worker or terminal inventory, branch protection lookup, or an unwritable restore log stops every delete in that repo for the day. An unreadable worktree list on any paired host stops origin deletes only. Each stop is a failure in the round log.
+
+Before each delete the restore log `~/agent-state/branch-prune/<date>.tsv` gets a line (time, host, repo, scope `worktree`, `local` or `remote`, name or path, commit), synced to disk. Restore a branch with `git branch <name> <sha>` (origin: `git push origin <sha>:refs/heads/<name>`). This works only while the commit is still in that host's git store: a local only commit lasts until `git gc` prunes it, about 2 weeks. A delete that fails is listed in the summary, the run goes on, and the round ends non-zero.
 
 Install on a host:
 

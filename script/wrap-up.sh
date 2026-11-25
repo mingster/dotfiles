@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Preview finished work cleanup; --apply performs the proposed changes.
 # Other modes: --scheduled (one round on this host; the coordinator also moves fleet board cards to Done),
-# --daily (once a day: the strict worktree cleanup, build caches, old logs, brew and bun caches, free space before and after),
+# --daily (once a day: the prune of everything but main, production, staging and active work (#1853), build caches, old logs,
+# brew and bun caches, free space before and after),
 # --branch (after a merge), --finish-worker (a settled worker).
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -248,6 +249,8 @@ scheduled_round() {
     printf '%s free space before: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$(kb_gb "$free_before")" >> "$detail_file"
     # The strict child: no worktree with uncommitted work or an open PR goes, and nothing changed in the last 3 hours.
     daily_env=("WRAP_UP_STRICT_KEEP=1" "WRAP_UP_LSOF_SNAPSHOT=1" "WRAP_UP_RECENT_MIN=${WRAP_UP_DAILY_RECENT_MIN:-180}" "WRAP_UP_BUILD_CACHE_DIRS=${WRAP_UP_DAILY_BUILD_CACHE_DIRS:-.next node_modules/.cache}")
+    # The prune (#1853): only the coordinator host deletes origin branches; every other host prunes its worktrees and local branches.
+    if coordinator_runs_board_done; then daily_env+=("WRAP_UP_DAILY_PRUNE=remote"); else daily_env+=("WRAP_UP_DAILY_PRUNE=local"); fi
     [ "${scheduled_dry:-0}" = 1 ] && repo_pipe=1
   fi
   guarded_round_rm f "$round_state/$round_name.terminals"
@@ -1002,7 +1005,7 @@ bounded() {
 # Called after terminal close so a slow fetch or PR lookup cannot spend the round before any terminal is closed.
 refresh_refs() {
   begin_optional "${WRAP_UP_SCHEDULED_CALL_TIMEOUT:-30}"
-  bounded git fetch --prune origin || fail_item 'git fetch' 'failed or timed out; refs may be stale, so fewer items qualify'
+  bounded git fetch --prune origin || { fail_item 'git fetch' 'failed or timed out; refs may be stale, so fewer items qualify'; fetch_ok=0; }
   git for-each-ref --format='%(refname) %(objectname)' refs/remotes/origin > "$tmp/remote-planned"
   git rev-parse --verify origin/main >/dev/null
   # One PR lookup for all local and remote branches. An open PR wins over an older closed PR.
@@ -1017,7 +1020,19 @@ refresh_refs() {
   jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | select(any(.[]; .state == "MERGED" or .state == "CLOSED")) | .[0].headRefName' "$tmp/prs" > "$tmp/closed"
   jq -r 'group_by(.headRefName)[] | select(any(.[]; .state == "OPEN") | not) | .[] | select(.state == "MERGED") | .headRefOid // empty' "$tmp/prs" > "$tmp/merged-heads"
   jq -r '.[] | select(.state == "OPEN") | .headRefOid // empty' "$tmp/prs" | sort -u > "$tmp/open-heads"
+  # The prune deletes every branch without an open PR, so it asks for open PRs alone: the list above stops at 1000 of any state.
+  # A list that reaches its limit may be cut short, so it counts as unreadable.
+  if [ "$prune" -eq 1 ]; then
+    local n
+    if bounded gh pr list --state open --limit 1000 --json headRefName,headRefOid > "$tmp/open-prs" \
+      && n=$(jq -e 'if type == "array" then length else error end' "$tmp/open-prs" 2>/dev/null) && [ "$n" -lt 1000 ]; then
+      { cat "$tmp/open"; jq -r '.[] | .headRefName // empty' "$tmp/open-prs"; } | sort -u > "$tmp/open.all" && mv "$tmp/open.all" "$tmp/open"
+      { cat "$tmp/open-heads"; jq -r '.[] | .headRefOid // empty' "$tmp/open-prs"; } | sort -u > "$tmp/open-heads.all" && mv "$tmp/open-heads.all" "$tmp/open-heads"
+    else open_prs_ok=0
+    fi
+  fi
 }
+fetch_ok=1; open_prs_ok=1
 pr_ok=1
 echo '[]' > "$tmp/prs"
 : > "$tmp/open"
@@ -1067,6 +1082,10 @@ terminals_read=0
 # A scheduled round sets WRAP_UP_SKIP_HOST_WIDE for every repo after the first: terminals, dispatch release, browsers, idle
 # worktrees, Chrome clones, agent temp files and worker panes cover the whole host, so one pass per round is enough.
 host_wide=1; [ -z "${WRAP_UP_SKIP_HOST_WIDE:-}" ] || host_wide=0
+# The daily prune (#1853): keep main, production, staging and active work, delete every other worktree and branch. "remote"
+# (the coordinator host) also deletes origin branches. Every delete is written to the restore log first.
+prune=0; prune_remote=0; prune_block=''
+case "${WRAP_UP_DAILY_PRUNE:-}" in local) prune=1 ;; remote) prune=1; prune_remote=1 ;; esac
 : > "$tmp/kept-terminals"
 terminal_kept() { printf 'Kept terminal %s (%s, %s)\n' "$1" "$2" "$3"; printf '%s %s\n' "$2" "$1" >> "$tmp/kept-terminals"; term_kept=$((term_kept+1)); }
 close_terminal_err='close failed'
@@ -1526,7 +1545,11 @@ protected() {
   if [ "$1" = gh-pages ] || { [ -n "$pages_branch" ] && [ "$1" = "$pages_branch" ]; }; then
     protected_reason='GitHub Pages branch'; return 0
   fi
-  case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
+  if [ "$prune" -eq 1 ]; then
+    case "$1" in main|staging|production|HEAD) return 0 ;; esac
+  else
+    case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
+  fi
   grep -Fxq -- "$1" "$tmp/protected" && return 0
   if [ "$protection_ok" -eq 0 ]; then protected_reason='branch protection lookup unavailable'; return 0; fi
   return 1
@@ -1736,6 +1759,22 @@ in_use() {
 # touches. Busy, unknown or a failed inventory keeps the item: it is reported and counted (in the counter named by the
 # first argument) and the function returns non-zero. A failed inventory stops every later delete in this run.
 inventory_failed=0
+# The prune's restore log: one line per deleted worktree, local or origin branch (time, host, repo, scope, name or path, sha),
+# appended and synced to disk before the delete. A branch comes back with git branch <name> <sha> (origin: git push origin
+# <sha>:refs/heads/<name>) while git still has the commit. A failed write stops every later delete in this repo.
+prune_log="${AGENT_STATE_DIR:-$HOME/agent-state}/branch-prune/$(date +%F).tsv"
+prune_record() { # stdin: scope<TAB>name or path<TAB>sha lines
+  perl -MIO::Handle -e 'my ($f, $pre) = @ARGV; open(my $fh, ">>", $f) or exit 1;
+    while (my $l = <STDIN>) { print {$fh} $pre, $l or exit 1 } $fh->flush or exit 1; $fh->sync or exit 1; close($fh) or exit 1;' \
+    "$prune_log" "$(date '+%Y-%m-%dT%H:%M:%S%z')"$'\t'"$(hostname -s 2>/dev/null || echo unknown)"$'\t'"$repo"$'\t' 2>/dev/null
+}
+prune_log_failed() { # <counter> <label>
+  if [ "$prune_block" != 'restore log write failed' ]; then
+    echo "Warning: could not write the restore log $prune_log; deleting nothing more in this repo." >&2
+    prune_block='restore log write failed'; fail_item 'restore log' "could not write $prune_log; nothing more deleted"
+  fi
+  guard_keep "$1" "$2" 'restore log write failed'
+}
 guard_keep() { # <counter> <label> <why>
   printf 'Kept %s (%s)\n' "$2" "$3"
   printf -v "$1" '%s' "$(( ${!1} + 1 ))"
@@ -1809,6 +1848,9 @@ guarded_orca_worktree_rm() { # <counter> <label> <path> [hostId]
 guarded_worktree_remove() { # <counter> <label> <path> [--force]
   local orca_rm orca_ok=0 remove_rc=0
   guard_paths "$1" "$2" "$3" || return
+  if [ "$prune" -eq 1 ] && [ -n "${prune_head:-}" ]; then
+    printf 'worktree\t%s\t%s\n' "$3" "$prune_head" | prune_record || { prune_log_failed "$1" "$2"; return 1; }
+  fi
   if [ "$inventory_read" -eq 1 ] && command -v "$orca_bin" >/dev/null 2>&1; then
     orca_rm=(worktree rm --worktree "path:$3")
     [ "${4:-}" = --force ] && orca_rm+=(--force)
@@ -1855,7 +1897,10 @@ guarded_local_branch_delete() { # <counter> <label> <branch> [eligibility reason
   local del_ok=0
   fresh_inventory || { guard_keep "$1" "$2" 'worktree inventory unavailable'; return 2; }
   branch_free "$1" "$2" "$3" || return
-  if local_unpushed "$3"; then guard_keep "$1" "$2" "$unpushed_why"; return 1; fi
+  if [ "${4:-}" = prune ]; then
+    printf 'local\t%s\t%s\n' "$3" "$(git rev-parse "refs/heads/$3")" | prune_record || { prune_log_failed "$1" "$2"; return 1; }
+  elif local_unpushed "$3"; then guard_keep "$1" "$2" "$unpushed_why"; return 1
+  fi
   if [ "${4:-}" = ancestor ]; then
     # -d checks HEAD/upstream, so give it the authoritative merge target.
     git -c "branch.$3.remote=origin" -c "branch.$3.merge=refs/heads/main" branch -d -- "$3" && del_ok=1
@@ -1878,6 +1923,11 @@ guarded_remote_branch_delete() { # <name...>: sets remote_gone to how many went;
   remote_gone=0
   remote_live "$@" || status=1
   [ ${#live[@]} -gt 0 ] || return "$status"
+  if [ "$prune" -eq 1 ]; then
+    for name in "${live[@]}"; do
+      printf 'remote\t%s\t%s\n' "$name" "$(awk -v r="refs/remotes/origin/$name" '$1 == r { print $2 }' "$tmp/remote-planned")"
+    done | prune_record || { for name in "${live[@]}"; do prune_log_failed kept "remote $name"; done; return 1; }
+  fi
   if bounded git push origin --delete "${live[@]}" "${leases[@]}" --atomic; then remote_gone=${#live[@]}; return "$status"; fi
   # One bad ref fails the whole push; retry one by one, each behind a fresh inventory, so only the failing ones are kept.
   for name in "${live[@]}"; do
@@ -1897,10 +1947,16 @@ remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets ca
     for name in "$@"; do guard_keep kept "remote $name" 'worktree inventory unavailable'; done
     return 2
   fi
+  # The prune deletes hundreds of branches in a short step, so it reads the live remote once per batch, not once per branch.
+  if [ "$prune" -eq 1 ] && ! bounded git ls-remote --heads origin > "$tmp/remote-all"; then
+    for name in "$@"; do fail_item "remote $name" 'live lookup failed'; guard_keep kept "remote $name" 'live remote lookup failed'; done
+    return 1
+  fi
   for name in "$@"; do
     if ! branch_free kept "remote $name" "$name"; then status=1; continue; fi
     expected=$(awk -v r="refs/remotes/origin/$name" '$1 == r { print $2 }' "$tmp/remote-planned")
-    if ! bounded git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
+    if [ "$prune" -eq 1 ]; then cp "$tmp/remote-all" "$tmp/remote-now"
+    elif ! bounded git ls-remote --heads origin "refs/heads/$name" > "$tmp/remote-now"; then
       fail_item "remote $name" 'live lookup failed'
       guard_keep kept "remote $name" 'live remote lookup failed'; status=1; continue
     fi
@@ -1911,7 +1967,7 @@ remote_live() { # <name...>: fresh checkout inventory and live SHA; also sets ca
     if [ -z "$expected" ] || [ "$actual" != "$expected" ]; then
       guard_keep kept "remote $name" 'remote SHA changed since fetch'; status=1; continue
     fi
-    if last_copy "$actual" "$name"; then
+    if [ "$prune" -eq 0 ] && last_copy "$actual" "$name"; then
       guard_keep kept "remote $name" 'last copy of unmerged work'; last_copy_kept=$((last_copy_kept+1)); status=1; continue
     fi
     live+=("$name")
@@ -1969,6 +2025,21 @@ keep() { printf 'Kept %s (%s)\n' "$1" "$2"; kept=$((kept+1)); }
 : > "$tmp/kept-worktrees"
 : > "$tmp/stale-ok"
 refresh_refs
+# The prune deletes on missing proof of activity, so any lookup it cannot read stops it: nothing is deleted in this repo.
+if [ "$prune" -eq 1 ]; then
+  if [ "$fetch_ok" -eq 0 ]; then prune_block='git fetch failed'
+  elif [ "$pr_ok" -eq 0 ] || [ "$open_prs_ok" -eq 0 ]; then prune_block='open PR list unreadable'
+  elif [ "$inventory_read" -ne 1 ]; then prune_block='Orca worker inventory unavailable'
+  elif grep -Fxq '*' "$tmp/active"; then prune_block='Orca worker or terminal inventory incomplete'
+  elif [ "$protection_ok" -eq 0 ]; then prune_block='branch protection lookup failed'
+  elif [ "$apply" -eq 1 ] && ! { mkdir -p "$(dirname "$prune_log")" && [ -w "$(dirname "$prune_log")" ] && { [ ! -e "$prune_log" ] || [ -w "$prune_log" ]; }; } 2>/dev/null; then
+    prune_block='restore log not writable'
+  fi
+  if [ -n "$prune_block" ]; then
+    echo "Warning: prune stopped in this repo ($prune_block); nothing deleted." >&2
+    fail_item 'prune' "$prune_block; nothing deleted in this repo"
+  fi
+fi
 git worktree list --porcelain -z > "$tmp/worktrees"
 main_checkout=''
 path=''; branch=''; head=''; locked=0
@@ -1989,10 +2060,27 @@ worktree_budget_spent() {
   [ -n "${WRAP_UP_SCHEDULED_CHILD:-}" ] && [ -n "${WRAP_UP_WORKTREE_BUDGET:-}" ] \
     && [ $((SECONDS - worktree_step_start)) -ge "$WRAP_UP_WORKTREE_BUDGET" ]
 }
+# The prune keeps only active work and the race guards; the policy keeps of the chain below do not apply (#1853).
+prune_worktree_why() { # sets why, or reason for a removal
+  reason='not active work'
+  if [ -n "$prune_block" ]; then why="prune stopped: $prune_block"
+  elif worktree_budget_spent; then why='worktree step budget spent, next round'
+  elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
+  elif protected "$branch"; then why=$protected_reason
+  elif [ "$locked" -eq 1 ]; then why='locked'
+  elif ! git -C "$path" status --porcelain --untracked-files=all > "$tmp/status"; then why='unreadable'
+  elif [ -s "$tmp/status" ] && ! only_ignorable_changes "$tmp/status"; then why='uncommitted changes'
+  elif active_worktree "$path"; then why='active or unknown Orca terminal'
+  elif { [ -n "$branch" ] && grep -Fxq -- "$branch" "$tmp/open"; } || grep -Fxq -- "$head" "$tmp/open-heads"; then why='open PR'
+  elif recent_worktree "$path"; then why="changed in the last ${WRAP_UP_RECENT_MIN:-30} minutes"
+  elif in_use "$path"; then why=$busy
+  fi
+}
 process_worktree() {
   local why='' force='' dest=''
   reason='on a remote branch'
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
+  elif [ "$prune" -eq 1 ]; then prune_worktree_why
   elif worktree_budget_spent; then why='worktree step budget spent, next round'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'
   elif protected "$branch"; then why=$protected_reason
@@ -2029,10 +2117,13 @@ process_worktree() {
     [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
   else
     printf 'Remove worktree %s (%s)\n' "$path" "$reason"
+    prune_head=$head
     if [ "$apply" -eq 0 ] || guarded_worktree_remove kept "worktree $path" "$path" "$force"; then
+      prune_head=''
       removed=$((removed+1))
       printf '%s\n' "$path" >> "$tmp/removed-paths"
     else
+      prune_head=''
       printf '%s\n' "$path" >> "$tmp/kept-worktrees"
       [ -z "$branch" ] || printf '%s\n' "$branch" >> "$tmp/kept-branches"
     fi
@@ -2056,8 +2147,26 @@ fi
 [ -z "${WRAP_UP_SCHEDULED_CHILD:-}" ] || printf 'step worktrees seconds=%s\n' "$SECONDS"
 # Release is after terminal and worktree cleanup. A failed release is recorded and does not undo a close.
 if [ "$terminals_read" -eq 1 ]; then release_finished_workers; fi
+# The prune deletes every local branch that is not named, checked out in a kept worktree, or the head of an open PR.
+prune_branch_why() { # <name> <sha>: sets why when the branch stays
+  why=''
+  if [ -n "$prune_block" ]; then why="prune stopped: $prune_block"
+  elif protected "$1"; then why=$protected_reason
+  elif grep -Fxq -- "$1" "$tmp/kept-branches"; then why='checked out in kept worktree'
+  elif grep -Fxq -- "$1" "$tmp/open" || grep -Fxq -- "$2" "$tmp/open-heads"; then why='open PR'
+  fi
+}
 while IFS= read -r branch; do
-  if protected "$branch"; then
+  if [ "$prune" -eq 1 ]; then
+    prune_branch_why "$branch" "$(git rev-parse "refs/heads/$branch")"
+    if [ -n "$why" ]; then keep "local $branch" "$why"; printf '%s\n' "$branch" >> "$tmp/kept-branches"; continue; fi
+    printf 'Delete local %s (not active work)\n' "$branch"
+    if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" prune; then
+      local_deleted=$((local_deleted+1))
+    else
+      printf '%s\n' "$branch" >> "$tmp/kept-branches"
+    fi
+  elif protected "$branch"; then
     keep "local $branch" "$protected_reason"
   elif archive_branch "$branch"; then
     keep "local $branch" 'archive branch'
@@ -2378,11 +2487,47 @@ flush_remote() {
   fi
   batch=()
 }
+# Every branch checked out in an Orca worktree on this host or a paired one (the fleet), into $tmp/fleet-checkouts. A worktree
+# this run removed does not count. Any host the lists do not cover makes the answer unreadable.
+prune_fleet_checkouts() {
+  local env scope
+  : > "$tmp/fleet-checkouts"
+  orca_call environment list --json > "$tmp/prune-envs" 2>/dev/null \
+    && jq -e '.ok != false and (.result.environments | type == "array") and (.result.truncated != true)' "$tmp/prune-envs" >/dev/null 2>&1 || return 1
+  jq '[.result.environments[] | "runtime:" + (.id // "")]' "$tmp/prune-envs" > "$tmp/prune-env-ids"
+  jq -R . "$tmp/removed-paths" | jq -s . > "$tmp/prune-removed"
+  while IFS= read -r env; do
+    scope=(); [ -z "$env" ] || scope=(--environment "$env")
+    orca_call worktree list ${scope[@]+"${scope[@]}"} --json > "$tmp/prune-wt" 2>/dev/null \
+      && jq -e --slurpfile envs "$tmp/prune-env-ids" '.ok != false and (.result.worktrees | type == "array") and (.result.truncated != true)
+        and all((.result.hostScope.omittedHostIds // [])[]; . as $h | $envs[0] | index($h))' "$tmp/prune-wt" >/dev/null 2>&1 || return 1
+    jq -r --slurpfile gone "$tmp/prune-removed" --arg local "$([ -z "$env" ] && echo 1)" '.result.worktrees[]
+      | select($local != "1" or ((.path // "") as $p | $gone[0] | index($p) | not)) | .branch // empty | sub("^refs/heads/"; "")' "$tmp/prune-wt" >> "$tmp/fleet-checkouts"
+  done < <(printf '\n'; jq -r '.result.environments[] | .id // .name // empty' "$tmp/prune-envs")
+}
+prune_remote_block=''
+if [ "$prune" -eq 1 ] && [ "$prune_remote" -eq 1 ] && [ -z "$prune_block" ] && ! prune_fleet_checkouts; then
+  prune_remote_block='Orca worktree list of the fleet unreadable'
+  echo "Warning: $prune_remote_block; deleting no origin branch." >&2
+  fail_item 'prune remote' "$prune_remote_block; no origin branch deleted"
+fi
+[ "$prune" -eq 0 ] || [ "$prune_remote" -eq 1 ] || echo 'Origin branches: left to the coordinator host round.'
 begin_optional
 while IFS= read -r ref; do
+  [ "$prune" -eq 0 ] || [ "$prune_remote" -eq 1 ] || break
   optional_ok || { optional_stop 'remote branch cleanup'; break; }
   branch=${ref#refs/remotes/origin/}
-  if protected "$branch"; then
+  if [ "$prune" -eq 1 ]; then
+    prune_branch_why "$branch" "$(git rev-parse "$ref")"
+    if [ -z "$why" ] && [ -n "$prune_remote_block" ]; then why=$prune_remote_block
+    elif [ -z "$why" ] && grep -Fxq -- "$branch" "$tmp/fleet-checkouts"; then why='checked out in an Orca worktree on the fleet'
+    fi
+    if [ -n "$why" ]; then keep "remote $branch" "$why"; continue; fi
+    printf 'Delete remote %s (not active work)\n' "$branch"
+    batch+=("$branch")
+    [ "$apply" -eq 1 ] || remote_deleted=$((remote_deleted+1))
+    [ ${#batch[@]} -lt 50 ] || flush_remote
+  elif protected "$branch"; then
     keep "remote $branch" "$protected_reason"
   elif archive_branch "$branch"; then
     keep "remote $branch" 'archive branch'
@@ -2511,7 +2656,8 @@ fi
 # A local branch with a commit on no origin ref holds work that exists only on this host: it is never deleted, and an
 # unreadable count keeps it too. Checked again right before the delete.
 stale_found=0
-if [ "$pr_ok" -eq 1 ]; then
+# The prune already deleted every stale branch it may.
+if [ "$pr_ok" -eq 1 ] && [ "$prune" -eq 0 ]; then
   begin_optional
   now=$(date +%s)
   {
@@ -2609,6 +2755,9 @@ printf 'terminals closed=%s kept=%s\n' "$term_closed" "$term_kept"
 printf 'workers released=%s\n' "$released_count"
 printf 'workers needing no action=%s\n' "$no_action_count"
 printf 'last copies kept=%s\n' "$last_copy_kept"
+if [ "$prune" -eq 1 ]; then
+  printf 'prune %s; restore log %s\n' "${prune_block:+stopped: $prune_block}${prune_block:-ran}" "$([ "$apply" -eq 1 ] && echo "$prune_log" || echo 'not written (dry run)')"
+fi
 printf 'build caches removed=%s kept=%s bytes=%s\n' "$cache_removed" "$cache_kept" "$cache_bytes"
 printf 'chrome clones removed=%s kept=%s\n' "$clone_removed" "$clone_kept"
 printf 'temp removed=%s kept=%s bytes=%s\n' "$temp_removed" "$temp_kept" "$temp_bytes"
