@@ -3871,20 +3871,35 @@ def _command_words(command):
     return words
 
 
-def _annotate_cwd(words, cwd):
-    cwd = cwd or os.getcwd()
+def _tilde_dir(text, cwd, oldpwd):
+    """The directory a leading `~+` (working dir) or `~-` (OLDPWD) names, else None."""
+    if text[:2] not in ("~+", "~-") or text[2:3] not in ("", "/"):
+        return None
+    return cwd if text[1] == "+" else oldpwd
+
+
+def _annotate_cwd(words, cwd, oldpwd):
+    """Each word with the directory it is judged from. A `~+` or `~-` word becomes `./...` judged from the
+    directory it names; `~-` and `cd -` name `oldpwd`, one guess at OLDPWD (#1887)."""
     noted = []
     for i, word in enumerate(words):
-        noted.append((*word, cwd))
-        text, _literal, metas = word
+        text, literal, metas = word
+        tilde = _tilde_dir(text, cwd, oldpwd)
+        noted.append(("." + text[2:], "." + literal[2:], metas, tilde) if tilde else (*word, cwd))
         if text != "cd" or metas or not _at_command(words, i):
             continue
         j = i + 1
-        while j < len(words) and words[j][0] not in _SHELL_OPERATORS and words[j][0].startswith("-"):
+        while j < len(words) and words[j][0] not in _SHELL_OPERATORS and words[j][0].startswith("-") \
+                and words[j][0] != "-":
             j += 1
         if j < len(words) and words[j][0] not in _SHELL_OPERATORS and not words[j][2]:
             dest = words[j][0]
-            if dest != "-":
+            tilde = _tilde_dir(dest, cwd, oldpwd)
+            if dest == "-":
+                cwd = oldpwd
+            elif tilde:
+                cwd = os.path.normpath(os.path.join(tilde, "." + dest[2:]))
+            else:
                 cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(dest)))
     return noted
 
@@ -3949,10 +3964,23 @@ def _xargs_reaches(words, absolute, relative):
 
 
 def _hidden_script_paths(command, cwd, absolute, relative):
-    # bash expands `~+` to the working directory and `~-` to the previous one: judge both as `./`, for cd,
-    # find and xargs as well as expansions.
-    words = _annotate_cwd([("." + t[2:], "." + lit[2:], m) if t[:2] in ("~+", "~-") and t[2:3] in ("", "/")
-                           else (t, lit, m) for t, lit, m in _command_words(command)], cwd)
+    # OLDPWD (`~-`, `cd -`) can be any directory the command stands in, the start one included: judge the
+    # words once per such directory (#1887).
+    raw = _command_words(command)
+    seen, todo = [], [cwd or os.getcwd()]
+    while todo:
+        oldpwd = todo.pop()
+        if oldpwd in seen:
+            continue
+        if len(seen) >= 32:
+            _deny_hidden()
+        seen.append(oldpwd)
+        words = _annotate_cwd(raw, seen[0], oldpwd)
+        todo.extend(word[3] for word in words)
+        _hidden_words(words, absolute, relative)
+
+
+def _hidden_words(words, absolute, relative):
     for text, literal, metas, path_cwd in words:
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
             _deny_hidden()
@@ -4083,30 +4111,32 @@ EXPANSION_END = re.compile(r"[}`)*?\]]")
 ANSI_C_QUOTE = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.DOTALL)
 
 
-def _unquoted_text(command, end_parameters=False):
-    """The command as one plain text for the two checks below, never split into commands, so a comment, pipe
-    or substitution cannot hide a line from them (#1870): backslash newlines joined, `$'..'` decoded and
-    `$"..."` read as a quote, then quotes and backslashes dropped. A bad escape raises, and the caller denies."""
-    text = command.replace("\\\n", "")
-    text = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
-                            .decode("unicode_escape") + "'", text).replace('$"', '"')
-    if end_parameters:
-        text = PARAMETER.sub("}", text)
-    return re.sub(r"[\"'\\]", "", text).lower()
+def _unquoted_texts(command, mark):
+    """Every plain reading of the command for the two checks below, never split into commands, so a comment,
+    pipe or substitution cannot hide a line from them (#1870). Backslash newlines are joined, then `$'..'` is
+    either decoded (with `$"` read as a quote) or left as written, since a `$'` can sit in a comment or another
+    quote; `mark` ends each expansion either before or after quotes and backslashes drop. A check denies when
+    any reading hits (#1887). A bad escape raises, and the caller denies."""
+    joined = command.replace("\\\n", "")
+    decoded = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
+                               .decode("unicode_escape") + "'", joined).replace('$"', '"')
+    for text in (decoded, joined):
+        yield mark(re.sub(r"[\"'\\]", "", text)).lower()
+        yield re.sub(r"[\"'\\]", "", mark(text)).lower()
 
 
 def check_built_blocked_names(command):
     """Deny an expansion followed directly by a 5+ character tail of a blocked script name, read as text."""
-    flat = _unquoted_text(command, end_parameters=True)
     tails = {name.lower()[i:] for name in BLOCKED_SCRIPTS for i in range(len(name) - 4)}
-    for match in EXPANSION_END.finditer(flat):
-        rest = flat[match.end():]
-        for tail in tails:
-            if rest.startswith(tail) and not re.match(r"[a-z0-9_./-]", rest[len(tail):len(tail) + 1]):
-                name = next(n for n in sorted(BLOCKED_SCRIPTS) if n.lower().endswith(tail))
-                deny(f"{name} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
-                     "A script name built from `$`, a backtick or a glob is refused even to read; "
-                     "write the name out in full.")
+    for flat in _unquoted_texts(command, lambda text: PARAMETER.sub("}", text)):
+        for match in EXPANSION_END.finditer(flat):
+            rest = flat[match.end():]
+            for tail in tails:
+                if rest.startswith(tail) and not re.match(r"[a-z0-9_./-]", rest[len(tail):len(tail) + 1]):
+                    name = next(n for n in sorted(BLOCKED_SCRIPTS) if n.lower().endswith(tail))
+                    deny(f"{name} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
+                         "A script name built from `$`, a backtick or a glob is refused even to read; "
+                         "write the name out in full.")
 
 
 def _part_named(part, tokens):
@@ -4116,18 +4146,42 @@ def _part_named(part, tokens):
                for token in tokens)
 
 
+# `$name`, `${name}`, `$(`, `)` and backticks become this mark, so an expansion glued to letters reads as `*`
+# there (`"$S"Server` is `*server`) while a lone one names nothing (#1887). `$?`, `$*` and `${?}` are
+# parameters, not globs; a `${...}` with more inside stays in, as a possible glob.
+EXPANSION_MARK = "\0"
+# Any bracket expression, negated (`[!x]`, `[^x]`) or holding a class (`[[:alpha:]]`), can match one character.
+BRACKET = re.compile(r"\[[!^]?\]?(?:\[:[a-z]+:\]|[^\]])*\]")
+
+
+def _mark_expansions(text):
+    text = re.sub(r"\$\{(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-])\}", EXPANSION_MARK, text)
+    text = PARAMETER.sub(EXPANSION_MARK, text).replace("$(", EXPANSION_MARK + " ")
+    return text.replace(")", " " + EXPANSION_MARK).replace("`", EXPANSION_MARK + " " + EXPANSION_MARK)
+
+
+def _tokens(flat):
+    """The words of one reading, each read with expansions as spaces and, where glued to letters, as `*`, and
+    with bracket expressions as written and as `?`."""
+    tokens = set()
+    for text in (flat, BRACKET.sub("?", flat)):
+        for token in re.split(r"[^a-z0-9_.*?\[\]{},\0-]+", text):
+            if token.strip(EXPANSION_MARK):
+                tokens.add(token.replace(EXPANSION_MARK, "*"))
+                tokens.update(t for t in token.split(EXPANSION_MARK) if t)
+    return tokens
+
+
 def check_secrets_dir_by_variable(command):
     """Deny any `$` or backtick in a command that names every component of a configured secrets dir, written
     out or through a glob. No split into reading and non reading commands: that parse lost text to comments,
     pipes, `<(...)` and quoted parens, so this check fails closed instead (#1870)."""
-    flat = _unquoted_text(command)
-    if "$" not in flat and "`" not in flat:
+    if "$" not in command and "`" not in command:
         return
-    # `$?`, `$*` and `${?}` are parameters, not globs; a `${...}` with more inside stays in, as a possible glob.
-    plain = PARAMETER.sub(" ", re.sub(r"\$\{(?:[a-z_][a-z0-9_]*|[0-9@*#?$!-])\}", " ", flat))
-    tokens = [t for t in re.split(r"[^a-z0-9_.*?\[\]{},-]+", plain) if t]
-    if any(all(_part_named(part.lower(), tokens) for part in _path_parts(rel)) for rel in SECRETS_DIR_RELPATHS):
-        _deny_hidden()
+    for flat in _unquoted_texts(command, _mark_expansions):
+        tokens = _tokens(flat)
+        if any(all(_part_named(part.lower(), tokens) for part in _path_parts(rel)) for rel in SECRETS_DIR_RELPATHS):
+            _deny_hidden()
 
 
 def check_command(command):
