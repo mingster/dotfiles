@@ -309,6 +309,7 @@ lint_exact() {
 cat >"$tmp/type-build.md" <<'EOF'
 Refs dotfiles#1026
 Type: build
+Tests: script/tests/x.test.sh
 
 ## Acceptance
 - [ ] The script exits 0.
@@ -707,6 +708,99 @@ Self-review, then send worker_done.
 EOF
 out=$(bash "$lint" "$tmp/no-verify-no-scope.md" 2>&1); ec=$?
 if [ "$ec" -eq 1 ] && [ "$out" = "$(printf 'brief-lint: missing Out of scope\nbrief-lint: missing Verify')" ]; then ok; else bad "missing Verify and Out of scope should both print with exit 1 ($ec, $out)"; fi
+
+set +e
+# 1840. Installer runs need --dry-run first and a Side effects: line; a script with no --dry-run cannot be run.
+extra_brief() { # <out> <extra lines, printf %b>
+  { sed -n '1,/^## Out of scope/p' "$tmp/refs-base.md" | sed '$d'; printf '%b\n\n' "$2"; sed -n '/^## Out of scope/,$p' "$tmp/refs-base.md"; } >"$1"
+}
+lint_case() { # <label> <file> <want ec> <want substring, or empty for no output>
+  local o e
+  o=$(bash "$lint" "$2" 2>&1); e=$?
+  if [ "$e" -ne "$3" ]; then bad "$1: exit $e, want $3 ($o)"; return; fi
+  if [ -z "$4" ]; then if [ -z "$o" ]; then ok; else bad "$1: want no output, got: $o"; fi; return; fi
+  case "$o" in *"$4"*) ok ;; *) bad "$1: want '$4', got: $o" ;; esac
+}
+extra_brief "$tmp/inst-nodry.md" '## Steps\n1. Run `bash script/install-fleet-automations.sh --install`.\nSide effects: turns fleet-watch on.'
+lint_case "installer run without --dry-run" "$tmp/inst-nodry.md" 1 "brief-lint: the first run of install-fleet-automations.sh must use --dry-run"
+extra_brief "$tmp/inst-noside.md" '## Steps\n1. Run `bash script/install-fleet-automations.sh --dry-run --install`, then `bash script/install-fleet-automations.sh --install`.'
+lint_case "installer run without Side effects" "$tmp/inst-noside.md" 1 "brief-lint: a brief that runs an installer needs a Side effects: line"
+extra_brief "$tmp/inst-ok.md" '## Steps\n1. Run `bash script/install-fleet-automations.sh --dry-run --install` and paste the plan.\n2. Then `bash script/install-fleet-automations.sh --install`.\nSide effects: installs the fleet automations; fleet-watch stays as the owner left it.'
+lint_case "installer with --dry-run first and Side effects passes" "$tmp/inst-ok.md" 0 ""
+extra_brief "$tmp/inst-late-dry.md" '## Steps\n~/dotfiles/script/install-fleet-automations.sh --install\nbash script/install-fleet-automations.sh --dry-run --install\nSide effects: installs automations.'
+lint_case "a --dry-run after the real run does not count" "$tmp/inst-late-dry.md" 1 "must use --dry-run"
+extra_brief "$tmp/inst-setup.md" '## Steps\nRun `bash script/setup-orca.sh --dry-run`.\nSide effects: links presets.'
+lint_case "setup-*.sh has no --dry-run" "$tmp/inst-setup.md" 1 "brief-lint: setup-orca.sh has no --dry-run, so a brief cannot run it; the owner runs it"
+extra_brief "$tmp/inst-root.md" '## Steps\n`DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh`\nSide effects: relinks dotfiles.'
+lint_case "install.sh has no --dry-run" "$tmp/inst-root.md" 1 "brief-lint: install.sh has no --dry-run"
+extra_brief "$tmp/inst-mention.md" '## Problem\nThe `install-fleet-automations.sh` fix is #1838, and `setup-*.sh` or `install.sh` stay as they are.\n\n## Allowed files\n- script/setup-orca.sh\n- install.sh'
+lint_case "a bare name or an Allowed files path is not a run" "$tmp/inst-mention.md" 0 ""
+{ cat "$tmp/refs-base.md"; printf '\n## Out of scope\nRunning `bash script/install-fleet-automations.sh --install`.\n'; } >"$tmp/inst-oos.md"
+lint_case "an installer under Out of scope is not a run" "$tmp/inst-oos.md" 0 ""
+extra_brief "$tmp/inst-rm1533.md" 'On each host, in order:\n2. Run script/install-fleet-automations.sh, then confirm with `orca automation list` that wrap-up-daily exists.'
+lint_case "rm-1533 step 2 (a prose run, no --dry-run) is refused" "$tmp/inst-rm1533.md" 1 "the first run of install-fleet-automations.sh must use --dry-run"
+extra_brief "$tmp/inst-run-name.md" 'Then run `install-fleet-automations.sh --install`.'
+lint_case "run before a backtick name counts as a run" "$tmp/inst-run-name.md" 1 "must use --dry-run"
+extra_brief "$tmp/inst-problem.md" '## Problem\nThe brief told release-manager to run script/install-fleet-automations.sh with no dry run.'
+lint_case "a run described under Problem is context" "$tmp/inst-problem.md" 0 ""
+
+# 1840. A UI brief (Allowed files under web/src/app or a components folder) needs a 390x844 step.
+extra_brief "$tmp/ui-none.md" '## Allowed files\n- web/src/app/(store)/page.tsx'
+lint_case "UI brief without 390x844" "$tmp/ui-none.md" 1 "brief-lint: UI brief needs a 390x844 phone check step"
+extra_brief "$tmp/ui-comp.md" 'Allowed files: `web/src/components/cart/Button.tsx`, docs/x.md'
+lint_case "components folder is a UI brief" "$tmp/ui-comp.md" 1 "390x844"
+extra_brief "$tmp/ui-ok.md" '## Allowed files\n- web/src/app/(store)/page.tsx\n\n## Phone\n- [ ] Screenshot the page at 390x844 with the Orca browser.'
+lint_case "UI brief with a 390x844 step passes" "$tmp/ui-ok.md" 0 ""
+extra_brief "$tmp/ui-not.md" '## Allowed files\n- script/brief-lint.sh\n- docs/agents/team-reference.md'
+lint_case "a non-UI brief needs no 390x844 step" "$tmp/ui-not.md" 0 ""
+sed 's|^Refs dotfiles#717$|Refs dotfiles#717\nType: verify\nPost it with script/post-verdict.sh.|' "$tmp/ui-none.md" >"$tmp/ui-verify.md"
+lint_case "a verify brief is not held to the UI builder step" "$tmp/ui-verify.md" 0 ""
+
+# 1840. An explicit Type: build brief needs a Tests: line naming test files.
+sed '/^Tests: /d' "$tmp/type-build.md" >"$tmp/build-no-tests.md"
+lint_case "build brief without Tests:" "$tmp/build-no-tests.md" 1 "brief-lint: build brief needs a Tests: line naming test files"
+sed 's|^Tests: .*$|Tests: the usual ones|' "$tmp/type-build.md" >"$tmp/build-vague-tests.md"
+lint_case "Tests: with no test file" "$tmp/build-vague-tests.md" 1 "needs a Tests: line"
+sed 's|^Tests: .*$|Tests: script/tests/brief-lint.test.sh, script/tests/test_pr_body_gate_builder.py|' "$tmp/type-build.md" >"$tmp/build-tests.md"
+lint_case "Tests: naming test files passes" "$tmp/build-tests.md" 0 ""
+sed 's|^Tests: .*$|Tests: web/src/lib/cart.spec.ts|' "$tmp/type-build.md" >"$tmp/build-spec.md"
+lint_case "a .spec file counts as a test file" "$tmp/build-spec.md" 0 ""
+
+# 1840. The new rules on a sample of fleet-watch's generated brief text: each generated brief still passes.
+mkdir -p "$tmp/fw-out" "$tmp/fw-repo/script"
+: >"$tmp/fw-repo/script/checks-local.sh"
+python3 - "$here/../fleet-watch.py" "$tmp/fw-repo" "$tmp/fw-out" <<'PY'
+import importlib.util, shutil, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location('fleet_watch', sys.argv[1])
+fw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fw)
+root, out = sys.argv[2], Path(sys.argv[3])
+repo = 'mingster/dotfiles'
+pr = {'number': 7, 'headRefOid': 'a' * 40, 'comments': [], 'files': [{'path': 'script/x.sh'}]}
+config = {'issue_scan': {'run': 'run_1', 'repo_roots': {repo: root}}}
+def spec_of(cmd):
+    return cmd[cmd.index('--spec') + 1]
+main_red = fw.main_red_issue_body('1', 'https://github.com/x/y/actions/runs/1', 'Tests')
+tier0 = fw.tier0_audit_issue_body([dict(pr, mergeCommit={'oid': 'b' * 40}, body='Builder: agent=claude model=sonnet')], repo)
+texts = {
+    'verifier': fw.build_babysit_spec(repo, pr, 'verifier', ('claude', 'sonnet'), root),
+    'fixer': fw.build_babysit_spec(repo, pr, 'fix', ('claude', 'sonnet'), root),
+    'rework': spec_of(fw.build_rework_start_command(config, repo, pr)),
+    'issue-main-red': spec_of(fw.build_issue_start_command(config, repo, {'number': 9, 'body': main_red})),
+    'issue-tier0': spec_of(fw.build_issue_start_command(config, repo, {'number': 10, 'body': tier0})),
+}
+for name, path in texts.items():
+    shutil.copy(path, out / (name + '.md'))
+PY
+fw_ec=$?
+fw_failed=""
+for f in "$tmp"/fw-out/*.md; do
+  [ -e "$f" ] || continue
+  o=$(bash "$lint" "$f" "$tmp/fw-repo" 2>&1) || fw_failed="$fw_failed $(basename "$f" .md): $o;"
+done
+n_fw=$(find "$tmp/fw-out" -name '*.md' | wc -l | tr -d ' ')
+if [ "$fw_ec" -eq 0 ] && [ "$n_fw" -eq 5 ] && [ -z "$fw_failed" ]; then ok; else bad "fleet-watch generated briefs should pass the new rules (python=$fw_ec, n=$n_fw, failed:$fw_failed)"; fi
 
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

@@ -4,6 +4,11 @@
 A builder may finish only when Acceptance has no unchecked box, ## Self-check
 names a command and a line of output, and the body has a valid
 "Builder: agent=<provider> model=<model>" line (#1201).
+
+Two opt-in rules (#1840), off unless the caller passes the input:
+--diff <file>: when the diff changes an existing function or field, the body has a Readers: section
+naming each changed name, every item with a test or a reason.
+--asked no: the worker sent no ask, so the body has a Decisions: section (Decisions: none is fine).
 """
 import re
 import sys
@@ -26,6 +31,20 @@ _SCRIPT_BUILDER = ('script', 'template-sync-pr.sh')
 _PROVIDERS = ('claude', 'antigravity', 'agy', 'grok', 'cursor', 'codex')
 # Model prefixes of the families in usage-gate.py family(). A role name or a host fails here.
 _MODEL_PREFIXES = ('claude-', 'sonnet', 'opus', 'haiku', 'fable', 'gpt-', 'composer', 'grok', 'gemini-')
+# Definitions a diff can change. A hunk header (@@ ... @@ <context>) names the function the hunk edits.
+_DEF_PATTERNS = (
+    re.compile(r'^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\('),
+    re.compile(r'^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)'),
+    re.compile(r'^\s*(?:export\s+)?(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:\(|function\b)'),
+    re.compile(r'^\s*([A-Za-z_][\w-]*)\s*\(\)\s*\{'),
+)
+_FIELD_PATTERNS = {
+    ('.ts', '.tsx'): re.compile(r'^\s*(?:readonly\s+)?([A-Za-z_$][\w$]*)\??\s*:\s*[^=(]+;?\s*$'),
+    ('.prisma',): re.compile(r'^\s+([a-z_]\w*)\s+[A-Z]\w*(?:\[\])?\??(?:\s|$)'),
+}
+_TEST_PATH = re.compile(r'(?:^|/)(?:tests?/|test_[^/]*$|[^/]*[._-](?:test|spec)\.[A-Za-z0-9]+$)')
+_TEST_REF = re.compile(r'[\w./-]*(?:test|spec)[\w./-]*\.[A-Za-z0-9]+|\btest\b', re.I)
+_REASON_REF = re.compile(r'\b(?:reason|because)\b', re.I)
 _ISSUE_LINK_FMT = (
     r'\b(?:Closes|Closed|Close|Fixes|Fixed|Fix|Resolves|Resolved|Resolve|Refs)\s+(?:[A-Za-z0-9_./-]+)?#%s\b'
 )
@@ -101,8 +120,99 @@ def unlinked_acceptance_issue(body):
     return None
 
 
-def finish_block_reason(body, issue=None):
-    """None when the body may finish. Otherwise the one-line reason."""
+def _definition_name(line, path):
+    for pattern in _DEF_PATTERNS:
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    for suffixes, pattern in _FIELD_PATTERNS.items():
+        if path.endswith(suffixes):
+            match = pattern.match(line)
+            if match:
+                return match.group(1)
+    return None
+
+
+def changed_definitions(diff):
+    """Names of existing functions or fields the diff changes, in diff order. A brand new definition
+    (only + lines) has no readers yet, and test files are skipped."""
+    names = []
+    path = ''
+    hunk_name = None
+    hunk_counted = True
+    for line in (diff or '').splitlines():
+        if line.startswith('+++ '):
+            path = line[4:].strip()
+            path = path[2:] if path.startswith('b/') else path
+            continue
+        if line.startswith('--- ') or line.startswith('diff --git'):
+            continue
+        if _TEST_PATH.search(path):
+            continue
+        if line.startswith('@@'):
+            context = line.split('@@', 2)[2] if line.count('@@') >= 2 else ''
+            hunk_name = _definition_name(context, path)
+            hunk_counted = False
+            continue
+        if line[:1] not in ('+', '-'):
+            continue
+        name = _definition_name(line[1:], path) if line.startswith('-') else None
+        for found in (name, None if hunk_counted else hunk_name):
+            if found and found not in names:
+                names.append(found)
+        hunk_counted = True
+    return names
+
+
+def _labeled_section(body, label):
+    """Text of a '## <label>' section, or of a '<label>:' line plus the list under it. None when absent."""
+    heading = _section(body, re.compile(r'^## %s\b' % label, re.I))
+    if heading is not None:
+        return heading
+    lines = (body or '').splitlines()
+    for index, line in enumerate(lines):
+        match = re.match(r'^\s*(?:\*\*)?%s:(?:\*\*)?(.*)$' % label, line.strip(), re.I)
+        if not match:
+            continue
+        chunk = [match.group(1)]
+        for rest in lines[index + 1:]:
+            if not rest.strip() or _ANY_HEAD.match(rest.strip()):
+                break
+            chunk.append(rest)
+        return '\n'.join(chunk)
+    return None
+
+
+def readers_block_reason(body, diff):
+    names = changed_definitions(diff)
+    if not names:
+        return None
+    need = "PR body needs a Readers: section listing each caller of %s with a test or a reason" % ', '.join(names)
+    section = _labeled_section(body, 'Readers')
+    if section is None:
+        return need
+    items = [line.strip() for line in section.splitlines() if re.match(r'^\s*(?:[-*]|[0-9]+[.)])\s+\S', line)]
+    items = items or [line.strip() for line in section.splitlines() if line.strip()]
+    missing = [name for name in names if not re.search(r'\b%s\b' % re.escape(name), section)]
+    bare = [item for item in items if not (_TEST_REF.search(item) or _REASON_REF.search(item))]
+    if not items or missing or bare:
+        return need
+    return None
+
+
+def decisions_block_reason(body, asked):
+    if asked is not False:
+        return None
+    section = _labeled_section(body, 'Decisions')
+    if section is None or not section.strip():
+        return "PR body needs a Decisions: section (the worker sent no ask; 'Decisions: none' when there were none)"
+    return None
+
+
+def finish_block_reason(body, issue=None, diff=None, asked=None):
+    """None when the body may finish. Otherwise the one-line reason.
+
+    diff (unified diff text) turns on the Readers: rule; asked=False turns on the Decisions: rule."""
     if unchecked_acceptance(body):
         return 'unchecked Acceptance items'
     if not self_check_has_command_and_output(body):
@@ -112,14 +222,27 @@ def finish_block_reason(body, issue=None):
         return 'PR body needs Closes #%d or Refs #%d' % (missing, missing)
     if not has_valid_builder_line(body):
         return "PR body needs a 'Builder: agent=<provider> model=<model>' line (provider claude, antigravity, grok or cursor, never a role or host)"
-    return None
+    if diff is not None:
+        reason = readers_block_reason(body, diff)
+        if reason:
+            return reason
+    return decisions_block_reason(body, asked)
 
 
 def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
-    issue = argv[1] if len(argv) == 2 and argv[0] == '--issue' and argv[1].isdigit() else None
+    argv = list(sys.argv[1:] if argv is None else argv)
+    opts = dict(zip(argv[::2], argv[1::2])) if len(argv) % 2 == 0 else {}
+    if len(argv) % 2 or set(opts) - {'--issue', '--diff', '--asked'} or opts.get('--asked', 'no') not in ('yes', 'no'):
+        print('usage: pr-body-gate.py [--issue <n>] [--diff <file>] [--asked yes|no] < body')
+        return 2
+    issue = opts['--issue'] if opts.get('--issue', '').isdigit() else None
+    diff = None
+    if '--diff' in opts:
+        with open(opts['--diff'], encoding='utf-8', errors='replace') as handle:
+            diff = handle.read()
+    asked = {'yes': True, 'no': False}.get(opts.get('--asked'))
     text = sys.stdin.read()
-    reason = finish_block_reason(text, issue)
+    reason = finish_block_reason(text, issue, diff=diff, asked=asked)
     if reason:
         print(reason)
         return 1
