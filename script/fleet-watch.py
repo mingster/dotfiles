@@ -1408,7 +1408,13 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
             }
         }
 
-    admitted = (occupied_count < cap)
+    gate_names = sorted(local_names) if is_local else [host]
+    gate_lock = next(filter(None, (head_checks_gate_lock(name) for name in gate_names)), None)
+    admitted = occupied_count < cap and not gate_lock
+    if gate_lock:
+        refusal = 'head checks hold the heavy gate on %s (%s)' % (host, gate_lock)
+    else:
+        refusal = 'host cap exceeded: %s %d/%d (live=%d retained=%d)' % (host, occupied_count, cap, live_count, retained_count)
     overflow_host = None if admitted else (
         _first_admitted_overflow_host(host, config, deduped, env_names, repo, repo_lookup) if is_local else None
     )
@@ -1422,7 +1428,7 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
         'retained_count': retained_count,
         'resources': host_resources,
         'overflow_host': overflow_host,
-        'reason': 'admitted' if admitted else ('host cap exceeded: %s %d/%d (live=%d retained=%d)' % (host, occupied_count, cap, live_count, retained_count)),
+        'reason': 'admitted' if admitted else refusal,
         'receipt': {
             'host': host,
             'admitted': admitted,
@@ -4393,7 +4399,27 @@ def _repo_checks_lock_path(repo_root):
 def head_checks_lock_live(repo_root, lock_live=None):
     if lock_live is not None:
         return lock_live(repo_root)
-    lock = _repo_checks_lock_path(repo_root)
+    return _lock_holder_live(_repo_checks_lock_path(repo_root))
+
+
+def head_checks_gate_lock(host):
+    """The lock path when a head checks run on this host holds the database step on `host`, else None (#1844).
+
+    head-checks.sh takes ~/orca/workspaces/<repo>/_db-<host>_<dir>.lock for the whole database step, from before
+    the remote heavy-gate wait to the end of the step, and that gate samples `host`'s own free memory.
+    """
+    # The lock key is <host>_<remote dir> with every other character turned into _, and the dir is absolute,
+    # so <host>__ starts it: host-a never matches the lock of host-a-2 (host_a_2__...).
+    key = re.sub(r'[^A-Za-z0-9._]', '_', host or '') + '__'
+    if key == '__':
+        return None
+    for lock in sorted(Path.home().glob('orca/workspaces/*/_db-*.lock')):
+        if lock.name[len('_db-'):].startswith(key) and _lock_holder_live(str(lock)):
+            return str(lock)
+    return None
+
+
+def _lock_holder_live(lock):
     if not os.path.isdir(lock):
         return False
     pid_path = os.path.join(lock, 'pid')
