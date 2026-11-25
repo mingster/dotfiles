@@ -65,6 +65,23 @@ else
   bad "invalid remote_read_only regex fails closed (out: $(tail -3 <<<"$out"))"
 fi
 
+# The template's SECRETS_DIR = re.compile(<pattern>, re.IGNORECASE) migrates (#1896); any other flag still fails closed.
+for flag in re.IGNORECASE re.I re.MULTILINE; do
+  FLG="$TMP/flag-$flag"
+  mkdir -p "$FLG/.claude/hooks"
+  printf 'import re\nSECRETS_DIR = re.compile(r"\\.secrets/", %s)\n' "$flag" > "$FLG/.claude/hooks/guard-bash.py"
+  git -C "$FLG" init -q -b main
+  out="$(timeout 300 bash "$ROOT/script/agent-team.sh" project "$FLG" --project-name x --dry-run 2>&1)"; rc=$?
+  if [ "$flag" = re.MULTILINE ]; then
+    if [ "$rc" -ne 0 ] && grep -qF "in SECRETS_DIR" <<<"$out"; then ok "SECRETS_DIR with $flag fails closed"
+    else bad "SECRETS_DIR with $flag fails closed (rc=$rc out: $(tail -3 <<<"$out"))"; fi
+  elif [ "$rc" -eq 0 ] && ! grep -qF "refusing migration" <<<"$out"; then
+    ok "SECRETS_DIR with $flag migrates"
+  else
+    bad "SECRETS_DIR with $flag migrates (rc=$rc out: $(tail -3 <<<"$out"))"
+  fi
+done
+
 # A host list built with list(<shared list>) migrates and keeps every host (#1121).
 LST="$TMP/lst"
 mkdir -p "$LST/.claude/hooks"
