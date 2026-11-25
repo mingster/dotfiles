@@ -183,7 +183,8 @@ export FAKE_HOSTNAME=coord-host
 coord=$(bash "$script" --install 2>&1)
 echo "$coord" | grep -q 'updated\|unchanged' && check 'coordinator install settles' true || check 'coordinator install settles' false
 coord_status=$(bash "$script" --status)
-echo "$coord_status" | grep -q 'fleet-watch: enabled' && check 'coordinator status enabled fleet-watch' true || check 'coordinator status enabled fleet-watch' false
+# fleet-watch already exists (disabled), so the coordinator keeps that state: the owner flips it, not the installer (#1838).
+echo "$coord_status" | grep -q 'fleet-watch: disabled' && check 'coordinator keeps an existing disabled fleet-watch' true || check 'coordinator keeps an existing disabled fleet-watch' false
 echo "$coord_status" | grep -q 'wrap-up-daily: enabled' && check 'coordinator status enabled wrap-up-daily' true || check 'coordinator status enabled wrap-up-daily' false
 echo "$coord_status" | grep -q 'fleet-toolchain: enabled' && check 'coordinator status enabled fleet-toolchain' true || check 'coordinator status enabled fleet-toolchain' false
 echo "$coord_status" | grep -q 'daily-program-1900: enabled' && check 'coordinator status enabled daily-program-1900' true || check 'coordinator status enabled daily-program-1900' false
@@ -246,6 +247,31 @@ echo "$un" | grep -q 'daily-program-1900 removed' && check 'uninstall removes da
 
 re=$(bash "$script" --install 2>&1)
 echo "$re" | grep -q 'created' && check 'reinstall after uninstall recreates' true || check 'reinstall after uninstall recreates' false
+# #1838: a new fleet-watch starts enabled on the coordinator; once the owner disables it, a re-install keeps it disabled.
+fw_new=$(bash "$script" --status)
+echo "$fw_new" | grep -q 'fleet-watch: enabled' && check 'coordinator creates fleet-watch enabled' true || check 'coordinator creates fleet-watch enabled' false
+python3 - <<'PY2'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+for a in d["automations"]:
+    if a["name"] == "fleet-watch":
+        a["enabled"] = False
+json.dump(d, open(p, "w"))
+PY2
+fw_keep=$(bash "$script" --install 2>&1)
+echo "$fw_keep" | grep -q 'fleet-watch unchanged' && check 're-install leaves owner disabled fleet-watch unchanged' true || check 're-install leaves owner disabled fleet-watch unchanged' false
+fw_kept=$(bash "$script" --status)
+echo "$fw_kept" | grep -q 'fleet-watch: disabled' && check 're-install keeps fleet-watch disabled' true || check 're-install keeps fleet-watch disabled' false
+python3 - <<'PY2'
+import json, os
+p = os.environ["FAKE_ORCA_STORE"]
+d = json.load(open(p))
+for a in d["automations"]:
+    if a["name"] == "fleet-watch":
+        a["enabled"] = True
+json.dump(d, open(p, "w"))
+PY2
 
 fleet_pc=$(python3 -c '
 import json, os

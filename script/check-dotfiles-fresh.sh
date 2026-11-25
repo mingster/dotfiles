@@ -7,7 +7,7 @@ case "${1:-}" in -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 dir=${1:-$(cd "$(dirname "$0")" && pwd)}
 [ -d "$dir" ] || { echo "check-dotfiles-fresh: not a directory: $dir" >&2; exit 2; }
 fail=0
-for f in worker-startup.sh ship.sh head-checks.sh fleet-watch-loop.sh; do
+for f in worker-startup.sh ship.sh head-checks.sh; do
   if ! grep -Eq '^\. "\$[a-z_]+/lib/dotfiles-fresh\.sh"' "$dir/$f" 2>/dev/null; then
     echo "check-dotfiles-fresh: $f does not source lib/dotfiles-fresh.sh" >&2
     fail=1

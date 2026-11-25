@@ -291,19 +291,20 @@ print("path:" + os.environ["WANT"])
 '
 }
 
-# enabled: 1, 0, or keep (the owner's choice on an existing entry; a new entry starts disabled).
+# enabled: 1, 0, keep (the owner's choice on an existing entry; a new entry starts disabled), or keep:1 (the same,
+# but a new entry starts enabled).
 ensure_automation() {
   local name=$1 trigger=$2 precheck=$3 timeout=$4 enabled=$5 tz=${6:-$FLEET_AUTOMATIONS_TIMEZONE}
   local existing id prompt
   prompt=$(manual_prompt "$name" "$precheck" "$timeout")
-  [ "$enabled" = keep ] && enabled=0
+  case "$enabled" in keep) enabled=0 ;; keep:1) enabled=1 ;; esac
   if existing=$(automation_by_name "$name" 2>/dev/null); then
     id=$(AUTOMATION_ROW="$existing" python3 - <<'PY'
 import json, os
 print(json.loads(os.environ["AUTOMATION_ROW"])["id"])
 PY
 )
-    [ "$5" = keep ] && enabled=$(AUTOMATION_ROW="$existing" python3 -c 'import json, os; print(1 if json.loads(os.environ["AUTOMATION_ROW"]).get("enabled") else 0)')
+    case "$5" in keep*) enabled=$(AUTOMATION_ROW="$existing" python3 -c 'import json, os; print(1 if json.loads(os.environ["AUTOMATION_ROW"]).get("enabled") else 0)') ;; esac
     if AUTOMATION_ROW="$existing" AUTOMATION_WANT_TRIGGER="$trigger" AUTOMATION_WANT_PROMPT="$prompt" \
       AUTOMATION_WANT_PRECHECK="$precheck" AUTOMATION_WANT_TIMEOUT="$timeout" \
       AUTOMATION_WANT_ENABLED="$enabled" AUTOMATION_WANT_TIMEZONE="$tz" python3 - <<'PY'
@@ -426,7 +427,11 @@ case "$action" in
     enabled=0
     host_is_coordinator "$coord_want" && enabled=1
     repo_selector=$(dotfiles_repo_selector)
-    ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$enabled"
+    # fleet-watch is the only fleet-watch scheduler (#1838). The coordinator creates it enabled and then keeps the
+    # owner's choice; any other host keeps it disabled.
+    fleet_watch_enabled=0
+    [ "$enabled" = 1 ] && fleet_watch_enabled=keep:1
+    ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$fleet_watch_enabled"
     # Dropped 2026-11-23 (#1533): wrap-up runs once a day. Drop the old 10 minute entry when a host still has it.
     automation_by_name wrap-up-scheduled >/dev/null 2>&1 && remove_by_name wrap-up-scheduled
     ensure_automation wrap-up-daily '0 4 * * *' "$(wrap_up_daily_precheck)" "$WRAP_UP_DAILY_PRECHECK_TIMEOUT" 1

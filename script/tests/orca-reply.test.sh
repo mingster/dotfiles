@@ -13,14 +13,16 @@ cat > "$tmp/bin/orca" <<'EOS'
 #!/usr/bin/env bash
 echo "$*" >> "$ORCA_LOG"
 case "$1 $2" in
-  "orchestration reply") [ -z "${FAKE_REPLY_FAIL:-}" ] || exit 1 ;;
+  "orchestration reply")
+    [ -z "${FAKE_REPLY_CONFLICT:-}" ] || { echo '{"ok":false,"error":{"code":"answer_conflict","message":"already answered"}}'; exit 1; }
+    [ -z "${FAKE_REPLY_FAIL:-}" ] || exit 1 ;;
   "terminal send") [ -z "${FAKE_SEND_FAIL:-}" ] || exit 1 ;;
   "orchestration worker-list") [ -z "${FAKE_WORKERS:-}" ] || { echo "$FAKE_WORKERS"; exit 0; } ;;
 esac
 echo '{"ok":true}'
 EOS
 chmod +x "$tmp/bin/orca"
-export ORCA_LOG="$tmp/orca.log" PATH="$tmp/bin:$PATH"
+export ORCA_LOG="$tmp/orca.log" PATH="$tmp/bin:$PATH" ORCA_REPLY_ANSWERED_FILE="$tmp/state/answered-asks.txt"
 run() { : > "$ORCA_LOG"; bash "$script" "$@" >"$tmp/out" 2>"$tmp/err"; echo $? >"$tmp/rc"; }
 
 # 1. replies, then nudges the recipient terminal with Enter
@@ -86,6 +88,13 @@ done
 # 10. an unknown recipient is still served
 FAKE_WORKERS='{"ok":true,"result":{"workers":[{"state":"succeeded","terminal":"term_b","dispatchId":"ctx_b","terminalState":"released"}]}}' run --to term_a --id msg_1 --body hi
 [ "$(cat "$tmp/rc")" = 0 ] && ok || bad "unknown recipient served"
+
+# 11. answer_conflict (#1838): the ask already has an answer; its id is recorded so the unanswered digest skips it
+FAKE_REPLY_CONFLICT=1 run --to term_a --id msg_9 --body hi
+grep -qx msg_9 "$tmp/state/answered-asks.txt" 2>/dev/null && ok || bad "answer_conflict records the ask id"
+grep -q "already has an answer" "$tmp/err" && ok || bad "answer_conflict is named"
+run --to term_a --id msg_10 --body hi
+! grep -qx msg_10 "$tmp/state/answered-asks.txt" 2>/dev/null && ok || bad "a plain reply records nothing"
 
 echo "orca-reply: $pass passed, $fail failed"
 [ "$fail" = 0 ]

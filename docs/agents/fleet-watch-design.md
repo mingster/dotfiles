@@ -45,7 +45,7 @@ Babysit starts no verifier for a PR whose body fails `pr-body-gate.py`. The buil
 
 **The outbox.** The dispatcher appends one JSON line per notice to `dispatcher.outbox.jsonl`. The monitor claims the file at the start of its pass (rename, then read), merges the lines into its queue, and deletes the claimed file once sent. Nothing else writes it. A crashed monitor leaves the claimed file, and the next pass reads it again. Duplicate text is merged, as today.
 
-**Why split.** A third of today's passes run past a minute. Six were killed at 280 s, and a killed pass sends nothing, because notices go out last. With the split, a broken dispatcher cannot silence the monitor, and a slow monitor cannot delay a verifier.
+**Why split.** A third of today's passes run past a minute. Six were killed at 280 s, and a killed pass sends nothing, because notices go out last. Until the split ships, the one runner is the Orca automation (#1838), and a pass stops new work at 250 s so the timeout does not kill it. With the split, a broken dispatcher cannot silence the monitor, and a slow monitor cannot delay a verifier.
 
 ## Sending notices
 

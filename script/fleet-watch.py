@@ -2580,13 +2580,28 @@ def _threaded_reply(messages, ask_id):
                and ask_id in (m.get('threadId'), m.get('thread_id')) for m in messages)
 
 
-def unanswered_ask_notices(state, now, messages, workers):
-    """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
-    within 15 minutes (#1781). The inbox `handled` flag is ignored: it can be set without a reply.
+def answered_asks_path():
+    """Ask ids that orca-reply.sh found already answered (answer_conflict, #1838)."""
+    return Path(os.environ.get('ORCA_REPLY_ANSWERED_FILE')
+                or Path.home() / '.local/state/agent-team/answered-asks.txt')
 
-    Messages carry no timestamp, so the age runs from the pass that first saw the ask. A reply is a later
-    non-ask message sent to the worker's dispatch or terminal, one not already in the inbox when the ask was first seen,
-    or any non-ask message whose thread id is the ask id (what `orca orchestration reply --id` sends)."""
+
+def read_answered_asks(path=None):
+    try:
+        text = Path(path or answered_asks_path()).read_text(errors='replace')
+    except OSError:
+        return set()
+    return {line.strip() for line in text.splitlines()[-500:] if line.strip()}
+
+
+def unanswered_ask_notices(state, now, messages, workers, answered=()):
+    """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
+    within 15 minutes (#1781).
+
+    Messages carry no timestamp, so the age runs from the pass that first saw the ask. An ask has an answer when the
+    inbox marks it `handled` or its id is in `answered` (orca-reply.sh got answer_conflict) (#1838), when a later
+    non-ask message went to the worker's dispatch or terminal (one not already in the inbox when the ask was first
+    seen), or when any non-ask message has the ask id as its thread id (what `orca orchestration reply --id` sends)."""
     live = {w['dispatchId']: w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
     book = state.setdefault('open_asks', {})
     seen = set()
@@ -2603,7 +2618,7 @@ def unanswered_ask_notices(state, now, messages, workers):
         handle = worker_terminal_handle(live[dispatch]) or m.get('from') or ''
         replies = _reply_ids(messages, dispatch, handle)
         row = book.setdefault(mid, {'at': now, 'dispatch': dispatch, 'before': sorted(replies)})
-        if replies - set(row['before']) or _threaded_reply(messages, mid):
+        if m.get('handled') or mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
             row['answered'] = True
         if row.get('answered') or row.get('notified') or now - row['at'] < ASK_REPLY_SECONDS:
             continue
@@ -5918,6 +5933,7 @@ def begin_pass_clock(now=None):
     """Start the start budget clock. main() calls it; with no call (tests, direct use) there is no budget."""
     global _PASS_BEGAN
     _PASS_BEGAN = time.time() if now is None else now
+    del _DEADLINE_SKIPPED[:]
 
 
 def end_pass_clock():
@@ -5936,6 +5952,44 @@ def start_cost(command):
         if index < len(command):
             return agent_start_cost(command[index])
     return START_COST_OTHER
+
+
+PASS_HARD_END = 250.0  # the pass stops new work here, ahead of the automation's 280 s precheck timeout (#1838)
+_DEADLINE_SKIPPED = []
+
+
+def pass_deadline_reached():
+    """True once the pass is PASS_HARD_END seconds old. Checked cooperatively at phase, babysit row and scan row
+    boundaries, so a worker start already begun always finishes. With no clock (tests, direct use) never true."""
+    return _PASS_BEGAN is not None and time.time() - _PASS_BEGAN >= PASS_HARD_END
+
+
+def deadline_hit(log_bits, bit):
+    """True at the deadline, and logs `bit` once."""
+    if not pass_deadline_reached():
+        return False
+    if bit not in log_bits:
+        log_bits.append(bit)
+    return True
+
+
+def run_phase(name, fn, skipped):
+    """Run one phase of main(), or return `skipped` once the deadline passed and record the phase as skipped."""
+    if pass_deadline_reached():
+        _DEADLINE_SKIPPED.append(name)
+        return skipped
+    pass_phase(name)
+    return fn()
+
+
+def pass_deadline_line():
+    return 'pass deadline %ds: skipped %s' % (PASS_HARD_END, ','.join(_DEADLINE_SKIPPED)) if _DEADLINE_SKIPPED else ''
+
+
+def start_fits_pass(cost):
+    """True while elapsed + cost fits PASS_HARD_END, so the automation timeout never kills a start (#1820).
+    Verifier and fixer starts skip START_FINISH_BY (#1838) but not this. With no clock (tests, direct use) True."""
+    return _PASS_BEGAN is None or time.time() - _PASS_BEGAN + cost <= PASS_HARD_END
 
 
 def start_allowed(cost):
@@ -7853,6 +7907,8 @@ def babysit_pass(
 
     for _index, _number, repo, pr_row in rows:
         number = pr_row.get('number')
+        if deadline_hit(log_bits, 'babysit_deadline=%s' % number):
+            break
         head = pr_row.get('headRefOid') or ''
         if pr_row.get('isDraft'):
             lines.append(_babysit_line(repo, number, head, 'skip', 'draft'))
@@ -8007,6 +8063,10 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += step
             continue
+        if not start_fits_pass(agent_start_cost(agent)):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'deadline'))
+            log_bits.append('start_deadline=%s' % number)
+            continue
         if kind == 'verifier':
             # The pass list can be minutes old and may be cached, so read the open list again just before the start (#1706).
             live_state = pr_open_now(repo, number, pr_state_fetch or pr_fetch)
@@ -8035,6 +8095,7 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
         # No start_allowed hold here: a verifier starts on Review PASS within the usage gate and host caps (owner 2026-11-25, #1838).
+        # start_fits_pass above still holds a start that would end past PASS_HARD_END (#1820).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)
@@ -8272,6 +8333,8 @@ def _issue_scan_pass(
 
     listed = {}
     for repo in pr_repos:
+        if deadline_hit(log_bits, 'issue_scan_deadline'):
+            break
         prs = pr_fetch(repo)
         listed[repo] = prs
         if prs is None:
@@ -8284,6 +8347,8 @@ def _issue_scan_pass(
         escalated = rework_escalated.setdefault(repo, {})
         fail_noted = state.setdefault('issue_scan_fail_noted', {}).setdefault(repo, {})
         for pr_row in prs:
+            if deadline_hit(log_bits, 'issue_scan_deadline'):
+                break
             if not pr_open_for_dispatch(pr_row) or pr_row.get('isDraft'):
                 continue
             if pr_has_label(pr_row, needs_elon) or pr_has_label(pr_row, needs_redesign):
@@ -8514,6 +8579,8 @@ def _issue_scan_pass(
     ready_queue_count = 0
     list_failed = False
     for repo in repos:
+        if deadline_hit(log_bits, 'issue_scan_deadline'):
+            break
         issues = list_issues(repo)
         if issues is None:
             log_bits.append('issue_scan_list_failed')
@@ -8641,6 +8708,8 @@ def _issue_scan_pass(
     pass_starts = {}
     attempts = 0
     for index, (repo, row) in enumerate(candidates):
+        if deadline_hit(log_bits, 'issue_scan_deadline'):
+            break
         placement = None
 
         def defer_rest(reason, first=index):
@@ -10301,7 +10370,7 @@ def _main():
         state.pop('orca_inventory_skip_latched', None)
         try:
             notices += gone_remote_dispatch_notices(workers, state, rpc)
-            notices += unanswered_ask_notices(state, now, inv['messages'], workers)
+            notices += unanswered_ask_notices(state, now, inv['messages'], workers, answered=read_answered_asks())
         except Exception as error:
             print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
@@ -10450,23 +10519,26 @@ def _main():
     for line in babysit_lines:
         print(line)
     notices += babysit_notices
-    pass_phase('audit')
-    try:
-        audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
-        for line in audit_lines:
-            print(line)
-        babysit_log = list(babysit_log) + audit_log
-    except Exception as error:
-        print('fleet-watch: tier 0 audit skipped: %s' % (repr(error),), file=sys.stderr)
-    pass_phase('issue_scan')
-    scan_extra, scan_log = issue_scan_pass(
+    def audit():
+        try:
+            audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
+            for line in audit_lines:
+                print(line)
+            return audit_log
+        except Exception as error:
+            print('fleet-watch: tier 0 audit skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
+    # From here each phase is skipped once the pass is PASS_HARD_END old; deliver and save always run (#1838).
+    babysit_log = list(babysit_log) + run_phase('audit', audit, [])
+    scan_extra, scan_log = run_phase('issue_scan', lambda: issue_scan_pass(
         config, state, now, workers,
         pr_fetch=fetch_once,
         inventory_ok=inventory_ok,
         persist_state=persist_scan_state,
         workflow_watch_prior=workflow_watch_prior,
         babysit_repos=babysit_dispatch_repos(config),
-    )
+    ), ([], []))
     notices += scan_extra
     status = work_order_status_notice(config, state, now, workers, _PASS.started if _PASS is not None else 0)
     if status:
@@ -10477,24 +10549,26 @@ def _main():
             notices += agy_signin_notices(config, workers, now=now)
         except Exception as error:
             print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
-    pass_phase('stall')
-    stall_extra, stall_log = worker_stall_pass(
+    stall_extra, stall_log = run_phase('stall', lambda: worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
-        inventory_ok=inventory_ok, pr_list=fetch_once, waiting=waiting_on_coordinator(state, workers))
+        inventory_ok=inventory_ok, pr_list=fetch_once, waiting=waiting_on_coordinator(state, workers)), ([], []))
     notices += stall_extra
-    pass_phase('signal')
-    signal_extra, signal_log = worker_signal_pass(
+    signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
-        inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok)
+        inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))
     notices += signal_extra
-    pass_phase('nudge')
-    nudge_log = []
-    if inventory_ok and terminal_list_ok:
+
+    def nudge():
+        if not (inventory_ok and terminal_list_ok):
+            return []
         try:
-            nudge_log = unread_nudge_pass(state, now, workers, term_times, inv['messages'], rpc)
+            return unread_nudge_pass(state, now, workers, term_times, inv['messages'], rpc)
         except Exception as error:
             print('fleet-watch: unread nudge skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
+    nudge_log = run_phase('nudge', nudge, [])
     notices += coordinator
     notices += drain_notices(config)
     pass_phase('deliver')
@@ -10505,6 +10579,8 @@ def _main():
         parts.append('pass failed: %.1fs' % duration)
     else:
         parts.append('pass ok %.1fs' % duration)
+    if pass_deadline_line():
+        parts.append(pass_deadline_line())
     if not terminal_list_ok:
         parts.append('terminal_list_failed')
     if backup_age is not None:
@@ -10527,6 +10603,8 @@ def _main():
         parts.append('scan ' + ','.join(scan_log))
     try:
         for repo in babysit_repos(config):
+            if pass_deadline_reached():  # the next pass prunes; a fetch here could run past the timeout
+                break
             if repo not in pass_prs and _state_tracks_repo(state, repo):
                 pass_prs[repo] = fetch_prs(repo)
         prune_closed_maps(state, pass_prs, {})
