@@ -2016,9 +2016,39 @@ class TextCheckBypassClasses(ProjectConfigGuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command)
 
+    def test_glob_from_a_cd_into_the_parent_dir_denied(self):
+        """Second review of PR #1894: the glob anchor now includes where the cd left the command."""
+        for command in ("cd fileServer && cat s*/x.json", "cd fileServer && cat se?rets/x.json",
+                        "cd fileServer && cd /tmp && cat ~-/*rets/x.json", "cd fileServer && cd /tmp && cat ~-/s*/x.json",
+                        "cd fileServer && cd /tmp && cat ~-/se?rets/x.json",
+                        "cd fileServer && cd /tmp && cd ~- && cat s*/x.json",
+                        "cd fileServer && cd /tmp && cd - && cat s*/x.json", "cd /tmp && cd ~-/fileServer && cat s*/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_any_bracket_expression_denied(self):
+        for command in ("cat fileServer/se[^x]rets/x.json", "cat fileServer/se[[:alpha:]]rets/x.json",
+                        "cat fileServer/se[[=c=]]rets/x.json", "D=fileServer/se[[=c=]]rets; cat $D/x.json",
+                        "D=fileServer/se[[.c.]]rets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_quote_between_dollar_and_name_denied(self):
+        for command in ("S=deploy-; eval 'bash bin/$'S'\"raw.sh\"'", "S=deploy-; bash -c 'bash bin/$'S'\"raw.sh\"'",
+                        'S=deploy-; eval "bash bin/\\\\$"S"\\\\raw.sh"', "S=deploy-; eval bash bin/\\$\\S\\\\raw.sh",
+                        'eval "D=fileServer/\\\\$"u"sec\\\\$"v"\\\\rets; cat \\\\$D/x.json"',
+                        "eval 'D=fileServer/$'u'sec$'v'\"rets\"; cat $D/x.json'"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_escape_after_a_comment_dollar_quote_denied(self):
+        self.assertDenied("# $'\nS=deploy; bash bin/$S$'\\x2draw.sh'")
+
     def test_nearby_commands_still_allowed(self):
         for command in ("cd /tmp && ls ~-", "cd /tmp && cat ~-/docs/x.md", 'X="$u"docs; cat $X/a.md',
-                        "ls docs/[!x]*.md", "eval 'echo hi'", "S=a; echo \"$S\"raw"):
+                        "ls docs/[!x]*.md", "eval 'echo hi'", "S=a; echo \"$S\"raw",
+                        "cd docs && cat s*/x.md", "cd fileServer && ls", "cd fileServer && cat README.md",
+                        "ls docs/[[:alpha:]]*.md", "printf '%s\\n' \"$HOME\"", "echo $'\\x41'"):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
