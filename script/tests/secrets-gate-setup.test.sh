@@ -74,7 +74,9 @@ out=$(run --dry-run --role receiver --dir "$D" --pubkey "$KEY" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "receiver dry run exits 0" || bad "receiver dry run rc $rc: $out"
 grep -qF "restrict,command=\"$TMP/opt/secrets-gate receive\" $KEY" <<<"$out" && ok "root's key line is restrict plus the fixed receive command" || bad "no forced command line: $out"
 grep -qF "PermitRootLogin forced-commands-only" <<<"$out" && ok "sshd drop in limits root to forced commands" || bad "no PermitRootLogin line"
-! grep -qiE 'sudoers|NOPASSWD' <<<"$out" && ok "receiver has no sudoers entry at all" || bad "receiver mentions sudoers"
+grep -qF "| $(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate run *" <<<"$out" && ok "receiver dry run prints the run sudoers entry" || bad "receiver has no run entry: $out"
+! grep -qE 'NOPASSWD:.*(receive|sync)' <<<"$out" && ok "receiver sudoers has no receive or sync entry" || bad "receiver sudoers grants receive or sync"
+! grep -qE "helpers folder|install helper" <<<"$out" && ok "receiver without --helpers installs no helper" || bad "helpers step without --helpers"
 [ ! -e "$TMP/sudo.log" ] && ok "receiver dry run ran no sudo" || bad "receiver dry run called sudo"
 for bad_key in '' 'ssh-rsa AAAA' "$KEY"$'\n'"command=\"x\" ssh-ed25519 AAAA" 'ssh-ed25519 AAAA;touch x' 'command="/bin/sh" ssh-ed25519 AAAAfake'; do
   out=$(run --dry-run --role receiver --dir "$D" --pubkey "$bad_key" 2>&1); rc=$?
@@ -90,6 +92,31 @@ out=$(run --role receiver --dir "$D" --pubkey "$KEY" 2>&1); rc=$?
 [ "$(cat "$TMP/captured/authorized_keys" 2>/dev/null)" = "restrict,command=\"$TMP/opt/secrets-gate receive\" $KEY" ] && ok "root's authorized_keys holds only the forced line" || bad "authorized_keys: $(cat "$TMP/captured/authorized_keys" 2>/dev/null)"
 [ "$(sed -n 2p "$TMP/captured/100-secrets-gate.conf" 2>/dev/null)" = "PermitRootLogin forced-commands-only" ] && ok "sshd drop in installed" || bad "drop in missing"
 grep -q ' -- ' "$TMP/sudo.log" && ok "privileged commands put -- before the names" || bad "no -- in the sudo log"
+
+# --helpers: fixed helpers installed root 755 into <gate dir>/helpers, on both roles
+HS="$TMP/hsrc"
+mkdir -p "$HS"
+printf '#!/bin/sh\necho one\n' >"$HS/peek"; printf '#!/bin/sh\necho two\n' >"$HS/env-check.sh"
+: >"$TMP/sudo.log"
+out=$(run --dry-run --role receiver --dir "$D" --pubkey "$KEY" --helpers "$HS" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "receiver dry run with --helpers exits 0" || bad "receiver --helpers dry run rc $rc: $out"
+for want in "would: create the helpers folder $TMP/opt/helpers (root, 755)" "would: install helper peek (root, 755)" "would: install helper env-check.sh (root, 755)"; do
+  grep -qF "$want" <<<"$out" && ok "helpers dry run says: $want" || bad "helpers dry run lacks: $want"
+done
+[ ! -s "$TMP/sudo.log" ] && [ ! -e "$TMP/opt/helpers" ] && ok "helpers dry run ran no sudo and created nothing" || bad "helpers dry run changed something"
+rm -f "$TMP/captured/"*
+: >"$TMP/sudo.log"
+out=$(run --role receiver --dir "$D" --pubkey "$KEY" --helpers "$HS" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "receiver run with --helpers exits 0" || bad "receiver --helpers run rc $rc: $out"
+grep -qE "^install -d -o root -g [^ ]+ -m 755 -- $TMP/opt/helpers\$" "$TMP/sudo.log" && ok "the helpers folder is made root 755" || bad "no helpers folder step: $(cat "$TMP/sudo.log")"
+for n in peek env-check.sh; do
+  grep -qE "^install -o root -g [^ ]+ -m 755 -- $HS/$n $TMP/opt/helpers/$n\$" "$TMP/sudo.log" && ok "helper $n installed root 755" || bad "helper $n not installed: $(cat "$TMP/sudo.log")"
+done
+cmp -s "$HS/peek" "$TMP/captured/peek" && ok "the installed helper is the source file" || bad "installed helper differs"
+grep -qxF "$(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate run *" "$TMP/captured/sudoers" && ok "receiver sudoers allows passwordless run" || bad "receiver sudoers: $(cat "$TMP/captured/sudoers" 2>/dev/null)"
+! grep -qE 'receive|NOPASSWD:.*sync' "$TMP/captured/sudoers" && ok "receive stays out of the receiver sudoers" || bad "receiver sudoers holds receive or sync"
+grep -q 'env_reset, secure_path=' "$TMP/captured/sudoers" && ok "receiver sudoers resets the environment" || bad "receiver sudoers lacks env_reset"
+[ "$(cat "$TMP/captured/authorized_keys" 2>/dev/null)" = "restrict,command=\"$TMP/opt/secrets-gate receive\" $KEY" ] && ok "receive stays the forced command only" || bad "authorized_keys changed: $(cat "$TMP/captured/authorized_keys" 2>/dev/null)"
 
 # Refusals: every one must leave sudo untouched
 refused() { # <label> <expected text> <args...>
@@ -120,6 +147,19 @@ rm -f "$D/fifo"
 refused "a host name with user@ is refused" "host name" --role source --dir "$D" --hosts "root@hostA"
 refused "an option shaped host name is refused" "host name" --role source --dir "$D" --hosts "-oProxyCommand=x"
 refused "a deploy name with a slash is refused" "deploy name" --role source --dir "$D" --hosts hostA --deploy "../x"
+refused "a missing helpers folder is refused" "helpers" --role receiver --dir "$D" --pubkey "$KEY" --helpers "$TMP/nohelpers"
+ln -s "$HS/peek" "$HS/linked"
+refused "a symlinked helper is refused" "symbolic link" --role receiver --dir "$D" --pubkey "$KEY" --helpers "$HS"
+rm -f "$HS/linked"
+printf 'x\n' >"$HS/.hidden"
+refused "a helper name with a leading dot is refused" "helper name" --role source --dir "$D" --hosts hostA --helpers "$HS"
+rm -f "$HS/.hidden"
+printf 'x\n' >"$HS/-x"
+refused "a helper name with a leading dash is refused" "helper name" --role source --dir "$D" --hosts hostA --helpers "$HS"
+rm -f "$HS/-x"
+mkdir "$HS/sub"
+refused "a directory among the helpers is refused" "regular file" --role receiver --dir "$D" --pubkey "$KEY" --helpers "$HS"
+rmdir "$HS/sub"
 
 # Real source run: lock the top, then look again as root, then hand over the rest, in that order
 : >"$TMP/sudo.log"
@@ -130,6 +170,10 @@ look=$(grep -n "^find -P $D " "$TMP/sudo.log" | head -1 | cut -d: -f1)
 all=$(grep -n "^chown -R -P root:.* -- $D\$" "$TMP/sudo.log" | head -1 | cut -d: -f1)
 if [ -n "$lock" ] && [ -n "$look" ] && [ -n "$all" ] && [ "$lock" -lt "$look" ] && [ "$look" -lt "$all" ]; then ok "order: lock the top, look for links as root, then chown -R -P"; else bad "order: lock=$lock look=$look all=$all: $(cat "$TMP/sudo.log")"; fi
 grep -qF "$(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate sync" "$TMP/captured/sudoers" && ok "installed sudoers is the sync entry" || bad "installed sudoers: $(cat "$TMP/captured/sudoers" 2>/dev/null)"
+grep -qxF "$(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate run *" "$TMP/captured/sudoers" && ok "source sudoers also allows passwordless run" || bad "source sudoers lacks run: $(cat "$TMP/captured/sudoers" 2>/dev/null)"
+: >"$TMP/sudo.log"
+out=$(run --role source --dir "$D" --helpers "$HS" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && grep -qE "^install -o root -g [^ ]+ -m 755 -- $HS/peek $TMP/opt/helpers/peek\$" "$TMP/sudo.log" && ok "source run with --helpers installs the helpers" || bad "source --helpers: rc $rc $(cat "$TMP/sudo.log")"
 [ "$(cat "$TMP/captured/secrets-gate.conf")" = "DIR=$D
 HOSTS=hostA hostB
 DEPLOY=" ] && ok "config holds the folder and hosts" || bad "config: $(cat "$TMP/captured/secrets-gate.conf")"

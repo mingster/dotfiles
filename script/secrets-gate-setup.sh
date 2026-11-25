@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Owner runs this once per host. Makes the credential folder root owned and installs the gate (secrets-gate.sh).
 # Usage: secrets-gate-setup.sh [--dry-run] --role source|receiver [--dir <path>] [--hosts "h1 h2"] [--deploy "n1 n2"]
-#                              [--pubkey "<ssh-ed25519 line>"]
+#                              [--pubkey "<ssh-ed25519 line>"] [--helpers <dir>]
 #   -h, --help print this Usage block
 #   --dry-run  print every step it would take (and the sudoers, authorized_keys and sshd text), change nothing, run no sudo
-#   --role     source: this host holds the master copy and pushes it. One passwordless sudoers entry, `sync` only.
-#              receiver: a fleet host that only receives. No sudoers entry at all. Needs --pubkey (the source's gate key).
+#   --role     source: this host holds the master copy and pushes it. Passwordless sudoers: `sync` and `run *`.
+#              receiver: a fleet host that only receives. Passwordless sudoers: `run *` only. Needs --pubkey (the
+#              source's gate key). `receive` is never in sudoers.
+#   --helpers  both roles: install every regular file in <dir> as a fixed helper for `secrets-gate run <name>`, root
+#              mode 755 in <gate dir>/helpers. A link, a non plain name (leading dot or dash) or anything else is refused.
 #   --dir      the folder, default /opt/secrets-gate/folder. It and every parent must be real directories (no link) that
 #              only root can rename: owned by root, no group or other write bit. A folder under a home folder is refused.
 #   --hosts    source only: fleet hosts to push to, default from script/secrets-sync.config.json, then fleet-pull.config.json
@@ -26,7 +29,7 @@ cfg=${SECRETS_SYNC_CONFIG:-$here/secrets-sync.config.json}
 fleet=${FLEET_PULL_CONFIG:-$here/fleet-pull.config.json}
 export SG_TRUST_UID=${SG_TRUST_UID:-0}
 
-dry=0 role='' dir='' hosts='' deploy='' pubkey=''
+dry=0 role='' dir='' hosts='' deploy='' pubkey='' helpers=''
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) print_usage; exit 0 ;;
@@ -36,6 +39,7 @@ while [ $# -gt 0 ]; do
     --hosts) hosts=${2:?--hosts needs a list}; shift 2 ;;
     --deploy) deploy=${2:?--deploy needs a list}; shift 2 ;;
     --pubkey) pubkey=${2:?--pubkey needs a line}; shift 2 ;;
+    --helpers) helpers=${2:?--helpers needs a folder}; shift 2 ;;
     *) echo "unknown flag $1" >&2; exit 2 ;;
   esac
 done
@@ -79,6 +83,19 @@ else
   [[ $pubkey =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [A-Za-z0-9._@-]+)?$ ]] || die "--pubkey must be one ssh-ed25519 public key line"
 fi
 for n in $deploy; do case $n in ''|*[!A-Za-z0-9._-]*|.*) die "deploy name '$n' is not a plain file name" ;; esac; done
+# Helpers are checked before any step runs: plain names, regular files only, no link.
+helper_names=()
+if [ -n "$helpers" ]; then
+  [ -d "$helpers" ] && [ ! -L "$helpers" ] || die "--helpers $helpers is not a folder"
+  while IFS= read -r -d '' f; do
+    n=${f##*/}
+    case $n in [.-]*|*[!A-Za-z0-9._-]*) die "helper name '$n' is not a plain file name" ;; esac
+    [ ! -L "$f" ] || die "helper $n is a symbolic link"
+    [ -f "$f" ] || die "helper $n is not a regular file"
+    helper_names+=("$n")
+  done < <(find -P "$helpers" -mindepth 1 -maxdepth 1 -print0)
+  [ "${#helper_names[@]}" -gt 0 ] || die "--helpers $helpers holds no file"
+fi
 owner=${SUDO_USER:-$(id -un)}
 case $owner in ''|-*|*[!A-Za-z0-9._-]*) die "owner account name is not plain" ;; esac
 root_group=$(id -gn 0)
@@ -125,6 +142,17 @@ else
   act "remove group and other access" chmod -R -- go-rwx "$dir"
 fi
 
+# 3h. Fixed helpers for `secrets-gate run <name>`: root 755 in the gate's helpers folder.
+if [ "${#helper_names[@]}" -gt 0 ]; then
+  hdir=$gate_dir/helpers
+  if [ "$(stat_of "$hdir" 2>/dev/null)" = "root 755" ]; then step "ok:    $hdir exists"
+  else act "create the helpers folder $hdir (root, 755)" install -d -o root -g "$root_group" -m 755 -- "$hdir"; fi
+  for n in "${helper_names[@]}"; do
+    if [ -f "$hdir/$n" ] && cmp -s "$helpers/$n" "$hdir/$n" && [ "$(stat_of "$hdir/$n")" = "root 755" ]; then step "ok:    helper $n up to date"
+    else act "install helper $n (root, 755)" install -o root -g "$root_group" -m 755 -- "$helpers/$n" "$hdir/$n"; fi
+  done
+fi
+
 if [ "$role" = source ]; then
   # 4s. The sync's ssh uses only a root owned key and known_hosts, never the owner's ~/.ssh.
   if [ -f "$gate_dir/id_ed25519" ]; then step "ok:    ssh key exists"
@@ -138,19 +166,6 @@ if [ "$role" = source ]; then
   if [ -f "$gate_dir/known_hosts" ] && cmp -s "$tmp/known_hosts" "$gate_dir/known_hosts" && [ "$dry" -eq 0 ]; then step "ok:    known_hosts up to date"
   else act "write known_hosts for the fleet hosts" install -o root -g "$root_group" -m 644 -- "$tmp/known_hosts" "$gate_dir/known_hosts"; fi
   step "note:  on every receiver run: secrets-gate-setup.sh --role receiver --pubkey \"\$(sudo cat $gate_dir/id_ed25519.pub)\""
-
-  # 5s. Sudoers: the fixed sync, passwordless. Everything else asks Touch ID or the password.
-  {
-    echo "# Managed by secrets-gate-setup.sh. Passwordless: the fixed sync only."
-    echo "Defaults!$gate_dir/secrets-gate env_reset, secure_path=\"/usr/bin:/bin:/usr/sbin:/sbin\""
-    echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate sync"
-  } >"$tmp/sudoers"
-  step "sudoers text:"; show "$tmp/sudoers"
-  if [ "$dry" -eq 0 ]; then
-    visudo -cf "$tmp/sudoers" >/dev/null || die "generated sudoers failed visudo, nothing installed"
-  fi
-  if [ "$dry" -eq 0 ] && sudo cmp -s "$tmp/sudoers" "$sudoers_file" 2>/dev/null; then step "ok:    sudoers entry up to date"
-  else act "install the sudoers entry" install -o root -g "$root_group" -m 440 -- "$tmp/sudoers" "$sudoers_file"; fi
 else
   # 4r. Root's authorized_keys: the gate key may run the receive command and nothing else.
   line="restrict,command=\"$gate_dir/secrets-gate receive\" $pubkey"
@@ -182,6 +197,21 @@ else
   fi
   step "note:  check: sudo sshd -T | grep -i permitrootlogin   must say forced-commands-only"
 fi
+
+# 5. Sudoers, both roles: the fixed helpers (`run *`), plus the fixed sync on the source, passwordless. `receive` is
+# never here (forced command only). Everything else asks Touch ID or the password.
+{
+  echo "# Managed by secrets-gate-setup.sh. Passwordless: the fixed helpers$([ "$role" = source ] && echo " and the fixed sync")."
+  echo "Defaults!$gate_dir/secrets-gate env_reset, secure_path=\"/usr/bin:/bin:/usr/sbin:/sbin\""
+  [ "$role" != source ] || echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate sync"
+  echo "$owner ALL=(root) NOPASSWD: $gate_dir/secrets-gate run *"
+} >"$tmp/sudoers"
+step "sudoers text:"; show "$tmp/sudoers"
+if [ "$dry" -eq 0 ]; then
+  visudo -cf "$tmp/sudoers" >/dev/null || die "generated sudoers failed visudo, nothing installed"
+fi
+if [ "$dry" -eq 0 ] && sudo cmp -s "$tmp/sudoers" "$sudoers_file" 2>/dev/null; then step "ok:    sudoers entry up to date"
+else act "install the sudoers entry" install -o root -g "$root_group" -m 440 -- "$tmp/sudoers" "$sudoers_file"; fi
 
 # 6. Touch ID for sudo on macOS (macOS 14 and later read /etc/pam.d/sudo_local).
 if [ "$role" = source ] && [ "$(uname -s)" = Darwin ]; then
