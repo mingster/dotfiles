@@ -8,7 +8,7 @@
 # Run the six checks on project roots (default: script/team-audit.local.conf)
 ~/dotfiles/script/team-audit.sh [<project-root> ...]
 
-# Checks plus metrics, as three sections: problems, proposals, stage times
+# Checks plus metrics: problems, proposals, stage times, start and fleet-pull durations, tier 0 audit
 ~/dotfiles/script/team-audit.sh --report [<project-root> ...]
 
 # Record an observation in ${TEAM_AUDIT_LOG:-$HOME/agent-state/team-observations.tsv}
@@ -30,3 +30,11 @@ Exit 0 when clean, 1 on any finding (also for `--report`), 2 on a usage error.
 `--report` runs `script/team-audit-metrics.ts --repo <owner/name>` per project with two gh calls (one GraphQL search for merged PRs, one `gh issue list`). It reads dispatch times from `${TEAM_AUDIT_DISPATCHES:-$HOME/agent-state/team-dispatches.tsv}` (columns `issue` and `dispatched_at`, header first, the earliest row per issue counts). Queue runs from `ready-for-agent` to spawn, build from dispatch to the first Checks result on the PR's first commit, merge from that result to merge. A PR with all four timestamps counts as fully verified.
 
 Per host fleet metrics are out of scope for `script/team-audit-metrics.ts`.
+
+## Start and fleet-pull durations
+
+`--report` then prints the median, maximum and sample count of `duration_s` from the worker-startup durations log and the fleet pull after ship log (#1330). Off the coordinator host the local worker-startup log is empty, so it reads the coordinator's copy over ssh (`TEAM_AUDIT_COORDINATOR_HOST`, else `coordinator_host` in the ship config) and prints one line when that host is unreachable (#1641).
+
+## Tier 0 audit
+
+Last, `--report` runs `script/tier0-audit.py report --repo <owner/name>` per project: the tier 0 PRs picked for audit in the past two weeks, each Audit result, and the FAIL rate against the 5 percent bar (#1730).
