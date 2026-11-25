@@ -68,18 +68,15 @@ def check_bash(data):
         deny('PR text has no "Test plan" section (CLAUDE.md, Using GitHub). Remove that heading and retry.')
 
 
-def check_changelog(data):
+def file_path(data):
     path = data.get("tool_input", {}).get("file_path", "")
+    return path if os.path.isabs(path) else os.path.join(data.get("cwd") or os.getcwd(), path)
+
+
+def check_changelog(data):
+    path = file_path(data)
     if os.path.basename(path) == "CHANGELOG.md" and os.path.isdir(os.path.join(os.path.dirname(path), "changelog.d")):
         deny("Never edit CHANGELOG.md in a PR. Add a changelog.d/<issue>-<slug>.md fragment instead.")
-
-
-def written_text(tool_input):
-    if "content" in tool_input:
-        return tool_input["content"]
-    if "new_string" in tool_input:
-        return tool_input["new_string"]
-    return "\n".join(e.get("new_string", "") for e in tool_input.get("edits", []))
 
 
 def dash_lines(text):
@@ -92,12 +89,38 @@ def dash_lines(text):
     return lines
 
 
+def edited_dash_lines(path, tool_input):
+    """Dash lines of an Edit or MultiEdit, numbered and fenced by the whole file on disk."""
+    if "new_string" in tool_input:
+        pieces = [tool_input["new_string"]]
+    else:
+        pieces = [e.get("new_string", "") for e in tool_input.get("edits", [])]
+    try:
+        with open(path, errors="replace") as f:
+            full = f.read()
+    except OSError:
+        return [n for piece in pieces for n in dash_lines(piece)]
+    file_dashes = set(dash_lines(full))
+    lines = []
+    for piece in pieces:
+        if not piece:
+            continue
+        piece_dashes = [i for i, line in enumerate(piece.splitlines()) if DASH.search(INLINE_CODE.sub("", line))]
+        starts = [m.start() for m in re.finditer(re.escape(piece), full)]
+        if not starts:
+            lines.extend(dash_lines(piece))
+        for start in starts:
+            first = full.count("\n", 0, start) + 1
+            lines.extend(first + i for i in piece_dashes if first + i in file_dashes)
+    return sorted(set(lines))
+
+
 def check_written(data):
     tool_input = data.get("tool_input", {})
-    path = tool_input.get("file_path", "")
+    path = file_path(data)
     notes = []
     if path.endswith(".md"):
-        lines = dash_lines(written_text(tool_input))
+        lines = dash_lines(tool_input["content"]) if "content" in tool_input else edited_dash_lines(path, tool_input)
         if lines:
             shown = ", ".join(str(n) for n in lines[:10])
             notes.append(f"{os.path.basename(path)} line {shown}: a dash is used as punctuation. "

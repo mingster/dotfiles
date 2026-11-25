@@ -23,10 +23,10 @@ class RuleChecksTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="rule-checks-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
-    def run_hook(self, event, tool, tool_input):
+    def run_hook(self, event, tool, tool_input, process_cwd=None):
         payload = {"hook_event_name": event, "tool_name": tool, "tool_input": tool_input, "cwd": self.dir}
         out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True,
-                             capture_output=True, timeout=20)
+                             capture_output=True, timeout=20, cwd=process_cwd)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)["hookSpecificOutput"] if out.stdout.strip() else None
 
@@ -81,6 +81,11 @@ class RuleChecksTest(unittest.TestCase):
         self.assertIsNone(self.bash('gh pr create --title x --body "The test plan section is gone"'))
 
     # Row 3: dashes as punctuation in markdown
+    def elsewhere(self):
+        path = tempfile.mkdtemp(prefix="elsewhere-")
+        self.addCleanup(shutil.rmtree, path, ignore_errors=True)
+        return path
+
     def write_md(self, content, name="notes.md"):
         return self.run_hook("PostToolUse", "Write", {"file_path": os.path.join(self.dir, name), "content": content})
 
@@ -129,10 +134,49 @@ class RuleChecksTest(unittest.TestCase):
         result = self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "y"})
         self.assertIn("250", result["additionalContext"])
 
+    def test_relative_agents_md_resolves_against_payload_cwd(self):
+        with open(os.path.join(self.dir, "AGENTS.md"), "w") as f:
+            f.write("x\n" * 205)
+        result = self.run_hook("PostToolUse", "Edit", {"file_path": "AGENTS.md", "old_string": "x", "new_string": "y"},
+                               process_cwd=self.elsewhere())
+        self.assertIn("205", result["additionalContext"])
+
+    # Row 3 with Edit: a dash is judged by its place in the whole file, not in new_string alone
+    def test_edit_inside_open_fence_with_spaced_dash_is_allowed(self):
+        path = os.path.join(self.dir, "fenced.md")
+        with open(path, "w") as f:
+            f.write("# T\n\n```\nx = a - b\n```\n")
+        self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x = 1", "new_string": "x = a - b"}))
+
+    def test_edit_outside_fence_with_spaced_dash_warns(self):
+        path = os.path.join(self.dir, "plain.md")
+        with open(path, "w") as f:
+            f.write("# T\n\n```\ncode\n```\n\nfoo a - b\n")
+        result = self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "foo", "new_string": "foo a - b"})
+        self.assertIn("line 7", result["additionalContext"])
+
+    def test_edit_ending_in_newline_does_not_flag_the_next_line(self):
+        path = os.path.join(self.dir, "newline.md")
+        with open(path, "w") as f:
+            f.write("# T\n\nedited\nuntouched - dash\n")
+        self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "edited\n"}))
+
+    def test_edit_without_dash_on_line_that_already_has_one_is_allowed(self):
+        path = os.path.join(self.dir, "sameline.md")
+        with open(path, "w") as f:
+            f.write("# T\n\nold - dash fresh\n")
+        self.assertIsNone(self.run_hook("PostToolUse", "Edit", {"file_path": path, "old_string": "x", "new_string": "fresh"}))
+
     # Row 5: CHANGELOG.md
     def test_changelog_edit_denied_when_fragments_dir_exists(self):
         os.mkdir(os.path.join(self.dir, "changelog.d"))
         result = self.run_hook("PreToolUse", "Edit", {"file_path": os.path.join(self.dir, "CHANGELOG.md"), "old_string": "a", "new_string": "b"})
+        self.assert_denied(result, "changelog.d")
+
+    def test_relative_changelog_path_resolves_against_payload_cwd(self):
+        os.mkdir(os.path.join(self.dir, "changelog.d"))
+        result = self.run_hook("PreToolUse", "Edit", {"file_path": "CHANGELOG.md", "old_string": "a", "new_string": "b"},
+                               process_cwd=self.elsewhere())
         self.assert_denied(result, "changelog.d")
 
     def test_changelog_edit_allowed_without_fragments_dir(self):
