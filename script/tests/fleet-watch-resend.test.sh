@@ -12,8 +12,11 @@ root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location('fleet_watch', root/'fleet-watch.py')
 watch = importlib.util.module_from_spec(spec); spec.loader.exec_module(watch)
 
-import tempfile as _tf
+import os, tempfile as _tf
 watch.DRAIN_LOG_DEFAULT = str(pathlib.Path(_tf.mkdtemp())/'drain.log')
+# Keep every line this file logs off the coordinator's real ~/.orca/logs/fleet-watch.log (#1843).
+LOG = pathlib.Path(_tf.mkdtemp())/'fleet-watch.log'
+os.environ['FLEET_WATCH_LOG_PATH'] = str(LOG)
 
 def failed(name):
     return {'dispatchId': name, 'dispatchStatus': 'failed'}
@@ -187,7 +190,7 @@ class Digest(unittest.TestCase):
         state, calls = {}, []
         with contextlib.redirect_stderr(io.StringIO()):
             watch.deliver_notices(UNTYPED, state, ['n1'], digest_rpc(calls, {'run:r1': OSError('x')}), now=0, owner_of=NO_OWNER)
-        self.assertEqual(sent(calls), [('run:r1', 'n1'), ('run:r2', 'n1')])
+        self.assertEqual(sent(calls), [('run:r1', 'n1'), ('run:r1', 'n1'), ('run:r2', 'n1')])
         calls.clear()
         watch.deliver_notices(UNTYPED, state, [], digest_rpc(calls), now=60, owner_of=NO_OWNER)
         self.assertEqual(sent(calls), [('run:r1', 'n1')])
@@ -277,6 +280,152 @@ class Digest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state = pathlib.Path(directory)/'state.json'
             state.write_text(json.dumps({'failed': ['x'], 'notice_delivery': {'old': {'sent': [], 'passes': 0}}}))
+
+
+def orca_ok(*_a, **_k):
+    return subprocess.CompletedProcess([], 0, stdout='{"ok":true,"result":{}}', stderr='')
+
+
+class SendRetry(unittest.TestCase):
+    """#1843: a send whose orca process could not start is tried once more; --from falls back to config."""
+    def setUp(self):
+        LOG.write_text('')
+
+    def test_spawn_oserror_through_real_rpc_is_retried_once_and_lands(self):
+        attempts = []
+        def run(cmd, **kw):
+            attempts.append(cmd)
+            if len(attempts) == 1:
+                raise OSError(35, 'Resource temporarily unavailable')
+            return orca_ok()
+        state = {}
+        with patch.object(watch.subprocess, 'run', side_effect=run), contextlib.redirect_stderr(io.StringIO()):
+            watch.deliver_notices({'runs': [UNTYPED['runs'][0]]}, state, ['n1'], watch.rpc, now=0, owner_of=NO_OWNER)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(attempts[0], attempts[1])
+        self.assertEqual(state['notice_queue'], {})
+        log = LOG.read_text()
+        self.assertIn('send retry for run:r1 after BlockingIOError', log)
+        self.assertNotIn('send failed', log)
+
+    def test_two_spawn_failures_log_one_failure_after_the_retry(self):
+        with patch.object(watch.subprocess, 'run', side_effect=OSError('x')), contextlib.redirect_stderr(io.StringIO()):
+            watch.deliver_notices({'runs': [UNTYPED['runs'][0]]}, {}, ['n1'], watch.rpc, now=0, owner_of=NO_OWNER)
+        lines = [l for l in LOG.read_text().splitlines() if 'run:r1' in l]
+        self.assertEqual(len(lines), 2)
+        self.assertIn('send retry for run:r1 after OSError', lines[0])
+        self.assertIn('send failed for run:r1: OrcaReadError', lines[1])
+
+    def test_timeout_is_not_retried(self):
+        attempts = []
+        def run(cmd, **kw):
+            attempts.append(cmd)
+            raise subprocess.TimeoutExpired(cmd, 15)
+        with patch.object(watch.subprocess, 'run', side_effect=run), contextlib.redirect_stderr(io.StringIO()):
+            watch.deliver_notices({'runs': [UNTYPED['runs'][0]]}, {}, ['n1'], watch.rpc, now=0, owner_of=NO_OWNER)
+        self.assertEqual(len(attempts), 1)
+
+    def test_typed_terminal_send_is_retried_once(self):
+        config = {'runs': [{'id': 'r1', 'terminal': 'term_first', 'typed': True}]}
+        calls = []
+        def rpc(*args):
+            calls.append(args)
+            if len(calls) == 1:
+                raise OSError('x')
+            return {}
+        state = {}
+        with contextlib.redirect_stderr(io.StringIO()):
+            watch.deliver_notices(config, state, ['n1'], rpc, now=0, owner_of=NO_OWNER)
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn('n1', state.get('typed_notice_delivery', {}))
+
+    def test_from_comes_from_config_when_the_pass_has_no_handle(self):
+        config = {'runs': [], 'babysit': {'from_terminal': 'term_cfg'}}
+        verdict = watch.Verdict('o/r #7 Verdict: PASS head=h verifier=v author=ctx_a1')
+        verdict.author = 'ctx_a1'
+        calls = []
+        env = {k: v for k, v in os.environ.items() if k != 'ORCA_TERMINAL_HANDLE'}
+        with patch.dict(os.environ, env, clear=True):
+            watch.deliver_notices(config, {}, [verdict], digest_rpc(calls), now=0, owner_of=lambda a: 'term_lead')
+        send = [c for c in calls if c[:2] == ('orchestration', 'send')]
+        self.assertEqual(len(send), 1)
+        self.assertEqual(send[0][send[0].index('--from') + 1], 'term_cfg')
+
+
+def ask(mid, dispatch, **extra):
+    return dict({'id': mid, 'type': 'question', 'subject': 'Which port?', 'from': 'term_w',
+                 'payload': {'dispatchId': dispatch}}, **extra)
+
+def live(dispatch, title):
+    return {'dispatchId': dispatch, 'dispatchStatus': 'running', 'terminalState': 'active', 'terminal': 'term_w',
+            'title': title, 'name': 'build-' + dispatch, 'projection': {}}
+
+
+class AskStamps(unittest.TestCase):
+    """#1843: every ask and reply carries a UTC time in the log and the digest, so wait time can be measured."""
+    def setUp(self):
+        LOG.write_text('')
+
+    def test_ask_and_reply_are_stamped(self):
+        state, workers = {}, [live('ctx_a', '#12|fullstack-dev')]
+        t0 = 1764061200  # 2025-11-25T09:00:00Z
+        self.assertEqual(watch.unanswered_ask_notices(state, t0, [ask('msg_1', 'ctx_a')], workers), [])
+        self.assertIn('ask question msg_1 from ctx_a asked 2025-11-25T09:00:00Z', LOG.read_text())
+        late = watch.unanswered_ask_notices(state, t0 + 16 * 60, [ask('msg_1', 'ctx_a')], workers)
+        self.assertEqual(len(late), 1)
+        self.assertIn('(asked 2025-11-25T09:00:00Z)', str(late[0]))
+        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 20 * 60, [ask("msg_1", "ctx_a", handled=True)], workers), [])
+        done = watch.take_ask_reply_lines(state)
+        line = 'reply to question msg_1 from ctx_a: asked 2025-11-25T09:00:00Z, answer seen 2025-11-25T09:20:00Z, waited 20 minutes'
+        self.assertEqual([str(n) for n in done], [line])
+        self.assertIn(line, LOG.read_text())
+        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 30 * 60, [ask('msg_1', 'ctx_a', handled=True)], workers), [])
+        self.assertEqual(LOG.read_text().count('reply to question msg_1'), 1)
+
+    def test_orca_created_at_wins_over_first_seen(self):
+        state = {}
+        watch.unanswered_ask_notices(state, 1764061200, [ask('msg_2', 'ctx_a', created_at='2025-11-25T08:55:00Z')],
+                                     [live('ctx_a', '#12|fullstack-dev')])
+        self.assertIn('asked 2025-11-25T08:55:00Z', LOG.read_text())
+
+    def test_stamped_reply_reaches_the_digest(self):
+        state = {}
+        workers = [live('ctx_a', '#12|fullstack-dev')]
+        watch.unanswered_ask_notices(state, 0, [ask('msg_1', 'ctx_a')], workers)
+        watch.unanswered_ask_notices(state, 60, [ask("msg_1", "ctx_a", handled=True)], workers)
+        notices = watch.take_ask_reply_lines(state)
+        self.assertEqual(watch.take_ask_reply_lines(state), [])
+        calls = []
+        watch.deliver_notices(UNTYPED, {}, notices, digest_rpc(calls), now=60, owner_of=NO_OWNER)
+        self.assertIn('answer seen 1970-01-01T00:01:00Z', sent(calls)[0][1])
+
+
+class OpenWork(unittest.TestCase):
+    """#1843: open asks and live claims survive a coordinator compaction in a file elon-startup prints."""
+    def test_open_ask_and_claim_are_written_and_leave_when_done(self):
+        path = pathlib.Path(tempfile.mkdtemp())/'elon-open-work.md'
+        state = {}
+        workers = [live('ctx_a', '#12|fullstack-dev'), live('ctx_b', 'no issue here')]
+        watch.unanswered_ask_notices(state, 0, [ask('msg_1', 'ctx_a')], workers)
+        watch.write_open_work(state, workers, {}, 0, path, repo_of=lambda w: 'o/r')
+        text = path.read_text()
+        self.assertIn('- question msg_1 from ctx_a, asked 1970-01-01T00:00:00Z: Which port?', text)
+        self.assertIn('- o/r#12 ctx_a build-ctx_a', text)
+        self.assertNotIn('ctx_b', text)
+        watch.unanswered_ask_notices(state, 60, [ask('msg_1', 'ctx_a', handled=True)], workers)
+        watch.write_open_work(state, workers, {}, 60, path, repo_of=lambda w: 'o/r')
+        self.assertNotIn('msg_1', path.read_text())
+        self.assertIn('o/r#12', path.read_text())
+        ended = [dict(workers[0], dispatchStatus='completed')]
+        watch.write_open_work(state, ended, {}, 120, path, repo_of=lambda w: 'o/r')
+        self.assertNotIn('o/r#12', path.read_text())
+        self.assertIn('## Live claims\nnone', path.read_text())
+
+    def test_open_work_sits_beside_the_state_file(self):
+        env = {k: v for k, v in os.environ.items() if k != 'ELON_OPEN_WORK_FILE'}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(watch.open_work_path('/s/agent-team/fleet-watch.state.json'),
+                             pathlib.Path('/s/agent-team/elon-open-work.md'))
 
 
 class DrainCounts(unittest.TestCase):
