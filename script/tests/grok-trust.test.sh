@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# grok-trust.sh writes a trusted folder entry once (#1312).
+# grok-trust.sh writes a trusted folder entry once (#1312), and trusts a linked worktree's main checkout too (#1908).
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tmp=$(mktemp -d)
@@ -27,4 +27,20 @@ assert sys.argv[2] in d['folders'], d
 assert d['folders'][sys.argv[2]]['trusted'] is True
 PY
 [ "$(grep -c "^\[folders" "$GROK_HOME/trusted_folders.toml")" = 3 ] && ok "weird path idempotent" || bad "weird path duplicated"
+
+export GROK_HOME=$tmp/grok-git GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+git init -q "$tmp/main"
+git -C "$tmp/main" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+git -C "$tmp/main" worktree add -q "$tmp/linked" 2>/dev/null
+main=$(cd "$tmp/main" && pwd -P)
+linked=$(cd "$tmp/linked" && pwd -P)
+bash "$here/../grok-trust.sh" "$tmp/linked" >/dev/null || bad "linked worktree run failed"
+store=$GROK_HOME/trusted_folders.toml
+grep -qxF "[folders.\"$linked\"]" "$store" && ok "linked worktree trusted" || bad "linked worktree missing"
+grep -qxF "[folders.\"$main\"]" "$store" && ok "main checkout of linked worktree trusted" || bad "main checkout missing"
+bash "$here/../grok-trust.sh" "$tmp/linked" "$tmp/main" >/dev/null || bad "linked second run failed"
+[ "$(grep -c "^\[folders" "$store")" = 2 ] && ok "linked worktree second run adds nothing" || bad "linked worktree duplicated"
+mkdir -p "$tmp/linked/sub"
+bash "$here/../grok-trust.sh" "$tmp/linked/sub" >/dev/null || bad "subfolder run failed"
+[ "$(grep -c "^\[folders" "$store")" = 3 ] && ok "subfolder of a worktree trusts only itself" || bad "subfolder added extra entries"
 exit $fail
