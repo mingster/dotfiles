@@ -5033,27 +5033,31 @@ def build_supply_command(config, repos, agent, model, claimed=(), free=0):
     return [part for part in command if part]
 
 
-_SUPPLY_DONE_RE = re.compile(r'\bsupply ready=(\d+) cleared=(\d+) reasons=(\d+)\b')
+_SUPPLY_DONE_RE = re.compile(r'\bsupply ready=(\d+) reasons=(\d+)\b')
 
 
 def supply_done_notices(messages, workers, state):
     """A supply worker_done that made no ready issue and gave no reason is a failure in the digest (#1904).
 
-    The brief asks for the subject `supply ready=<n> cleared=<m> reasons=<k>`. A missing line counts as
-    nothing made. Each message is reported once."""
+    The brief asks for the subject `supply ready=<n> reasons=<k>`. A missing line counts as nothing made.
+    Each message is reported once; the first pass only records the messages already in the inbox."""
     titles = {w.get('dispatchId'): str(w.get('_task_title') or w.get('title') or '')
               for w in workers or [] if isinstance(w, dict)}
+    first = 'supply_done_seen' not in state
     seen = state.setdefault('supply_done_seen', [])
     notices = []
     for m in messages or []:
         if not isinstance(m, dict) or m.get('type') != 'worker_done' or not m.get('id') or m['id'] in seen:
             continue
-        dispatch = _message_payload(m).get('dispatchId') or m.get('dispatchId')
+        if worker_done_rejected(m):
+            continue
+        payload = _message_payload(m)
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
         if not titles.get(dispatch, '').startswith(_SUPPLY_TITLE):
             continue
         seen.append(m['id'])
         match = _SUPPLY_DONE_RE.search(str(m.get('subject') or ''))
-        if match and (int(match.group(1)) or int(match.group(3))):
+        if first or (match and (int(match.group(1)) or int(match.group(2)))):
             continue
         notices.append('supply run failed: %s made no ready issue and gave no reason (subject: %s)'
                        % (dispatch, str(m.get('subject') or '')[:80]))
@@ -5126,7 +5130,10 @@ def work_order_try_supply(
         else:
             forced = True
             bits.append('supply_force=%d' % short)
-            bits.extend((clear_blocked or clear_stale_blocked)(repos))
+            swept = (clear_blocked or clear_stale_blocked)(repos)
+            bits.extend(swept)
+            # How many stale blocked labels the sweep cleared, also when none (#1904).
+            bits.append('unblock_cleared=%d' % sum(1 for b in swept if b.startswith('unblock=')))
     scan = config.get('issue_scan') or {}
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     try:

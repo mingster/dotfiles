@@ -380,6 +380,7 @@ class ForcedSupply(unittest.TestCase):
         later, bits = scan_supply(state)
         self.assertEqual(len(first), 1, first_bits)
         self.assertIn('supply_force=3', first_bits)
+        self.assertIn('unblock_cleared=0', first_bits)
         self.assertEqual(later, [], bits)  # one supply per pass
         self.assertFalse([b for b in first_bits + bits if b.startswith('supply_budget')], first_bits + bits)
         self.assertEqual(state['work_order_short_passes'], 0)
@@ -433,10 +434,11 @@ def done(subject, dispatch='ctx_supply', mid='m1'):
 
 class SupplyResult(unittest.TestCase):
     def notices(self, messages, state=None, workers=(SUPPLY_ROW,)):
-        return fw.supply_done_notices(messages, list(workers), {} if state is None else state)
+        # A state that already ran a pass: the first pass only records the inbox.
+        return fw.supply_done_notices(messages, list(workers), {'supply_done_seen': []} if state is None else state)
 
     def test_a_supply_run_with_no_ready_issue_and_no_reasons_is_a_failure_in_the_digest(self):
-        for subject in ('supply ready=0 cleared=0 reasons=0', 'all done'):
+        for subject in ('supply ready=0 reasons=0', 'all done'):
             with self.subTest(subject=subject):
                 notices = self.notices([done(subject)])
                 self.assertEqual(len(notices), 1, notices)
@@ -444,12 +446,17 @@ class SupplyResult(unittest.TestCase):
                 self.assertIn('ctx_supply', notices[0])
 
     def test_ready_issues_or_listed_reasons_are_no_failure(self):
-        for subject in ('supply ready=2 cleared=1 reasons=0', 'supply ready=0 cleared=0 reasons=4'):
+        for subject in ('supply ready=2 reasons=0', 'supply ready=0 reasons=4'):
             with self.subTest(subject=subject):
                 self.assertEqual(self.notices([done(subject)]), [])
 
-    def test_reported_once_and_only_for_supply_workers(self):
+    def test_first_pass_records_old_runs_without_reporting_them(self):
         state = {}
+        self.assertEqual(self.notices([done('nothing')], state), [])
+        self.assertEqual(len(self.notices([done('nothing'), done('nothing', mid='m2')], state)), 1)
+
+    def test_reported_once_and_only_for_supply_workers(self):
+        state = {'supply_done_seen': []}
         self.assertEqual(len(self.notices([done('nothing')], state)), 1)
         self.assertEqual(self.notices([done('nothing')], state), [])
         builder = {'dispatchId': 'ctx_b', '_task_title': '#7|fullstack-dev'}

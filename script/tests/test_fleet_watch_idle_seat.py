@@ -1,8 +1,13 @@
 """#1905: a finished worker idle at its prompt is woken once, then stopped when its work is closed, so its seat comes back."""
 import importlib.util
+import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
+from fleet_watch_test_env import isolated_main_env
 
 spec = importlib.util.spec_from_file_location('fleet_watch_idle_seat', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
@@ -139,6 +144,33 @@ class IdleSeat(unittest.TestCase):
         fleet.run(T + GRACE + 60, T + 5)
         self.assertIn('env-remote', fleet.sent()[0])
         self.assertIn('env-remote', fleet.stops()[0])
+
+
+
+class MainPass(unittest.TestCase):
+    def test_a_good_inventory_pass_runs_the_idle_seat_and_early_supply_steps(self):
+        inventory = {'messages': [], 'workers': [worker()], 'alive': {'run_fixture': True}, 'leads': {}}
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({'runs': [{'id': 'run_fixture', 'terminal': 'term_sender'}]}))
+            state.write_text('{}')
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', return_value={}), \
+                    patch.object(fw, 'read_orca_inventory', return_value=inventory), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw, 'idle_seat_pass', wraps=fw.idle_seat_pass) as idle, \
+                    patch.object(fw, 'issue_scan_supply_first', wraps=fw.issue_scan_supply_first) as early, \
+                    patch.object(fw, 'supply_done_notices', wraps=fw.supply_done_notices) as done:
+                self.assertEqual(fw.main(), 0)
+                saved = json.loads(state.read_text())
+        self.assertEqual((idle.call_count, early.call_count, done.call_count), (1, 1, 1))
+        self.assertEqual(saved.get('idle_seat'), {})
+        self.assertEqual(saved.get('supply_done_seen'), [])
 
 
 if __name__ == '__main__':

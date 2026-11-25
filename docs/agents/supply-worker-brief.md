@@ -27,6 +27,6 @@ Do not start builds, do not change code, and do not touch issues labeled `blocke
 
 ## Finish
 Run `orca worktree set --worktree active --workspace-status completed` before worker_done.
-Send worker_done with the subject `supply ready=<n> cleared=<m> reasons=<k>`: n issues you made `ready-for-agent`, m issues whose stale `blocked` label came off this pass (the sweep names them as unblock lines), and k reasons for seats left empty. The body has one line per issue: repo and number, what you did (closed, ready, filed, asked, left for owner), and its priority, then one line per reason. fleet-watch reports a run with ready=0 and reasons=0, or with no such subject, as a failed supply run.
+Send worker_done with the subject `supply ready=<n> reasons=<k>`: n issues you made `ready-for-agent` and k reasons for seats left empty. fleet-watch clears stale `blocked` labels itself and logs that count. The body has one line per issue: repo and number, what you did (closed, ready, filed, asked, left for owner), and its priority, then one line per reason. fleet-watch reports a run with ready=0 and reasons=0, or with no such subject, as a failed supply run.
 
 ## Watched repos
