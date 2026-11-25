@@ -2092,6 +2092,8 @@ class LiteralHostVariables(GuardTest):
             "for h in blue; do ssh $h uptime; done; ssh $h uptime",
             "for h in blue; do h=prod.example; ssh $h rm -rf /x; done",
             "H=prod; H+=.example; ssh $H rm -rf /x",
+            "H=blue; for x in *; do echo a; ssh -$x $H uptime; done",
+            "H=blue; for x in *; do echo a; scp -$x /tmp/y $H:/tmp/z; done",
         ):
             with self.subTest(command=command):
                 self.assertDenied(command)

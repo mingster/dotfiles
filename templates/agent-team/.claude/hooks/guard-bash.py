@@ -4211,6 +4211,8 @@ def literal_variable_copies(command):
     for _, stmt in flat + (loop[3] if loop else []):
         if stmt[0][1] not in ("ssh", "scp"):
             continue
+        if any(values_of(n) is None for _, t in stmt for n in _lv_vars(t)):
+            continue  # a glob loop word could be an option: lift nothing in this statement
         for kind, text in stmt[1:]:
             names = _lv_vars(text)
             if not names or any(values_of(n) is None for n in names):
