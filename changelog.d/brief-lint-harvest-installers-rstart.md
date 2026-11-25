@@ -1,0 +1,1 @@
+brief-lint: a brief line with several backtick spans, where a later span runs an installer, no longer hangs the linter in an awk loop. The installer check now keeps its own copy of the match position, so the line is read correctly (#1901).
