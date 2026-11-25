@@ -498,6 +498,7 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     pending = pending_starts(recent, known_dispatches)
     cores_per_worker = placement_float(config, 'cores_per_worker', DEFAULT_CORES_PER_WORKER)
     mem_per_worker = placement_float(config, 'mem_gb_per_worker', DEFAULT_MEM_GB_PER_WORKER)
+    gate_lock = load_fleet_watch().head_checks_gate_lock
     considered: dict[str, float] = {}
     full: dict[str, str] = {}
     candidates: list[tuple[bool, float, float, int, str, float, float, int, int]] = []
@@ -521,6 +522,12 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
         if ceiling is None:
             continue
         considered[host] = load
+        held = gate_lock(host)
+        if held:
+            # #1844: head checks on this host hold the database step on that host's heavy gate.
+            print('worker-placement: skip %s (head checks hold the heavy gate: %s)' % (host, held), file=sys.stderr)
+            full[host] = 'heavy-gate-held'
+            continue
         cap = scaled_cap(caps[host], cores, cores_per_worker)
         workers = (0 if live is None else live.get(host, 0)) + pending.get(host, 0)
         if workers >= cap:

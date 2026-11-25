@@ -1016,6 +1016,18 @@ time.sleep(30)
         self.assertIn('wait cap of 0.5s reached, not admitted: load 30.00 exceeds', err)
         self.assertEqual(self.events(), [])
 
+    def test_free_memory_floor_is_20_percent(self):
+        # #1844: the floor stays at 20% free memory on the host that runs the gate. 19.9 waits, 20.0 runs.
+        self.config(1)
+        self.set_reading('0 19.9')
+        self.env['HEAVY_GATE_WAIT_CAP_SECONDS'] = '0.5'
+        _, err = self.finish(self.job('below'), 75)
+        self.assertIn('wait cap of 0.5s reached, not admitted: free memory 19.9% is below 20%', err)
+        self.assertEqual(self.events(), [])
+        self.set_reading('0 20.0')
+        self.finish(self.job('at'))
+        self.assertTrue(self.started('at'))
+
     def test_admission_reports_the_wait(self):
         self.config(1)
         self.set_reading('30 90')

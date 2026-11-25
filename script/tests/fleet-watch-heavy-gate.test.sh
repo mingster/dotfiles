@@ -220,6 +220,84 @@ class HeavyGateWatch(unittest.TestCase):
         self.assertEqual(title, 'wrap-up last round stale on host-b')
 
 
+class HeadChecksGatePlacement(unittest.TestCase):
+    """#1844: while head checks hold the database step on a host, no new worker goes there."""
+    REPO = 'owner/app'
+    CONFIG = {
+        'issue_scan': {
+            'enabled': True, 'repos': [REPO], 'run': 'run_x', 'from_terminal': 'term_coord',
+            'host': 'local', 'agent': 'cursor', 'model': 'm1', 'repo_roots': {REPO: '/tmp/app'},
+        },
+        'host_caps': {'local': 0, 'db_host': 4, 'hostB': 4},
+    }
+    ISSUE = {
+        'number': 7, 'title': 't', 'labels': [{'name': 'ready-for-agent'}], 'comments': [],
+        'body': '## Acceptance\n- [ ] it works\n\n## Out of scope\nnothing else\n',
+        'createdAt': '2026-01-01T00:00:00Z',
+    }
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = pathlib.Path(self.tmp.name)
+        env = patch.dict(os.environ, {'HOME': str(self.home), 'FLEET_WATCH_TEST_LOAD_PER_CORE': '0.1',
+                                      'FLEET_WATCH_TEST_FREE_GB': '50'})
+        env.start()
+        self.addCleanup(env.stop)
+        gh = patch.object(watch, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+
+    def hold(self, host, pid):
+        # The lock head-checks.sh takes for the database step: _db-<host>_<remote dir>.lock with the holder pid.
+        lock = self.home / 'orca/workspaces/app' / ('_db-%s__home_u_lead_train.lock' % host)
+        lock.mkdir(parents=True)
+        (lock / 'pid').write_text(str(pid))
+        return lock
+
+    def scan(self, config=None):
+        starts = []
+        _, log = watch.issue_scan_pass(
+            config or self.CONFIG, {'issue_scan_backlog_sweep_at': T0}, T0, [],
+            list_issues=lambda _r: [self.ISSUE], pr_fetch=lambda _r: [],
+            gate_check=lambda _c: True, admit_fn=lambda host, cfg, workers: watch.admit(host, cfg, workers=workers),
+            start_worker=lambda cmd: starts.append(cmd) or 0,
+            repo_id_lookup=lambda host, repo: 'id-' + host,
+        )
+        return starts, ','.join(log)
+
+    def test_held_host_refuses_and_the_start_moves_to_another_host(self):
+        lock = self.hold('db_host', os.getpid())
+        receipt = watch.admit('db_host', self.CONFIG, workers=[])
+        self.assertFalse(receipt['admitted'])
+        self.assertEqual(receipt['reason'], 'head checks hold the heavy gate on db_host (%s)' % lock)
+        self.assertTrue(watch.admit('hostB', self.CONFIG, workers=[])['admitted'])
+        starts, log = self.scan()
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][starts[0].index('--on') + 1], 'hostB')
+        self.assertIn('issue_scan_refused_db_host=head checks hold the heavy gate on db_host', log)
+
+    def test_held_host_with_no_other_host_holds_the_start(self):
+        self.hold('db_host', os.getpid())
+        config = dict(self.CONFIG, host_caps={'local': 0, 'db_host': 4})
+        starts, log = self.scan(config)
+        self.assertEqual(starts, [])
+        self.assertIn('issue_scan_refused_db_host=head checks hold the heavy gate on db_host', log)
+
+    def test_lock_of_a_finished_run_does_not_hold_the_host(self):
+        done = subprocess.Popen(['true'])
+        done.wait()
+        self.hold('db_host', done.pid)
+        self.assertTrue(watch.admit('db_host', self.CONFIG, workers=[])['admitted'])
+        starts, _ = self.scan()
+        self.assertEqual(starts[0][starts[0].index('--on') + 1], 'db_host')
+
+    def test_lock_for_another_host_does_not_hold_this_one(self):
+        # head-checks.sh keys db-host-2 as db_host_2, which shares the db_host_ prefix.
+        self.hold('db_host_2', os.getpid())
+        self.assertTrue(watch.admit('db_host', self.CONFIG, workers=[])['admitted'])
+
+
 if __name__ == '__main__':
     unittest.main(argv=['x'], verbosity=1)
 PY

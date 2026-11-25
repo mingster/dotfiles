@@ -495,4 +495,26 @@ done
 bh_check "$tmp/bh.json" host-plain fullstack-dev >/dev/null || fail "fullstack-dev --on any host must pass"
 bh_check "$tmp/bh-none.json" host-plain release-manager >/dev/null || fail "no browser_hosts key must accept any host"
 
+# #1844: a host whose heavy gate a live head checks run holds (_db-<host>_<dir>.lock) takes no new worker.
+hold_home=$tmp/hold-home
+mkdir -p "$hold_home/orca/workspaces/app/_db-host_remote__home_u_lead_train.lock"
+echo $$ >"$hold_home/orca/workspaces/app/_db-host_remote__home_u_lead_train.lock/pid"
+held_pick() { HOME="$hold_home" FLEET_LOAD_SCRIPT="$tmp/load-spread.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" pick --json 2>"$tmp/held.err"; }
+out=$(held_pick "$tmp/spread.json") || fail "a held host must not block the other hosts: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-remote-2 ] || fail "the start must move off the held host: $out"
+grep -Fq 'skip host-remote (head checks hold the heavy gate' "$tmp/held.err" || fail "stderr must name the held host:"
+cat >"$tmp/held-only.json" <<'EOS'
+{
+  "host_caps": {"host-remote": 4},
+  "host_load_ceilings": {"host-remote": 8},
+  "worker_placement": {"order": ["host-remote"]}
+}
+EOS
+ec=0; out=$(held_pick "$tmp/held-only.json") || ec=$?
+[ "$ec" = 1 ] && grep -Fq 'heavy-gate-held' <<<"$out" || fail "with only the held host the start is held (ec=$ec): $out"
+sleep 0 & dead=$!; wait "$dead"
+echo "$dead" >"$hold_home/orca/workspaces/app/_db-host_remote__home_u_lead_train.lock/pid"
+out=$(held_pick "$tmp/held-only.json") || fail "a lock whose run exited must not hold the host: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-remote ] || fail "a dead lock frees the host: $out"
+
 echo "worker-placement.test.sh passed"
