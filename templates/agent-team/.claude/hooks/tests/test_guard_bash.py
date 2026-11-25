@@ -2043,6 +2043,80 @@ MAIN_ALLOWS_1795 = (
 )
 
 
+class GatedNamesAsText(GuardTest):
+    """A gated name inside text is data, the same name as a command is still gated (#1799)."""
+    SHA = "a" * 40
+
+    def setUp(self):
+        super().setUp()
+        cfg = os.path.join(self.home, "guard-config.json")
+        with open(cfg, "w") as f:
+            json.dump({"production_branches": ["production"], "production_hosts": ["prod.example"],
+                       "promote_scripts": ["promote-production.sh"], "approval_namespace": "ns"}, f)
+        self.extra_env = {"GUARD_CONFIG": cfg}
+        self.approval = os.path.join(self.home, ".config", "ns", "approval.json")
+        os.makedirs(os.path.dirname(self.approval))
+
+    def test_text_is_allowed(self):
+        for command in (
+            "cd /tmp; cat > /tmp/m.md <<'E'\nNeeds bin/owner-approve.sh promote\nE",
+            "X=1; cat > /tmp/m.md <<'E'\nNeeds bin/owner-approve.sh promote\nE",
+            f"cat > brief.md <<'EOF'\nThen run bin/promote-production.sh {self.SHA}\nEOF",
+            f"cd /tmp; cat > brief.md <<'EOF'\nThen run bin/promote-production.sh {self.SHA}\nEOF",
+            "shasum -a 256 ~/.config/ns/approval.json",
+            "sha256sum ~/.config/ns/approval.json",
+            "python3 -c \"s=open('a').read(); s=s.replace('subprocess','x')\"",
+            "python3 -c \"print('os.system is a call')\"",
+            "git commit -m \"docs: mention the secrets dir\"",
+            "git commit --message \"docs: mention fileServer/secrets\"",
+            "gh issue create --title \"fileServer/secrets layout\" --body \"see the secrets dir\"",
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_commands_are_still_denied(self):
+        for name in ("bin/owner-approve.sh promote", f"bin/promote-production.sh {self.SHA}"):
+            for command in (name, f"cd /tmp; {name}", f"cd /tmp && {name}", f"bash -c '{name}'",
+                            f"X=1; {name}", f"bash <<'E'\n{name}\nE", f"sh <<'E'\n{name}\nE",
+                            f"python3 <<'E'\nimport os\nos.system('{name}')\nE"):
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+        for command in (
+            "echo {} > ~/.config/ns/approval.json", "cp /tmp/a ~/.config/ns/approval.json",
+            "mv /tmp/a ~/.config/ns/approval.json", "echo {} | tee ~/.config/ns/approval.json",
+            "rm ~/.config/ns/approval.json", "shasum ~/.config/ns/approval.json > ~/.config/ns/approval.json",
+            "python3 -c \"open('/Users/x/.config/ns/approval.json','w').write('{}')\"",
+            "X=1; cat > ~/.config/ns/approval.json <<'E'\n{}\nE",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "approval")
+        for command in (
+            "python3 -c \"import subprocess; subprocess.run(['ls'])\"",
+            "python3 -c \"import os; os.system('ls')\"",
+            # Aliases, imports, lookups and other process starts the substring rule already caught.
+            "python3 -c \"import subprocess as sp; sp.run(['ls'])\"",
+            "python3 -c \"from os import system; system('ls')\"",
+            "python3 -c \"import os; getattr(os, 'system')('ls')\"",
+            "python3 -c \"__import__('os').system('ls')\"",
+            "python3 -c \"eval('1')\"", "python3 -c \"exec('x=1')\"",
+            "python3 -c \"import pty; pty.spawn('ls')\"", "python3 -c \"import os; os.spawnl(0, 'ls')\"",
+            "python3 -c \"import os; os.popen('ls')\"", "python3 -c \"import os; os.execv('/bin/ls', ['ls'])\"",
+            "python3 -c \"import os\nos.system('ls'\"",  # does not parse: the substring rule
+            "python3 -c \"import sys; sys.modules['subprocess'].run(['ls'])\"",
+            "python3 -c \"().__class__.__base__.__subclasses__()[0]('subprocess')\"",
+            "python3 -c \"globals()['__builtins__'].__dict__['exec']('x=1')\"",
+            "perl -e 'system(\"ls\")'", "perl -e 'system \"ls\"'", "perl -e 'exec(\"ls\")'",
+            "perl -e 'print `ls`'", "perl -e 'print qx(ls)'",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "starts a process")
+        for command in ("cat fileServer/secrets/x.json", "git commit -F fileServer/secrets/x.json",
+                        "gh issue create --title t --body-file fileServer/secrets/x.json",
+                        "git commit -m x fileServer/secrets/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command, "secrets")
+
+
 class LiteralHostVariables(GuardTest):
     """A host variable bound to a literal in the same command is judged by its value (#1795), under a closed shape."""
     CONFIG = {"production_hosts": ["prod.example"], "secrets_dir": SECRETS,

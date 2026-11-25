@@ -146,7 +146,7 @@ SCOPE_TTL_MAX = {"merge": MERGE_TTL_MAX, "host": HOST_TTL_MAX}
 APPROVE = "bin/owner-approve.sh"
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 VIEWERS = {"cat", "less", "more", "head", "tail", "bat", "nl", "wc", "ls", "stat", "file", "diff",
-           "jq", "test", "[", "shellcheck"} | GREPS
+           "jq", "test", "[", "shellcheck", "shasum", "sha256sum"} | GREPS
 SCRIPT_NAME = re.compile(r"owner-approve(?![A-Za-z0-9_-])")
 GIT_RUNS_PROGRAMS = {"filter-branch", "rebase", "bisect", "submodule", "difftool", "mergetool", "config", "alias"}
 GIT_READ_ONLY = {"log", "diff", "show", "blame", "status", "grep", "ls-files", "cat-file", "shortlog"}
@@ -646,6 +646,26 @@ def is_refs_invocation(prog, args, cwd=None):
         return False
 
 
+def message_free_args(base, args):
+    """`args` without the `-m`/`--message` values of `git commit` and the `--title`/`--body` values of `gh`:
+    text the program stores, never a file it reads (#1799). Any other program keeps every argument."""
+    if base == "git" and git_subcommand(args)[0] == "commit":
+        flags = ("-m", "--message")
+    elif base == "gh":
+        flags = ("--title", "--body")
+    else:
+        return list(args)
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in flags:
+            skip = True
+        elif not a.startswith(tuple(f + "=" for f in flags if f.startswith("--"))):
+            out.append(a)
+    return out
+
+
 def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     """Deny a segment that reads the secrets dir: readers, interpreters, redirects, copies out, cd."""
     text = SECRETS_WRITE_REDIRECT.sub("", segment)
@@ -653,6 +673,8 @@ def check_secrets_dir(segment, base, args, prog=None, cwd=None):
         return
     if any(p.fullmatch(segment.strip()) for p in SECRETS_STDIN_OK):
         return
+    if not has_redirect(segment) and not any(SECRETS_DIR.search(a) for a in [prog or base, *message_free_args(base, args)]):
+        return  # only a commit message, an issue title or a body names it (#1799)
     if is_sign_in_invocation(prog or base, args) or is_refs_invocation(prog or base, args, cwd):
         return
     if base in SECRETS_COPIERS:
@@ -3166,6 +3188,41 @@ def blocked_script_by_expansion(word):
     return next((b for b in sorted(BLOCKED_SCRIPTS) if name.fullmatch(os.path.basename(b))), None)
 
 
+# Builtins that reach a value by its text. Code that uses one, a dunder name or any import can turn a string
+# into a process start, so its strings count too (#1799).
+PY_LOOKUP = {"getattr", "setattr", "delattr", "globals", "locals", "vars", "eval", "exec", "compile", "breakpoint",
+             "help"}
+
+
+def python_starts_process(code):
+    """Python code starts a process when a name in it (not a string) matches STARTS_PROCESS: an import, a call,
+    an alias, an attribute. A matching string counts too unless the code imports nothing and uses no dunder
+    name and no lookup builtin. Code that does not parse keeps the substring rule (#1799)."""
+    import ast
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return bool(STARTS_PROCESS.search(code))
+    names, imports = [], False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            names.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.append(node.attr)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            imports = True
+            names += [node.module or ""] if isinstance(node, ast.ImportFrom) else []
+            names += [n for alias in node.names for n in (alias.name, alias.asname or "")]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.append(node.name)
+        elif isinstance(node, ast.keyword):
+            names.append(node.arg or "")
+    if STARTS_PROCESS.search(" ".join(names)):
+        return True
+    reaches = imports or any(n.startswith("__") or n in PY_LOOKUP for n in names)
+    return reaches and bool(STARTS_PROCESS.search(code))
+
+
 def check_indirection(base, args):
     if base in SHELLS:
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
@@ -3195,7 +3252,11 @@ def check_indirection(base, args):
                 code = CODE_COMMAND
         else:
             return
-        if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
+        if base.startswith("python") and code is not CODE_COMMAND:
+            starts = python_starts_process(code)
+        else:
+            starts = bool(STARTS_PROCESS.search(code))
+        if starts or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
                             "hides the command from the guard. Run the command directly.")
 
@@ -3472,12 +3533,13 @@ def substitutions(command):
 
 
 # A quoted heredoc whose consumer is a text sink (`cat > f`, `cat <<'EOF' > f`, `git commit -F -`,
-# `gh ... --body-file -`), after plain `&&` steps (those steps are still checked). Its body is data.
+# `gh ... --body-file -`), after plain steps joined by `&&` or `;`, `X=value` among them (those steps are still
+# checked, #1799). Its body is data.
 QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2")
 _WORD = r"[A-Za-z0-9_./=~-]+"
 _PATH = r"(?:[A-Za-z0-9_./~-]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?|\"(?:[^\"`$\\<>]|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)*\"|'[^'<>]*')+"
 TEXT_SINK = re.compile(
-    rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*&&[ \t]*)*"
+    rf"(?:{_WORD}(?:[ \t]+{_WORD})*[ \t]*(?:&&|;)[ \t]*)*"
     rf"(?:cat[ \t]+>>?[ \t]*{_PATH}"
     r"|git[ \t]+commit(?:[ \t]+-[A-Za-z-]+)*[ \t]+(?:-F[ \t]*-|--file[ \t=]-)"
     rf"|gh(?:[ \t]+{_WORD})+[ \t]+(?:--body-file|-F)[ \t=]-)"
