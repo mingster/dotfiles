@@ -1,0 +1,1 @@
+Fleet-watch tests no longer append their fixture lines to `~/.orca/logs/fleet-watch.log`. `fleet_watch_test_env` points `FLEET_WATCH_LOG_PATH` at a temporary file when it is unset, every fleet-watch test imports it or sets the variable, and a regression test checks it (#1864).

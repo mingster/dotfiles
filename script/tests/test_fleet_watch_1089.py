@@ -5,6 +5,7 @@ import unittest
 import unittest.mock
 from contextlib import redirect_stderr
 from pathlib import Path
+import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('fleet_watch_1089', ROOT / 'fleet-watch.py')

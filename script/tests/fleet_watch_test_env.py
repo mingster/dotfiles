@@ -1,8 +1,22 @@
 """Shared test env for fleet-watch main(); keeps pass logs off the real default path."""
+import atexit
 import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+
+
+def _isolate_default_log():
+    """Point FLEET_WATCH_LOG_PATH at a temp file when unset or blank, so no test line reaches
+    ~/.orca/logs/fleet-watch.log (#1864). Children and later imports inherit it."""
+    if (os.environ.get('FLEET_WATCH_LOG_PATH') or '').strip():
+        return
+    tmp = tempfile.TemporaryDirectory(prefix='fleet-watch-test-log-')
+    atexit.register(tmp.cleanup)
+    os.environ['FLEET_WATCH_LOG_PATH'] = str(Path(tmp.name) / 'fleet-watch-test.log')
+
+
+_isolate_default_log()
 
 # gh verbs that change GitHub state. A test that reaches one of them through a real gh fails.
 GH_WRITE_VERBS = frozenset({

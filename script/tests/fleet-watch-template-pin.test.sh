@@ -9,6 +9,11 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# Keep fixture lines out of ~/.orca/logs/fleet-watch.log (#1864).
+if [ -z "$(printf %s "${FLEET_WATCH_LOG_PATH:-}" | tr -d '[:space:]')" ]; then
+  FLEET_WATCH_LOG_PATH="$TMP/fleet-watch-test.log"
+  export FLEET_WATCH_LOG_PATH
+fi
 gq() { git -c user.name=t -c user.email=t@example.invalid -C "$@"; }
 
 # dotfiles: X (template), Y (template change, a day and a half later), Z (unrelated, later still).

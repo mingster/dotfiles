@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 import asdf_pin  # noqa: E402
