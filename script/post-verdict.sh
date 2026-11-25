@@ -19,6 +19,33 @@ die() { echo "post-verdict: $*" >&2; exit 1; }
 print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
 case "${1:-}" in -h|--help) print_usage; exit 0 ;; esac
 
+# owner/name of a checkout's GitHub origin, or nothing (same origin parse as ship.sh)
+checkout_slug() {
+  local url
+  url=$(git -C "$1" remote get-url origin 2>/dev/null) || return 0
+  if [[ "$url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then echo "${BASH_REMATCH[1]%.git}"; fi
+  return 0
+}
+# A local checkout whose origin is <owner/name>: POST_VERDICT_REPO_DIR, then the fleet configs, then the usual places.
+resolve_checkout() {
+  local want=$1 state_dir cfg raw c
+  state_dir=${AGENT_STATE_DIR:-$HOME/agent-state}
+  if [ -n "${POST_VERDICT_REPO_DIR:-}" ] && [ "$(checkout_slug "$POST_VERDICT_REPO_DIR")" = "$want" ]; then
+    echo "$POST_VERDICT_REPO_DIR"; return 0
+  fi
+  for cfg in "$state_dir/fleet-pull.json" "$state_dir/fleet-config.json" "$(cd "$(dirname "$0")" && pwd)/fleet-pull.config.json"; do
+    [ -f "$cfg" ] || continue
+    while IFS= read -r raw; do
+      c=${raw/#\~/$HOME}
+      if [ -d "$c" ] && [ "$(checkout_slug "$c")" = "$want" ]; then echo "$c"; return 0; fi
+    done < <(jq -r '(.repos // [])[]' "$cfg" 2>/dev/null)
+  done
+  for c in "$HOME/projects/${want##*/}" "$HOME/${want##*/}" "$HOME/orca/workspaces/${want##*/}"/*; do
+    if [ -d "$c" ] && [ "$(checkout_slug "$c")" = "$want" ]; then echo "$c"; return 0; fi
+  done
+  return 1
+}
+
 repo="" pr="" result="" head="" verifier="" author="" command="" notes="" correction="" agent="" model="" print_only=false ship=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,7 +116,13 @@ echo "post-verdict: posted $result for PR $pr at ${head:0:12}"
 now_head=$(gh pr view "$pr" --repo "$repo" --json headRefOid --jq .headRefOid) || die "cannot re-read the PR head before shipping"
 [ "$now_head" = "$head" ] || { echo "post-verdict: SHIP SKIPPED: PR moved to $now_head after the Verdict"; exit 0; }
 ship_sh=${POST_VERDICT_SHIP_SH:-$(cd "$(dirname "$0")" && pwd)/ship.sh}
-if ship_out=$(bash "$ship_sh" --repo "$repo" --pr "$pr" 2>&1); then
+# ship.sh refuses unless its cwd is a checkout of $repo. Run it from the repo's own checkout when cwd is another repo.
+ship_cwd=$PWD
+cwd_slug=$(checkout_slug .)
+if [ -n "$cwd_slug" ] && [ "$cwd_slug" != "$repo" ]; then
+  ship_cwd=$(resolve_checkout "$repo") || ship_cwd=$PWD
+fi
+if ship_out=$(cd "$ship_cwd" && bash "$ship_sh" --repo "$repo" --pr "$pr" 2>&1); then
   echo "post-verdict: shipped PR $pr"
   if [ "${repo##*/}" = dotfiles ]; then
     df=${POST_VERDICT_DOTFILES:-$HOME/dotfiles}
