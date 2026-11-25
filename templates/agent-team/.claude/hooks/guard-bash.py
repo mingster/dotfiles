@@ -47,6 +47,7 @@ from __future__ import annotations
 import datetime
 import fnmatch
 import glob
+import itertools
 import json
 import os
 import re
@@ -4238,10 +4239,44 @@ def _xargs_reaches(words, absolute, relative):
     return False
 
 
+_HIDDEN_OPS = {";", "&", "&&", "|", "||", "\n"}
+
+
+def _resolved_word_safe(word, cwd, absolute, relative):
+    """#1821: one value of a resolved word reaches no protected path, also when it still holds a glob."""
+    if _directory_hit(word, cwd, absolute, relative, ancestor=False):
+        return False
+    at = next((i for i, c in enumerate(word) if c in "*?[{$`"), None)
+    if at is None:
+        return True
+    if ".." in word.replace("\\", "/").split("/"):
+        return False
+    lit = word[:at]
+    anchor = lit[:-1] if lit.endswith("/") else lit.rpartition("/")[0]
+    if _directory_hit(anchor or ".", cwd, absolute, relative, ancestor=True):
+        return False
+    metas = {c for c in word[at:] if c in "*?[{$`"}
+    return not _expansion_hits(lit, word, metas, cwd, absolute, relative)
+
+
+def _hidden_lifts(command, words):
+    """Word index -> the values the closed-shape resolver found for it, when both tokenizers read the same words."""
+    command_, seq = _LV_LIFT.get("hidden", (None, None))
+    if command_ is None or command != command_:
+        return {}
+    kept = [i for i, w in enumerate(words) if w[0] not in _HIDDEN_OPS]
+    if [words[i][0] for i in kept] != [text for text, _ in seq]:
+        return {}
+    return {i: values for i, (_, values) in zip(kept, seq) if values}
+
+
 def _hidden_script_paths(command, cwd, absolute, relative):
     words = _annotate_cwd(_command_words(command), cwd)
-    for text, literal, metas, path_cwd in words:
+    lifts = _hidden_lifts(command, words)
+    for n, (text, literal, metas, path_cwd) in enumerate(words):
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
+            if n in lifts and all(_resolved_word_safe(w, path_cwd, absolute, relative) for w in lifts[n]):
+                continue
             _deny_hidden()
     programs = _programs(words)
     find_hits = False
@@ -4463,10 +4498,13 @@ def _lv_sub(text, values):
     return _LV_VAR.sub(lambda m: values[m.group(1) or m.group(2)], text)
 
 
+def _lv_home(word):
+    return os.path.expanduser("~") + word[1:] if word == "~" or word.startswith("~/") else word
+
+
 def _lv_literal(word):
     """A plain word as the shell keeps it: `~` only alone or before `/`, no `..` component, a closed charset."""
-    if word == "~" or word.startswith("~/"):
-        word = os.path.expanduser("~") + word[1:]
+    word = _lv_home(word)
     if "/../" in f"/{word}/" or "++" in word or "--" in word or not _LV_VALUE.match(word):
         raise _LVMiss
     return word
@@ -4609,6 +4647,24 @@ def literal_variable_copies(command):
                     lifted.add(j)
             if lifted:
                 _LV_LIFT[n] = (texts, lifted)
+
+    # The hidden path lift (#1821): each word of the command in order, with every value it can take.
+    def word_values(name):
+        if loop and name == loop[0]:  # a glob loop word stands for the variable as it is
+            return [_lv_home(_lv_sub(w, prelude)) for w in words_]
+        return [prelude[name]]
+
+    seq = []
+    for _, stmt in stmts:
+        for kind, text in stmt:
+            bare = text[1:-1] if kind in ("qword", "sqword") else text
+            if kind == "redir" and text == "2>&1":
+                seq += [("2>", None), ("1", None)]
+                continue
+            names = sorted(set(_lv_vars(text))) if kind in ("uword", "qword") else []
+            seq.append((bare, [_lv_sub(bare, dict(zip(names, combo)))
+                               for combo in itertools.product(*(word_values(m) for m in names))] if names else None))
+    _LV_LIFT["hidden"] = (command, seq)
 
     def render(stmts_, values):
         out = []

@@ -2180,6 +2180,46 @@ class LiteralHostVariables(GuardTest):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+    def test_resolved_hidden_paths_are_allowed(self):
+        """#1821: a variable path whose every value is checked is no longer a hidden path deny."""
+        for command in (
+            "P=/tmp/p; for f in $P/.claude/skills/*/SKILL.md; do echo $f; done",
+            "for w in a b; do [ -d ../$w ] && echo $w; done",
+            "B=~/agent-state/briefs; cat $B/x",
+            "P=/tmp/p\nfor h in blue green\ndo\n  ls $P/$h\ndone",
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_resolved_hidden_paths_that_reach_a_protected_path_are_denied(self):
+        self.assertDeniedOrAsOnMain((
+            "for d in docs fileServer/secrets; do cat $d/x.json; done",
+            "D=Secrets; cat fileServer/$D/x.json",
+            "for d in Secrets; do cat fileServer/$d/x.json; done",
+            "D=~; cat $D/*/*/*/x.json",
+            "for d in ~; do cat $d/*/*/*/x.json; done",
+            "D=~/project; cat $D/*/*/x.json",
+            "D=~/project/fileServer; cat $D/*/x.json",
+            "D=../project; cat $D/*/*/x.json",
+            "D=../project/fileServer; cat $D/*/x.json",
+            "for d in ../project; do cat $d/*/*/x.json; done",
+            "D=a; mkdir -p a/b; cat $D/*/../../*/*/x.json",
+            "for d in a; do mkdir -p $d/b; cat $d/*/../../*/*/x.json; done",
+            "for x in a* ~user; do cat $x/*/x.json; done",
+            "for x in a* ../b; do cat $x/*/x.json; done",
+            'D=~""; cat $D/*/*/*/x.json',
+            'D=~"/.."; cat $D/*/*/*/x.json',
+            'for d in ~""; do cat $d/*/*/*/x.json; done',
+            "D=fileServer; cat $D/*/x.json",
+            "D=.claude/bin; cat $D/probe-*.sh",
+            "D=.claude; cat $D/bin/probe-secrets.sh",
+            "for d in docs .claude/bin; do cat $d/*; done",
+            "P=/tmp/p; for f in $P/* fileServer/*; do cat $f; done",
+            "D=fileServer; ls $D; for f in a*; do cat $D/*/x.json; done",
+            "D=fileServer; cat $D/s*/x.json",
+            "D=file; cat ${D}Server/*/x.json",
+        ))
+
     def test_a_production_host_value_is_judged_as_that_host(self):
         self.assertDenied("for h in blue prod.example; do ssh $h rm -rf /x; done", "production host")
         self.assertDenied("H=prod.example; ssh $H rm -rf /x", "production host")
