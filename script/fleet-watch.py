@@ -4603,6 +4603,9 @@ def issue_scan_try_backlog_sweep(
     if not repo:
         log_bits.append('backlog_sweep_skip_root')
         return log_bits
+    if not start_allowed(agent_start_cost(scan.get('sweep_agent') or scan.get('agent') or 'claude')):
+        log_bits.append('backlog_sweep_budget=%s' % repo)
+        return log_bits
     state['issue_scan_backlog_sweep_pending'] = True
     if persist_state:
         persist_state()
@@ -4612,6 +4615,9 @@ def issue_scan_try_backlog_sweep(
         if command is None:
             log_bits.append('backlog_sweep_skip=%s' % role)
             continue
+        if not start_allowed(start_cost(command)):
+            log_bits.append('backlog_sweep_budget=%s' % role)
+            break
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
@@ -4776,6 +4782,8 @@ def work_order_try_supply(
     command = build_supply_command(config, repos, chosen[0], chosen[1])
     if command is None:
         return ['supply_skip_root'], 0
+    if not start_allowed(start_cost(command)):
+        return ['supply_budget=%d:%d' % (free, supply)], 0
     if start_worker(command) != 0:
         count_failed()
         return ['supply_fail'], 0
@@ -4912,6 +4920,9 @@ def issue_scan_try_triage(
             continue
         if live_start_title(command, workers):
             log_bits.append('triage_skip_live')
+            continue
+        if not start_allowed(start_cost(command)):
+            log_bits.append('triage_budget=%s' % repo)
             continue
         if start_worker(command) == 0:
             last_starts[repo] = now
@@ -5669,6 +5680,44 @@ def babysit_settings(config):
     if not isinstance(roots, dict) or not roots:
         roots = repos_from_roots(config.get('repo_roots'))[1]
     return startup, run_id, from_terminal, roots
+
+
+START_FINISH_BY = 140.0  # a start may begin only if it can end before this many seconds into the pass (#1820)
+START_COST_AGY = 105.0  # an antigravity start that keeps worker-startup's 60 s sign in screen wait
+START_COST_OTHER = 45.0  # any other start
+_PASS_BEGAN = None
+
+
+def begin_pass_clock(now=None):
+    """Start the start budget clock. main() calls it; with no call (tests, direct use) there is no budget."""
+    global _PASS_BEGAN
+    _PASS_BEGAN = time.time() if now is None else now
+
+
+def end_pass_clock():
+    global _PASS_BEGAN
+    _PASS_BEGAN = None
+
+
+def agent_start_cost(agent):
+    return START_COST_AGY if _AGENT_ALIASES.get(agent, agent) == 'antigravity' else START_COST_OTHER
+
+
+def start_cost(command):
+    """Cost of a start command by its --agent. A command with no --agent (the ship script) is the cheap kind."""
+    if isinstance(command, (list, tuple)) and '--agent' in command:
+        index = command.index('--agent') + 1
+        if index < len(command):
+            return agent_start_cost(command[index])
+    return START_COST_OTHER
+
+
+def start_allowed(cost):
+    """True while elapsed + cost fits START_FINISH_BY. Each start site calls it once, after it picks the agent
+    and before it writes any state. with_coordinator_handle does not call it: a start a site let through runs."""
+    if _PASS_BEGAN is None:
+        return True
+    return time.time() - _PASS_BEGAN + cost <= START_FINISH_BY
 
 
 def with_coordinator_handle(config, start):
@@ -7216,7 +7265,8 @@ def standing_route(
 ):
     """Send an eligible PR to an idle standing verifier, starting one when none exists.
 
-    Returns 'assigned', 'started', or 'fallback' (the caller starts a fresh one-shot verifier).
+    Returns 'assigned', 'started', 'held' (the start budget is spent: no start this pass, no one-shot fallback)
+    or 'fallback' (the caller starts a fresh one-shot verifier).
     """
     cfg = standing_settings(config)
     if not cfg['enabled']:
@@ -7262,6 +7312,9 @@ def standing_route(
         command = build_babysit_command(config, repo, pr_row, 'verifier', cfg['agent'], cfg['model'], builder, tag, standing_host=host)
         if command is None:
             return 'fallback'
+        if not start_allowed(start_cost(command)):
+            log_bits.append('standing_budget=%s' % number)
+            return 'held'
         result = start_worker(command)
         code, reason = start_result_parts(result)
         if code != 0:
@@ -7660,6 +7713,9 @@ def babysit_pass(
                 config, state, workers, repo, pr_row, builder, tag, open_prs, standing_io, start_worker,
                 release_worker, now, term_times, log_bits, headroom,
             )
+            if routed == 'held':
+                lines.append(_babysit_line(repo, number, head, 'skip', 'budget'))
+                continue
             if routed in ('assigned', 'started'):
                 babysit_mark(state, repo, number, head, action)
                 started += step if routed == 'started' else 0
@@ -7672,6 +7728,10 @@ def babysit_pass(
         command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder, tag)
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
+            continue
+        if not start_allowed(start_cost(command)):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'budget'))
+            log_bits.append('%s_budget=%s' % (action, number))
             continue
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
@@ -7994,10 +8054,13 @@ def _issue_scan_pass(
                 if verdict_age_seconds(pr_row, now) < SHIP_FALLBACK_AFTER:
                     log_bits.append('ship_wait=%d' % pr_num)
                     continue
+                command = build_ship_command(repo, pr_row, root)
+                if not start_allowed(start_cost(command)):
+                    log_bits.append('ship_budget=%d' % pr_num)
+                    continue
                 shipped[head] = True
                 if persist_state:
                     persist_state()
-                command = build_ship_command(repo, pr_row, root)
                 code, reason = start_result_parts(start_worker(command))
                 if code == 0:
                     notices.append('ship %s #%d %s' % (repo, pr_num, head[:8]))
@@ -8068,6 +8131,9 @@ def _issue_scan_pass(
                 continue
             if live_start_title(command, workers):
                 log_bits.append('rework_live=%d' % pr_num)
+                continue
+            if not start_allowed(start_cost(command)):
+                log_bits.append('rework_budget=%d' % pr_num)
                 continue
             pending[head] = True
             if persist_state:
@@ -8370,6 +8436,9 @@ def _issue_scan_pass(
                 count_refused('usage_gate')
                 log_bits.append('issue_scan_gate=%s' % gate_reason)
                 break
+        if not start_allowed(start_cost(command)):
+            log_bits.append('issue_start_budget=%d' % row['number'])
+            continue
         attempts += 1
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
@@ -9535,6 +9604,14 @@ def format_seat_report(report):
 
 
 def main():
+    begin_pass_clock()
+    try:
+        return _main()
+    finally:
+        end_pass_clock()
+
+
+def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
     parser.add_argument('--state', type=Path, required=False)
