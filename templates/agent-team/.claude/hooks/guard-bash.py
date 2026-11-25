@@ -4082,15 +4082,99 @@ def check_blocked_script_mentions(command):
 PARAMETER = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
 EXPANSION_END = re.compile(r"[}`)*?\]]")
 ANSI_C_QUOTE = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.DOTALL)
+ANSI_C_ESCAPE = re.compile(r"\\(?:x([0-9A-Fa-f]{1,2})|u([0-9A-Fa-f]{1,4})|U([0-9A-Fa-f]{1,8})|([0-7]{1,3})|c(.)|(.))",
+                           re.DOTALL)
+ANSI_C_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t",
+                 "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def _ansi_c_decode(body):
+    """Decode the escapes of a `$'...'` body as bash does (`\\x` 1 to 2 hex digits, `\\u` 1 to 4, `\\U` 1 to 8,
+    octal, `\\cX`). An escape bash keeps as written stays as written, and nothing raises (#1887)."""
+    def one(m):
+        hexa, short, long_, octal, ctrl, other = m.groups()
+        if hexa or short or long_:
+            code = int(hexa or short or long_, 16)
+            return chr(code) if code <= 0x10FFFF else m.group(0)
+        if octal:
+            return chr(int(octal, 8) & 0xFF)
+        if ctrl is not None:
+            return chr(ord(ctrl) & 0x1F)
+        return ANSI_C_SIMPLE.get(other, m.group(0))
+    return ANSI_C_ESCAPE.sub(one, body)
+
+
+def _scan_shell(text, strip_comments):
+    """Walk `text` with bash quoting: `$(...)` and backticks start their own quotes, also inside `"..."`, and a
+    `#` at a word start outside quotes starts a comment through the end of its line (#1887). Without
+    strip_comments every character stays and each `$'...'` is decoded; inside a comment only one that closes on
+    the same line, since a comment's `$'` opens nothing. With strip_comments comments are dropped and `$'...'`
+    becomes `$` and its decoded text in plain quotes, which segments() and shlex read right, and None means a `case` inside a substitution makes the comments unsure."""
+    out, stack, quote, comment, i, n = [], [], "", False, 0, len(text)
+    while i < n:
+        c = text[i]
+        ansi = ANSI_C_QUOTE.match(text, i) if text.startswith("$'", i) else None
+        if comment:
+            if c == "\n":
+                comment = False
+                out.append(c)
+            elif not strip_comments:
+                if ansi and "\n" not in ansi.group(0):
+                    out.append("'" + _ansi_c_decode(ansi.group(1)) + "'")
+                    i = ansi.end()
+                    continue
+                out.append(c)
+            i += 1
+            continue
+        if quote == "'":
+            quote = "" if c == "'" else quote
+            out.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if text.startswith("$(", i):
+            stack.append((quote, ")"))
+            quote = ""
+            out.append("$(")
+            i += 2
+            continue
+        if c == "`" and not (stack and stack[-1][1] == "`" and not quote):
+            stack.append((quote, "`"))
+            quote = ""
+        elif quote == '"':
+            quote = "" if c == '"' else quote
+        elif ansi:
+            decoded = _ansi_c_decode(ansi.group(1))
+            out.append("$" + shlex.quote(decoded) if strip_comments else "'" + decoded + "'")
+            i = ansi.end()
+            continue
+        elif c == "`" or (c == ")" and stack and stack[-1][1] == ")"):
+            quote = stack.pop()[0]
+        elif c == "(" and stack:
+            stack.append(("", ")"))
+        elif c in "'\"":
+            quote = c
+        elif c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()<>"):
+            comment = True
+            if strip_comments:
+                i += 1
+                continue
+        elif (strip_comments and stack and re.match(r"case\b", text[i:])
+              and (i == 0 or not re.match(r"\w", text[i - 1]))):
+            return None
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 def _unquoted_text(command, end_parameters=False):
     """The command as one plain text for the two checks below, never split into commands, so a comment, pipe
     or substitution cannot hide a line from them (#1870): backslash newlines joined, `$'..'` decoded and
-    `$"..."` read as a quote, then quotes and backslashes dropped. A bad escape raises, and the caller denies."""
-    text = command.replace("\\\n", "")
-    text = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
-                            .decode("unicode_escape") + "'", text).replace('$"', '"')
+    `$"..."` read as a quote, then quotes and backslashes dropped. Comment text stays in (#1887)."""
+    text = _scan_shell(command.replace("\\\n", ""), strip_comments=False).replace('$"', '"')
     if end_parameters:
         text = PARAMETER.sub("}", text)
     return re.sub(r"[\"'\\]", "", text).lower()
@@ -4110,6 +4194,112 @@ def check_built_blocked_names(command):
                      "write the name out in full.")
 
 
+# ---------------------------------------------------------------- Blocked script run guard (#1887)
+
+# With blocked_scripts set, the guard refuses to run what it cannot read: eval, and a program or script word
+# built from `$`, a backtick, a glob or a brace list, also inside `<shell> -c`, `find -exec` and the wrappers.
+RUN_GUARD_DENY = ("Refused: this project lists blocked_scripts, so eval and a program or script name built from "
+                  "`$`, a backtick, a glob, a brace list or a `$'...'` escape cannot run, also inside `<shell> -c`. "
+                  "Write the program and script names out in full.")
+BUILT_WORD = re.compile(r"[$`*?\[]|\{[^}]*(?:,|\.\.)")
+ASSIGN_WORD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
+REDIRECT_WORD = re.compile(r"^[0-9]*(?:&>>?|[<>]&?|>>|<<<?|<>)")
+RUN_LEAD = {"if", "while", "until", "!", "{", "}", "then", "do", "else", "elif", "time", "coproc", "builtin"}
+RUN_NOT_A_PROGRAM = {"[", "[[", "test", "case", "esac", "for", "select", "function", "in", "done", "fi"}
+SHELL_OPTION_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+HEREDOC_RUNNERS = SHELLS | {"source", ".", "eval", "xargs"}
+# `((...))` and `$((...))` with no parens, quotes or backticks inside are arithmetic, never a command.
+ARITHMETIC = re.compile(r"\$?\(\([A-Za-z0-9_\s$+*/%<>=!&|^~?:,;#.\[\]{}-]*\)\)")
+CASE_PATTERN = re.compile(r"(\bin|;;&?|;&)[ \t]*\(?[^;&()\n`]+\)")
+
+
+def _strip_data_heredocs(command):
+    """`command` with each heredoc body that feeds no shell, eval, source or xargs replaced by the
+    substitutions in it, which still run. An unsure or unclosed heredoc keeps the whole text (fail closed)."""
+    lines = command.splitlines(keepends=True)
+    shell, out, i = ShellLines(), [], 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        shell.scan(line)
+        if shell.unsure:
+            return command
+        out.append(line)
+        if shell.pending and not shell.quote and not shell.continued:
+            runs = any(os.path.basename(w.strip("'\"")) in HEREDOC_RUNNERS for w in re.split(r"[\s;&|()<>]+", line))
+            for dash, delim in shell.pending:
+                body = []
+                while i < len(lines):
+                    text = lines[i]
+                    i += 1
+                    if (text.rstrip("\r\n").lstrip("\t") if dash else text.rstrip("\r\n")) == delim:
+                        break
+                    body.append(text)
+                else:
+                    return command
+                out.extend(body if runs else [sub + "\n" for sub in substitutions("".join(body))])
+            shell.pending = []
+    return "".join(out)
+
+
+def _check_run_words(tokens, depth):
+    i = 0
+    while i < len(tokens) and (tokens[i] in RUN_LEAD or ASSIGN_WORD.match(tokens[i])
+                               or REDIRECT_WORD.match(tokens[i])):
+        i += 2 if REDIRECT_WORD.fullmatch(tokens[i]) else 1
+    prog, args = program_and_args(tokens[i:])
+    if not prog or prog in RUN_NOT_A_PROGRAM:
+        return
+    if re.fullmatch(r"[0-9.]+[smhd]?", prog) and args:  # the value of `nice -n 5` or `timeout -k 5 10`
+        return _check_run_words(args, depth)
+    base = os.path.basename(prog)
+    if BUILT_WORD.search(prog) or base == "eval":
+        deny(RUN_GUARD_DENY)
+    if base in SHELLS or base in {"source", "."}:
+        j = 0
+        while j < len(args):
+            arg = args[j]
+            if base in SHELLS and re.match(r"^-[A-Za-z]*c[A-Za-z]*$", arg):
+                if j + 1 < len(args):
+                    check_blocked_script_runs(args[j + 1], depth + 1)
+                return
+            if arg in SHELL_OPTION_VALUE:
+                j += 2
+            elif arg.startswith(("-", "+")):
+                j += 1
+            else:
+                if BUILT_WORD.search(arg):
+                    deny(RUN_GUARD_DENY)
+                return
+    if base == "find":
+        for j, arg in enumerate(args):
+            if arg in {"-exec", "-execdir", "-ok", "-okdir"}:
+                end = next((k for k in range(j + 1, len(args)) if args[k] in {";", "+"}), len(args))
+                _check_run_words(args[j + 1:end], depth)
+
+
+def check_blocked_script_runs(command, depth=0):
+    """Deny eval and a built program or script word in every command of `command`, read twice: once with
+    comments dropped (a comment's quote cannot swallow the next line) and once as written (a misread comment
+    cannot hide a command). Heredoc bodies that feed a non shell are data; arithmetic and case patterns are
+    not commands."""
+    if depth > 3:
+        deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
+    text = _strip_data_heredocs(command)
+    stripped = _scan_shell(text, strip_comments=True)
+    if stripped is None:
+        if "#" in text:
+            deny(RUN_GUARD_DENY)
+        stripped = text
+    for version in {text, stripped}:
+        version = ARITHMETIC.sub(" 0 ", join_continuations(version))
+        if re.search(r"\bcase\b", version) and re.search(r"\besac\b", version):
+            version = CASE_PATTERN.sub(lambda m: m.group(1) + "\n", version)
+        for part in [version, *substitutions(version)]:
+            for seg in segments(part):
+                _check_run_words(words(seg), depth)
+
+
 def _part_named(part, tokens):
     """True when a token holds the path component, or is a glob or brace pattern that could match it."""
     return any(part in token or (re.search(r"[*?\[{]", token)
@@ -4126,7 +4316,11 @@ def check_secrets_dir_by_variable(command):
         return
     # `$?`, `$*` and `${?}` are parameters, not globs; a `${...}` with more inside stays in, as a possible glob.
     plain = PARAMETER.sub(" ", re.sub(r"\$\{(?:[a-z_][a-z0-9_]*|[0-9@*#?$!-])\}", " ", flat))
-    tokens = [t for t in re.split(r"[^a-z0-9_.*?\[\]{},-]+", plain) if t]
+    # The `${` that opens `${X:-word}` or `${#X}` is no brace pattern (#1887): drop the opening and the name, so
+    # only the word stays in; a `}` with no `{` before it in its token goes too.
+    plain = re.sub(r"\$\{[#!]?(?:[a-z_][a-z0-9_]*|[0-9@*#?$!-])(?=[}:#%/^,@\[+=?-])", " ", plain)
+    tokens = [t for t in (t if "{" in t else t.replace("}", "") for t in re.split(r"[^a-z0-9_.*?\[\]{},-]+", plain))
+              if t]
     if any(all(_part_named(part.lower(), tokens) for part in _path_parts(rel)) for rel in SECRETS_DIR_RELPATHS):
         _deny_hidden()
 
@@ -4159,6 +4353,13 @@ def check_command(command):
         deny("A built script name or a credential path could not be checked, so the command is denied.")
     if INDIRECT:
         deny(INDIRECT[0])
+    if BLOCKED_SCRIPTS:
+        try:
+            check_blocked_script_runs(command)
+        except SystemExit:
+            raise
+        except Exception:
+            deny(RUN_GUARD_DENY)
 
 
 def main():
