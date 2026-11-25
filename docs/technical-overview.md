@@ -1,0 +1,166 @@
+# Technical overview
+
+The technical detail that used to live in the root [README](../README.md): the agent team terms, how one task runs step by step, machine and project setup, fleet and load, the team guideline summary, team files, tools, the engineering workflow, shared skills and the repository layout. Read it when you set up a machine, adopt the team in a project or change how the team works.
+
+Each project keeps its own facts in `docs/agents/`. Everything else is linked from this repo.
+
+## What an agent team is
+
+An **agent team** is a small set of AI agents that share one delivery playbook. Terms used below:
+
+* **Orca:** the desktop app that starts, shows and connects the agents.
+* **Tracker:** the list of tasks (GitHub issues) the team reads and updates.
+* **Grill:** a round of pointed questions that fills the gaps in an idea before anyone builds it.
+* **Verifier:** a second AI model, from a different model family than the author, that checks a finished change and gives a pass or fail.
+* **Unit:** one ticket sized piece of work. **PR owner:** the worker that writes its branch.
+* **Babysit:** a check every five minutes on open pull requests. It starts one verifier when head-checks passed, the head has a cold `Review: PASS` (or the repo has no online review runner) and no Verdict. A failing head still starts a fix worker, and a head that already has a passing Verdict can still start a shipping run.
+* **Fleet:** the group of computers that run the agents.
+
+One **coordinator agent** holds the CEO role. It reads the issue tracker, plans work, and **dispatches** tasks. A dispatch is a single start command that gives one worker a complete assignment.
+
+**Worker agents** each take one task. They work in their own **worktree**, a separate git checkout so their edits never collide with other tasks. When a worker finishes, it sends **worker_done**, an orchestration message that ends its turn and reports what it did.
+
+The **user** is the human who approves money rules and prices, spending, customer messages, irreversible data deletion, production once a real store is live, and one look at a new feature or page before production. Agents run the rest without waiting on chat.
+
+Full role names and boundaries live in [Agent team reference](agents/team-reference.md).
+
+## How one task runs
+
+1. **Issue.** Someone opens a tracker item with acceptance criteria. Intake roles may grill and slice it until it is ready.
+2. **Brief.** The coordinator attaches a structured **brief** on the issue (or uses the body). The brief has four parts a person writes: `Refs`, Acceptance, Out of scope and Verify. `script/worker-startup.sh` runs `script/brief-lint.sh` once per start and rejects a brief that lacks any of them, then appends the fixed Finish steps when the brief has no `## Finish`. `Refs` may be `Refs #n`, `Closes #n`, `Fixes #n` or `Resolves #n`, and `Verify` must name `script/checks-local.sh` only when the target repo has that script. The worker title must be `#<issue>|<role>`.
+3. **Worker start.** The coordinator runs `script/worker-startup.sh` (or the matching Orca helper). That checks that the host is ready and that the usage quota allows another worker, then starts one worker in a fresh worktree.
+4. **Build.** The worker implements the ticket, runs local checks, commits, pushes once and opens a pull request.
+5. **Checks and review.** GitHub Actions runs required checks. A read only bot review and a separate verifier model post a **Verdict** (`PASS`, `PASS+NOTES` or `FAIL`) via `script/post-verdict.sh`.
+6. **Merge.** When checks and Verdict match the PR head, `script/ship.sh` (the only merge path) may squash merge. After it merges a dotfiles PR it pulls the latest dotfiles to every fleet host. A periodic babysit pass starts a verifier when the Verdict is missing. The existing fix worker and `script/ship.sh` stay in place for a failing head and a head that already passed.
+7. **Cleanup.** `script/wrap-up.sh` removes finished worktrees and merged branches. The issue closes when the PR merges.
+
+Orca orchestration details, gates and failure limits are in [Coordinator operations](agents/coordinator-operations.md) and [Agent team architecture](agents/agent-team-architecture.md).
+
+## Set up
+
+### Set up a machine
+
+```bash
+mkdir -p ~/GitHub && cd ~/GitHub
+git clone https://github.com/mingster/dotfiles.git && cd dotfiles
+sh mac/osxprep.sh   # macOS only: installs Command Line Tools
+sh install.sh
+```
+
+`install.sh` links `~/dotfiles`, home dotfiles, editor settings and shared skills, then runs the package script for your system (`mac/`, `arch/` or `debian/`). Safe to re-run: unchanged tools are skipped and conflicting files are backed up.
+
+| Command | Effect |
+| --- | --- |
+| `DOTFILES_SKIP_SYSTEM_SETUP=1 sh install.sh` | Refresh links without installing system packages |
+| `DOTFILES_BREW_UPGRADE=1 sh install.sh` | Also upgrade Homebrew packages on macOS |
+| `script/agent-team.sh machine` | Link skills, bins and model routing into `~/.claude`, write rendered copies of roles and `session-start.md`, and merge settings (add `--dry-run` to preview). CLI install is `script/install-agent-clis.sh`, Orca presets are `script/setup-orca.sh` |
+
+On macOS, apps install into `/Applications`. A script finds an app through `script/lib/app-path.sh`, and `script/check-appdir.sh` (run by `script/checks-local.sh`) fails on any mention of the old per category app folder.
+
+Fleet host registration, pull scripts, automations and the readiness checklist are in [Fleet readiness](agents/team-reference.md#fleet-readiness).
+
+### Adopt the team in a project
+
+`script/agent-team.sh` is the single entry point for machine setup and project adoption.
+
+```bash
+script/agent-team.sh machine
+script/agent-team.sh project /path/to/project --project-name <name>
+script/agent-team.sh sync    /path/to/project
+script/agent-team.sh check   /path/to/project
+script/agent-team.sh all     /path/to/project
+```
+
+| Command | Effect |
+| --- | --- |
+| `machine` | Link skills, bins and model routing, write rendered copies of roles and `session-start.md`, and merge settings on this computer |
+| `project` | Seed roles, labels, team skills and audit output on a new repository |
+| `sync` | Refresh linked roles, hooks, skills and template managed files on an existing repository |
+| `check` | Read only drift check on one or more repositories (exit non zero when something diverges) |
+| `all` | Run `machine`, then `project` or migration logic for the given directory |
+
+After adoption, fill in project facts:
+
+* `docs/agents/team-facts.md`: repositories, stack and team facts
+* `docs/agents/deploy-facts.md`: deploy targets, URLs and smoke commands
+* `docs/agents/domain.md`: domain context for planning skills
+
+`bun script/team-audit-metrics.ts --repo <owner/name>` prints the weekly delivery numbers for any project. The weekly audit runs it, and no project keeps its own copy.
+
+See [Agent team setup](agents/team-reference.md#agent-team-setup) for owner login steps and [settings backup](agents/agent-settings-backup.md) for backups.
+
+## Fleet and load
+
+The **fleet** is several computers paired in Orca. One host runs the coordinator agent. Other hosts run builders, reviewers, browser work and heavy checks.
+
+Placement follows the order and per host limits in [Coordinator operations](agents/coordinator-operations.md): primary code host (also the coordinator host), then first overflow host, then second overflow host. Browser and secrets work stays on its dedicated host. The database host runs the dev database and the `head-checks.sh` steps that need Postgres, never interactive workers or Playwright.
+
+The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch for a provider at its weekly quota ceiling. The **coordinator overload gate** lives in `script/fleet-watch.py` (`COORDINATOR_MAX_LOAD_PER_CORE`). When the coordinator host's load per core or free memory crosses its limit, no new local worker starts there, and the run points to an overflow host with free room. The coordinator must not dispatch past `NO DISPATCH` lines from `script/elon-startup.sh`.
+
+`script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. Placement is automatic (`script/worker-placement.py` ranks hosts by workers per host cap first, then load per core, and picks the coordinator host last). A reason flag (`--force-host chrome-dev|line-desktop|host-file`) sends the start to the host the fleet config maps that reason to. `--on <environment>` remains only as a test or debug override, still gated by the host's load limit and, for the coordinator host, by an allowed `--force-host` reason.
+
+`script/fleet-watch.py` is the 5 minute pass that starts verifiers, fix workers and ready issues, and reruns host fault checks. Its one scheduler is the Orca automation `fleet-watch` on the coordinator host, registered by `script/install-fleet-automations.sh` (see [Fleet watchdog](agents/fleet-watch.md)). Issues are picked by label: [Labels](agents/labels.md).
+
+Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
+
+## Team guideline (summary)
+
+### Goal
+
+An agent team that follows the [Matt Pocock](https://github.com/mattpocock/skills) and [pstack](https://github.com/cursor/plugins/tree/main/pstack) skill design inside Orca. Every role works through pstack `poteto-mode` with our gates in `templates/agent-team/.agents/skills/orca-adapter/ORCA-ADAPTER.md`. A ready unit reaches merge without message relay between agents. Each day at 19:00 Taiwan time the `daily-program-1900` automation wakes the coordinator to run the standing program (`templates/agent-team/docs/agents/daily-run.md`), which deploys staging when it is behind trunk and then runs the pstack `swarm` live lanes. Production needs green live lanes, then the Playground regression while production holds only test data, or the user's go once a real store is live.
+
+Principles, targets, the full lifecycle diagram, babysit and shipping rules, role table, owner decisions and review depth are in [Agent team reference](agents/team-reference.md#team-guideline). Per project policy lives in each repo's `docs/agents/team.md`.
+
+### Team files
+
+Canonical team templates live under `templates/agent-team/`. The pstack, cursor-team-kit and The Algorithm trees are vendored whole there (license and pinned commit in `templates/agent-team/docs/agents/pstack-attribution.md`; `script/sync-pstack-template-skills.sh` refreshes them weekly and records the pin in `script/.pstack-template-upstream`) and never edited by hand. The rule table, with what enforces each rule, is in `templates/agent-team/docs/agents/team.md`. Each project's `docs/agents/` keeps five required files (`issue-tracker.md`, `triage-labels.md`, `domain.md`, `team-facts.md`, `deploy-facts.md`). See [Docs for agent projects](agents/domain.md).
+
+## Tools
+
+These are the only team tools we keep or build. Full contracts live in each project's process spec. The Job and Runs table is in [Agent team reference](agents/team-reference.md#team-tools).
+
+Project hooks stay small: a command guard for production, secrets and destructive commands, the three strike stop and the worker turn limit.
+
+## Engineering workflow
+
+For a change in one repository, use the shared skills in order: intent, grill, spec, tickets, build, review. Stage table and shortcuts are in [Skills inventory](agents/skills-inventory.md) and [SDLC skill map](agents/sdlc-skill-map.md).
+
+| Stage | Skill | What it does |
+| --- | --- | --- |
+| Intent | `/capture-intent` | The problem and outcome in the owner's words. New features only |
+| Grill | `/grill-with-docs` | Interview that finds edge cases and records decisions |
+| Spec | `/write-spec` or `/to-spec` | The agreed plan, no second interview |
+| Tickets | `/to-tickets` | Small vertical slices with test cases |
+| Build | `/implement` or `/tdd` | Bug fixes start with a failing test, then the fix (skip only when expensive, integration heavy or unclear). Features, scripts and refactors require tests and proof on the real artifact (test need not fail first; refactors prove behavior unchanged) |
+| Review | `/code-review` | Standards and spec, never skipped |
+
+Shortcuts: a typo or config tweak goes straight to `/tdd` or an edit. A bug starts with `/diagnosing-bugs` until a test goes red. A single slice skips `/to-tickets`.
+
+## Shared skills
+
+All skills live in `.agents/skills/<name>/`, and `install.sh` links them into Claude Code, Cursor and Antigravity. Change one here and every tool gets it.
+
+* **Planning:** `capture-intent`, `grill-me`, `grilling`, `grill-with-docs`, `write-spec`, `to-spec`, `to-tickets`, `wayfinder`, `triage`, `domain-modeling`, `codebase-design`.
+* **Building:** `tdd`, `tdd-bugfix`, `implement`, `code-review`, `diagnosing-bugs`, `prototype`, `improve-codebase-architecture`, `resolving-merge-conflicts`, `laravel-inertia-react-structure`, `create-pr`.
+* **Research and docs:** `research`, `retro`, `handoff`, `writing-for-agents`.
+* **Environment:** `setup-matt-pocock-skills`, `agent-browser`, `orca-team`, `wizard`. Orca's own skills come from `orca skills install --all`.
+
+## Release notes and changelog
+
+* [RELEASE-NOTES.md](../RELEASE-NOTES.md): what changed each week, in plain language.
+* [CHANGELOG.md](../CHANGELOG.md): the full technical list.
+* [docs/changelog.md](changelog.md): how `changelog.d/` fragments become `CHANGELOG.md`.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `install.sh` | Bootstrap for all systems |
+| `mac/`, `arch/`, `debian/` | System packages and installers |
+| `script/` | Setup scripts and team tools |
+| `.agents/skills/` | Shared skills |
+| `.agents/claude/` | Global Claude Code configuration |
+| `templates/agent-team/` | Roles and team skills adopted into projects |
+| `.config/` | Application configuration, managed with GNU Stow |
+| `ide/` | Editor settings |
+| `docs/agents/` | Deeper docs: [setup](agents/team-reference.md#agent-team-setup), [roles](agents/team-reference.md), [Orca automations](agents/orca-automations.md), [settings backup](agents/agent-settings-backup.md) |
