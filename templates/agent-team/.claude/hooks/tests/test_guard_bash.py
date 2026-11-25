@@ -2022,7 +2022,9 @@ class TextCheckBypassClasses(ProjectConfigGuardTest):
                         "cd fileServer && cd /tmp && cat ~-/*rets/x.json", "cd fileServer && cd /tmp && cat ~-/s*/x.json",
                         "cd fileServer && cd /tmp && cat ~-/se?rets/x.json",
                         "cd fileServer && cd /tmp && cd ~- && cat s*/x.json",
-                        "cd fileServer && cd /tmp && cd - && cat s*/x.json", "cd /tmp && cd ~-/fileServer && cat s*/x.json"):
+                        "cd fileServer && cd /tmp && cd - && cat s*/x.json", "cd /tmp && cd ~-/fileServer && cat s*/x.json",
+                        "pushd fileServer && cat s*/x.json", "cd fileServer && pushd /tmp && popd && cat s*/x.json",
+                        "cd fileServer && pushd /tmp && pushd && cat s*/x.json"):
             with self.subTest(command=command):
                 self.assertDenied(command)
 
@@ -2048,7 +2050,8 @@ class TextCheckBypassClasses(ProjectConfigGuardTest):
         for command in ("cd /tmp && ls ~-", "cd /tmp && cat ~-/docs/x.md", 'X="$u"docs; cat $X/a.md',
                         "ls docs/[!x]*.md", "eval 'echo hi'", "S=a; echo \"$S\"raw",
                         "cd docs && cat s*/x.md", "cd fileServer && ls", "cd fileServer && cat README.md",
-                        "ls docs/[[:alpha:]]*.md", "printf '%s\\n' \"$HOME\"", "echo $'\\x41'"):
+                        "ls docs/[[:alpha:]]*.md", "printf '%s\\n' \"$HOME\"", "echo $'\\x41'",
+                        "printf '%s\\n' \"$HOME\" '[x]'", "grep -n '\\$[A-Za-z]' docs/a.md", "pushd docs && ls && popd"):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 

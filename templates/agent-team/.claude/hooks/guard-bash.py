@@ -3678,8 +3678,17 @@ def _component_patterns(partial, suffix):
 
 
 def _pattern_hits_name(patterns, name):
+    # fnmatch misreads `[^x]` and `[[:alpha:]]`, so everything from the first `[` to the last `]` also reads as
+    # `*`, a superset of what bash matches there (#1887).
     folded = name.lower()
-    return any(fnmatch.fnmatch(folded, pattern.lower()) for pattern in patterns)
+    return any(fnmatch.fnmatch(folded, p) for pattern in patterns
+               for p in {pattern.lower(), _wide_brackets(pattern.lower())})
+
+
+def _wide_brackets(text):
+    """Text with everything from the first `[` to the last `]` read as `*`, when a letter or digit is left."""
+    wide = re.sub(r"\[.*\]", "*", text)
+    return wide if re.search(r"[a-z0-9]", wide) else text
 
 
 def _generic_secrets(partial, suffix):
@@ -3722,6 +3731,13 @@ def _expansion_hits(literal, decoded, kinds, cwd, absolute, relative):
     patterns = _component_patterns(partial, suffix)
     if _generic_secrets(partial, suffix):
         return True
+    # The anchor as the shell resolves it, after any cd: the glob then has to match the next component of a
+    # protected dir under it (`cd fileServer && cat s*/x.json`, #1887).
+    base = _resolve_fold(anchor or ".", cwd).rstrip(os.sep) + os.sep
+    for directory in absolute:
+        other = directory.lower()
+        if other.startswith(base) and _pattern_hits_name(patterns, other[len(base):].split(os.sep)[0]):
+            return True
     for pref in relative:
         if len(anchor_parts) >= len(pref) or tuple(pref[:len(anchor_parts)]) != anchor_parts:
             continue
@@ -3880,13 +3896,17 @@ def _tilde_dir(text, cwd, oldpwd):
 
 def _annotate_cwd(words, cwd, oldpwd):
     """Each word with the directory it is judged from. A `~+` or `~-` word becomes `./...` judged from the
-    directory it names; `~-` and `cd -` name `oldpwd`, one guess at OLDPWD (#1887)."""
+    directory it names; `~-`, `cd -` and a `pushd` or `popd` without a directory name `oldpwd`, one guess
+    at OLDPWD or the top of the directory stack (#1887)."""
     noted = []
     for i, word in enumerate(words):
         text, literal, metas = word
         tilde = _tilde_dir(text, cwd, oldpwd)
         noted.append(("." + text[2:], "." + literal[2:], metas, tilde) if tilde else (*word, cwd))
-        if text != "cd" or metas or not _at_command(words, i):
+        if text not in ("cd", "pushd", "popd") or metas or not _at_command(words, i):
+            continue
+        if text == "popd":
+            cwd = oldpwd
             continue
         j = i + 1
         while j < len(words) and words[j][0] not in _SHELL_OPERATORS and words[j][0].startswith("-") \
@@ -3895,12 +3915,14 @@ def _annotate_cwd(words, cwd, oldpwd):
         if j < len(words) and words[j][0] not in _SHELL_OPERATORS and not words[j][2]:
             dest = words[j][0]
             tilde = _tilde_dir(dest, cwd, oldpwd)
-            if dest == "-":
+            if dest == "-" or (text == "pushd" and dest[:1] in "+-"):
                 cwd = oldpwd
             elif tilde:
                 cwd = os.path.normpath(os.path.join(tilde, "." + dest[2:]))
             else:
                 cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(dest)))
+        elif text == "pushd":
+            cwd = oldpwd
     return noted
 
 
@@ -4109,6 +4131,7 @@ def check_blocked_script_mentions(command):
 PARAMETER = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
 EXPANSION_END = re.compile(r"[}`)*?\]]")
 ANSI_C_QUOTE = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.DOTALL)
+ESCAPE = re.compile(r"\\(?:x[0-9A-Fa-f]{1,2}|[0-7]{1,3}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8})")
 
 
 def _unquoted_texts(command, mark):
@@ -4120,9 +4143,15 @@ def _unquoted_texts(command, mark):
     joined = command.replace("\\\n", "")
     decoded = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
                                .decode("unicode_escape") + "'", joined).replace('$"', '"')
-    for text in (decoded, joined):
+    # Every escape decoded with no quote pairing, since a `$'` in a comment shifts the pairing above.
+    escaped = ESCAPE.sub(lambda m: m.group(0).encode("latin-1", "backslashreplace").decode("unicode_escape"),
+                         joined.replace("$'", "'"))
+    for text in (decoded, joined, escaped):
         yield mark(re.sub(r"[\"'\\]", "", text)).lower()
         yield re.sub(r"[\"'\\]", "", mark(text)).lower()
+        # A quote or backslash between `$` and the name drops in a nested eval or `-c` shell, so the name
+        # follows the `$`; the next quote still ends it.
+        yield re.sub(r"[\"'\\]", "", mark(re.sub(r"\$[\"'\\]+(?=[A-Za-z_{(])", "$", text))).lower()
 
 
 def check_built_blocked_names(command):
@@ -4162,10 +4191,11 @@ def _mark_expansions(text):
 
 def _tokens(flat):
     """The words of one reading, each read with expansions as spaces and, where glued to letters, as `*`, and
-    with bracket expressions as written and as `?`."""
+    with bracket expressions as written, as `?`, and (any bracket span, whatever its grammar) as `*`."""
     tokens = set()
-    for text in (flat, BRACKET.sub("?", flat)):
-        for token in re.split(r"[^a-z0-9_.*?\[\]{},\0-]+", text):
+    for text in (flat, BRACKET.sub("?", flat), re.sub(r"\[[^\s/;|&<>()]*\]", "\1", flat)):
+        for token in re.split(r"[^a-z0-9_.*?\[\]{},\0\1-]+", text):
+            token = _wide_brackets(token.replace("\1", "[]"))
             if token.strip(EXPANSION_MARK):
                 tokens.add(token.replace(EXPANSION_MARK, "*"))
                 tokens.update(t for t in token.split(EXPANSION_MARK) if t)
