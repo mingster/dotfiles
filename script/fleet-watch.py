@@ -9400,14 +9400,16 @@ def _message_payload(message):
     return value if isinstance(value, dict) else {}
 
 
-def _message_outcome(message, payload):
+def _message_outcome(message, payload, worker=None):
     for source in (message, payload):
         if not isinstance(source, dict):
             continue
         outcome = source.get('outcome')
         if isinstance(outcome, str) and outcome.strip():
             return outcome.strip().lower()
-    return ''
+    # The concise inbox view omits outcome, so the matched worker row settles it (#1858).
+    settled = worker_settled_kind(worker)
+    return settled if settled in ('succeeded', 'failed') else ''
 
 
 _NEW_TITLE_RE = re.compile(r'^#(\d+)\|([a-z][a-z-]*)(?:\|.*)?$', re.I)
@@ -9797,12 +9799,12 @@ def release_green_successes(messages, workers, config, state, release, pr_of, se
         if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
             continue
         payload = _message_payload(message)
-        if _message_outcome(message, payload) != 'succeeded':
-            continue
         dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
         if not isinstance(dispatch, str) or not dispatch or dispatch in seen or release_held(state, dispatch):
             continue
         worker = by_dispatch.get(dispatch)
+        if _message_outcome(message, payload, worker) != 'succeeded':
+            continue
         if worker is None or worker_terminal_released(worker):
             continue
         number = worker_pr_number(worker)
@@ -9968,12 +9970,12 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
         if not isinstance(message_id, str) or not message_id or message_id in seen:
             continue
         payload = _message_payload(message)
-        if _message_outcome(message, payload) in ('failed', 'failure'):
-            continue
         dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
         if not isinstance(dispatch, str) or dispatch not in by_dispatch:
             continue
         worker = by_dispatch[dispatch]
+        if _message_outcome(message, payload, worker) in ('failed', 'failure'):
+            continue
         role = _builder_role(worker)
         if role in ('qa', 'qa-sdet', 'reviewer', 'verifier') or _worker_is_verifier(worker):
             continue
@@ -10014,10 +10016,10 @@ def relay_done_board(messages, workers, config, state, board_of, set_status, pr_
         if not isinstance(message_id, str) or not message_id or message_id in handled or message_id in bounced:
             continue
         payload = _message_payload(message)
-        if _message_outcome(message, payload) in ('failed', 'failure'):
-            continue
         dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
         worker = by_dispatch.get(dispatch)
+        if _message_outcome(message, payload, worker) in ('failed', 'failure'):
+            continue
         # A held worker_done does not count, so the card stays until a passing resend (#1849).
         if worker is None or release_held(state, dispatch):
             continue

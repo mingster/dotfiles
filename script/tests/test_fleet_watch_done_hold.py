@@ -382,5 +382,65 @@ class AgentStateHold(unittest.TestCase):
         self.assertEqual(state['done_hold'], {})
 
 
+def settled_row(dispatch, settled, pr=99):
+    """A worker row whose settled state comes from the row alone (no projection outcome) (#1858)."""
+    return {'dispatchId': dispatch, 'taskId': 'task_x', 'runId': 'run_fixture', 'terminalState': 'retained',
+            'dispatchStatus': 'completed', 'agentTerminalHandle': 'term_w', 'githubPullRequestNumber': pr,
+            'title': '#77|fullstack-dev', 'workerState': settled}
+
+
+def concise_done(dispatch):
+    """A concise inbox worker_done: the payload names the dispatch and carries no outcome key."""
+    return {'id': 'msg_' + dispatch, 'type': 'worker_done', 'from': 'term_w', 'to': 'run:run_fixture',
+            'subject': 'done', 'handled': True, 'body': PLAIN,
+            'payload': {'taskId': 'task_x', 'dispatchId': dispatch}}
+
+
+class ConciseDoneOutcome(unittest.TestCase):
+    """#1858: a concise worker_done has no outcome, so the matched worker row settles it."""
+
+    def test_succeeded_row_is_released_when_checks_are_green(self):
+        released = []
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            done = fw.release_green_successes([concise_done('ctx_ok')], [settled_row('ctx_ok', 'succeeded')], {},
+                                              {}, released.append, lambda repo, n: GREEN)
+        self.assertEqual(done, ['ctx_ok'])
+        self.assertEqual(released, ['ctx_ok'])
+
+    def test_failed_row_is_not_released(self):
+        released = []
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            done = fw.release_green_successes([concise_done('ctx_f')], [settled_row('ctx_f', 'failed')], {}, {},
+                                              released.append, lambda repo, n: GREEN)
+        self.assertEqual(done, [])
+        self.assertEqual(released, [])
+
+    def test_failed_row_is_not_bounced_on_the_pr_body(self):
+        notified = []
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            bounced = fw.bounce_builder_dones([concise_done('ctx_b')], [settled_row('ctx_b', 'succeeded')],
+                                              lambda repo, n: '', lambda handle, text: notified.append(text), {}, {})
+            skipped = fw.bounce_builder_dones([concise_done('ctx_f')], [settled_row('ctx_f', 'failed')],
+                                              lambda repo, n: '', lambda handle, text: notified.append(text), {}, {})
+        self.assertTrue(bounced, 'control: a succeeded worker with an empty body is bounced')
+        self.assertEqual(skipped, [])
+
+    def test_failed_row_keeps_its_board_card(self):
+        moved = []
+
+        def set_status(worker, target):
+            moved.append((worker['dispatchId'], target))
+            return True
+
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            relayed = fw.relay_done_board([concise_done('ctx_f')], [settled_row('ctx_f', 'failed')], {}, {},
+                                          lambda worker: 'in-progress', set_status, lambda repo, n: {'state': 'OPEN'})
+            control = fw.relay_done_board([concise_done('ctx_ok')], [settled_row('ctx_ok', 'succeeded')], {}, {},
+                                          lambda worker: 'in-progress', set_status, lambda repo, n: {'state': 'OPEN'})
+        self.assertEqual(relayed, [])
+        self.assertEqual(control, ['ctx_ok:in-review'], 'control: a succeeded worker moves its card')
+        self.assertEqual(moved, [('ctx_ok', 'in-review')])
+
+
 if __name__ == '__main__':
     unittest.main()
