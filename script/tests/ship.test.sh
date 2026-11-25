@@ -302,6 +302,34 @@ else
   bad "missing Self-check refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# #1882: ship.sh passes the PR diff to pr-body-gate, so a change to a shared function needs a Readers: section.
+readers_case() { # <pr> <extra body>; sets SHIP_RC and SHIP_OUT
+  local n=$1 h
+  mf_pr_add "$n" "feat-readers-$n" "Closes #9"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"
+  [ -z "$2" ] || jq --arg l "$2" '.body = (.body + "\n" + $l + "\n")' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$h"
+  mkdir -p "$MF_DIR/readers-$n"
+  printf '#!/usr/bin/env bash\nif [ "$1 $2" = "pr diff" ]; then printf %%s "$READERS_DIFF"; exit 0; fi\nexec "%s/gh" "$@"\n' "$MF_BIN" > "$MF_DIR/readers-$n/gh"; chmod +x "$MF_DIR/readers-$n/gh"
+  : > "$MF_GH_LOG"
+  SHIP_OUT=$(READERS_DIFF=$'diff --git a/lib/shared.py b/lib/shared.py\n--- a/lib/shared.py\n+++ b/lib/shared.py\n@@ -1,2 +1,2 @@ def shared(x):\n-    return x\n+    return x + 1\n' \
+    PATH="$MF_DIR/readers-$n:$PATH" bash "$here/ship.sh" --repo example/repo --pr "$n" 2>&1); SHIP_RC=$?
+}
+readers_case 3033 ""
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "Readers:" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a shared function change without Readers: refuses"
+else
+  bad "a shared function change without Readers: refuses" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+readers_case 3034 $'Readers:\n- shared: lib/test_shared.py covers its one caller'
+if ! grep -Fq "Readers:" <<<"$SHIP_OUT"; then
+  ok "a Readers: section naming the changed function passes the body gate"
+else
+  bad "a Readers: section naming the changed function passes the body gate" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # 11. Edited FAIL still blocks an older PASS
 mf_pr_add 11 feat-edited-fail "Body"
 h11=$(jq -r .headRefOid "$MF_GH_DIR/pr-11.json")

@@ -251,6 +251,13 @@ if run; then fail "a body without ## Self-check must fail the review run"; fi
 [ ! -e "$tmp/claude-args" ] || fail "a failing body runs no review agent"
 rm -f "$tmp/pr-body"
 
+# #1882: the PR diff goes to pr-body-gate, so a diff that changes a shared function needs a Readers: section
+printf 'diff --git a/lib/shared.py b/lib/shared.py\n--- a/lib/shared.py\n+++ b/lib/shared.py\n@@ -1,2 +1,2 @@ def shared(x):\n-    return x\n+    return x + 1\n' > "$tmp/diff-patch"
+if run >"$tmp/readers.out" 2>&1; then fail "a shared function change without Readers: must fail the review run"; fi
+grep -qF "Readers:" "$tmp/readers.out" || fail "the Readers: refusal names the section"
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "a body without Readers: runs no review agent and posts nothing"
+rm -f "$tmp/diff-patch"
+
 if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
 
 # gh api user fails (workflow_run token): no GITHUB_ACTOR is fatal; with GITHUB_ACTOR the run proceeds
