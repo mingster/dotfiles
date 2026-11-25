@@ -1,0 +1,99 @@
+{
+ "captured": "2026-11-25 on mini6, remote host blueDevil (Orca 1.4.274): antigravity worker started with start-remote-worker.sh, worker-stop --environment, worker-release --environment, worker-release (#1832)",
+ "worker_show_started": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "state": "ready",
+  "stage": "server_record",
+  "server": "blueDevil",
+  "asOf": "2026-11-25T03:42:27Z",
+  "note": "blueDevil's state as of 2026-11-25T03:42:27Z. blueDevil last answered 5 s ago. Its output is kept only on blueDevil.",
+  "waitingOnHuman": "unknown"
+ },
+ "worker_show_after_stop": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "state": "stopped",
+  "stage": "server_record",
+  "server": "blueDevil",
+  "asOf": "2026-11-25T03:42:36Z",
+  "note": "blueDevil's state as of 2026-11-25T03:42:36Z. blueDevil last answered 0 s ago. Its output is kept only on blueDevil.",
+  "waitingOnHuman": "unknown",
+  "lastError": "stopped"
+ },
+ "worker_show_after_release": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "state": "stopped",
+  "stage": "server_record",
+  "server": "blueDevil",
+  "asOf": "2026-11-25T03:42:36Z",
+  "note": "blueDevil's state as of 2026-11-25T03:42:36Z. blueDevil last answered 1 s ago. Its output is kept only on blueDevil.",
+  "waitingOnHuman": "unknown",
+  "lastError": "stopped"
+ },
+ "worker_show_environment_after_release": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_4ab0cc4f285d",
+  "state": "stopped",
+  "stage": "process_stopped",
+  "liveness": "exited",
+  "terminal": "term_acafe9e8-9506-4d00-9015-61ec51cad6da",
+  "terminalState": "released",
+  "workspace": "a7cf6848-df01-4c02-b672-f10c692aa748::/Users/mtsai/orca/workspaces/dotfiles/_checks",
+  "attention": [
+   "failure"
+  ],
+  "waitingOnHuman": "unknown",
+  "coordinatedFrom": "mini6"
+ },
+ "worker_list_full_row_started": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "workerState": "ready",
+  "dispatchStatus": "dispatched",
+  "agentTerminalHandle": null,
+  "terminalState": null,
+  "resource": null,
+  "server": {
+   "environmentId": "e5cb250c-f27a-42ac-a298-399f66370589",
+   "name": "blueDevil",
+   "asOf": "2026-11-25T03:42:27Z"
+  }
+ },
+ "worker_list_full_row_after_release": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "workerState": "stopped",
+  "dispatchStatus": "failed",
+  "agentTerminalHandle": null,
+  "terminalState": null,
+  "resource": null,
+  "server": {
+   "environmentId": "e5cb250c-f27a-42ac-a298-399f66370589",
+   "name": "blueDevil",
+   "asOf": "2026-11-25T03:42:36Z"
+  }
+ },
+ "worker_list_full_row_after_60s": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "runId": "run_589ba6dd1c1b",
+  "workerState": "stopped",
+  "dispatchStatus": "failed",
+  "agentTerminalHandle": null,
+  "terminalState": null,
+  "resource": null,
+  "server": {
+   "environmentId": "e5cb250c-f27a-42ac-a298-399f66370589",
+   "name": "blueDevil",
+   "asOf": "2026-11-25T03:42:36Z"
+  }
+ }
+}

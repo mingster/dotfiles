@@ -1,0 +1,1 @@
+Fleet watch issue starts now exit 10 when the antigravity start is signed out. `worker-startup.sh` marks the host, stops and releases the dispatch, puts the issue labels back and removes its worktree in that one call, and the next pass starts the issue on claude. A stopped remote worker no longer raises a failed dispatch notice (#1832, #1820).
