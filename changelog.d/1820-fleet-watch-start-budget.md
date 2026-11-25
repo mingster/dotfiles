@@ -1,0 +1,1 @@
+- Fleet watch holds a worker start that would end the pass past 140 seconds (45 seconds for most starts, 105 for an antigravity start that keeps the sign in wait): each start site checks `start_allowed(cost)` once before it writes state, a held start logs `<site>_budget=<id>` and runs on the next pass, and the start wrapper never refuses for time (#1820).
