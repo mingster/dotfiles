@@ -82,6 +82,8 @@ F
 cat > "$tmp/claude" <<'F'
 #!/usr/bin/env bash
 echo "$*" > "$FAKE/claude-args"
+# #1841: another run posts its Review on this head while this one is still reviewing.
+[ -z "${FAKE_RACE_COMMENTS:-}" ] || cp "$FAKE_RACE_COMMENTS" "$FAKE/issue-comments.json"
 cat issues.json > "$FAKE/seen-issues"
 if [ -n "${FAKE_DUAL_DISAGREE:-}" ]; then
   n=$( (wc -l < "$FAKE/claude-invocations") 2>/dev/null | tr -d ' ' ) || true
@@ -219,6 +221,21 @@ run
 issue_comments_set "Verdict: PASS head=$sha model=x"
 run
 [ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "Verdict PASS at current head settles without agent or new comment"
+
+# #1841: a Review another run posted on this head while this run reviewed: this result is dropped
+issue_comments_set "Review: FAIL head=$sha model=gemini-4-argon-high"
+cp "$tmp/issue-comments.json" "$tmp/race-comments.json"
+issue_comments_set
+printf 'Review: FAIL\nBroken.\n' > "$tmp/answer"
+FAKE_RACE_COMMENTS="$tmp/race-comments.json" run
+[ -e "$tmp/claude-args" ] || fail "the race case runs the reviewer"
+[ ! -e "$tmp/posted" ] || fail "a head reviewed by another run meanwhile gets no second Review"
+issue_comments_set "Review: FAIL head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb model=x"
+cp "$tmp/issue-comments.json" "$tmp/race-comments.json"
+issue_comments_set
+FAKE_RACE_COMMENTS="$tmp/race-comments.json" run
+grep -q "^Review: FAIL head=$sha" "$tmp/posted" || fail "a Review on another head does not drop this result"
+printf 'Review: PASS\nLooks right.\n' > "$tmp/answer"
 
 issue_comments_set
 HEAD_NOW=bbbb run

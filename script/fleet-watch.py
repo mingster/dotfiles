@@ -6324,6 +6324,54 @@ def _babysit_closed(pr_row):
     return state_name in ('MERGED', 'CLOSED') or bool(pr_row.get('mergedAt') or pr_row.get('closedAt'))
 
 
+def live_verifier_claims(workers):
+    """PR numbers and branch names that live verifier workers name, the keys live_verifier_worker matches on."""
+    numbers, branches = set(), set()
+    for worker in workers or []:
+        if not isinstance(worker, dict) or not worker_row_is_live(worker):
+            continue
+        numbers.update(verifier_title_prs(worker))
+        if _worker_titled_verifier(worker):
+            if worker_pr_number(worker) is not None:
+                numbers.add(worker_pr_number(worker))
+            if worker_branch_name(worker):
+                branches.add(worker_branch_name(worker))
+    return numbers, branches
+
+
+UNKNOWN_BUILDER_REFUSALS = 3  # refusals on one head before one notice and a skip until the head changes (#1841)
+
+
+def _unknown_builder_book(state, repo):
+    return state.setdefault('babysit_unknown_builder', {}).setdefault(repo, {})
+
+
+def unknown_builder_refused(state, repo, number, head):
+    """Count one unknown builder refusal on this head. True on the refusal that parks it, once per head."""
+    book = _unknown_builder_book(state, repo)
+    entry = book.get(str(number))
+    if not isinstance(entry, dict) or entry.get('head') != head:
+        entry = book[str(number)] = {'head': head, 'refusals': 0}
+    entry['refusals'] = int(entry.get('refusals') or 0) + 1
+    return entry['refusals'] == UNKNOWN_BUILDER_REFUSALS
+
+
+def unknown_builder_parked(state, repo, number, head):
+    entry = ((state.get('babysit_unknown_builder') or {}).get(repo) or {}).get(str(number))
+    return isinstance(entry, dict) and entry.get('head') == head \
+        and int(entry.get('refusals') or 0) >= UNKNOWN_BUILDER_REFUSALS
+
+
+def unknown_builder_prune(state, repo, open_numbers):
+    """Drop records for PRs that are no longer open."""
+    book = (state.get('babysit_unknown_builder') or {}).get(repo)
+    if not isinstance(book, dict):
+        return
+    keep = {str(n) for n in open_numbers}
+    for key in [k for k in book if k not in keep]:
+        book.pop(key)
+
+
 def _babysit_line(repo, number, head, action, detail=''):
     text = 'babysit %s#%s head=%s action=%s' % (repo, number, head, action)
     if detail:
@@ -7265,8 +7313,7 @@ def standing_route(
 ):
     """Send an eligible PR to an idle standing verifier, starting one when none exists.
 
-    Returns 'assigned', 'started', 'held' (the start budget is spent: no start this pass, no one-shot fallback)
-    or 'fallback' (the caller starts a fresh one-shot verifier).
+    Returns 'assigned', 'started' or 'fallback' (the caller starts a fresh one-shot verifier).
     """
     cfg = standing_settings(config)
     if not cfg['enabled']:
@@ -7312,9 +7359,6 @@ def standing_route(
         command = build_babysit_command(config, repo, pr_row, 'verifier', cfg['agent'], cfg['model'], builder, tag, standing_host=host)
         if command is None:
             return 'fallback'
-        if not start_allowed(start_cost(command)):
-            log_bits.append('standing_budget=%s' % number)
-            return 'held'
         result = start_worker(command)
         code, reason = start_result_parts(result)
         if code != 0:
@@ -7500,44 +7544,44 @@ def babysit_pass(
                 picks[key] = pick(role)
         return picks[key]
 
+    # A closed PR gets per PR work only when a live verifier names it, so a pass does not walk every closed PR (#1841).
+    verifier_numbers, verifier_branches = live_verifier_claims(workers)
     rows = []
     for index, repo in enumerate(repos):
         prs = pr_fetch(repo)
-        if prs is None:
+        fetch_failed = prs is None
+        if fetch_failed:
             log_bits.append('fetch_fail')
             prs = []
-        seen = set()
-
-        def note_closed(pr_row, repo_name=repo):
-            number = pr_row.get('number')
-            if number in seen:
-                return
-            seen.add(number)
-            detail = 'closed'
-            if not dry_run and release_closed_verifier(
-                pr_row, workers, state, repo_name, release_worker,
-            ):
-                detail = 'verifier-released'
-                if persist_state:
-                    persist_state()
-            lines.append(_babysit_line(
-                repo_name, number or 0, pr_row.get('headRefOid') or '', 'skip', detail,
-            ))
-
+        closed = []
+        open_numbers = set()
         for pr_row in prs:
             if not isinstance(pr_row, dict):
                 continue
-            if not pr_open_for_dispatch(pr_row):
-                if _babysit_closed(pr_row):
-                    note_closed(pr_row)
+            if pr_open_for_dispatch(pr_row):
+                open_numbers.add(pr_row.get('number'))
+                rows.append((index, pr_row.get('number') or 0, repo, pr_row))
+            elif _babysit_closed(pr_row):
+                closed.append(pr_row)
+        if verifier_numbers - open_numbers or verifier_branches:
+            closed_rows = closed_fetch(repo)
+            if isinstance(closed_rows, list):
+                closed += [r for r in closed_rows if isinstance(r, dict) and _babysit_closed(r)]
+        released = set()
+        for pr_row in closed:
+            number = pr_row.get('number')
+            if number in open_numbers or number in released:
                 continue
-            seen.add(pr_row.get('number'))
-            rows.append((index, pr_row.get('number') or 0, repo, pr_row))
-        closed_rows = closed_fetch(repo)
-        if isinstance(closed_rows, list):
-            for pr_row in closed_rows:
-                if isinstance(pr_row, dict) and _babysit_closed(pr_row):
-                    note_closed(pr_row)
+            if number not in verifier_numbers and (pr_row.get('headRefName') or '') not in verifier_branches:
+                continue
+            if dry_run or not release_closed_verifier(pr_row, workers, state, repo, release_worker):
+                continue
+            released.add(number)
+            lines.append(_babysit_line(repo, number or 0, pr_row.get('headRefOid') or '', 'skip', 'verifier-released'))
+            if persist_state:
+                persist_state()
+        if not fetch_failed and not dry_run:
+            unknown_builder_prune(state, repo, open_numbers)
     # Tier 1 verifiers start before the rest (#1730).
     rows.sort(key=lambda item: (0 if pr_tier(item[3]) == 1 else 1, item[0], item[1]))
 
@@ -7560,6 +7604,9 @@ def babysit_pass(
             continue
         if not re.fullmatch(r'[0-9a-f]{40}', head):
             lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
+            continue
+        if unknown_builder_parked(state, repo, number, head):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-parked'))
             continue
         record = babysit_record(state, repo, number)
         reported = record.get('head') == head and record.get('action') == 'report'
@@ -7681,6 +7728,12 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-family'))
             log_bits.append('unknown_builder=%s' % number)
             count_refused('builder')
+            if not dry_run and unknown_builder_refused(state, repo, number, head):
+                notices.append(Urgent(
+                    '%s#%s head %s: no builder agent and model, so no verifier family can be chosen; '
+                    'skipped until the head changes (add a Builder: line to the PR body and push)' % (repo, number, head[:8])))
+                if persist_state:
+                    persist_state()
             continue
         picked = cached_pick(role, avoid_fam)
         chosen = choose_pick(picked, avoid=avoid)
@@ -7713,9 +7766,6 @@ def babysit_pass(
                 config, state, workers, repo, pr_row, builder, tag, open_prs, standing_io, start_worker,
                 release_worker, now, term_times, log_bits, headroom,
             )
-            if routed == 'held':
-                lines.append(_babysit_line(repo, number, head, 'skip', 'budget'))
-                continue
             if routed in ('assigned', 'started'):
                 babysit_mark(state, repo, number, head, action)
                 started += step if routed == 'started' else 0
@@ -7729,10 +7779,7 @@ def babysit_pass(
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
-        if not start_allowed(start_cost(command)):
-            lines.append(_babysit_line(repo, number, head, 'skip', 'budget'))
-            log_bits.append('%s_budget=%s' % (action, number))
-            continue
+        # No start_allowed hold here: a verifier starts on Review PASS within the usage gate and host caps (owner 2026-11-25, #1838).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)

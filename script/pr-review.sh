@@ -442,6 +442,18 @@ if [ "${REVIEW_MODEL_DUAL:-0}" -eq 1 ]; then
   fi
 fi
 
+# #1841: two runs on one head both pass the "head already reviewed" check while neither has posted. The later one
+# drops its result, so one head never carries two cold Reviews (a duplicate FAIL would count toward needs-redesign).
+if gh api --paginate "repos/$repo/issues/$pr/comments" |
+  jq -e --arg login "$review_me" --arg h "$head" '
+    [.[] | select(.user.login == $login) | select(.created_at == .updated_at)
+      | (.body // "" | split("\n")[0])
+      | select(test("^(Review|Verdict): ") and (ascii_downcase | contains("head=" + ($h | ascii_downcase))))]
+    | length > 0' >/dev/null; then
+  echo "head reviewed by another run meanwhile; dropping this result"
+  exit 0
+fi
+
 pass_patch=$(gh pr diff "$pr" --repo "$repo" | git patch-id --verbatim | awk 'NF { print $1; exit }')
 {
   if [ -n "$pass_patch" ]; then
