@@ -1,0 +1,1 @@
+- guard-bash: a quoted text sink heredoc (`cat > f <<'EOF'`, `git commit -F -`, `gh ... --body-file -`) after plain `;` steps or a literal `X=value` step is now read as data, as it already was after `&&` steps; `shasum` and `sha256sum` may read the approval file. The leading steps are still checked, and every write to the approval file stays denied (#1799).

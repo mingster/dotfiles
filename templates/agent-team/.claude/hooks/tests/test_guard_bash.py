@@ -962,6 +962,68 @@ class ProjectConfigRules(GuardTest):
         self.assertIsNone(self.edit(os.path.join(self.home, ".config", "elsewhere", "notes")))
 
 
+class TextSinkStepsAndHashViewers(GuardTest):
+    """#1799: a quoted text sink heredoc after `;` or literal `X=value` steps is data; shasum reads the approval file."""
+    CONFIG = {
+        "approval_namespace": "sample",
+        "secrets_dir": "fileServer/secrets",
+        "production_branches": ["production"],
+        "promote_scripts": ["promote-production.sh"],
+    }
+    APPROVE_BODY = "Needs bin/owner-approve.sh promote"
+    PROMOTE_BODY = "Then run bin/promote-production.sh 0123456789abcdef0123456789abcdef01234567"
+
+    def setUp(self):
+        super().setUp()
+        self.approval_dir = os.path.join(self.home, ".config", "sample")
+        os.makedirs(self.approval_dir)
+        self.approval = os.path.join(self.approval_dir, "approval.json")
+        self.use_config(self.CONFIG)
+
+    use_config = ProjectConfigRules.use_config
+
+    def test_heredoc_after_semicolon_or_literal_assignment_is_data(self):
+        for command in (f"cd /tmp; cat > /tmp/m.md <<'E'\n{self.APPROVE_BODY}\nE",
+                        f"X=1; cat > /tmp/m.md <<'E'\n{self.APPROVE_BODY}\nE",
+                        f"cd /tmp; cat > brief.md <<'EOF'\n{self.PROMOTE_BODY}\nEOF",
+                        "X=1; cat > /tmp/b.md <<'E'\nnever read $D under fileServer/secrets\nE"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_hash_tools_read_the_approval_file(self):
+        for path in (self.approval, "~/.config/sample/approval.json"):
+            for command in (f"shasum -a 256 {path}", f"sha256sum {path}"):
+                with self.subTest(command=command):
+                    self.assertAllowed(command)
+
+    def test_scripts_in_command_position_still_denied(self):
+        for script in ("bin/owner-approve.sh promote", "bin/promote-production.sh 0123456789abcdef"):
+            for command in (script, f"cd /tmp; {script}", f"cd /tmp && {script}", f"bash -c '{script}'"):
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+
+    def test_non_literal_step_or_shell_consumer_still_denied(self):
+        for body in (self.APPROVE_BODY, self.PROMOTE_BODY):
+            for command in (f"bash <<'E'\n{body}\nE", f"sh <<'E'\n{body}\nE",
+                            f"cd /tmp; bash <<'E'\n{body}\nE", f"X=1; sh <<'E'\n{body}\nE"):
+                with self.subTest(command=command):
+                    self.assertDenied(command)
+        # The promote script named in a python3 heredoc or after `X=$(id)` is allowed on main too (#1799 residual).
+        for command in (f"X=$(id); cat > /tmp/m.md <<'E'\n{self.APPROVE_BODY}\nE",
+                        f"python3 <<'E'\n{self.APPROVE_BODY}\nE", f"X=1; python3 <<'E'\n{self.APPROVE_BODY}\nE"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_writes_to_the_approval_file_still_denied(self):
+        a = self.approval
+        for command in (f"echo x > {a}", f"cp x {a}", f"mv x {a}", f"echo x | tee {a}", f"rm {a}",
+                        f"python3 -c \"open('{a}', 'w')\"",
+                        f"shasum -a 256 {a} > {a}", f"sha256sum {a} > {a}",
+                        "shasum -a 256 ~/.config/sample/approval.json > ~/.config/sample/approval.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+
 class PromoteHostSteps(GuardTest):
     """A promote approval covers read-only host inspection and Prisma client regeneration for its release."""
     OTHER = "fedcba9876543210fedcba9876543210fedcba98"
