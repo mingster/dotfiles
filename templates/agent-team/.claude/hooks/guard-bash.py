@@ -4208,26 +4208,50 @@ RUN_LEAD = {"if", "while", "until", "!", "{", "}", "then", "do", "else", "elif",
 RUN_NOT_A_PROGRAM = {"[", "[[", "test", "case", "esac", "for", "select", "function", "in", "done", "fi"}
 SHELL_OPTION_VALUE = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
 HEREDOC_RUNNERS = SHELLS | {"source", ".", "eval", "xargs"}
-# `((...))` and `$((...))` with no parens, quotes or backticks inside are arithmetic, never a command.
-ARITHMETIC = re.compile(r"\$?\(\([A-Za-z0-9_\s$+*/%<>=!&|^~?:,;#.\[\]{}-]*\)\)")
-CASE_PATTERN = re.compile(r"(\bin|;;&?|;&)[ \t]*\(?[^;&()\n`]+\)")
+# `$((...))` with no parens, quotes or backticks inside is arithmetic, and so is `((...))` in command place in
+# the top shell; under `sh -c` a dash reads `((` as two subshells, so there only `$((` counts.
+ARITHMETIC_BODY = r"\(\([A-Za-z0-9_\s$+*/%<>=!&|^~?:,;#.\[\]{}-]*\)\)"
+ARITHMETIC = re.compile(r"\$" + ARITHMETIC_BODY + r"|(?:^|(?<=[;&|\n{(!])"
+                        + "".join(r"|(?<=\b%s)" % w for w in ("then", "while", "until", "do", "if", "for", "else"))
+                        + r")[ \t]*" + ARITHMETIC_BODY)
+ARITHMETIC_EXPANSION = re.compile(r"\$" + ARITHMETIC_BODY)
+# A case pattern follows `case WORD in`, `;;`, `;;&` or `;&`, never a bare `in` (#1887 review).
+CASE_PATTERN = re.compile(r"((?<![\w\"'$-])case[ \t]+[^\s;&|()]+[ \t\n]+in\b|;;&?|;&)[ \t\n]*\(?[^;&()\n`]+\)")
+RUN_WRAPPERS = WRAPPERS | {"env", "timeout", "xargs"}
+INPUT_REDIRECT = re.compile(r"^[0-9]*<(?![<&>(])")
+# Simple `${...}`, `$((...))` and `$'...'` on one line, read as a plain word so ShellLines can find heredocs.
+LINE_EXPANSION = re.compile(r"\$\{[^{}'\"`$\n]*\}|\$\(\([^()'\"`\n]*\)\)|\$'(?:[^'\\\n]|\\.)*'")
+
+
+class _DataShellLines(ShellLines):
+    """ShellLines that also records, per pending heredoc, whether its delimiter was quoted (a quoted body
+    expands nothing)."""
+
+    def __init__(self):
+        super().__init__()
+        self.quoted = []
+
+    def _delimiter(self, text, j):
+        delim, end = super()._delimiter(text, j)
+        self.quoted.append(any(c in text[j:end] for c in "'\"\\"))
+        return delim, end
 
 
 def _strip_data_heredocs(command):
     """`command` with each heredoc body that feeds no shell, eval, source or xargs replaced by the
     substitutions in it, which still run. An unsure or unclosed heredoc keeps the whole text (fail closed)."""
     lines = command.splitlines(keepends=True)
-    shell, out, i = ShellLines(), [], 0
+    shell, out, i = _DataShellLines(), [], 0
     while i < len(lines):
         line = lines[i]
         i += 1
-        shell.scan(line)
+        shell.scan(LINE_EXPANSION.sub("x", line))
         if shell.unsure:
             return command
         out.append(line)
         if shell.pending and not shell.quote and not shell.continued:
             runs = any(os.path.basename(w.strip("'\"")) in HEREDOC_RUNNERS for w in re.split(r"[\s;&|()<>]+", line))
-            for dash, delim in shell.pending:
+            for (dash, delim), quoted in zip(shell.pending, shell.quoted[-len(shell.pending):]):
                 body = []
                 while i < len(lines):
                     text = lines[i]
@@ -4237,17 +4261,51 @@ def _strip_data_heredocs(command):
                     body.append(text)
                 else:
                     return command
-                out.extend(body if runs else [sub + "\n" for sub in substitutions("".join(body))])
+                if runs:
+                    out.extend(body)
+                elif not quoted:
+                    out.extend(sub + "\n" for sub in substitutions("".join(body)))
             shell.pending = []
     return "".join(out)
+
+
+def _wrapper_tails(tokens, depth):
+    """Check every word after a wrapper's options that an option value may have pushed into program place:
+    `sudo -u root $C` and `stdbuf -o L $C` run `$C` (#1887 review)."""
+    j = 0
+    while j < len(tokens) and ENV_ASSIGN.match(tokens[j]):
+        j += 1
+    if j >= len(tokens) or os.path.basename(tokens[j]) not in RUN_WRAPPERS:
+        return
+    start = j + 1
+    k = start
+    while k < len(tokens) and (tokens[k].startswith("-") or (k > start and tokens[k - 1].startswith("-"))
+                               or ENV_ASSIGN.match(tokens[k])):
+        if os.path.basename(tokens[j]) == "env" and tokens[k] in {"-S", "--split-string"} and k + 1 < len(tokens):
+            check_blocked_script_runs(tokens[k + 1], depth + 1)
+        k += 1
+    for c in range(start + 1, min(k + 1, len(tokens))):
+        if tokens[c - 1].startswith("-") or tokens[c - 2].startswith("-"):
+            _check_run_words(tokens[c:], depth)
 
 
 def _check_run_words(tokens, depth):
     i = 0
     while i < len(tokens) and (tokens[i] in RUN_LEAD or ASSIGN_WORD.match(tokens[i])
                                or REDIRECT_WORD.match(tokens[i])):
+        # `X=$(cmd $F)` is cut at the `)` by segments(); substitutions() reads the inside.
+        if ASSIGN_WORD.match(tokens[i]) and (tokens[i].count("$(") > tokens[i].count(")")
+                                             or tokens[i].count("`") % 2):
+            return
         i += 2 if REDIRECT_WORD.fullmatch(tokens[i]) else 1
-    prog, args = program_and_args(tokens[i:])
+    tokens = tokens[i:]
+    if len(tokens) > 1 and os.path.basename(tokens[0]) == "command" and tokens[1] in {"-v", "-V"}:
+        return  # a lookup, it runs nothing
+    if tokens and tokens[0].startswith("("):  # `((cmd))` under `sh -c` is two subshells
+        tokens = [tokens[0].lstrip("(")] + tokens[1:] if tokens[0].lstrip("(") else tokens[1:]
+        return _check_run_words(tokens, depth)
+    _wrapper_tails(tokens, depth)
+    prog, args = program_and_args(tokens)
     if not prog or prog in RUN_NOT_A_PROGRAM:
         return
     if re.fullmatch(r"[0-9.]+[smhd]?", prog) and args:  # the value of `nice -n 5` or `timeout -k 5 10`
@@ -4256,9 +4314,17 @@ def _check_run_words(tokens, depth):
     if BUILT_WORD.search(prog) or base == "eval":
         deny(RUN_GUARD_DENY)
     if base in SHELLS or base in {"source", "."}:
+        for j, word in enumerate(tokens):  # `bash < bin/$S` runs the file it reads
+            if INPUT_REDIRECT.match(word):
+                target = word[INPUT_REDIRECT.match(word).end():] or (tokens[j + 1] if j + 1 < len(tokens) else "")
+                if BUILT_WORD.search(target):
+                    deny(RUN_GUARD_DENY)
         j = 0
         while j < len(args):
             arg = args[j]
+            if REDIRECT_WORD.match(arg):
+                j += 2 if REDIRECT_WORD.fullmatch(arg) else 1
+                continue
             if base in SHELLS and re.match(r"^-[A-Za-z]*c[A-Za-z]*$", arg):
                 if j + 1 < len(args):
                     check_blocked_script_runs(args[j + 1], depth + 1)
@@ -4292,7 +4358,7 @@ def check_blocked_script_runs(command, depth=0):
             deny(RUN_GUARD_DENY)
         stripped = text
     for version in {text, stripped}:
-        version = ARITHMETIC.sub(" 0 ", join_continuations(version))
+        version = (ARITHMETIC_EXPANSION if depth else ARITHMETIC).sub(" 0 ", join_continuations(version))
         if re.search(r"\bcase\b", version) and re.search(r"\besac\b", version):
             version = CASE_PATTERN.sub(lambda m: m.group(1) + "\n", version)
         for part in [version, *substitutions(version)]:

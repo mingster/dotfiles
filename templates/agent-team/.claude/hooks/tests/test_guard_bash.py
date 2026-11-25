@@ -2115,6 +2115,27 @@ class BlockedScriptsOnlyRunGuard(ProjectConfigGuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command, BlockedScriptRunGuard.RUN)
 
+    def test_review_bypasses_denied(self):
+        # Cold review: a stray `case` word, `((` inside `sh -c`, wrapper option values, a script on stdin, and
+        # a command in `env -S`.
+        for command in ("A=deploy-; B=raw.sh; : case esac; (in=1 bash bin/$A$B)",
+                        "export A=deploy- B=raw.sh; sh -c '((bash bin/$A$B))'",
+                        "sudo -u root $C", "exec -a x $C", "stdbuf -o L $C", "nice -n 5 -- $C",
+                        "timeout -k 5 10 $C", "env -u X $C", "env -S '$C x'",
+                        "A=deploy-; B=raw.sh; bash < bin/$A$B", "A=deploy-; B=raw.sh; sh <bin/$A$B"):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_review_false_refusals_allowed(self):
+        for command in ('B=$(basename "$f")', "X=$(cat $F)", "out=$(python3 $SP/p.py)", "X=`cat $F`",
+                        "git commit -m \"$(cat <<'EOF'\nrefuse `eval` and `$C` here\nEOF\n)\"",
+                        "echo \"${X}\"; python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "echo $((1+1)); python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "echo $'a'; python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "case $x in a) echo a;; esac; echo in $X", "command -v $X", "sudo -u root ls $X"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
     def test_case_and_find_allowed(self):
         for command in ("case $x in a) echo a;; *) echo b;; esac", "find . -name '*.py' -exec grep -l x {} +",
                         "find . -name '*.sh' -print"):
