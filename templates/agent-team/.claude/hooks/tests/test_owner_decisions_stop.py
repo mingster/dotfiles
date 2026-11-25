@@ -16,9 +16,9 @@ class OwnerDecisionsStopTest(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="ods-")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.script = os.path.join(self.dir, "owner-decisions.sh")
-        # Stub: issue 7 has a decision (exit 0), 8 has none (exit 1), 9 fails (exit 2). Logs "<repo> <n>".
+        # Stub: issue 44 only prints a decision recorded on #7 (a referenced issue). Issue 7 has a decision (exit 0), 8 has none (exit 1), 9 fails (exit 2). Logs "<repo> <n>".
         with open(self.script, "w") as fh:
-            fh.write('#!/usr/bin/env bash\necho "$1 $2" >>"$(dirname "$0")/calls"\ncase "$2" in 7|42) echo "#7: Owner decision: A"; exit 0;; 9) exit 2;; *) exit 1;; esac\n')
+            fh.write('#!/usr/bin/env bash\necho "$1 $2" >>"$(dirname "$0")/calls"\ncase "$2" in 7|42) echo "#$2: Owner decision: A"; exit 0;; 44) echo "#7: Owner decision: A"; exit 0;; 9) exit 2;; *) exit 1;; esac\n')
         os.chmod(self.script, os.stat(self.script).st_mode | stat.S_IXUSR)
 
     def transcript(self, reply, first_user="hello"):
@@ -59,6 +59,21 @@ class OwnerDecisionsStopTest(unittest.TestCase):
     def test_one_answered_among_several_blocks(self):
         self.assertIn("#7", self.run_hook("#8 and #7: which one?")["reason"])
 
+    def test_progress_report_on_a_decided_issue_passes(self):
+        self.assertIsNone(self.run_hook("PR merged for #7.\nWorker answered on #7.\nAnything else?"))
+
+    def test_question_on_another_line_than_the_issue_passes(self):
+        self.assertIsNone(self.run_hook("Merged #7.\nWhich day works for the call?"))
+
+    def test_needs_you_wording_about_a_decided_issue_blocks(self):
+        self.assertEqual(self.run_hook("#7 needs you.")["decision"], "block")
+
+    def test_a_or_b_choice_about_a_decided_issue_blocks(self):
+        self.assertEqual(self.run_hook("#7: take A/B")["decision"], "block")
+
+    def test_decision_only_on_a_referenced_issue_passes(self):
+        self.assertIsNone(self.run_hook("Which for #44?"))
+
     def test_statement_without_a_question_passes(self):
         self.assertIsNone(self.run_hook("Applied the decision on #7."))
 
@@ -97,7 +112,7 @@ class OwnerDecisionsStopTest(unittest.TestCase):
         path = self.write_records([self.user("hello"), self.assistant("Re #7:"),
                                    {"type": "user", "toolUseResult": {}, "message": {"role": "user", "content": [
                                        {"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}},
-                                   self.assistant("A or B?")])
+                                   self.assistant("#7: A or B?")])
         self.assertEqual(self.run_hook("", path=path)["decision"], "block")
 
     def test_turn_without_assistant_text_leaves_no_stale_question(self):

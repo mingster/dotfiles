@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Stop hook, coordinator only: do not ask the owner what the owner already decided (#1283).
 
-When the last assistant reply asks something ("?") and names issues (#N or owner/repo#N), run
-`script/owner-decisions.sh <repo> <N>` for each. If one has an "Owner decision" comment, block the
-reply: "already answered on #N, apply it". Dispatched workers (their first message is the Orca task
+When the last assistant reply has a line that asks the owner something about an issue (#N or
+owner/repo#N on a line with a "?", an "A or B" choice, or "needs you" wording), run
+`script/owner-decisions.sh <repo> <N>`. If the decision is recorded on that issue itself (a "#N:" or
+"asks log:" line, not one printed from an issue it links), block the reply: "already answered on #N,
+apply it" (#1827: progress reports and referenced issues' decisions pass). Dispatched workers (their first message is the Orca task
 preamble) and a second pass after a block (stop_hook_active) are left alone. Anything unexpected,
 including a script or gh failure, exits 0: this is a seatbelt, not a gate.
 
@@ -17,6 +19,24 @@ import sys
 
 MAX_ISSUES = 5
 REF = re.compile(r"(?<![\w/])([\w.-]+/[\w.-]+)?#(\d+)")
+ASK = re.compile(r"[?？]|\bA\s*(?:/|or)\s*B\b|\bneeds? (?:you|the owner|owner)\b", re.I)
+LINE_START = re.compile(r"^(?:#\d+: |asks log: )")
+
+
+def asked_refs(reply):
+    """Refs that share a line with a question to the owner."""
+    return [m for line in reply.splitlines() if ASK.search(line) for m in REF.findall(line)]
+
+
+def own_decisions(out, n):
+    """Keep only the decision blocks the script printed for issue n itself (and the asks log)."""
+    keep, on = [], False
+    for line in out.splitlines():
+        if LINE_START.match(line):
+            on = line.startswith("asks log: ") or line.startswith(f"#{n}: ")
+        if on:
+            keep.append(line)
+    return "\n".join(keep)
 
 
 def text_of(content):
@@ -75,9 +95,9 @@ def main():
         return
     first_user, reply = read_transcript(payload.get("transcript_path") or "")
     reply = payload.get("last_assistant_message") or reply
-    if "dispatched worker" in first_user or not re.search(r"[?？]", reply):
+    if "dispatched worker" in first_user:
         return
-    refs = REF.findall(reply)
+    refs = asked_refs(reply)
     script = os.environ.get("OWNER_DECISIONS_SCRIPT") or os.path.expanduser("~/dotfiles/script/owner-decisions.sh")
     if not refs or not os.path.isfile(script):
         return
@@ -88,8 +108,9 @@ def main():
         if not r_repo:
             continue
         r = subprocess.run(["bash", script, r_repo, n], capture_output=True, text=True, timeout=60)
-        if r.returncode == 0:
-            answered.append((n, r.stdout.strip()))
+        own = own_decisions(r.stdout, n) if r.returncode == 0 else ""
+        if own:
+            answered.append((n, own))
     if answered:
         nums = ", ".join(f"#{n}" for n, _ in answered)
         detail = "\n".join(d for _, d in answered)

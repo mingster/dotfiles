@@ -1,0 +1,1 @@
+The owner-decisions Stop hook now fires only on a line that asks the owner about an issue whose decision is recorded on that issue itself, so progress reports and referenced-issue decisions no longer block (#1827).
