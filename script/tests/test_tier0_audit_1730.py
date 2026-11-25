@@ -16,6 +16,9 @@ spec.loader.exec_module(fw)
 aspec = importlib.util.spec_from_file_location('tier0_audit', HERE.parent / 'tier0-audit.py')
 ta = importlib.util.module_from_spec(aspec)
 aspec.loader.exec_module(ta)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', HERE / 'fleet_watch_test_env.py')
+_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(_env)
 
 REPO = 'o/r'
 NOW = 1_700_000_000.0  # 2023-11-14

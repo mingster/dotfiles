@@ -1,0 +1,1 @@
+fleet-watch tests: the four test files that load fleet-watch.py without logging now isolate FLEET_WATCH_LOG_PATH too, and the log isolation check has no exemption list, so no test line reaches ~/.orca/logs/fleet-watch.log (Refs #1864).
