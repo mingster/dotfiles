@@ -2459,9 +2459,10 @@ def start_delivered_refusal(reason):
 
 
 def start_gate_refusal(reason):
-    """True when worker-startup refused on a gate that says nothing about the brief (#1170 follow-up)."""
+    """True when worker-startup refused on a gate that says nothing about the brief (#1170 follow-up, #1839)."""
     text = str(reason or '').lower()
-    return ('is ready and not started' in text or 'overlaps other work in flight' in text)
+    return ('is ready and not started' in text or 'overlaps other work in flight' in text
+            or 'already has live ' in text or 'cannot read the live task list' in text)
 
 
 def count_refused(token):

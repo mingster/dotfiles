@@ -1113,5 +1113,56 @@ class IssueScanPass(unittest.TestCase):
         self.assertTrue(fw.rework_needed_at_head(row, {}, 'owner/dotfiles'))
 
 
+class LiveDuplicateRefusalDefers(unittest.TestCase):
+    """worker-startup refuse_live_duplicate exits 2 (#1839). The issue defers and keeps its labels, it is not parked (#1838)."""
+
+    LIVE_DUPLICATE = 'worker-startup: refused: %s already has live builder worker d1' % REPO
+    UNREADABLE_LIST = 'worker-startup: refused: cannot read the live task list of run_x; pass --allow-overlap REASON on a hand start'
+
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+
+    def _scan(self, reason):
+        edits = []
+        starts = []
+
+        def start_worker(command):
+            starts.append(command)
+            return fw.BabysitStartResult(2, reason)
+
+        notices, log = fw.issue_scan_pass(
+            IssueScanPass.CONFIG, {'issue_scan_backlog_sweep_at': NOW}, NOW, [],
+            list_issues=lambda repo: [issue(1, ['ready-for-agent'], IssueScanPass.VALID_BRIEF)] if repo == REPO else [],
+            pr_fetch=lambda _repo: [],
+            gate_check=lambda _cfg: True,
+            admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
+            start_worker=start_worker,
+            inventory_ok=True,
+            persist_state=None,
+            start_detached=lambda *_a, **_k: 0,
+            act=lambda argv: edits.append(argv),
+        )
+        return notices, log, starts, edits
+
+    def test_start_gate_refusal_matches_both_live_duplicate_messages(self):
+        self.assertTrue(fw.start_gate_refusal(self.LIVE_DUPLICATE))
+        self.assertTrue(fw.start_gate_refusal(self.UNREADABLE_LIST))
+
+    def test_start_gate_refusal_still_rejects_brief_and_two_fail_refusals(self):
+        self.assertFalse(fw.start_gate_refusal('brief is broken'))
+        self.assertFalse(fw.start_gate_refusal(
+            'worker-startup: refused: %s has two FAIL reviews; fix it first' % REPO))
+
+    def test_live_duplicate_defers_without_needs_triage(self):
+        for reason in (self.LIVE_DUPLICATE, self.UNREADABLE_LIST):
+            with self.subTest(reason=reason):
+                _, log, starts, edits = self._scan(reason)
+                self.assertEqual(len(starts), 1, starts)
+                self.assertTrue(any(str(bit).startswith('issue_start_deferred=1') for bit in log), log)
+                self.assertFalse(any(str(bit).startswith('issue_start_fail') for bit in log), log)
+                self.assertFalse([e for e in edits if 'needs-triage' in e], edits)
+                self.assertFalse([e for e in edits if 'ready-for-agent' in e], edits)
+
+
 if __name__ == '__main__':
     unittest.main()
