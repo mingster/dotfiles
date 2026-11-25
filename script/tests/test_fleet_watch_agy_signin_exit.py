@@ -19,8 +19,8 @@ from test_fleet_watch_scan import pr as plain_pr  # noqa: E402
 from test_fleet_watch_triage import NOW, pick as triage_pick  # noqa: E402
 
 ENV = fw.AGY_SIGNIN_ENV
-HELD_NOTIFY = 'agy-signin: host=mini6 notify'
-HELD_KNOWN = 'agy-signin: host=mini6 known'
+HELD_NOTIFY = 'agy-signin: host=host-a notify'
+HELD_KNOWN = 'agy-signin: host=host-a known'
 
 
 def held(reason):
@@ -74,8 +74,8 @@ class IssueScanHoldsExit10(unittest.TestCase):
         notices, _bits, _s, _a = run_issue_scan(lambda _c: held(HELD_NOTIFY))
         found = urgent(notices)
         self.assertEqual(1, len(found))
-        self.assertIn('host=mini6', found[0])
-        self.assertIn('sign in to agy on mini6', found[0])
+        self.assertIn('host=host-a', found[0])
+        self.assertIn('sign in to agy on host-a', found[0])
         notices, _bits, _s, _a = run_issue_scan(lambda _c: held(HELD_KNOWN))
         self.assertEqual([], urgent(notices))
 
@@ -152,10 +152,10 @@ class OnlyIssueStartsCarryTheVariable(unittest.TestCase):
 
 
 class StoppedRowFixtures(unittest.TestCase):
-    """The rows Orca lists after worker-stop and worker-release, captured on mini6 (Orca 1.4.274): one local, one remote
-    on blueDevil. Neither is live and neither holds a seat, so classify_worker and worker_row_is_live need no change."""
+    """The rows Orca lists after worker-stop and worker-release, captured on host-a (Orca 1.4.274): one local, one remote
+    on host-b. Neither is live and neither holds a seat, so classify_worker and worker_row_is_live need no change."""
 
-    CONFIG = {'host_caps': {'mini6': 3, 'blueDevil': 5}, 'local_host': 'mini6', 'runs': []}
+    CONFIG = {'host_caps': {'host-a': 3, 'host-b': 5}, 'local_host': 'host-a', 'runs': []}
 
     def rows(self):
         for name in ('local', 'remote'):
@@ -172,7 +172,7 @@ class StoppedRowFixtures(unittest.TestCase):
                 occupies, info, unknown = fw.classify_worker(row)
                 self.assertFalse(occupies, info)
                 self.assertFalse(unknown)
-                for host in ('mini6', 'blueDevil'):
+                for host in ('host-a', 'host-b'):
                     receipt = fw.admit(host, self.CONFIG, workers=[row])
                     self.assertEqual(0, receipt.get('occupied'), receipt)
                 report = fw.fleet_seat_report(self.CONFIG, workers=[row])

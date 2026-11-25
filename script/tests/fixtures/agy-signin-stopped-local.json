@@ -1,5 +1,5 @@
 {
- "captured": "2026-11-25 on mini6 (Orca 1.4.274): antigravity worker started, worker-stop, worker-release (#1832)",
+ "captured": "2026-11-25 on host-a (Orca 1.4.274): antigravity worker started, worker-stop, worker-release (#1832)",
  "worker_show_before_stop": {
   "dispatchId": "ctx_79c6a2088359",
   "taskId": "task_abe3b7dbaba9",
@@ -11,7 +11,7 @@
   "lastActivity": "just now",
   "terminal": "term_7fd8b957-1dbe-452e-af91-c5e286821c88",
   "terminalState": "active",
-  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2"
+  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2"
  },
  "worker_show_after_stop": {
   "dispatchId": "ctx_79c6a2088359",
@@ -22,7 +22,7 @@
   "liveness": "exited",
   "terminal": "term_7fd8b957-1dbe-452e-af91-c5e286821c88",
   "terminalState": "released",
-  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2",
+  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2",
   "attention": [
    "failure"
   ],
@@ -37,7 +37,7 @@
   "liveness": "exited",
   "terminal": "term_7fd8b957-1dbe-452e-af91-c5e286821c88",
   "terminalState": "released",
-  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2",
+  "workspace": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2",
   "attention": [
    "failure"
   ],
@@ -58,9 +58,9 @@
    "releaseState": "released",
    "retainedReason": null,
    "terminalHandle": "term_7fd8b957-1dbe-452e-af91-c5e286821c88",
-   "worktreeId": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2",
+   "worktreeId": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2",
    "endpointId": "e72d7723-2ee7-4d42-ae28-93b876ee01ea",
-   "endpointIncarnation": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2@@6a46fe47:9a584ccd-c915-4fb3-835f-2c11cfa5d00d",
+   "endpointIncarnation": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2@@6a46fe47:9a584ccd-c915-4fb3-835f-2c11cfa5d00d",
    "originDispatchId": "ctx_79c6a2088359",
    "ownerDispatchId": "ctx_79c6a2088359",
    "releaseRequestedAt": "2026-11-25 03:39:24",
@@ -89,7 +89,7 @@
     "id": "local"
    },
    "workspace": {
-    "id": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/Users/mtsai/orca/workspaces/dotfiles/issue-1832-2",
+    "id": "7d15a130-3db7-4b55-a242-6ee8fb7df7cb::/home/user/orca/workspaces/dotfiles/issue-1832-2",
     "kind": "folder_or_worktree"
    },
    "stage": {
