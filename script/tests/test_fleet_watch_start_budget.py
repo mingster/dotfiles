@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -34,8 +35,8 @@ def spent():
 def norm(value):
     """State without its empty containers: a pass creates empty maps with setdefault, which is not a state change."""
     if isinstance(value, dict):
-        # A status notice marker and the short pass count (#1876) are not starts.
-        out = {k: norm(v) for k, v in value.items() if k not in ('work_order_no_work_day', 'work_order_short_passes')}
+        # A status notice marker, the short pass count (#1876) and the last ready count (#1904) are not starts.
+        out = {k: norm(v) for k, v in value.items() if k not in ('work_order_no_work_day', 'work_order_short_passes', 'work_order_last_supply')}
         return {k: v for k, v in out.items() if v not in ({}, [], None)}
     if isinstance(value, list):
         return [norm(v) for v in value]
@@ -327,6 +328,140 @@ class StartBudget(unittest.TestCase):
             with self.subTest(scenario=scenario.__name__):
                 self.assertEqual(scenario(True)[0], [])
         self.assertEqual(len(one_shot_verifier(True)[0]), 1)
+
+
+# #1904: the forced supply runs at the start of the pass, free counts only working seats, and an empty supply run fails.
+SUPPLY_ORDER = {'min_active': 3, 'target_workers': 10}
+
+
+def scan_supply(state, workers=(), first=False, order=None):
+    """One forced supply candidate pass: no ready issue, five open issues. `first` runs main()'s early supply step."""
+    config = park_config('/work/app')
+    config['work_order'] = dict(order or SUPPLY_ORDER)
+    starts = []
+    kwargs = dict(
+        gate_check=lambda _c: True, admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
+        start_worker=lambda cmd: (starts.append(cmd), 0)[1], act=lambda _c: 0, pick_fn=triage_pick,
+        count_open=lambda _r: 5, list_blocked=lambda _r: [], ref_state=lambda *_a: None, list_claimed=lambda _r: [],
+    )
+    with patch.object(fw, 'rpc', side_effect=fake_rpc):
+        if first:
+            bits = fw.issue_scan_supply_first(config, state, TRIAGE_NOW, list(workers), **kwargs)
+        else:
+            _n, bits = fw.issue_scan_pass(
+                config, state, TRIAGE_NOW, list(workers), pr_fetch=lambda _r: [], list_issues=lambda _r: [],
+                repo_id_lookup=lambda _h, _r: 'repo-id', list_backlog=lambda _r: 3, **kwargs)
+    return [c for c in starts if 'supply-architect-pm' in c], bits
+
+
+def short_state(passes=2):
+    # A supply worker started 10 minutes ago holds the interval; `passes` short passes already counted.
+    return {'issue_scan_backlog_sweep_at': TRIAGE_NOW, 'work_order_supply_at': TRIAGE_NOW - 600,
+            'work_order_short_passes': passes}
+
+
+def live_rows(n):
+    return [{'dispatchId': 'd%d' % i, 'dispatchStatus': 'ready', 'terminalState': 'active', '_task_title': '#%d|fullstack-dev' % (i + 1),
+             'projection': {'liveness': {'verdict': 'unverifiable'}, 'host': {'id': 'local'}}} for i in range(n)]
+
+
+class ForcedSupply(unittest.TestCase):
+    def tearDown(self):
+        fw.end_pass_clock()
+
+    def test_three_short_passes_on_a_slow_pass_still_start_the_forced_supply(self):
+        state = short_state(0)
+        for _ in range(2):
+            self.assertEqual(scan_supply(state)[0], [])
+        self.assertEqual(state['work_order_short_passes'], 2)
+        fw.begin_pass_clock(time.time())  # main() runs the early step before babysit and the per issue work
+        first, first_bits = scan_supply(state, first=True)
+        fw.begin_pass_clock(time.time() - 230)  # then the rest of the pass runs slow
+        later, bits = scan_supply(state)
+        self.assertEqual(len(first), 1, first_bits)
+        self.assertIn('supply_force=3', first_bits)
+        self.assertIn('unblock_cleared=0', first_bits)
+        self.assertEqual(later, [], bits)  # one supply per pass
+        self.assertFalse([b for b in first_bits + bits if b.startswith('supply_budget')], first_bits + bits)
+        self.assertEqual(state['work_order_short_passes'], 0)
+
+    def test_the_slow_pass_alone_still_refuses_on_the_pass_end(self):
+        # The refusal #1904 saw: the late supply call has no time left. The early step is what avoids it.
+        fw.begin_pass_clock(time.time() - 230)
+        supply, bits = scan_supply(short_state())
+        self.assertEqual(supply, [])
+        self.assertTrue([b for b in bits if b.startswith('supply_budget')], bits)
+
+    def test_the_early_step_does_nothing_before_the_forced_pass(self):
+        state = short_state(0)
+        self.assertEqual(scan_supply(state, first=True), ([], []))
+        self.assertEqual(state['work_order_short_passes'], 0)
+
+    def test_main_runs_the_early_supply_before_babysit(self):
+        tree = ast.parse(SCRIPT.read_text(encoding='utf-8'))
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_main')
+        lines = {}
+        for node in ast.walk(main):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                lines.setdefault(node.func.id, node.lineno)
+        self.assertLess(lines['idle_seat_pass'], lines['issue_scan_supply_first'])
+        self.assertLess(lines['issue_scan_supply_first'], lines['babysit_pass'])
+
+    def test_finished_or_idle_workers_do_not_count_toward_free(self):
+        order = {'min_active': 3, 'target_workers': 3}
+        state = short_state(0)
+        _s, bits = scan_supply(state, workers=live_rows(3), order=order)
+        self.assertIn('supply_enough=0:0', bits)  # three working seats fill the target
+        state = dict(short_state(0), idle_seat={'d0': {'woke_at': TRIAGE_NOW}, 'd1': {'woke_at': TRIAGE_NOW, 'stopped': True}})
+        _s, bits = scan_supply(state, workers=live_rows(3), order=order)
+        self.assertFalse([b for b in bits if b.startswith('supply_enough')], bits)
+        self.assertEqual(state['work_order_short_passes'], 1)
+
+    def test_the_brief_asks_for_one_ready_issue_per_free_seat(self):
+        state = {'issue_scan_backlog_sweep_at': TRIAGE_NOW}
+        supply, _bits = scan_supply(state, workers=live_rows(2))
+        text = Path(supply[0][supply[0].index('--spec') + 1]).read_text(encoding='utf-8')
+        self.assertIn('Free seats: 8', text)
+        self.assertIn('supply ready=', text)
+
+
+SUPPLY_ROW = {'dispatchId': 'ctx_supply', 'dispatchStatus': 'completed', '_task_title': '#0|architect-pm|supply'}
+
+
+def done(subject, dispatch='ctx_supply', mid='m1'):
+    return {'id': mid, 'type': 'worker_done', 'subject': subject, 'payload': {'dispatchId': dispatch}}
+
+
+class SupplyResult(unittest.TestCase):
+    def notices(self, messages, state=None, workers=(SUPPLY_ROW,)):
+        # A state that already ran a pass: the first pass only records the inbox.
+        return fw.supply_done_notices(messages, list(workers), {'supply_done_seen': []} if state is None else state)
+
+    def test_a_supply_run_with_no_ready_issue_and_no_reasons_is_a_failure_in_the_digest(self):
+        for subject in ('supply ready=0 reasons=0', 'all done'):
+            with self.subTest(subject=subject):
+                notices = self.notices([done(subject)])
+                self.assertEqual(len(notices), 1, notices)
+                self.assertIn('supply run failed', notices[0])
+                self.assertIn('ctx_supply', notices[0])
+
+    def test_ready_issues_or_listed_reasons_are_no_failure(self):
+        for subject in ('supply ready=2 reasons=0', 'supply ready=0 reasons=4'):
+            with self.subTest(subject=subject):
+                self.assertEqual(self.notices([done(subject)]), [])
+
+    def test_first_pass_records_old_runs_without_reporting_them(self):
+        state = {}
+        self.assertEqual(self.notices([done('nothing')], state), [])
+        self.assertEqual(len(self.notices([done('nothing'), done('nothing', mid='m2')], state)), 1)
+
+    def test_reported_once_and_only_for_supply_workers(self):
+        state = {'supply_done_seen': []}
+        self.assertEqual(len(self.notices([done('nothing')], state)), 1)
+        self.assertEqual(self.notices([done('nothing')], state), [])
+        builder = {'dispatchId': 'ctx_b', '_task_title': '#7|fullstack-dev'}
+        self.assertEqual(self.notices([done('nothing', dispatch='ctx_b', mid='m2')], workers=(builder,)), [])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -3285,13 +3285,15 @@ def set_board_status(rpc_call, worker, status, environment=''):
     return True
 
 
-def stop_and_release_stalled(rpc_call, worker, dispatch_id, environment=''):
+def stop_and_release_stalled(rpc_call, worker, dispatch_id, environment='', stop_on_host=False):
     """The one place the stall ladder stops and releases a worker and archives its card (#1842).
 
     Returns '' on success, else the stop failure code; nothing is released when the stop fails.
+    `stop_on_host` sends the stop with --environment too, for a remote worker (#1905).
     """
+    on_host = ('--environment', environment) if stop_on_host and environment else ()
     try:
-        rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id)
+        rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id, *on_host)
     except SEND_ERRORS as exc:
         return orchestration_failure_log_code(exc) or 'error'
     # A remote dispatch is released on its host first, then on the coordinator.
@@ -5004,15 +5006,17 @@ _SUPPLY_BRIEF = Path(__file__).resolve().parent.parent / 'docs/agents/supply-wor
 _SUPPLY_TITLE = '#0|architect-pm|supply'
 
 
-def build_supply_command(config, repos, agent, model, claimed=()):
+def build_supply_command(config, repos, agent, model, claimed=(), free=0):
     """One supply worker for all watched repos, started in the first repo that has a local root (#1689).
 
-    `claimed` is (repo, number) for open issues labeled ISSUE_CLAIM_LABEL with no live worker (#1876)."""
+    `claimed` is (repo, number) for open issues labeled ISSUE_CLAIM_LABEL with no live worker (#1876).
+    `free` is the free seats: the brief asks for that many ready issues (#1904)."""
     scan = config['issue_scan']
     root = next((r for r in (_issue_scan_repo_root(config, repo) for repo in repos) if r), None)
     if not root:
         return None
     text = _SUPPLY_BRIEF.read_text(encoding='utf-8') + ''.join('- %s\n' % repo for repo in repos)
+    text += '\nFree seats: %d\n' % free
     if claimed:
         text += '\n## Claimed with no live worker\n\n' + ''.join('- %s#%d\n' % pair for pair in claimed)
     spec_path = _write_issue_scan_spec(_with_preamble(text, 'architect-pm'))
@@ -5027,6 +5031,38 @@ def build_supply_command(config, repos, agent, model, claimed=()):
         '--repo', local_repo_selector(root),
     ]
     return [part for part in command if part]
+
+
+_SUPPLY_DONE_RE = re.compile(r'\bsupply ready=(\d+) reasons=(\d+)\b')
+
+
+def supply_done_notices(messages, workers, state):
+    """A supply worker_done that made no ready issue and gave no reason is a failure in the digest (#1904).
+
+    The brief asks for the subject `supply ready=<n> reasons=<k>`. A missing line counts as nothing made.
+    Each message is reported once; the first pass only records the messages already in the inbox."""
+    titles = {w.get('dispatchId'): str(w.get('_task_title') or w.get('title') or '')
+              for w in workers or [] if isinstance(w, dict)}
+    first = 'supply_done_seen' not in state
+    seen = state.setdefault('supply_done_seen', [])
+    notices = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get('type') != 'worker_done' or not m.get('id') or m['id'] in seen:
+            continue
+        if worker_done_rejected(m):
+            continue
+        payload = _message_payload(m)
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
+        if not titles.get(dispatch, '').startswith(_SUPPLY_TITLE):
+            continue
+        seen.append(m['id'])
+        match = _SUPPLY_DONE_RE.search(str(m.get('subject') or ''))
+        if first or (match and (int(match.group(1)) or int(match.group(2)))):
+            continue
+        notices.append('supply run failed: %s made no ready issue and gave no reason (subject: %s)'
+                       % (dispatch, str(m.get('subject') or '')[:80]))
+    del seen[:-200]
+    return notices
 
 
 def work_order_supply_line(config, now, workers, supply, host=None, admission=None, waiting=()):
@@ -5071,7 +5107,7 @@ def work_order_try_supply(
     order = work_order_settings(config, now)
     if order is None:
         return [], 0
-    free = order[1] - active_worker_count(workers) - extra_starts
+    free = order[1] - working_worker_count(workers, state) - extra_starts
     if free <= supply:
         state['work_order_short_passes'] = 0
         return ['supply_enough=%d:%d' % (free, supply)], 0
@@ -5094,7 +5130,10 @@ def work_order_try_supply(
         else:
             forced = True
             bits.append('supply_force=%d' % short)
-            bits.extend((clear_blocked or clear_stale_blocked)(repos))
+            swept = (clear_blocked or clear_stale_blocked)(repos)
+            bits.extend(swept)
+            # How many stale blocked labels the sweep cleared, also when none (#1904).
+            bits.append('unblock_cleared=%d' % sum(1 for b in swept if b.startswith('unblock=')))
     scan = config.get('issue_scan') or {}
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     try:
@@ -5109,7 +5148,7 @@ def work_order_try_supply(
     if not chosen:
         return bits + ['supply_pick_blocked'], 0
     claimed = list(stale_claimed(repos)) if stale_claimed else []
-    command = build_supply_command(config, repos, chosen[0], chosen[1], claimed)
+    command = build_supply_command(config, repos, chosen[0], chosen[1], claimed, free)
     if command is None:
         return bits + ['supply_skip_root'], 0
     # PASS_HARD_END, not START_FINISH_BY: supply runs late in the pass, so an agy pick never fit 140 s (#1889).
@@ -5126,6 +5165,70 @@ def work_order_try_supply(
     if claimed:
         bits.append('supply_claimed=%s' % ','.join(_blocker_label(pair, repos[0]) for pair in claimed))
     return bits + ['supply_start=%d:%d' % (free, supply)], 1
+
+
+def working_worker_count(workers, state):
+    """Live workers minus the ones the idle seat pass flagged as finished or idle: only these fill a seat (#1904)."""
+    idle = idle_seat_dispatches(state)
+    return sum(1 for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w) and w.get('dispatchId') not in idle)
+
+
+def stale_claimed_issues(state, now, workers, list_claimed, repos):
+    """(repo, number) of claimed issues with no live worker, past the start grace: the supply worker gets them (#1876)."""
+    issue_pending = state.get('issue_scan_pending') or {}
+    started_at = state.get('issue_scan_started_at') or {}
+    out = []
+    for repo in repos:
+        for claimed in list_claimed(repo) or []:
+            number = claimed.get('number')
+            if not isinstance(number, int) or issue_has_live_dispatch(workers, number):
+                continue
+            # A start this recent may not show in the inventory or the label yet (#1216); no time counts as stale (#1811).
+            at = (started_at.get(repo) or {}).get(str(number))
+            if number in issue_pending.get(repo, []) or (at is not None and now - float(at) < ISSUE_RESTART_GRACE_SECONDS):
+                continue
+            out.append((repo, number))
+    return out
+
+
+def forced_supply_due(state):
+    """True when this pass, if it is short, is the forced supply pass (#1876)."""
+    try:
+        return int(state.get('work_order_short_passes') or 0) + 1 >= SUPPLY_FORCE_PASSES
+    except (TypeError, ValueError):
+        return False
+
+
+def issue_scan_supply_first(
+    config, state, now, workers, gate_check=None, admit_fn=None, start_worker=None, act=None, pick_fn=None,
+    persist_state=None, count_open=None, list_blocked=None, ref_state=None, list_claimed=None,
+):
+    """A due forced supply runs at the start of the pass, before babysit and the per issue work (#1904).
+
+    Run late in a slow pass the start never fit PASS_HARD_END (supply_budget). The ready count is the last
+    pass's. Once this ran, the issue scan of the same pass does not try supply again."""
+    scan = config.get('issue_scan') or {}
+    if not scan.get('enabled') or work_order_settings(config, now) is None or not forced_supply_due(state):
+        return []
+    if not (gate_check or default_issue_scan_gate)(config):
+        return ['supply_first_gate']
+    host = scan.get('host') or 'local'
+    admission = (admit_fn or admit)(host, config, workers)
+    if not admission.get('admitted'):
+        return ['supply_first_refused']
+    act = act or run_gh
+    try:
+        supply = int(state.get('work_order_last_supply') or 0)
+    except (TypeError, ValueError):
+        supply = 0
+    bits, _used = work_order_try_supply(
+        config, state, now, scan.get('repos') or [], supply, host, admission, 0, supply, workers,
+        with_coordinator_handle(config, start_worker or default_issue_scan_start), pick_fn, persist_state, count_open,
+        lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act),
+        lambda rs: stale_claimed_issues(state, now, workers, list_claimed or fetch_claimed_issues, rs),
+    )
+    state['work_order_supply_first_at'] = now
+    return ['supply_first'] + bits
 
 
 def fetch_open_issue_count(repo, run=subprocess.run):
@@ -6475,6 +6578,105 @@ def live_verifier_worker(pr, workers, state=None, repo=None):
 def live_verifier_for_pr(pr, workers, state=None, repo=None):
     """True when a live verifier worker, hand dispatched or not, is already on this PR."""
     return live_verifier_worker(pr, workers, state, repo) is not None
+
+
+IDLE_SEAT_QUIET_SECONDS = 20 * 60
+IDLE_SEAT_GRACE_SECONDS = 15 * 60
+IDLE_SEAT_STOP_QUIET_SECONDS = 5 * 60
+IDLE_SEAT_TEXT = 'fleet-watch: you look idle. Read your inbox (orca orchestration check), finish, then send worker_done.'
+
+
+def idle_seat_dispatches(state):
+    """Dispatch ids the idle seat pass flagged as finished or idle and not back at work (#1904, #1905)."""
+    book = (state or {}).get('idle_seat') or {}
+    return {did for did, rec in book.items() if isinstance(rec, dict) and not rec.get('busy')}
+
+
+def _idle_seat_ref(worker, repo_of, ref_state):
+    """('owner/repo#n', closed) for the worker's PR, else its issue; closed is False when unknown."""
+    number = worker_pr_number(worker) or _worker_issue_number(worker)
+    try:
+        repo = repo_of(worker)
+    except SEND_ERRORS:
+        repo = None
+    if not repo or not number:
+        return '', False
+    try:
+        closed = ref_state(repo, number) == 'CLOSED'
+    except SEND_ERRORS:
+        closed = False
+    return '%s#%d' % (repo, number), closed
+
+
+def idle_seat_pass(config, state, now, workers, term_times, messages, rpc_call, ref_state=None, repo_of=None):
+    """Wake a worker idle at its prompt once, then free its seat when its work is closed (#1905).
+
+    A worker whose output is quiet IDLE_SEAT_QUIET_SECONDS while its issue or PR is closed, or while a message
+    to it is unread, gets one wake line. After IDLE_SEAT_GRACE_SECONDS, if the work is still closed and the
+    output is quiet IDLE_SEAT_STOP_QUIET_SECONDS, it is stopped and released; otherwise elon hears it once and
+    it is never stopped. Verifiers wait for their next PR and are left alone. Returns (notices, log_bits)."""
+    ref_state = ref_state or fetch_ref_state
+    repo_of = repo_of or (lambda w: repo_for_worker(w, config))
+    notices, bits = [], []
+    book = state.setdefault('idle_seat', {})
+    live = {w.get('dispatchId'): w for w in workers or []
+            if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
+    for did in list(book):
+        if did not in live:
+            book.pop(did, None)
+    unread = set()
+    for m in messages or []:
+        if isinstance(m, dict) and not m.get('read') and not m.get('handled') and isinstance(m.get('to'), str):
+            unread.add(m['to'])
+    for did, w in live.items():
+        if _worker_titled_verifier(w) or worker_liveness_verdict(w) == 'live':
+            continue
+        rec = book.get(did)
+        if rec and rec.get('stopped'):
+            continue
+        handle = worker_terminal_handle(w)
+        last = _normalize_terminal_time_ms((term_times or {}).get(handle)) if handle else None
+        if last is None:
+            continue
+        quiet = now - last
+        env = remote_environment(w) if worker_is_remote(w, config) else ''
+        if rec is None:
+            if quiet < IDLE_SEAT_QUIET_SECONDS:
+                continue
+            ref, closed = _idle_seat_ref(w, repo_of, ref_state)
+            if not closed and handle not in unread:
+                continue
+            on_host = ('--environment', env) if env else ()
+            try:
+                rpc_call('terminal', 'send', *on_host, '--terminal', handle, '--text', IDLE_SEAT_TEXT, '--enter')
+            except SEND_ERRORS as error:
+                log_send_failed(handle, error)
+                bits.append('idle_wake_fail=%s' % did)
+                continue
+            book[did] = {'woke_at': now, 'closed': closed}
+            bits.append('idle_wake=%s' % did)
+            continue
+        woke = float(rec.get('woke_at') or now)
+        # Output well after the wake line, and recent: back at work, so it fills a seat again.
+        rec['busy'] = last > woke + 60 and quiet < IDLE_SEAT_STOP_QUIET_SECONDS
+        if rec['busy'] or rec.get('reported') or now - woke < IDLE_SEAT_GRACE_SECONDS:
+            continue
+        ref, closed = _idle_seat_ref(w, repo_of, ref_state)
+        if closed:
+            if quiet < IDLE_SEAT_STOP_QUIET_SECONDS:
+                continue
+            code = stop_and_release_stalled(rpc_call, w, did, env, stop_on_host=True)
+            if code:
+                bits.append('idle_stop_fail=%s:%s' % (did, code))
+                continue
+            rec['stopped'] = True
+            bits.append('idle_stop=%s' % did)
+            notices.append('worker %s stopped: idle at its prompt after a wake and %s is closed, so its seat is free' % (did, ref))
+            continue
+        rec['reported'] = True
+        bits.append('idle_report=%s' % did)
+        notices.append('worker %s idle at its prompt after a wake, %s still open: not stopped, check its inbox' % (did, ref or 'its work'))
+    return notices, bits
 
 
 UNREAD_NUDGE_IDLE_SECONDS = 300
@@ -8831,26 +9033,19 @@ def _issue_scan_pass(
     if supply_line:
         notices.append(supply_line)
 
-    def stale_claimed(supply_repos):
-        # Claimed issues with no live worker, past the start grace, go to the supply worker (#1876).
-        out = []
-        for repo in supply_repos:
-            for claimed in list_claimed(repo) or []:
-                number = claimed.get('number')
-                if not isinstance(number, int) or issue_has_live_dispatch(workers, number):
-                    continue
-                if number in issue_pending.get(repo, []) or not started_is_stale(repo, number):
-                    continue
-                out.append((repo, number))
-        return out
-
     def try_supply(reserved):
         if list_failed:
             return 0
+        state['work_order_last_supply'] = len(candidates)  # the next pass's early supply step reads it (#1904)
+        if state.get('work_order_supply_first_at') == now:
+            # The early step of this pass already tried supply (#1904); a start there still takes a seat here.
+            log_bits.append('supply_ran_first')
+            return 1 if state.get('work_order_supply_at') == now else 0
         bits, used = work_order_try_supply(
             config, state, now, repos, len(candidates), host, admission, extra_starts, reserved, workers,
             start_worker, pick_fn, persist_state, count_open,
-            lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act), stale_claimed,
+            lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act),
+            lambda rs: stale_claimed_issues(state, now, workers, list_claimed, rs),
         )
         log_bits.extend(bits)
         return used
@@ -10762,6 +10957,31 @@ def _main():
     def persist_scan_state():
         save_state(args.state, state)
 
+    def idle_seat():
+        if not (inventory_ok and terminal_list_ok):
+            return [], []
+        try:
+            return idle_seat_pass(config, state, now, workers, term_times, inv['messages'], rpc)
+        except Exception as error:
+            print('fleet-watch: idle seat skipped: %s' % (repr(error),), file=sys.stderr)
+            return [], []
+
+    idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
+    notices += idle_extra
+    if inventory_ok:
+        notices += supply_done_notices(inv['messages'], workers, state)
+
+    def supply_first():
+        if not inventory_ok:
+            return []
+        try:
+            return issue_scan_supply_first(config, state, now, workers, persist_state=persist_scan_state)
+        except Exception as error:
+            print('fleet-watch: early supply skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
+    supply_first_log = run_phase('supply_first', supply_first, [])
+
     pass_phase('babysit')
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
@@ -10849,6 +11069,10 @@ def _main():
         parts.append('signal ' + ','.join(signal_log))
     if nudge_log:
         parts.append('nudge ' + ','.join(nudge_log))
+    if idle_log:
+        parts.append('idle ' + ','.join(idle_log))
+    if supply_first_log:
+        parts.append('supply ' + ','.join(supply_first_log))
     if babysit_log:
         parts.append('babysit ' + ','.join(babysit_log))
     if scan_log:
