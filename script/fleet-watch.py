@@ -2617,18 +2617,76 @@ def unanswered_ask_notices(state, now, messages, workers, answered=()):
         seen.add(mid)
         handle = worker_terminal_handle(live[dispatch]) or m.get('from') or ''
         replies = _reply_ids(messages, dispatch, handle)
+        is_new = mid not in book
         row = book.setdefault(mid, {'at': now, 'dispatch': dispatch, 'before': sorted(replies)})
+        if is_new:
+            row.update(type=m['type'], subject=m.get('subject') or '', asked=m.get('created_at') or utc_stamp(now))
+        was_answered = bool(row.get('answered'))
         if m.get('handled') or mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
             row['answered'] = True
+        asked = row.get('asked') or utc_stamp(row['at'])
+        if is_new:
+            log_fleet_watch('ask %s %s from %s asked %s%s' % (
+                m['type'], mid, dispatch, asked, ' (already answered)' if row.get('answered') else ''))
+        elif row.get('answered') and not was_answered:
+            line = 'reply to %s %s from %s: asked %s, answer seen %s, waited %d minutes' % (
+                m['type'], mid, dispatch, asked, utc_stamp(now), (now - row['at']) // 60)
+            log_fleet_watch(line)
+            state.setdefault('ask_reply_lines', []).append(line)
         if row.get('answered') or row.get('notified') or now - row['at'] < ASK_REPLY_SECONDS:
             continue
         row['notified'] = True
-        notices.append(Urgent('unanswered %s %s from %s for %d minutes: %s; reply to it' % (
-            m['type'], mid, dispatch, (now - row['at']) // 60, m.get('subject') or '(no subject)')))
+        notices.append(Urgent('unanswered %s %s from %s for %d minutes (asked %s): %s; reply to it' % (
+            m['type'], mid, dispatch, (now - row['at']) // 60, asked, m.get('subject') or '(no subject)')))
     for mid in list(book):
         if mid not in seen:
             book.pop(mid)
     return notices
+
+
+def take_ask_reply_lines(state):
+    """Stamped reply lines unanswered_ask_notices recorded this pass, for the digest; cleared once taken (#1843)."""
+    return state.pop('ask_reply_lines', None) or []
+
+
+def utc_stamp(epoch):
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(epoch))
+
+
+def open_work_path(state_path):
+    """Open asks and live claims, beside the pass state file, printed by elon-startup.sh (#1843).
+    Beside the state file, so a test with a temporary state never writes the coordinator's copy."""
+    return Path(os.environ.get('ELON_OPEN_WORK_FILE') or Path(state_path).with_name('elon-open-work.md'))
+
+
+def write_open_work(state, workers, config, now, path, repo_of=None):
+    """Rewrite the open work file from unanswered open_asks rows and live workers with an issue, so a compacted
+    coordinator still knows them. An answered ask or an ended worker drops out on the next pass."""
+    repo_of = repo_of or (lambda w: repo_for_worker(w, config))
+    live = [w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)]
+    live_ids = {w['dispatchId'] for w in live}
+    asks = ['- %s %s from %s, asked %s: %s' % (row.get('type') or 'ask', mid, row.get('dispatch'),
+                                                row.get('asked') or utc_stamp(row.get('at') or now),
+                                                row.get('subject') or '(no subject)')
+            for mid, row in sorted((state.get('open_asks') or {}).items())
+            if isinstance(row, dict) and not row.get('answered') and row.get('dispatch') in live_ids]
+    claims = []
+    for w in live:
+        number = _worker_issue_number(w)
+        if not number:
+            continue
+        try:
+            repo = repo_of(w) or '?'
+        except (OSError, subprocess.SubprocessError):
+            repo = '?'
+        claims.append(('- %s#%s %s %s' % (repo, number, w['dispatchId'], w.get('name') or '')).rstrip())
+    text = '# Open asks and live claims (fleet-watch, %s)\n\n## Open asks\n%s\n\n## Live claims\n%s\n' % (
+        utc_stamp(now), '\n'.join(asks) or 'none', '\n'.join(sorted(claims)) or 'none')
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(target.name + '.tmp')
+    temporary.write_text(text)
+    temporary.replace(target)
 
 
 def waiting_on_coordinator(state, workers):
@@ -9324,17 +9382,45 @@ def log_send_failed(address, error):
     log_fleet_watch(line)
 
 
+def _spawn_oserror(error):
+    """The OSError when the orca process never ran (bare, or anywhere in rpc's cause chain), else None.
+    A timeout may have landed, so it is not one."""
+    seen = 0
+    while error is not None and seen < 5:
+        if isinstance(error, OSError):
+            return error
+        error, seen = error.__cause__, seen + 1
+    return None
+
+
+def send_once_more_on_oserror(rpc_call, address, *command):
+    """Run one send; when the orca process could not start, log a retry line and try once more (#1843)."""
+    try:
+        return rpc_call(*command)
+    except SEND_ERRORS as error:
+        cause = _spawn_oserror(error)
+        if cause is None:
+            raise
+        line = 'fleet-watch: send retry for %s after %s' % (address, type(cause).__name__)
+        print(line, file=sys.stderr)
+        log_fleet_watch(line)
+    return rpc_call(*command)
+
+
 def send_digest(rpc_call, address, sender, body):
     """Address run:<id> or a lead. --from is fleet watch's sender, not a copy of the receiver."""
     command = ['orchestration', 'send', '--to', address]
     if sender:
         command += ['--from', sender]
     command += ['--subject', 'fleet-watch digest', '--body', body]
-    rpc_call(*command)
+    send_once_more_on_oserror(rpc_call, address, *command)
 
 
-def flush_queue(state, now, rpc_call):
-    """One orchestration send per address: at once when urgent, else at most every DIGEST_SECONDS."""
+def flush_queue(state, now, rpc_call, fallback_sender=''):
+    """One orchestration send per address: at once when urgent, else at most every DIGEST_SECONDS.
+
+    A queued item with no sender goes out --from fallback_sender (config), since a scheduled pass has no
+    ORCA_TERMINAL_HANDLE and Orca then refuses with no_active_sender_terminal (#1843)."""
     queue = state.setdefault('notice_queue', {})
     sent_at = state.setdefault('notice_sent_at', {})
     for address in list(queue):
@@ -9350,7 +9436,7 @@ def flush_queue(state, now, rpc_call):
         if not any(item.get('urgent') for item in items) and address in sent_at and now - sent_at[address] < DIGEST_SECONDS:
             continue
         try:
-            send_digest(rpc_call, address, notice_sender(items), '\n'.join(item['text'] for item in items))
+            send_digest(rpc_call, address, notice_sender(items) or fallback_sender, '\n'.join(item['text'] for item in items))
         except SEND_ERRORS as error:
             log_send_failed(address, error)
             continue
@@ -9402,7 +9488,7 @@ def deliver_typed_notices(typed_runs, state, new_notices, rpc_call, now):
             if term in entry['sent'] or term in failed:
                 continue
             try:
-                rpc_call('terminal', 'send', '--terminal', term, '--text', line, '--enter')
+                send_once_more_on_oserror(rpc_call, term, 'terminal', 'send', '--terminal', term, '--text', line, '--enter')
                 entry['sent'].append(term)
                 log_send_ok()
             except SEND_ERRORS as error:
@@ -9422,7 +9508,7 @@ def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of
     runs = config.get('runs', [])
     routes = digest_routes(runs)
     typed_runs = [run for run in runs if isinstance(run, dict) and run.get('typed')]
-    sender = fleet_watch_sender(runs)
+    sender = fleet_watch_sender(runs) or babysit_settings(config)[2]
     migrate_notice_addresses(state, runs)
     queue = state.setdefault('notice_queue', {})
     live = {address for address, _sender in routes}
@@ -9442,7 +9528,7 @@ def deliver_notices(config, state, new_notices, rpc_call=rpc, now=None, owner_of
         if address not in live:
             print('fleet-watch: dropping %d notice(s) for %s, not in runs' % (len(queue[address]), address), file=sys.stderr)
             del queue[address]
-    flush_queue(state, now, rpc_call)
+    flush_queue(state, now, rpc_call, sender)
     deliver_typed_notices(typed_runs, state, new_notices, rpc_call, now)
 
 
@@ -10371,6 +10457,8 @@ def _main():
         try:
             notices += gone_remote_dispatch_notices(workers, state, rpc)
             notices += unanswered_ask_notices(state, now, inv['messages'], workers, answered=read_answered_asks())
+            notices += take_ask_reply_lines(state)
+            write_open_work(state, workers, config, now, open_work_path(args.state))
         except Exception as error:
             print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
         try:

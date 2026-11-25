@@ -146,11 +146,16 @@ else
     flag "waiter not armed: no run id in $FLEET_WATCH_CONFIG (runs[0].id)"
   else
     waiter=$tmpdir/elon-wait.sh
-    printf '#!/usr/bin/env bash\n# One wait for worker mail. 3600000 ms is only the backstop, the 5 minute watch wakes elon on time.\nexec "${ORCA_CLI_COMMAND:-orca}" orchestration check --run %s --wait --timeout-ms 3600000 >"%s/elon-waiter.json"\n' "$run_id" "$tmpdir" >"$waiter"
+    printf '#!/usr/bin/env bash\n# One wait for worker mail. 3600000 ms is only the backstop, the 5 minute watch wakes elon on time.\nexec "${ORCA_CLI_COMMAND:-orca}" orchestration check --run %s --wait --timeout-ms 3600000 --full >"%s/elon-waiter.json"\n' "$run_id" "$tmpdir" >"$waiter"
     chmod +x "$waiter"
     echo "job waiter: armed, script $waiter (run $run_id, backstop 3600000 ms); start it with Bash run_in_background"
   fi
   echo "job watch: every 5 minutes (300 s) plus on worker mail; set it with CronCreate '*/5 * * * *'"
 fi
+
+# Open asks and live claims, written by each fleet-watch pass beside its state file, so a compaction loses neither (#1843).
+echo "== 7 open asks and live claims"
+open_work=${ELON_OPEN_WORK_FILE:-$state_dir_agent/elon-open-work.md}
+if [ -f "$open_work" ]; then cat "$open_work"; else echo "no open work file at $open_work (fleet-watch has not run a pass)"; fi
 
 echo "== $problems problem(s)"

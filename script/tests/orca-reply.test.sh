@@ -18,6 +18,8 @@ case "$1 $2" in
     [ -z "${FAKE_REPLY_FAIL:-}" ] || exit 1 ;;
   "terminal send") [ -z "${FAKE_SEND_FAIL:-}" ] || exit 1 ;;
   "orchestration worker-list") [ -z "${FAKE_WORKERS:-}" ] || { echo "$FAKE_WORKERS"; exit 0; } ;;
+  "orchestration inbox") [ -z "${FAKE_INBOX:-}" ] || { echo "$FAKE_INBOX"; exit 0; } ;;
+  "orchestration send") [ -z "${FAKE_RESEND_FAIL:-}" ] || exit 1 ;;
 esac
 echo '{"ok":true}'
 EOS
@@ -95,6 +97,20 @@ grep -qx msg_9 "$tmp/state/answered-asks.txt" 2>/dev/null && ok || bad "answer_c
 grep -q "already has an answer" "$tmp/err" && ok || bad "answer_conflict is named"
 run --to term_a --id msg_10 --body hi
 ! grep -qx msg_10 "$tmp/state/answered-asks.txt" 2>/dev/null && ok || bad "a plain reply records nothing"
+
+# 12. answer_conflict (#1843): fetch the ask, resend the body in its thread, then nudge
+inbox='{"ok":true,"result":{"messages":[{"id":"msg_8","subject":"other"},{"id":"msg_9","subject":"Which port?","from_handle":"term_a"}]}}'
+FAKE_INBOX=$inbox FAKE_REPLY_CONFLICT=1 run --to term_a --id msg_9 --body "use 9223" --from term_me
+[ "$(cat "$tmp/rc")" = 0 ] && ok || bad "conflict resend exit 0"
+grep -q -- "orchestration inbox .*--full" "$ORCA_LOG" && ok || bad "conflict fetches the ask with --full"
+grep -qF -- "orchestration send --to term_a --thread-id msg_9 --subject Re: Which port? --body use 9223 --json --from term_me" "$ORCA_LOG" && ok || bad "conflict resends in the ask thread"
+grep -q -- "terminal send --terminal term_a" "$ORCA_LOG" && ok || bad "conflict resend nudges"
+FAKE_REPLY_CONFLICT=1 run --to term_a --id msg_7 --body hi
+grep -qF -- "--thread-id msg_7 --subject Re: Question" "$ORCA_LOG" && ok || bad "ask not in inbox still resends"
+FAKE_RESEND_FAIL=1 FAKE_REPLY_CONFLICT=1 run --to term_a --id msg_9 --body hi
+[ "$(cat "$tmp/rc")" != 0 ] && ok || bad "failed resend exits nonzero"
+grep -q "did not reach" "$tmp/err" && ok || bad "failed resend is named"
+! grep -q "terminal send" "$ORCA_LOG" && ok || bad "no nudge after failed resend"
 
 echo "orca-reply: $pass passed, $fail failed"
 [ "$fail" = 0 ]

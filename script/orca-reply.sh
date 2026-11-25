@@ -57,6 +57,18 @@ if [ -n "$id" ] && grep -q answer_conflict <<<"$out$(cat "$errf")"; then
   answered=${ORCA_REPLY_ANSWERED_FILE:-$HOME/.local/state/agent-team/answered-asks.txt}
   mkdir -p "$(dirname "$answered")" && echo "$id" >>"$answered"
   echo "orca-reply: $id already has an answer (answer_conflict); recorded in $answered" >&2
+  # The earlier answer is not this body, so this one was not delivered (#1843). Fetch the ask and resend in its thread.
+  ask_subject=$(bounded "$orca_cli" orchestration inbox --limit 5000 --full --json 2> /dev/null \
+    | jq -r --arg id "$id" 'first(.result.messages[]? | select(.id == $id) | .subject // empty) // empty' 2> /dev/null || true)
+  resend=("$orca_cli" orchestration send --to "$to" --thread-id "$id" --subject "Re: ${ask_subject:-Question}" --body "$body" --json)
+  [ -z "$from" ] || resend+=(--from "$from")
+  rc=0
+  out=$(bounded "${resend[@]}" 2>"$errf") || rc=$?
+  [ -z "$out" ] || printf '%s\n' "$out"
+  cat "$errf" >&2
+  if [ "$rc" = 0 ]; then echo "orca-reply: resent the answer to $to in the thread of $id" >&2
+  else echo "orca-reply: resend in the thread of $id failed; the answer did not reach $to" >&2
+  fi
 fi
 [ "$rc" = 0 ] || exit "$rc"
 

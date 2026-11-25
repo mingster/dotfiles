@@ -95,5 +95,22 @@ check "missing coordinator line" "NO DISPATCH: no coordinator line"
 setup; git -C "$work/state" remote set-url origin "$work/nowhere.git"; run coordinator-a
 check "fetch failure, local file still read" "NO DISPATCH: fetch of the state repo failed" "this host is"
 
+# #1843: the waiter reads asks with --full, and the open work file that fleet-watch writes is printed at start.
+setup; run coordinator-a
+check "no open work file is named" "no open work file at $work/home/.local/state/agent-team/elon-open-work.md"
+mkdir -p "$work/home/.local/state/agent-team"
+printf '# Open asks and live claims\n\n## Open asks\n- question msg_1 from ctx_a, asked 2026-11-25T09:00:00Z: Which port?\n' \
+  > "$work/home/.local/state/agent-team/elon-open-work.md"
+echo '{"runs":[{"id":"run_t","terminal":"term_t"}]}' > "$work/home/.claude/state/fleet-watch-elon.json"
+run coordinator-a
+check "open work file is printed" "- question msg_1 from ctx_a, asked 2026-11-25T09:00:00Z: Which port?"
+check "open work comes after the jobs" "== 7 open asks and live claims"
+if grep -qF -- '--wait --timeout-ms 3600000 --full' "$work/home/.local/state/agent-team/elon-wait.sh"; then
+  pass=$((pass + 1)); echo "ok   waiter reads asks with --full"
+else
+  fail=$((fail + 1)); echo "FAIL waiter reads asks with --full"
+fi
+rm -rf "$work/home/.local/state" "$work/home/.claude/state/fleet-watch-elon.json"
+
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
