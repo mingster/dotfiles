@@ -1,0 +1,1 @@
+Fixed fleet-watch ignoring the settled outcome of a concise `worker_done`. The concise inbox view omits `outcome`, so a succeeded worker was never released on green checks, and a failed worker could be bounced on the PR body or have its board card moved. `_message_outcome` now falls back to the matched worker row when the message and payload carry no outcome (#1858).
