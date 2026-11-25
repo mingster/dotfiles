@@ -1,0 +1,1 @@
+- `fleet-watch.py`: a `worker_done` that names a missing `~/agent-state` path (and no agent-state commit) is held. No automatic release, board relay or stall stop frees the worker until a fixed `worker_done` arrives; the worker is told once and the coordinator hears when the notice fails or the hold outlasts a stall window. Cut inbox bodies are read in full (#1849).

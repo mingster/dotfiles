@@ -902,6 +902,14 @@ def list_pages(*command):
         seen.add(cursor)
 
 
+def read_full_inbox_bodies():
+    """Message id to full body, from one inbox --full read (the concise view cuts bodies at 200 characters)."""
+    inbox = rpc('orchestration', 'inbox', '--limit', '5000', '--full')
+    if not isinstance(inbox, dict) or not isinstance(inbox.get('messages'), list):
+        raise OrcaReadError('malformed full inbox reply')
+    return {m.get('id'): str(m.get('body') or '') for m in inbox['messages'] if isinstance(m, dict)}
+
+
 def read_orca_inventory(config):
     """Read inbox, workers, lead terminals, and pgrep in one pass; validate JSON shapes. Raises OrcaReadError."""
     inbox = rpc('orchestration', 'inbox', '--limit', '5000')
@@ -3558,6 +3566,9 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not worker_row_is_live(w):
             if worker_startup_failed(w):
                 retry_startup_failed(w, did)
+            continue
+        # A held dispatch is never nudged, stopped or restarted; the hold notice reports it instead (#1849).
+        if release_held(state, did):
             continue
         term = worker_terminal_handle(w)
         host_id = worker_execution_host_id(w)
@@ -6283,7 +6294,7 @@ def _verifier_head_bucket(state, repo):
 def release_closed_verifier(pr, workers, state, repo, release):
     """Release a live verifier on a merged or closed pull request. True when released."""
     worker = live_verifier_worker(pr, workers)
-    if worker is None:
+    if worker is None or release_held(state, worker.get('dispatchId')):
         return False
     release(worker.get('dispatchId') or '')
     _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
@@ -6293,7 +6304,7 @@ def release_closed_verifier(pr, workers, state, repo, release):
 def release_idle_rework_verifier(pr, workers, state, repo, now, term_times, release):
     """Release a verifier that has waited out a rework for an hour. True when released."""
     worker = live_verifier_worker(pr, workers)
-    if worker is None or not rework_needed_at_head(pr):
+    if worker is None or not rework_needed_at_head(pr) or release_held(state, worker.get('dispatchId')):
         return False
     if verifier_idle_seconds(worker, term_times, now) < VERIFIER_REWORK_IDLE_SECONDS:
         return False
@@ -6317,6 +6328,8 @@ def route_rework_head(pr, workers, state, repo, now, term_times, release, notify
     idle = verifier_idle_seconds(worker, term_times, now)
     if tracked and tracked != head:
         if idle >= VERIFIER_REWORK_IDLE_SECONDS:
+            if release_held(state, worker.get('dispatchId')):
+                return 'live'
             release(worker.get('dispatchId') or '')
             bucket.pop(str(number), None)
             return 'released'
@@ -7420,6 +7433,9 @@ def standing_idle(rec, open_prs):
 def standing_retire(state, host, rec, reason, io, release_worker, now, log_bits, event='retire'):
     """Stop and release a standing verifier, clear its record, and log the retirement."""
     did = rec.get('dispatch_id') or ''
+    if did and release_held(state, did):
+        log_bits.append('standing_retire_held=%s:%s' % (did, reason))
+        return
     if did:
         io.stop(did, host)
         release_worker(did, None if rec.get('local') else host)
@@ -9477,6 +9493,181 @@ def _shown_remote_worker(dispatch, rpc_call):
     return row
 
 
+# A worker_done whose body names ~/agent-state/... counts only once that path is on the coordinator (#1849).
+# The path may be written ~/..., $HOME/... or with a home folder (/Users/<name>/..., /home/<name>/...).
+_AGENT_STATE_PATH_RE = re.compile(r'(?:~|\$HOME|/(?:Users|home)/[^/\s]+)/agent-state/([^\s`\'"(),;<>]+)')
+_HEX_SHA_RE = re.compile(r'\b[0-9a-f]{7,40}\b')
+_TRUNCATED_SUFFIX = '(truncated; --full)'
+_ORIGINAL_BODY = 'Original body:'
+AGENT_STATE_DIR = os.path.expanduser('~/agent-state')
+
+
+def _agent_state_sha_exists(sha):
+    try:
+        proc = subprocess.run(['git', '-C', AGENT_STATE_DIR, 'cat-file', '-e', sha + '^{commit}'],
+                              capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def _done_text(message):
+    """The worker's own done text. A rejected remote copy keeps it after "Original body:" in both inbox views."""
+    body = str(message.get('body') or '')
+    if body.startswith('Orca rejected this worker_done') and _ORIGINAL_BODY in body:
+        body = body.split(_ORIGINAL_BODY, 1)[1]
+    extra = _message_payload(message).get('body')
+    return body + ('\n' + extra if isinstance(extra, str) else '')
+
+
+def agent_state_hold(message, path_exists=None, sha_exists=None):
+    """Why this worker_done does not count yet, or '' when it does.
+
+    It holds when the body names an ~/agent-state path that is missing on this machine, unless the body
+    also names a commit sha that exists in ~/agent-state.
+    """
+    path_exists = path_exists or os.path.exists
+    text = _done_text(message)
+    missing = []
+    for match in _AGENT_STATE_PATH_RE.finditer(text):
+        rel = match.group(1).rstrip('.:')
+        if not rel or any(c in rel for c in '*{}…'):
+            continue
+        name = '~/agent-state/' + rel
+        if not path_exists(os.path.join(AGENT_STATE_DIR, rel)) and name not in missing:
+            missing.append(name)
+    if not missing:
+        return ''
+    sha_exists = sha_exists or _agent_state_sha_exists
+    if any(sha_exists(sha) for sha in list(dict.fromkeys(_HEX_SHA_RE.findall(text)))[:10]):
+        return ''
+    more = ' (and %d more)' % (len(missing) - 1) if len(missing) > 1 else ''
+    return 'it names %s%s, which is not on the coordinator' % (missing[0], more)
+
+
+def release_held(state, dispatch):
+    """The one release gate: True while the dispatch's last worker_done names an agent-state path that is missing."""
+    holds = state.get('done_hold')
+    return isinstance(holds, dict) and dispatch in holds
+
+
+def update_done_holds(state, messages, workers, now, read_full=None, path_exists=None, sha_exists=None):
+    """Set or clear state['done_hold'][dispatch] from each dispatch's newest worker_done. Runs once per pass.
+
+    Only a dispatch with a release still ahead is judged, so old mail raises no hold. The inbox lists the
+    newest message first. Its concise view cuts a body at 200 characters, so a cut body is read once from
+    read_full (message id to full body); a body that cannot be read holds with no notice until a later pass.
+    """
+    holds = state.get('done_hold')
+    if not isinstance(holds, dict):
+        holds = state['done_hold'] = {}
+    texts = state.get('done_hold_text')
+    if not isinstance(texts, dict):
+        texts = state['done_hold_text'] = {}
+    rows = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
+    finished = set(state.get('auto_released') or ()) | set(state.get('remote_reconciled') or ())
+    newest = {}
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done':
+            continue
+        dispatch = _message_payload(message).get('dispatchId')
+        if not isinstance(dispatch, str) or not dispatch or dispatch in newest or dispatch in finished:
+            continue
+        # A rejected remote copy still has a reconcile release ahead, even when its row reads as released.
+        rejected = worker_done_rejected(message)
+        row = rows.get(dispatch)
+        if row is not None and worker_terminal_released(row) and not rejected:
+            continue
+        if row is None and not rejected:
+            continue
+        newest[dispatch] = message
+    full = {}
+
+    def full_body(message_id):
+        if 'read' not in full:
+            try:
+                full['read'] = read_full() if read_full else None
+            except SEND_ERRORS:
+                full['read'] = None
+        return (full['read'] or {}).get(message_id)
+
+    present = {m.get('id') for m in messages or [] if isinstance(m, dict)}
+    for message_id in list(texts):
+        if message_id not in present:
+            del texts[message_id]
+    for dispatch, message in newest.items():
+        message_id = message.get('id')
+        body = str(message.get('body') or '')
+        unread = False
+        if body.endswith(_TRUNCATED_SUFFIX):
+            if message_id not in texts:
+                text = full_body(message_id)
+                if isinstance(text, str):
+                    texts[message_id] = text if 'agent-state' in text else ''
+            if message_id in texts:
+                message = dict(message, body=texts[message_id])
+            else:
+                unread = True
+        reason = 'its full body could not be read' if unread else agent_state_hold(message, path_exists, sha_exists)
+        if not reason:
+            holds.pop(dispatch, None)
+            continue
+        old = holds.get(dispatch) if isinstance(holds.get(dispatch), dict) else {}
+        holds[dispatch] = dict(old, reason=reason, message_id=message_id, since=old.get('since', now), unread=unread)
+    for dispatch in list(holds):
+        if dispatch not in newest:
+            del holds[dispatch]
+    return holds
+
+
+def send_done_hold_notices(state, workers, config, now, rpc_call):
+    """Tell each held worker once why its worker_done does not count; return the coordinator's notice lines.
+
+    A notice is latched only on a confirmed send: a terminal handle, --environment for a remote row, and no
+    send error. Otherwise it is tried again next pass, and the coordinator hears once per message id.
+    A hold with no passing resend after one stall window is reported once; fleet-watch never releases it.
+    """
+    holds = state.get('done_hold')
+    if not isinstance(holds, dict) or not holds:
+        return []
+    notified = state.setdefault('done_hold_notified', [])
+    undelivered = state.setdefault('done_hold_undelivered', [])
+    rows = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
+    stall_limit = stall_idle_limit_seconds(config)
+    lines = []
+    for dispatch, hold in sorted(holds.items()):
+        if not isinstance(hold, dict) or hold.get('unread'):
+            continue
+        message_id = hold.get('message_id')
+        if message_id not in notified:
+            row = rows.get(dispatch) or {}
+            term = worker_terminal_handle(row)
+            remote = bool(row) and worker_is_remote(row, config)
+            environment = remote_environment(row) if remote else ''
+            sent = False
+            if term and (environment or not remote):
+                text = ('Your worker_done for %s does not count yet: %s. Push it to agent-state (or name the '
+                        'agent-state commit sha) and send worker_done again.' % (dispatch, hold.get('reason')))
+                try:
+                    rpc_call('terminal', 'send', '--terminal', term, '--text', text, '--enter',
+                             *(('--environment', environment) if environment else ()))
+                    sent = True
+                except SEND_ERRORS as error:
+                    log_send_failed(term, error)
+            if sent:
+                notified.append(message_id)
+            elif message_id not in undelivered:
+                undelivered.append(message_id)
+                lines.append('hold on %s: notice not delivered (%s)' % (dispatch, hold.get('reason')))
+        if not hold.get('overdue') and stall_limit > 0 and now - float(hold.get('since') or now) >= stall_limit:
+            hold['overdue'] = True
+            lines.append(Urgent('hold on %s: no passing worker_done after one stall window (%s); fleet-watch '
+                                'will not release it' % (dispatch, hold.get('reason'))))
+    del notified[:-500]
+    del undelivered[:-500]
+    return lines
+
+
 def reconcile_remote_completions(config, state, workers, messages, rpc_call):
     """Turn a settled remote worker into the worker_done the coordinator server rejected (#1220, #1228).
 
@@ -9516,7 +9707,7 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
         if settled is None and worker_inventory_status(worker) != 'completed':
             continue
         dispatch = worker.get('dispatchId')
-        if not isinstance(dispatch, str) or not dispatch:
+        if not isinstance(dispatch, str) or not dispatch or release_held(state, dispatch):
             continue
         outcome = 'succeeded' if settled in (None, 'succeeded') else 'failed'
         synthesized = {
@@ -9583,7 +9774,7 @@ def release_green_successes(messages, workers, config, state, release, pr_of, se
         if _message_outcome(message, payload) != 'succeeded':
             continue
         dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
-        if not isinstance(dispatch, str) or not dispatch or dispatch in seen:
+        if not isinstance(dispatch, str) or not dispatch or dispatch in seen or release_held(state, dispatch):
             continue
         worker = by_dispatch.get(dispatch)
         if worker is None or worker_terminal_released(worker):
@@ -9801,7 +9992,8 @@ def relay_done_board(messages, workers, config, state, board_of, set_status, pr_
             continue
         dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
         worker = by_dispatch.get(dispatch)
-        if worker is None:
+        # A held worker_done does not count, so the card stays until a passing resend (#1849).
+        if worker is None or release_held(state, dispatch):
             continue
         current = board_of(worker)
         if current is None:
@@ -10069,6 +10261,7 @@ def _main():
     workers = []
     notices = []
     inventory_ok = True
+    holds_ok = True
     pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
@@ -10084,7 +10277,15 @@ def _main():
         except Exception as error:
             print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
-            notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
+            update_done_holds(state, inv['messages'], workers, now, read_full=read_full_inbox_bodies)
+        except Exception as error:
+            # Without fresh holds nothing may be released this pass.
+            holds_ok = False
+            print('fleet-watch: done hold check skipped: %s' % (repr(error),), file=sys.stderr)
+        try:
+            if holds_ok:
+                notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
+                notices += send_done_hold_notices(state, workers, config, now, rpc)
             for failed in workers:
                 enrich_failed_worker_show(failed, state, rpc)
         except Exception as error:
@@ -10140,7 +10341,7 @@ def _main():
         return [row for row in rows if _babysit_closed(row)]
 
     pass_phase('release')
-    if inventory_ok:
+    if inventory_ok and holds_ok:
         try:
             env_of = {
                 w.get('dispatchId'): remote_environment(w)
