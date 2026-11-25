@@ -1,4 +1,6 @@
-"""#1820: one start budget check, start_allowed(cost), owned by each start site; the start wrapper has none."""
+"""#1820: one start budget check, start_allowed(cost), owned by each start site; the start wrapper has none.
+
+#1841: verifier starts (one shot and standing) have no budget hold; they start on Review PASS within the usage gate."""
 import ast
 import copy
 import importlib.util
@@ -142,11 +144,6 @@ def one_shot_verifier(held):
     return starts, bits, before, state
 
 
-def fixer(held):
-    # The fixer shares the one shot verifier's call site (`action` names the log line), so one scenario drives both.
-    return one_shot_verifier(held)
-
-
 AGY_PICK = lambda _role, **_kw: {'selected': {'provider': AGY, 'model': 'm', 'eligible': True, 'headroom': 50}}  # noqa: E731
 
 
@@ -156,6 +153,12 @@ def standing_verifier(held):
     return starts, bits, before, state
 
 
+# Verifier starts that never wait on the start budget (owner 2026-11-25, #1838): scenario per site.
+VERIFIER_SITES = {
+    'standing verifier': standing_verifier,
+    'one shot verifier': one_shot_verifier,
+}
+
 # site -> (scenario, log line the held start leaves)
 BUDGET_TABLE = {
     'issue start': (issue_start, 'issue_start_budget=1'),
@@ -163,9 +166,6 @@ BUDGET_TABLE = {
     'backlog sweep': (backlog_sweep, 'backlog_sweep_budget='),
     'supply': (supply, 'supply_budget='),
     'triage': (triage, 'triage_budget='),
-    'standing verifier': (standing_verifier, 'standing_budget=7'),
-    'one shot verifier': (one_shot_verifier, 'verifier_budget=2'),
-    'fixer': (fixer, 'verifier_budget=2'),
     'rework': (rework, 'rework_budget=1'),
 }
 
@@ -176,9 +176,9 @@ START_SITES = {
     'issue_scan_try_backlog_sweep': 1,
     'work_order_try_supply': 1,
     'issue_scan_try_triage': 1,
-    'standing_route': 1,
+    'standing_route': 1,  # a verifier start: no budget check (#1841), see VERIFIER_SITES
     'babysit_pass.start_worker': 1,  # the wrapper, which calls with_coordinator_handle's result: no budget check here
-    'babysit_pass': 2,  # the one shot verifier or fixer start, and its one startup retry
+    'babysit_pass': 2,  # the one shot verifier start and its one startup retry: no budget check (#1841)
     '_issue_scan_pass': 3,  # auto ship, rework, issue start
 }
 
@@ -285,33 +285,34 @@ class StartBudget(unittest.TestCase):
         self.assertEqual(state.get('issue_scan_deferred') or {}, {})
         self.assertIn('issue_start_budget=1', bits)
 
-    def test_a_held_standing_verifier_starts_no_one_shot_and_marks_nothing(self):  # case 7
-        starts, bits, _before, state, lines = babysit(
-            True, [standing_pr(7)], standing={'enabled': True, 'hosts': [HOST]}, pick=AGY_PICK)
-        self.assertEqual(starts, [])
-        self.assertIn('standing_budget=7', bits)
-        self.assertEqual(state.get('babysit') or {}, {})
-        self.assertTrue(any('skip' in line and 'budget' in line for line in lines), lines)
-        starts, bits, _before, state, _lines = babysit(
-            False, [standing_pr(7)], standing={'enabled': True, 'hosts': [HOST]}, pick=AGY_PICK)
-        self.assertEqual(len(starts), 1)  # the next pass starts it
+    def test_a_verifier_starts_on_the_same_pass_when_the_budget_is_spent(self):
+        for site, scenario in VERIFIER_SITES.items():
+            with self.subTest(site=site):
+                fw.begin_pass_counts()
+                starts, bits, _before, state = scenario(True)
+                self.assertEqual(len(starts), 1, (site, bits))
+                self.assertFalse([b for b in bits if '_budget=' in b], (site, bits))
+                self.assertTrue(state.get('babysit'), site)
 
-    def test_standing_route_returns_held(self):
+    def test_standing_route_starts_when_the_budget_is_spent(self):
         config = tier_config('/tmp')
         config['babysit']['standing_verifier'] = {'enabled': True, 'hosts': [HOST]}
         config['issue_scan']['repo_roots'] = {'o/r': '/tmp'}
-        bits = []
-        with spent():
+        starts = []
+        with spent(), tempfile.TemporaryDirectory() as root, \
+                patch.dict(os.environ, {'STANDING_VERIFIER_TRIAL_LOG': os.path.join(root, 't.tsv')}):
             result = fw.standing_route(
                 config, {}, [], 'o/r', standing_pr(7), ('claude', 'sonnet'), '', [], FakeIO(),
-                lambda command: self.fail('started %s' % command), lambda *_a, **_k: None, 10_000.0, {}, bits)
-        self.assertEqual(result, 'held')
+                lambda command: starts.append(command) or fw.BabysitStartResult(0, '', 'ctx_s', 'term_s'),
+                lambda *_a, **_k: None, 10_000.0, {}, [])
+        self.assertEqual(result, 'started')
+        self.assertEqual(len(starts), 1)
 
-    def test_the_one_shot_verifier_holds_with_the_issue_start(self):  # case 8
-        for scenario in (one_shot_verifier, fixer, rework, issue_start):
+    def test_rework_and_issue_start_still_hold_while_a_verifier_starts(self):  # case 8
+        for scenario in (rework, issue_start):
             with self.subTest(scenario=scenario.__name__):
                 self.assertEqual(scenario(True)[0], [])
-
+        self.assertEqual(len(one_shot_verifier(True)[0]), 1)
 
 if __name__ == '__main__':
     unittest.main()

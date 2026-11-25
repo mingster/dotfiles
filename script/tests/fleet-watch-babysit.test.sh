@@ -474,10 +474,11 @@ else
   bad "merged and closed pass exits 0"
 fi
 if [ "$(starts)" = 0 ]; then ok "merged and closed do not dispatch"; else bad "merged and closed do not dispatch (got $(starts))"; fi
-if grep -q 'action=skip closed' "$tmp/closed.out" && [ "$(grep -c 'action=skip closed' "$tmp/closed.out")" -eq 3 ]; then
-  ok "merged and closed are skipped"
+# #1841: the list is filtered to open PRs first, so a closed PR with no live verifier gets no per PR line.
+if ! grep -q 'action=skip closed' "$tmp/closed.out" && ! grep -Eq 'owner/app#(1021|8|9) ' "$tmp/closed.out"; then
+  ok "merged and closed get no per PR line"
 else
-  bad "merged and closed are skipped ($(cat "$tmp/closed.out"))"
+  bad "merged and closed get no per PR line ($(cat "$tmp/closed.out"))"
 fi
 
 # --- builder comes from the dispatch record when the body has no Builder line ---
@@ -758,6 +759,71 @@ if ! grep -q 'action=skip body-gate' "$tmp/nobuilder.out"; then
   ok "body gate does not block when no live builder can take the note"
 else
   bad "body gate does not block when no live builder can take the note (out=$(cat "$tmp/nobuilder.out"))"
+fi
+
+# --- #1841: a head with Review: FAIL starts no verifier and no cold Review ---
+empty_repos
+: > "$BABYSIT_STARTS"
+green 31 "$HEAD_D"
+python3 - "$BABYSIT_GH_DIR/owner/app.json" "$HEAD_D" <<'PY'
+import json, sys
+path, head = sys.argv[1:]
+rows = json.load(open(path, encoding="utf-8"))
+rows[0]["comments"] = [{"body": "Review: FAIL head=%s model=gemini-4-argon-high\n" % head, "createdAt": "2026-11-25T03:07:20Z"}]
+json.dump(rows, open(path, "w", encoding="utf-8"))
+PY
+echo '{}' > "$tmp/state-reviewfail.json"
+run_pass "$tmp/state-reviewfail.json" only "" "$tmp/reviewfail.out" || true
+if [ "$(starts)" = 0 ] && grep -q "owner/app#31 head=$HEAD_D action=skip needs-fix" "$tmp/reviewfail.out"; then
+  ok "Review: FAIL at the head starts nothing"
+else
+  bad "Review: FAIL at the head starts nothing (starts=$(starts) out=$(cat "$tmp/reviewfail.out"))"
+fi
+
+# --- #1841: an unresolvable builder is refused 3 times, noticed once, then skipped until its head changes ---
+if python3 - "$root/script/fleet-watch.py" "$HEAD_A" "$HEAD_B" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("fw", sys.argv[1])
+fw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fw)
+head_a, head_b = sys.argv[2:]
+pr = {
+    "number": 41, "state": "OPEN", "isDraft": False, "headRefOid": head_a, "headRefName": "feature/pr-41",
+    "body": "Why\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n\nNo builder line here.\n",
+    "files": [{"path": "script/fleet-watch.py"}],
+    "comments": [{"body": "Review: PASS head=%s\n" % head_a}],
+    "statusCheckRollup": [{"name": "head-checks", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+}
+config = {"issue_scan": {"run": "run_t", "from_terminal": "term_t", "repo_roots": {"owner/app": "/tmp"}},
+          "babysit": {"repos": ["owner/app"], "startup": "/bin/true"}}
+state, picks, starts = {}, [], []
+def run():
+    return fw.babysit_pass(
+        config, state, [], pr_fetch=lambda _r: [pr], closed_fetch=lambda _r: None,
+        start_worker=lambda c: starts.append(c) or 0,
+        pick=lambda role, avoid_family=None: picks.append(role) or {"selected": {"provider": "claude", "model": "opus", "eligible": True}},
+        owner_check=lambda _pr, **_k: None, now=1_700_000_000)
+results = [run() for _ in range(5)]
+notices = [n for r in results for n in r[0]]
+bits = [b for r in results for b in r[2]]
+lines = [l for r in results for l in r[1]]
+assert len(notices) == 1 and "owner/app#41" in str(notices[0]), notices
+assert bits.count("unknown_builder=41") == 3, bits
+assert sum("unknown-builder-parked" in l for l in lines) == 2, lines
+assert not starts and not picks, (starts, picks)
+pr["headRefOid"] = head_b
+pr["comments"] = [{"body": "Review: PASS head=%s\n" % head_b}]
+notices, lines, bits = run()
+assert bits.count("unknown_builder=41") == 1 and not notices, (bits, notices)
+pr["state"] = "MERGED"
+pr["mergedAt"] = "2026-11-25T03:00:00Z"
+run()
+assert not state.get("babysit_unknown_builder", {}).get("owner/app"), state
+PY
+then
+  ok "unknown builder: 3 refusals, one notice, skipped until the head changes"
+else
+  bad "unknown builder: 3 refusals, one notice, skipped until the head changes"
 fi
 
 echo "babysit-dispatch: $pass passed, $fail failed"
