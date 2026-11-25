@@ -670,6 +670,52 @@ class Bounce(unittest.TestCase):
         self.assertEqual(sent2, [])
 
 
+class BounceReadersDecisions(unittest.TestCase):
+    """#1882: worker_done passes the PR diff and the dispatch's ask record to pr-body-gate."""
+    GOOD = ('Closes #42\n\n## Self-check\n$ bash script/checks-local.sh\nexit 0\n'
+            'Builder: agent=claude model=claude-opus-5-5\n')
+    SHARED = ('diff --git a/lib/shared.py b/lib/shared.py\n--- a/lib/shared.py\n+++ b/lib/shared.py\n'
+              '@@ -1,2 +1,2 @@ def shared(x):\n-    return x\n+    return x + 1\n')
+    DONE = {'id': 'm1', 'type': 'worker_done', 'payload': {'dispatchId': 'ctx_b', 'outcome': 'succeeded'}}
+    ASK = {'id': 'q1', 'type': 'question', 'from': 'term_b', 'payload': {'dispatchId': 'ctx_b'}}
+
+    def bounce(self, body, diff=None, extra=(), messages=None):
+        sent = []
+        worker = {'dispatchId': 'ctx_b', 'terminal': 'term_b', 'githubPullRequestNumber': 8,
+                  '_task_title': 'fullstack-dev - #42',
+                  'projection': {'role': 'worker', 'workspace': {'id': 'wt::/tmp/not-a-checkout'}}}
+        lines = fw.bounce_builder_dones(
+            messages if messages is not None else [self.DONE, *extra], [worker], lambda _r, _n: body,
+            lambda terminal, text: sent.append((terminal, text)), {},
+            {'issue_scan': {'repo_roots': {REPO: '/tmp/not-a-checkout'}}},
+            diff_of=lambda _r, _n: diff,
+        )
+        return lines, sent
+
+    def test_shared_function_change_without_readers_bounces(self):
+        lines, sent = self.bounce(self.GOOD + 'Decisions: none\n', diff=self.SHARED)
+        self.assertEqual(len(lines), 1)
+        self.assertIn('Readers:', lines[0])
+        self.assertIn('Readers:', sent[0][1])
+
+    def test_readers_section_passes(self):
+        body = self.GOOD + 'Decisions: none\n\nReaders:\n- shared: lib/test_shared.py covers its caller\n'
+        self.assertEqual(self.bounce(body, diff=self.SHARED), ([], []))
+
+    def test_unreadable_diff_leaves_the_readers_rule_off(self):
+        self.assertEqual(self.bounce(self.GOOD + 'Decisions: none\n', diff=None), ([], []))
+
+    def test_no_ask_needs_decisions_and_an_ask_does_not(self):
+        lines, _sent = self.bounce(self.GOOD)
+        self.assertIn('Decisions:', lines[0])
+        self.assertEqual(self.bounce(self.GOOD, extra=[self.ASK]), ([], []))
+        self.assertEqual(self.bounce(self.GOOD + 'Decisions: none\n'), ([], []))
+
+    def test_an_inbox_cut_at_its_limit_leaves_the_decisions_rule_off(self):
+        filler = [{'id': 'f%d' % i, 'type': 'status', 'payload': {}} for i in range(fw.INBOX_LIMIT - 1)]
+        self.assertEqual(self.bounce(self.GOOD, messages=[self.DONE] + filler), ([], []))
+
+
 class OwnerReceiptGate(unittest.TestCase):
     def test_pr_owner_only_reason_checks_owner_receipt_in_repo_root(self):
         with tempfile.TemporaryDirectory() as tmp:

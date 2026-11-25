@@ -8,6 +8,7 @@ SCRIPT="$ROOT/script/check-pr-body.sh"
 TMP="$(cd -P "$(mktemp -d)" && pwd)"
 trap 'rm -rf "$TMP"' EXIT
 pass=0 fail=0
+cd "$TMP" || exit 1  # outside any checkout, so no branch diff applies unless a case sets one up
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL $1"; }
 
@@ -62,6 +63,42 @@ if [ "$rc" -eq 1 ] && grep -qF "#7" <<<"$out"; then ok "--title naming an issue 
 
 run --title "fix: thing (#5)" --repo o/r "$TMP/good.md"
 if [ "$rc" -eq 0 ] && grep -qF "repos/o/r/issues/5" "$TMP/gh.args"; then ok "--repo is passed to the issue lookup"; else bad "--repo (rc=$rc, $(cat "$TMP/gh.args"))"; fi
+
+# #1882: --diff turns on the Readers: rule, --asked no the Decisions: rule.
+cat >"$TMP/shared.diff" <<'D'
+diff --git a/lib/shared.py b/lib/shared.py
+--- a/lib/shared.py
++++ b/lib/shared.py
+@@ -1,2 +1,2 @@ def shared(x):
+-    return x
++    return x + 1
+D
+run --diff "$TMP/shared.diff" "$TMP/good.md"
+if [ "$rc" -eq 1 ] && grep -qF "Readers:" <<<"$out" && grep -qF "shared" <<<"$out"; then ok "--diff changing a shared function refuses a body without Readers:"; else bad "--diff no Readers (rc=$rc, $out)"; fi
+{ cat "$TMP/good.md"; printf '\nReaders:\n- shared: script/tests/test_shared.py covers both callers\n'; } >"$TMP/readers.md"
+run --diff "$TMP/shared.diff" "$TMP/readers.md"
+[ "$rc" -eq 0 ] && ok "--diff with a Readers: section naming the function passes" || bad "--diff Readers (rc=$rc, $out)"
+run --asked no "$TMP/good.md"
+if [ "$rc" -eq 1 ] && grep -qF "Decisions:" <<<"$out"; then ok "--asked no refuses a body without Decisions:"; else bad "--asked no (rc=$rc, $out)"; fi
+run --asked yes "$TMP/good.md"
+[ "$rc" -eq 0 ] && ok "--asked yes needs no Decisions:" || bad "--asked yes (rc=$rc, $out)"
+run --asked maybe "$TMP/good.md"
+[ "$rc" -eq 2 ] && ok "--asked other than yes or no is a usage error" || bad "--asked maybe (rc=$rc)"
+
+# With no --diff, a checkout's branch diff against origin/main is the diff (the PR is not open yet).
+g() { git -C "$TMP/repo" -c user.name=t -c user.email=t@example.test "$@" >/dev/null 2>&1; }
+git init -q --bare "$TMP/origin.git"
+git init -q -b main "$TMP/repo"
+mkdir "$TMP/repo/lib"
+printf 'def shared(x):\n    return x\n' >"$TMP/repo/lib/shared.py"
+g add -A; g commit -m base; g remote add origin "$TMP/origin.git"; g push origin main; g fetch origin
+g checkout -b feat
+printf 'def shared(x):\n    return x + 1\n' >"$TMP/repo/lib/shared.py"
+g commit -am change
+out=$(cd "$TMP/repo" && bash "$SCRIPT" "$TMP/good.md" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && grep -qF "Readers:" <<<"$out"; then ok "no --diff: the branch diff against origin/main turns on Readers:"; else bad "git default diff (rc=$rc, $out)"; fi
+out=$(cd "$TMP/repo" && bash "$SCRIPT" "$TMP/readers.md" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "no --diff: a Readers: section passes the branch diff" || bad "git default Readers (rc=$rc, $out)"
 
 run "$TMP/missing.md"
 [ "$rc" -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (rc=$rc)"
