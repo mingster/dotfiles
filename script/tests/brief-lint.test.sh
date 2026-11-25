@@ -802,5 +802,15 @@ done
 n_fw=$(find "$tmp/fw-out" -name '*.md' | wc -l | tr -d ' ')
 if [ "$fw_ec" -eq 0 ] && [ "$n_fw" -eq 5 ] && [ -z "$fw_failed" ]; then ok; else bad "fleet-watch generated briefs should pass the new rules (python=$fw_ec, n=$n_fw, failed:$fw_failed)"; fi
 
+# 1886. Multibyte text lints the same as its ASCII twin under a UTF-8 locale (BSD awk died with towc).
+mb_twin() { # <out> <phrase>
+  printf 'Refs #1886\n\n## Acceptance\n- [ ] `%s` and - %s, `x`\n\n## Verify\n`bash script/checks-local.sh`\n' "$2" "$2" >"$1"
+}
+mb_twin "$tmp/mb-ascii.md" 'cash, ATM, paid stand'
+mb_twin "$tmp/mb-zh.md" '現金, ATM, 立牌已收款'
+mb_a=$(LC_ALL=en_US.UTF-8 bash "$lint" "$tmp/mb-ascii.md" 2>&1); mb_ae=$?
+mb_z=$(LC_ALL=en_US.UTF-8 bash "$lint" "$tmp/mb-zh.md" 2>&1); mb_ze=$?
+if [ "$mb_ze" -eq "$mb_ae" ] && [ "$mb_z" = "$mb_a" ] && [ "$mb_a" = "brief-lint: missing Out of scope" ]; then ok; else bad "Chinese brief should lint like its ASCII twin (zh ec=$mb_ze out=$mb_z; ascii ec=$mb_ae out=$mb_a)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
