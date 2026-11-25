@@ -140,6 +140,23 @@ chmod 755 "$D"
 expect_rc "run checks the folder first" 1 g run peek
 chmod 700 "$D"
 
+# run refuses a helper whose owner uid is not the trusted uid, or whose stat fails. A fake stat on PATH answers
+# for the helper only and hands every other path to the real stat. Non-root runs use PATH as given (no reset).
+REAL_STAT=$(command -v stat)
+mkdir -p "$TMP/fakebin"
+printf '%s\n' '#!/bin/sh' \
+  "for a in \"\$@\"; do [ \"\$a\" = \"$H/peek\" ] && { echo '99999 755'; exit 0; }; done" \
+  "exec \"$REAL_STAT\" \"\$@\"" >"$TMP/fakebin/stat"
+chmod +x "$TMP/fakebin/stat"
+expect_rc "run refuses a helper owned by an untrusted uid" 2 env PATH="$TMP/fakebin:$PATH" SECRETS_GATE_CONF="$TMP/send.conf" bash "$GATE" run peek
+[[ "$LAST_OUT" == *"refused: run: peek is not owned by uid"* ]] && ok "the refusal names the untrusted owner" || bad "owner refusal text: $LAST_OUT"
+printf '%s\n' '#!/bin/sh' \
+  "for a in \"\$@\"; do [ \"\$a\" = \"$H/peek\" ] && exit 1; done" \
+  "exec \"$REAL_STAT\" \"\$@\"" >"$TMP/fakebin/stat"
+expect_rc "run refuses a helper that cannot be stat'd" 2 env PATH="$TMP/fakebin:$PATH" SECRETS_GATE_CONF="$TMP/send.conf" bash "$GATE" run peek
+[[ "$LAST_OUT" == *"refused: run: cannot stat peek"* ]] && ok "the refusal names the failed stat" || bad "stat refusal text: $LAST_OUT"
+rm -f "$TMP/fakebin/stat"
+
 # The folder is checked on every use: root controlled path, mode 700, no link inside
 chmod 755 "$D"
 expect_rc "a folder with mode 755 is refused" 1 g fingerprint a.key
