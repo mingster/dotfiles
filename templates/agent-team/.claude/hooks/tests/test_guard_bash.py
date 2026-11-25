@@ -1861,5 +1861,156 @@ class BuilderOwnerPathGate(GuardTest):
         self.assertIsNotNone(self.write(self.HOOK_PATH))
 
 
+class ProjectConfigGuardTest(GuardTest):
+    """Runs the hook in a project whose guard-config.json is found from the working directory."""
+    CONFIG = {"secrets_dir": "fileServer/secrets", "exact_only_scripts": [".claude/bin/probe-secrets.sh"],
+              "blocked_scripts": ["deploy-raw.sh"]}
+
+    def setUp(self):
+        super().setUp()
+        self.project = os.path.join(self.home, "project")
+        for sub in (".claude/hooks", ".claude/bin", "fileServer/secrets"):
+            os.makedirs(os.path.join(self.project, sub))
+        with open(os.path.join(self.project, ".claude", "bin", "probe-secrets.sh"), "w") as f:
+            f.write("#!/bin/sh\n")
+        with open(os.path.join(self.project, ".claude", "hooks", "guard-config.json"), "w") as f:
+            json.dump(self.CONFIG, f)
+
+    def bash(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.project}
+        env = dict(os.environ, HOME=self.home)
+        env.pop("GUARD_CONFIG", None)
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=env, cwd=self.project, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        if not out.stdout.strip():
+            return None
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
+    """Deny only (#1870): blocked script names built from expansions, the secrets dir in another case or
+    named through a leading `$`, and `~+` / `~-` paths."""
+    BUILT = "A script name built from `$`, a backtick or a glob is refused even to read"
+
+    def test_built_blocked_script_names_denied(self):
+        for command in ("S=deploy; bash bin/$S-raw.sh", "S=deploy; bash bin/${S}-raw.sh", "S=deploy; bin/$S-raw.sh",
+                        'S=deploy; b"a"sh bin/${S}-raw.sh', "S=deploy; b\\ash bin/${S}-raw.sh",
+                        'S=deploy; bash "-e" bin/${S}-raw.sh', "S=deploy; command bin/${S}-raw.sh",
+                        "S=deploy; env bin/${S}-raw.sh", 'S=deploy; "A"=1 bin/${S}-raw.sh',
+                        "S=deploy # <<'E'\nbash bin/$S-raw.sh", "S=deploy; echo \"<<'E'\"\nbash bin/$S-raw.sh"):
+            with self.subTest(command=command):
+                reason = self.assertDenied(command)
+                self.assertTrue(reason.startswith("deploy-raw.sh runs only inside the deploy pipeline"), reason)
+                self.assertIn(self.BUILT, reason)
+
+    def test_built_name_accepted_new_denies(self):
+        for command in ("S=deploy; echo $S-raw.sh", "git commit -m 'fix $S-raw.sh'", "ls bin/*-raw.sh",
+                        "cat bin/*-raw.sh", "grep -n set bin/*-raw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command, self.BUILT)
+
+    def test_secrets_dir_case_variable_and_tilde_plus_denied(self):
+        for command in ("cat fileServer/Secrets/x.json", "cat fileServer/SECRETS/x.json",
+                        "D=fileServer/secrets; cat $D/x.json", "D=fileServer/Secrets; cat $D/x.json",
+                        "D=fileServer; S=secrets; cat $D/$S/x.json",
+                        "for d in fileServer/Secrets; do cat $d/x.json; done",
+                        "cat ~+/fileServer/*/x.json", "D=fileServer; cat ~+/$D/*/x.json",
+                        "cat ~-/fileServer/*/x.json", "echo $HOME; ls fileServer/secrets"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_nearby_commands_still_allowed(self):
+        for command in ("cat bin/deploy-raw.sh", "git commit -m 'fix: deploy-raw.sh exit code'",
+                        "git commit -F - <<'E'\nbash bin/$S-raw.sh\nE", "X=a; cat $X.sh", "X=a; cat $Xaw.sh",
+                        "for f in scripts/*.sh; do shellcheck $f; done", "D=docs; cat $D/x.md", "B=/tmp/b; cat $B/x",
+                        "ls fileServer/Secrets", "cat ~+/docs/x.md",
+                        "cat > /tmp/b.md <<'E'\nnever read $D under fileServer/secrets\nE",
+                        "gh issue create --title t --body-file - <<'E'\nS=deploy; bash bin/$S-raw.sh is allowed\nE"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_review_bypasses_denied(self):
+        # PR #1874 cold review: a quote or backslash ends `$S`, `~+` reaching cd, find and xargs, a reader
+        # inside `$(...)`, and a quoted secrets dir component.
+        for command in ('S=deploy-; bash bin/"$S"raw.sh', 'S=deploy-; bash bin/$S"raw.sh"',
+                        "S=deploy-; bash bin/$S'raw.sh'", "S=deploy-; bash bin/$S\\raw.sh",
+                        'S=d; bash bin/"$S"eploy-raw.sh',
+                        "cd ~+/fileServer && cat */x.json", "find ~+/fileServer -exec cat {} +",
+                        "find ~+ -exec cat {} +", "find ~+/fileServer -print | xargs cat",
+                        'D=fileServer/secrets; ls "$(cat $D/x.json)"', 'D=fileServer/secrets; test -n "$(cat $D/x.json)"',
+                        'D=fileServer/secrets; X="$(cat $D/x.json >&2)"',
+                        'D=file"Server"/secrets; cat $D/x.json', 'D=fileServer/sec"rets"; cat $D/x.json',
+                        "D=file\\Server/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    # PR #1874 second cold review, one test per finding.
+    def test_comment_with_quote_does_not_hide_next_line(self):
+        for command in ("D=fileServer/secrets # don't\ncat $D/x.json",
+                        "D=fileServer/secrets # <<'E'\ncat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_continuations_and_dollar_quotes_denied(self):
+        for command in ("S=deploy; bash bin/$S\\\n-raw.sh", "S=deploy; bash bin/$S-\\\nraw.sh",
+                        "S=deploy; bash bin/$\\\nS-raw.sh", "D=file\\\nServer/secrets; cat $D/x.json",
+                        "S=deploy; bash bin/$S$'-raw.sh'", 'S=deploy; bash bin/$S$"-raw.sh"',
+                        "S=deploy; bash bin/$S$'\\x2draw.sh'", "D=file$'Server'/secrets; cat $D/x.json",
+                        "D=file$'\\x53erver'/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_reader_behind_pipe_process_substitution_or_quoted_paren_denied(self):
+        for command in ("D=fileServer; S=secrets; ls $D/$S/x.json | xargs cat",
+                        "D=fileServer/secrets; ls <(cat $D/x.json >&2)",
+                        "D=fileServer/secrets; test -s <(cat $D/x.json >&2)",
+                        "D=fileServer/secrets; ls \"$(echo ')'; cat $D/x.json)\"",
+                        "D=fileServer/secrets; X=\"$(echo ')'; cat $D/x.json >&2)\""):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_glob_or_brace_in_assignment_denied(self):
+        for command in ("D=fileServer/*; cat $D/x.json", "D=fileServer/sec*; cat $D/x.json",
+                        "D=file*/secrets; cat $D/x.json", "D=fileServer/se[c]rets; cat $D/x.json",
+                        "D=file{Server,x}/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+
+class DenyMessagesNameRewrite(ProjectConfigGuardTest):
+    """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""
+    CONFIG = dict(ProjectConfigGuardTest.CONFIG, production_hosts=["prod.example"])
+    HOSTS = "Write each host out, one ssh or scp per host, for example `ssh blueDevil uptime; ssh niteking uptime`"
+    PATH = "Write the path out in full, for example `ls /tmp/p/.claude/skills/*/SKILL.md` instead of `$P/...`."
+    MESSAGE = ("When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
+               "`gh ... --body-file -` and a quoted heredoc.")
+    CODE = ("To edit text that names one of these words, use `sed`, or write the code to a file with a quoted "
+            "heredoc and run that file.")
+
+    def test_denies_name_the_rewrite(self):
+        for command, needle in (("for h in blueDevil niteking; do ssh $h uptime; done", self.HOSTS),
+                                ('S=/tmp/sp; scp -q niteking:x.patch "$S/"', self.HOSTS),
+                                ("P=/tmp/p; for f in $P/.claude/skills/*/SKILL.md; do echo $f; done", self.PATH),
+                                ("for w in a b; do [ -d ../$w ] && echo $w; done", self.PATH),
+                                ('git commit -m "docs: mention the secrets dir"', self.MESSAGE),
+                                ("python3 -c \"s=open('a').read(); s=s.replace('subprocess','x')\"", self.CODE),
+                                ("perl -esystem+q:ls:", self.CODE)):
+            with self.subTest(command=command):
+                self.assertDenied(command, needle)
+
+    def test_reader_deny_has_no_message_sentence(self):
+        reason = self.assertDenied("cat secrets/x.json")
+        self.assertNotIn(self.MESSAGE, reason)
+
+    def test_rewrites_allowed(self):
+        for command in ("ssh blueDevil uptime; ssh niteking uptime", "scp -q niteking:x.patch /tmp/sp/",
+                        "ls /tmp/p/.claude/skills/*/SKILL.md", "ls -d ../a ../b",
+                        "git commit -F - <<'E'\ndocs: mention the secrets dir\nE",
+                        "sed -i '' 's/subprocess/x/g' a"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 if __name__ == "__main__":
     unittest.main()

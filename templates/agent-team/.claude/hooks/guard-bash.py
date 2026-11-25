@@ -104,8 +104,8 @@ CONFIG_LOADED_FROM: str | None = None
 GRILL_APPROVERS: set[str] = set()
 
 DEFAULT_SECRETS_DIR_PATTERN = r"(?:^|[/\s='\"<(])secrets(?:/|$|[\s'\"\)])"
-SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
-SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
+SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN, re.IGNORECASE)
+SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*", re.IGNORECASE)
 
 SECRET_FILE = re.compile(
     r"(^|[/=])("
@@ -269,8 +269,8 @@ def load_guard_config(start_dir):
     HOST_DEPLOY_PATTERNS = {}
     PROMOTE_STEPS = None
     REMOTE_READ_ONLY = DEFAULT_REMOTE_READ_ONLY
-    SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN)
-    SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*")
+    SECRETS_DIR = re.compile(DEFAULT_SECRETS_DIR_PATTERN, re.IGNORECASE)
+    SECRETS_WRITE_REDIRECT = re.compile(r">>?\s*\S*secrets/\S*", re.IGNORECASE)
     CONFIG_LOADED_FROM = None
 
     cfg_path = find_guard_config(start_dir)
@@ -402,9 +402,9 @@ def load_guard_config(start_dir):
     if extra_dirs:
         escaped = [re.escape(d) for d in extra_dirs]
         dir_union = "|".join([DEFAULT_SECRETS_DIR_PATTERN] + [rf"(?:^|[/\s='\"<(])(?:{e})(?:/|$|[\s'\"\)])" for e in escaped])
-        SECRETS_DIR = re.compile(dir_union)
+        SECRETS_DIR = re.compile(dir_union, re.IGNORECASE)
         redir_union = "|".join(["secrets/"] + [rf"{e}/?" for e in escaped])
-        SECRETS_WRITE_REDIRECT = re.compile(rf">>?\s*\S*(?:{redir_union})\S*")
+        SECRETS_WRITE_REDIRECT = re.compile(rf">>?\s*\S*(?:{redir_union})\S*", re.IGNORECASE)
 
     raw_sign_in = cfg_expect("sign_in_script", str, "string")
     if raw_sign_in and raw_sign_in.strip():
@@ -674,8 +674,10 @@ def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     else:
         exception = (f" The only exception is `{SIGN_IN_SCRIPT}`, which reads the file itself without printing it."
                      if SIGN_IN_SCRIPT else "")
+    message = (" When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
+               "`gh ... --body-file -` and a quoted heredoc." if base in {"git", "gh"} else "")
     deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
-         f"secrets dir.{exception} Anything else, ask Elon.")
+         f"secrets dir.{exception} Anything else, ask Elon.{message}")
 
 
 KILL_FORMS = ("Stop a port owner with kill $(lsof -ti tcp:<port> -sTCP:LISTEN), or a job you started "
@@ -1799,7 +1801,9 @@ def check_hidden_hosts(segment, base, args):
         if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
-                 "approval covers it. Write the host literally.")
+                 "approval covers it. Write the host literally. Write each host out, one ssh or scp per host, for "
+                 "example `ssh blueDevil uptime; ssh niteking uptime`; a path variable in an scp operand also goes "
+                 "literal.")
 
 
 GIT_REMOTE_OPS = {"fetch", "pull", "push", "clone", "ls-remote", "remote", "submodule", "archive"}
@@ -2966,7 +2970,9 @@ def check_indirection(base, args):
             glued = [" ".join([m[1], *args[i + 1:]]) for i, a in enumerate(args) if (m := GLUED_PERL_CODE.match(a))]
             if any(STARTS_PROCESS.search(code) or "`" in code for code in glued):
                 INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process "
-                                "...) hides the command from the guard. Run the command directly.")
+                                "...) hides the command from the guard. Run the command directly. To edit text "
+                                "that names one of these words, use `sed`, or write the code to a file with a "
+                                "quoted heredoc and run that file.")
         idx = next((i for i, a in enumerate(args) if INLINE_CODE_FLAG.match(a)), None)
         operand = next((a for a in args if not a.startswith("-") and not REDIRECT.match(a)), None)
         if idx is not None:
@@ -2979,7 +2985,9 @@ def check_indirection(base, args):
             return
         if STARTS_PROCESS.search(code) or (base.startswith(("perl", "ruby")) and "`" in code):
             INDIRECT.append(f"`{base}` code that starts a process (os.system, subprocess, system, child_process ...) "
-                            "hides the command from the guard. Run the command directly.")
+                            "hides the command from the guard. Run the command directly. To edit text that names "
+                            "one of these words, use `sed`, or write the code to a file with a quoted heredoc and "
+                            "run that file.")
 
 
 def check_segment(segment, depth=0, cwd=None):
@@ -3941,7 +3949,10 @@ def _xargs_reaches(words, absolute, relative):
 
 
 def _hidden_script_paths(command, cwd, absolute, relative):
-    words = _annotate_cwd(_command_words(command), cwd)
+    # bash expands `~+` to the working directory and `~-` to the previous one: judge both as `./`, for cd,
+    # find and xargs as well as expansions.
+    words = _annotate_cwd([("." + t[2:], "." + lit[2:], m) if t[:2] in ("~+", "~-") and t[2:3] in ("", "/")
+                           else (t, lit, m) for t, lit, m in _command_words(command)], cwd)
     for text, literal, metas, path_cwd in words:
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
             _deny_hidden()
@@ -3970,7 +3981,8 @@ def _deny_hidden():
     deny("A glob, brace, variable, substitution, find -exec, find -execdir or xargs could build a path under "
          + ", ".join(listed)
          + " without that path appearing as text. The guard cannot see the path the shell would produce, "
-         "so the command is denied.")
+         "so the command is denied. Write the path out in full, for example `ls /tmp/p/.claude/skills/*/SKILL.md` "
+         "instead of `$P/...`.")
 
 
 def check_hidden_script_paths(command, cwd):
@@ -4063,6 +4075,61 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# A `$name` (greedy, so `$Xaw.sh` is `$Xaw` then `.sh`) or a special parameter, matched before quotes drop so a
+# quote or backslash ends the name as bash does. Each becomes `}`, the end of an expansion, as do the closing `}`,
+# `)` or backtick of `${...}`, `$(...)` or `...`, and a glob character (#1870).
+PARAMETER = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
+EXPANSION_END = re.compile(r"[}`)*?\]]")
+ANSI_C_QUOTE = re.compile(r"\$'((?:[^'\\]|\\.)*)'", re.DOTALL)
+
+
+def _unquoted_text(command, end_parameters=False):
+    """The command as one plain text for the two checks below, never split into commands, so a comment, pipe
+    or substitution cannot hide a line from them (#1870): backslash newlines joined, `$'..'` decoded and
+    `$"..."` read as a quote, then quotes and backslashes dropped. A bad escape raises, and the caller denies."""
+    text = command.replace("\\\n", "")
+    text = ANSI_C_QUOTE.sub(lambda m: "'" + m.group(1).encode("latin-1", "backslashreplace")
+                            .decode("unicode_escape") + "'", text).replace('$"', '"')
+    if end_parameters:
+        text = PARAMETER.sub("}", text)
+    return re.sub(r"[\"'\\]", "", text).lower()
+
+
+def check_built_blocked_names(command):
+    """Deny an expansion followed directly by a 5+ character tail of a blocked script name, read as text."""
+    flat = _unquoted_text(command, end_parameters=True)
+    tails = {name.lower()[i:] for name in BLOCKED_SCRIPTS for i in range(len(name) - 4)}
+    for match in EXPANSION_END.finditer(flat):
+        rest = flat[match.end():]
+        for tail in tails:
+            if rest.startswith(tail) and not re.match(r"[a-z0-9_./-]", rest[len(tail):len(tail) + 1]):
+                name = next(n for n in sorted(BLOCKED_SCRIPTS) if n.lower().endswith(tail))
+                deny(f"{name} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
+                     "A script name built from `$`, a backtick or a glob is refused even to read; "
+                     "write the name out in full.")
+
+
+def _part_named(part, tokens):
+    """True when a token holds the path component, or is a glob or brace pattern that could match it."""
+    return any(part in token or (re.search(r"[*?\[{]", token)
+                                 and fnmatch.fnmatchcase(part, re.sub(r"\{[^}]*\}?", "*", token)))
+               for token in tokens)
+
+
+def check_secrets_dir_by_variable(command):
+    """Deny any `$` or backtick in a command that names every component of a configured secrets dir, written
+    out or through a glob. No split into reading and non reading commands: that parse lost text to comments,
+    pipes, `<(...)` and quoted parens, so this check fails closed instead (#1870)."""
+    flat = _unquoted_text(command)
+    if "$" not in flat and "`" not in flat:
+        return
+    # `$?`, `$*` and `${?}` are parameters, not globs; a `${...}` with more inside stays in, as a possible glob.
+    plain = PARAMETER.sub(" ", re.sub(r"\$\{(?:[a-z_][a-z0-9_]*|[0-9@*#?$!-])\}", " ", flat))
+    tokens = [t for t in re.split(r"[^a-z0-9_.*?\[\]{},-]+", plain) if t]
+    if any(all(_part_named(part.lower(), tokens) for part in _path_parts(rel)) for rel in SECRETS_DIR_RELPATHS):
+        _deny_hidden()
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4082,6 +4149,13 @@ def check_command(command):
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)
     check_blocked_script_mentions(RAW_COMMAND)
+    try:
+        check_built_blocked_names(command)
+        check_secrets_dir_by_variable(command)
+    except SystemExit:
+        raise
+    except Exception:
+        deny("A built script name or a credential path could not be checked, so the command is denied.")
     if INDIRECT:
         deny(INDIRECT[0])
 
