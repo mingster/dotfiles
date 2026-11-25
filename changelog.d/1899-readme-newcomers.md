@@ -1,0 +1,1 @@
+- README rewritten for newcomers with the Goal section restored, the technical detail moved to `docs/technical-overview.md`, and a Traditional Chinese `README.zh-TW.md` (#1899).
