@@ -99,7 +99,7 @@ The **usage gate** (`script/usage-gate.py` and provider hooks) blocks dispatch f
 
 `script/worker-startup.sh` checks host readiness and the usage gate, then starts the worker. Placement is automatic (`script/worker-placement.py` ranks hosts by workers per host cap first, then load per core, and picks the coordinator host last). A reason flag (`--force-host chrome-dev|line-desktop|host-file`) sends the start to the host the fleet config maps that reason to. `--on <environment>` remains only as a test or debug override, still gated by the host's load limit and, for the coordinator host, by an allowed `--force-host` reason.
 
-`script/fleet-watch.py` is the 5 minute pass that starts verifiers, fix workers and ready issues, and reruns host fault checks. Start it as a loop from the coordinator terminal with `script/fleet-watch-loop.sh` (see [Fleet watchdog](docs/agents/fleet-watch.md)). Issues are picked by label: [Labels](docs/agents/labels.md).
+`script/fleet-watch.py` is the 5 minute pass that starts verifiers, fix workers and ready issues, and reruns host fault checks. Its one scheduler is the Orca automation `fleet-watch` on the coordinator host, registered by `script/install-fleet-automations.sh` (see [Fleet watchdog](docs/agents/fleet-watch.md)). Issues are picked by label: [Labels](docs/agents/labels.md).
 
 Host names, caps and roles come from private fleet configuration, not from hard coded values in this public repo.
 

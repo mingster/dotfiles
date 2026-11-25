@@ -46,7 +46,7 @@ check "fetch failure continues" "$rc" 0
 
 # The lint
 s="$tmp/scripts"; mkdir -p "$s/lib"
-for f in worker-startup.sh ship.sh head-checks.sh fleet-watch-loop.sh; do
+for f in worker-startup.sh ship.sh head-checks.sh; do
   printf '#!/usr/bin/env bash\nhere=x\n. "$here/lib/dotfiles-fresh.sh"\n' >"$s/$f"
 done
 bash "$here/check-dotfiles-fresh.sh" "$s" 2>/dev/null; check "lint passes when all source it" "$?" 0

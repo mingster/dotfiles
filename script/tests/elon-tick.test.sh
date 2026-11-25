@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# elon-tick.sh (#1790) against fake gh, orca, pgrep, worker-watch, loop status and mailbox.
+# elon-tick.sh (#1790) against fake gh, orca, pgrep, worker-watch, fleet-watch automation status and log, and mailbox.
 # Each case starts from a healthy fixture (prints OK), breaks one thing, and expects that check's ACTION line.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -64,7 +64,10 @@ EOF
   echo '[{"number":50,"title":"fix 40","body":"Closes #40","headRefName":"mingster/issue-40","headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","comments":[{"body":"Review: PASS head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}]' \
     > "$FX/gh-pr-o_proj.json"
   echo '[{"number":40,"title":"bug","body":"","labels":[]}]' > "$FX/gh-issue-o_proj.json"
-  touch "$FX/loop" "$FX/waiter"
+  touch "$FX/waiter"
+  # The fleet-watch automation (#1838): install-fleet-automations.sh --status output and the wrapper log, one finished pass now.
+  printf 'fleet-watch: enabled\nwrap-up-daily: enabled\n' > "$FX/fw.status"
+  fw_end 60
   printf '#!/usr/bin/env bash\necho "ctx_a term_a OK"\n' > "$FX/ww.sh"
   printf '#!/usr/bin/env bash\necho "mailbox $*" >> "$FX/calls"\n' > "$FX/root/.claude/bin/support-mailbox.sh"
   : > "$FX/calls"
@@ -87,9 +90,16 @@ workers() {
   printf '{"ok":true,"result":{"workers":[%s]}}' "$rows"
 }
 
+# fw_end <seconds ago>: the wrapper log holds one phase=end line that old, stamped in local time like the wrapper.
+fw_end() {
+  printf '%s host=h automation=fleet-watch run=r phase=end exit=0 duration=30s summary=ok\n' \
+    "$(python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - int(sys.argv[1]))))' "$1")" \
+    > "$FX/fw.log"
+}
+
 tick() {
   set +e
-  out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_LOOP_STATUS="test -e $FX/loop" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
+  out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_FW_STATUS="cat $FX/fw.status" ELON_TICK_FW_LOG="$FX/fw.log" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
     bash "$root/script/elon-tick.sh" --run run_t --config "$FX/config.json" 2>&1)
   rc=$?
   set -e
@@ -121,8 +131,14 @@ done
 [[ $(grep -c '^gh ' "$FX/calls") -eq 4 ]] || fail "budget: $(grep '^gh ' "$FX/calls")"
 tests=$((tests + 1))
 
-reset; rm "$FX/loop"
-expect 'W1 loop down' '[W1] fleet-watch-loop is not running'
+reset; printf 'fleet-watch: disabled\n' > "$FX/fw.status"
+expect 'W1 automation disabled' '[W1] Orca automation fleet-watch is disabled'
+reset; printf 'wrap-up-daily: enabled\n' > "$FX/fw.status"
+expect 'W1 automation missing' '[W1] Orca automation fleet-watch is missing'
+reset; fw_end 1200
+expect 'W1 no pass for 10 minutes' '[W1] Orca automation fleet-watch finished no pass in the last 10 minutes'
+reset; rm "$FX/fw.log"
+expect 'W1 no log' '[W1] Orca automation fleet-watch finished no pass in the last 10 minutes'
 
 reset; rm "$FX/waiter"
 expect 'M6 no waiter' '[M6] no inbox waiter for run_t'

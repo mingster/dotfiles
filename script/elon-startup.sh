@@ -125,35 +125,22 @@ if [ -x "$here/wrap-up.sh" ] && [ -d "${PWD}/.git" -o -f "${PWD}/.git" ]; then
 fi
 
 # The four elon jobs (#1778, owner 2026-11-24): fleet-watch every 5 minutes, a waiter for worker mail, a 5 minute watch of
-# the fleet, and keeping target_workers filled. They start here, on the coordinator host only. The loop is started for real. The
-# waiter and the watch live in the elon session, so this prints the waiter script and the 5 minute interval for the /elon skill.
+# the fleet, and keeping target_workers filled. They are checked here, on the coordinator host only: fleet-watch is the Orca
+# automation (#1838), so startup only checks that it is enabled. The waiter and the watch live in the elon session, so this prints the waiter script and the 5 minute interval for the /elon skill.
 echo "== 6 elon jobs"
 if [ "$blocked" = 1 ]; then
   echo "skip elon jobs: this host may not dispatch"
 else
   tmpdir=$state_dir_agent
   mkdir -p "$tmpdir" 2>/dev/null || true
-  export FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.claude/state/fleet-watch-elon.json}
-  export FLEET_WATCH_STATE=${FLEET_WATCH_STATE:-$HOME/.local/state/agent-team/fleet-watch.state.json}
-  loop=${FLEET_WATCH_LOOP_CMD:-$here/fleet-watch-loop.sh}
-  if loop_status=$(bash "$loop" --status 2>&1); then
-    echo "job fleet-watch loop: found running ($loop_status)"
-  elif [ ! -f "$FLEET_WATCH_CONFIG" ]; then
-    flag "fleet-watch loop not started: no config at $FLEET_WATCH_CONFIG"
-  else
-    nohup bash "$loop" >/dev/null 2>&1 &
-    disown 2>/dev/null || true
-    started=0
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
-      sleep 1
-      if loop_status=$(bash "$loop" --status 2>&1); then started=1; break; fi
-    done
-    if [ "$started" = 1 ]; then
-      echo "job fleet-watch loop: started ($loop_status)"
-    else
-      flag "fleet-watch loop did not start ($loop)"
-    fi
-  fi
+  FLEET_WATCH_CONFIG=${FLEET_WATCH_CONFIG:-$HOME/.claude/state/fleet-watch-elon.json}
+  status_cmd=${FLEET_AUTOMATION_STATUS_CMD:-$here/install-fleet-automations.sh}
+  fw_state=$(bash "$status_cmd" --status 2>/dev/null | sed -n 's/^fleet-watch: //p' | head -n 1)
+  case "$fw_state" in
+    enabled) echo "job fleet-watch: Orca automation enabled (every 5 minutes)" ;;
+    disabled) flag "fleet-watch automation is disabled; enable it in Orca Automations (or: orca automations edit --id <id> --enabled)" ;;
+    *) flag "fleet-watch automation is missing; run script/install-fleet-automations.sh --install" ;;
+  esac
   run_id=$(jq -r '(.runs // [])[0].id // empty' "$FLEET_WATCH_CONFIG" 2>/dev/null || true)
   if [ -z "$run_id" ]; then
     flag "waiter not armed: no run id in $FLEET_WATCH_CONFIG (runs[0].id)"

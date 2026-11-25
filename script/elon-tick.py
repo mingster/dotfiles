@@ -18,12 +18,14 @@ import shlex
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PR_LIMIT = 200
 ISSUE_LIMIT = 1000
 ASK_SECONDS = 15 * 60
+FW_PASS_SECONDS = 10 * 60  # the automation runs every 5 minutes, so two missed passes
 REF_RE = re.compile(r'(?:([\w.-]+/[\w.-]+))?#(\d+)\b')
 CLOSING_RE = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)\b:?\s+((?:[\w.-]+/[\w.-]+)?#\d+)', re.I)
 BLOCKED_LINE_RE = re.compile(r'^\s*(?:[-*]\s+)?blocked by\b:?(?!\s+red gate\b)(.*)$', re.I)
@@ -94,7 +96,7 @@ def gather(args, config):
     attempt('tasks', lambda: tasks(args.run))
     attempt('workers', lambda: workers(args.run))
     attempt('state', lambda: read_json(args.state))
-    snap['loop'] = loop_status()
+    snap['fleet_watch'] = fleet_watch_status()
     snap['waiter'] = waiter_alive(args.run)
     attempt('watch', lambda: worker_watch(args.run))
     snap['mail'] = {}
@@ -160,10 +162,29 @@ def list_pages(cmd):
         seen.add(cursor)
 
 
-def loop_status():
-    cmd = shlex.split(os.environ.get('ELON_TICK_LOOP_STATUS', '')) or ['bash', str(HERE / 'fleet-watch-loop.sh'), '--status']
-    out = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    return out.returncode == 0
+def fleet_watch_status():
+    """The Orca automation fleet-watch (#1838): None when it is enabled and finished a pass in the last
+    FW_PASS_SECONDS, else why not ('disabled', 'missing' or 'stale')."""
+    cmd = shlex.split(os.environ.get('ELON_TICK_FW_STATUS', '')) or [
+        'bash', str(HERE / 'install-fleet-automations.sh'), '--status']
+    out = subprocess.run(cmd, capture_output=True, text=True, check=False).stdout
+    state = next((line.split(':', 1)[1].strip() for line in out.splitlines() if line.startswith('fleet-watch:')), 'missing')
+    if state != 'enabled':
+        return 'disabled' if state == 'disabled' else 'missing'
+    log = Path(os.environ.get('ELON_TICK_FW_LOG') or Path.home() / '.orca/logs/fleet-watch.log')
+    try:
+        lines = log.read_text(errors='replace').splitlines()[-200:]
+    except OSError:
+        return 'stale'
+    for line in reversed(lines):
+        if ' phase=end ' not in line:
+            continue
+        try:
+            at = datetime.strptime(line.split(' ', 1)[0], '%Y-%m-%dT%H:%M:%S%z').timestamp()
+        except ValueError:
+            continue
+        return None if time.time() - at <= FW_PASS_SECONDS else 'stale'
+    return 'stale'
 
 
 def waiter_alive(run):
@@ -554,9 +575,16 @@ def check_m8(snap):
     return hits
 
 
-def check_loop(snap):
-    """W1: the fleet-watch loop runs."""
-    return [] if snap['loop'] else ['[W1] fleet-watch-loop is not running; start it from this terminal (coordinator-operations.md)']
+def check_fleet_watch(snap):
+    """W1: the Orca automation fleet-watch is enabled and finished a pass in the last 10 minutes."""
+    why = snap['fleet_watch']
+    if why is None:
+        return []
+    if why == 'stale':
+        return ['[W1] Orca automation fleet-watch finished no pass in the last 10 minutes; read ~/.orca/logs/fleet-watch.log '
+                '(coordinator-operations.md)']
+    return ['[W1] Orca automation fleet-watch is %s; enable it in Orca Automations or run '
+            'script/install-fleet-automations.sh --install (coordinator-operations.md)' % why]
 
 
 def check_watch(snap):
@@ -610,8 +638,8 @@ def check_asks(snap):
     """W5: worker questions and escalations nobody answered for 15 minutes (fleet-watch state, open_asks)."""
     if isinstance(snap['state'], Unreadable):
         return not_checked('W5', snap['state'])
-    if not snap['loop']:
-        return not_checked('W5', 'fleet-watch is not running, so its ask book is stale')
+    if snap['fleet_watch'] is not None:
+        return not_checked('W5', 'fleet-watch finished no recent pass, so its ask book is stale')
     live = None
     if not isinstance(snap['workers'], Unreadable):
         live = {w['dispatchId'] for w in snap['workers'] if '_unreadable_host' not in w and worker_live(w)}
@@ -626,7 +654,7 @@ def check_asks(snap):
     return out
 
 
-CHECKS = (check_loop, check_m6, check_watch, check_asks, check_m1, check_m2, check_m7, check_m5,
+CHECKS = (check_fleet_watch, check_m6, check_watch, check_asks, check_m1, check_m2, check_m7, check_m5,
           check_m4, check_m8, check_m3, check_supply, check_queues)
 
 

@@ -46,7 +46,19 @@ if [ -n "$id" ]; then reply=("$orca_cli" orchestration reply --id "$id" --body "
 else reply=("$orca_cli" orchestration send --to "$to" --subject "$subject" --body "$body" --json)
 fi
 [ -z "$from" ] || reply+=(--from "$from")
-bounded "${reply[@]}"
+errf=$(mktemp)
+trap 'rm -f "$errf"' EXIT
+rc=0
+out=$(bounded "${reply[@]}" 2>"$errf") || rc=$?
+[ -z "$out" ] || printf '%s\n' "$out"
+cat "$errf" >&2
+# answer_conflict: the ask already has an answer. Record its id so the fleet-watch unanswered digest skips it (#1838).
+if [ -n "$id" ] && grep -q answer_conflict <<<"$out$(cat "$errf")"; then
+  answered=${ORCA_REPLY_ANSWERED_FILE:-$HOME/.local/state/agent-team/answered-asks.txt}
+  mkdir -p "$(dirname "$answered")" && echo "$id" >>"$answered"
+  echo "orca-reply: $id already has an answer (answer_conflict); recorded in $answered" >&2
+fi
+[ "$rc" = 0 ] || exit "$rc"
 
 if ! bounded "$orca_cli" terminal send --terminal "$to" --text "check your inbox" --enter --json > /dev/null; then
   echo "orca-reply: reply sent but the nudge to $to failed" >&2

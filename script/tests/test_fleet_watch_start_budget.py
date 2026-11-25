@@ -261,9 +261,11 @@ class StartBudget(unittest.TestCase):
             with self.subTest(scenario=scenario.__name__):
                 allowed = iter([True])
                 with patch.object(fw, 'start_allowed', side_effect=lambda cost: next(allowed, True)), \
+                        patch.object(fw, 'pass_deadline_reached', return_value=False), \
                         patch.object(fw, '_PASS_BEGAN', 1000.0), patch.object(fw.time, 'time', return_value=1000.0 + 900.0):
                     fw.begin_pass_counts()
                     # start_allowed is stubbed true; the wrapper sees the clock far past the line and must still run.
+                    # The pass deadline (#1838) is held off: this case is about the wrapper, not the row loops.
                     starts, bits = scenario(False)[:2]
                 self.assertTrue(starts, bits)
                 self.assertFalse([b for b in bits if b.startswith(('ship_fail', 'issue_start_fail', 'issue_deferred', 'backlog_sweep_fail', 'supply_fail', 'triage_fail'))], bits)

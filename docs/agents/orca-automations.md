@@ -26,7 +26,7 @@ A scheduled wrap-up round asks Orca once about a never settled dispatch that Orc
 
 Dry run: `~/dotfiles/script/install-fleet-automations.sh --dry-run --install`.
 
-Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall from a non coordinator host, then enable only what you need by hand). Resume: `orca automations edit <id> --enabled`.
+Pause on the coordinator: `orca automations edit <id> --disabled` (or reinstall from a non coordinator host, then enable only what you need by hand). Resume: `orca automations edit <id> --enabled`. A re-install keeps a paused `fleet-watch` paused: the installer creates it enabled on the coordinator, then keeps the owner's choice (#1838).
 
 ## Installed automations
 
@@ -144,7 +144,7 @@ Precheck logs default under `~/.orca/logs/` or `~/.local/state/agent-team/` unle
 
 | Script | Automate | Reason |
 |--------|----------|--------|
-| `script/fleet-watch.py` | Yes (as `fleet-watch`) | Five minute watchdog; append-only private state and logs; coordinator already enabled elsewhere |
+| `script/fleet-watch.py` | Yes (as `fleet-watch`) | Five minute watchdog and its one scheduler (#1838); append-only private state and logs; a pass ends new work at 250 s, inside the 280 s timeout |
 | `script/wrap-up.sh --scheduled` | No (dropped 2026-11-23, #1533) | Manual runs only; the installer removes a leftover `wrap-up-scheduled` entry |
 | `script/wrap-up.sh --daily` | Yes (as `wrap-up-daily`) | Enabled on every Orca host; once a day it frees disk the 10 minute round leaves alone (#1533) |
 | `script/agent-team.sh check` | Yes (as `sync-team-skills-drift`) | Read-only drift; daily log for architect |

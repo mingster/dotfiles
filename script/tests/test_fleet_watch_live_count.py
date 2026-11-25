@@ -1,5 +1,6 @@
 """Live count (#1781): a gone remote dispatch is not live, and a worker question nobody answered is raised."""
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -61,9 +62,9 @@ class GoneRemoteDispatch(unittest.TestCase):
         self.assertTrue(fw.worker_row_is_live(self.gone))
 
 
-def ask(mid, dispatch, kind='question', subject='Which option?'):
+def ask(mid, dispatch, kind='question', subject='Which option?', handled=False):
     return {'id': mid, 'type': kind, 'from': 'term_' + dispatch, 'to': 'run:run_1', 'subject': subject,
-            'handled': True, 'payload': {'dispatchId': dispatch}}
+            'handled': handled, 'payload': {'dispatchId': dispatch}}
 
 
 def reply(mid, dispatch):
@@ -89,12 +90,30 @@ class UnansweredAsk(unittest.TestCase):
         self.assertIn('Blocked: fixture needs a decision', notices[0])
         self.assertEqual(fw.unanswered_ask_notices(state, NOW + 5000, messages, workers), [])
 
-    def test_handled_flag_does_not_hide_an_unanswered_ask(self):
+    def test_a_handled_ask_has_an_answer(self):
+        # #1838 reverses #1781: the inbox marks an ask handled once it has an answer (msg_9363796cba3d was
+        # handled and `reply` returned answer_conflict, yet the digest called it unanswered).
         state, workers = {}, [live_worker('d1')]
-        messages = [ask('msg_q1', 'd1')]
-        self.assertTrue(messages[0]['handled'])
+        messages = [ask('msg_q1', 'd1', handled=True)]
         fw.unanswered_ask_notices(state, NOW, messages, workers)
-        self.assertEqual(len(fw.unanswered_ask_notices(state, NOW + 900, messages, workers)), 1)
+        self.assertEqual(fw.unanswered_ask_notices(state, NOW + 900, messages, workers), [])
+        self.assertTrue(state['open_asks']['msg_q1']['answered'])
+        self.assertEqual(fw.waiting_on_coordinator(state, workers), set())
+
+    def test_an_ask_recorded_by_answer_conflict_has_an_answer(self):
+        state, workers = {}, [live_worker('d1')]
+        messages = [ask('msg_q1', 'd1'), ask('msg_q2', 'd1')]
+        fw.unanswered_ask_notices(state, NOW, messages, workers, answered={'msg_q1'})
+        notices = fw.unanswered_ask_notices(state, NOW + 900, messages, workers, answered={'msg_q1'})
+        self.assertEqual(len(notices), 1)
+        self.assertIn('msg_q2', notices[0])
+
+    def test_answered_asks_file_is_read_and_a_missing_file_is_empty(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'answered-asks.txt'
+            self.assertEqual(fw.read_answered_asks(path), set())
+            path.write_text('msg_a\n\nmsg_b\n')
+            self.assertEqual(fw.read_answered_asks(path), {'msg_a', 'msg_b'})
 
     def test_reply_to_the_worker_clears_it(self):
         state, workers = {}, [live_worker('d1')]
