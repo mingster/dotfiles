@@ -1,0 +1,1 @@
+The README and docs/ pages match main again (provider order with Grok, the verifier table, the Review PASS gate before a verifier starts, the daily wrap-up round, ship and post-verdict refusals, the dotfiles first tiers, check-pr-body in coordinator publication, team-audit report sections, the AGENTS.md line limit hook) (Refs #1873)

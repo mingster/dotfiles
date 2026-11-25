@@ -25,7 +25,7 @@ Windows.
 ## Size
 
 Target under 200 lines. `AGENTS.md` is loaded into context at the start of every session, and
-adherence drops as it grows. `/doctor` proposes trims for an oversized file.
+adherence drops as it grows. The `rule-checks.py` hook warns after a write that leaves `AGENTS.md` over 200 lines, and `/doctor` proposes trims for an oversized file.
 
 Splitting into more `@` imports does **not** help: imported files load at launch too. Only two
 things actually reduce what a session pays for:

@@ -20,6 +20,7 @@ The worktree must already be checked out on `--branch`. The helper never reads `
 - `Closes #N` on its own line when closing an issue (at most one issue per line).
 - `## Verification` with exactly three bullets (command or path and observed outcome).
 - No `## Test plan` heading and no tool credit (`Generated with Claude Code`, `Generated with Cursor`, `Co-Authored-By:`).
+- It must also pass `script/check-pr-body.sh` (the same pr-body-gate review, with the title issue check when `--title` is given), which runs before any push (#1676, #1688).
 
 ## Existing pull requests
 
