@@ -17,6 +17,7 @@ Counts every active Dispatch, including descendants. Restarts a stalled worker o
 """
 import argparse
 import calendar
+import contextlib
 import copy
 import datetime
 import hashlib
@@ -1428,8 +1429,11 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
 
 
 def worker_failure_is_quiet(worker):
-    """A failed dispatch that is already released or settled is not a new alert."""
-    if worker_terminal_released(worker):
+    """A failed dispatch that is already released or settled is not a new alert.
+
+    A worker someone stopped is not a failure to report: a remote server record has no release fields, only
+    workerState stopped with dispatchStatus failed (a signed out antigravity start undoes itself that way, #1832)."""
+    if worker_terminal_released(worker) or (worker.get('workerState') or worker.get('state')) == 'stopped':
         return True
     stage = (worker.get('projection') or {}).get('stage')
     detail = stage.get('detail') if isinstance(stage, dict) else ''
@@ -6629,6 +6633,30 @@ class BabysitStartResult(int):
 
 
 BABYSIT_DEFERRED_EXITS = (3, 4)  # worker-startup.sh: usage gate refused, host placement refused
+# worker-startup.sh with WORKER_STARTUP_AGY_SIGNIN=exit: the antigravity start hit the sign in screen and undid itself (#1832).
+AGY_SIGNIN_ENV = 'WORKER_STARTUP_AGY_SIGNIN'
+AGY_SIGNIN_HELD_EXIT = 10
+_AGY_SIGNIN_LINE_RE = re.compile(r'agy-signin: host=(\S+) (notify|known)\s*$')
+
+
+@contextlib.contextmanager
+def agy_signin_exit_env():
+    """An issue start only: set WORKER_STARTUP_AGY_SIGNIN=exit for the one start call, then put the variable back."""
+    previous = os.environ.get(AGY_SIGNIN_ENV)
+    os.environ[AGY_SIGNIN_ENV] = 'exit'
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop(AGY_SIGNIN_ENV, None)
+        else:
+            os.environ[AGY_SIGNIN_ENV] = previous
+
+
+def agy_signin_held(reason):
+    """(host, notify) from the last line worker-startup printed before exit 10; host is '' when it did not print one."""
+    found = _AGY_SIGNIN_LINE_RE.search(reason or '')
+    return (found.group(1), found.group(2) == 'notify') if found else ('', False)
 
 
 def _json_error_message(text):
@@ -8490,12 +8518,25 @@ def _issue_scan_pass(
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
             persist_state()
-        started_worker = start_worker(command)
+        with agy_signin_exit_env():
+            started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         pending_list = issue_pending.setdefault(repo, [])
         if row['number'] in pending_list:
             pending_list.remove(row['number'])
         suffix = ':%s' % reason if reason else ''
+        if code == AGY_SIGNIN_HELD_EXIT:
+            # The antigravity start was signed out and worker-startup undid it: the host is marked, the dispatch stopped and
+            # released, the labels back, the worktree gone. Nothing here changes, so the next pass starts the issue on claude (#1832).
+            held_host, notify = agy_signin_held(reason)
+            log_bits.append('issue_start_agy_signin=%d' % row['number'])
+            if notify:
+                notices.append(Urgent(
+                    'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
+                    'Send the owner one PushNotification: "sign in to agy on %s".' % (held_host, held_host)))
+            if persist_state:
+                persist_state()
+            continue
         delivered = start_delivered_refusal(reason) if code != 0 else None
         if delivered:
             # Refused as already delivered: elon closes the issue or starts it with --allow-delivered (#1811).

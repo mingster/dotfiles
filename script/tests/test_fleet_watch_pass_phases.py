@@ -10,6 +10,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib'))
+import asdf_pin  # noqa: E402
+
+asdf_pin.pin()  # before any test sets HOME
+
 SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'
 spec = importlib.util.spec_from_file_location('fleet_watch', SCRIPT)
 fw = importlib.util.module_from_spec(spec)
