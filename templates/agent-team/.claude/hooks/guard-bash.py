@@ -4064,6 +4064,8 @@ _LV_SPECIAL = {
     "prompt", "options", "commands", "functions", "aliases", "builtins", "parameters", "reply", "match",
     "mbegin", "mend", "signals", "history", "historywords", "jobstates", "jobtexts", "jobdirs", "dirstack",
     "funcstack", "widgets", "termcap", "terminfo", "modules", "nameddirs", "userdirs", "sysparams", "_",
+    "COLUMNS", "LINES", "SHLVL", "ERRNO", "GID", "EGID", "SAVEHIST", "LISTMAX", "ARGC", "FUNCNEST", "GROUPS",
+    "FUNCNAME", "DIRSTACK", "EPOCHSECONDS", "EPOCHREALTIME", "SRANDOM",
 }
 _LV_SPECIAL_PREFIX = ("LC_", "BASH", "LD_", "DYLD_", "ZSH", "GIT_", "PS", "PROMPT", "HIST", "SSH_", "SUDO")
 
@@ -4132,7 +4134,7 @@ def _lv_literal(word):
     """A plain word as the shell keeps it: `~` only alone or before `/`, no `..` component, a closed charset."""
     if word == "~" or word.startswith("~/"):
         word = os.path.expanduser("~") + word[1:]
-    if "/../" in f"/{word}/" or not _LV_VALUE.match(word):
+    if "/../" in f"/{word}/" or "++" in word or "--" in word or not _LV_VALUE.match(word):
         raise _LVMiss
     return word
 
@@ -4168,9 +4170,6 @@ def literal_variable_copies(command):
         words = [t for _, t in header[3:]]
         if any(w in ("for", "do", "done") for w in words):
             raise _LVMiss
-        if len(words) > _LV_LOOP_MAX:
-            deny(f"A loop over {len(words)} words is more than the guard follows ({_LV_LOOP_MAX}), so it is "
-                 "refused: split the loop into smaller loops.")
         body = rest[1:]
         if len(body) < 2 or body[-1][1] != [("uword", "done")] or body[-1][0] not in (";", "\n"):
             raise _LVMiss
@@ -4196,6 +4195,9 @@ def literal_variable_copies(command):
     for part, names in ((flat, set(prelude)), (loop[3] if loop else [], bound)):
         for _, stmt in part:
             _lv_check_statement(stmt, names, bound)
+    if loop and len(loop[2][0][1]) - 3 > _LV_LOOP_MAX:
+        deny(f"A loop over {len(loop[2][0][1]) - 3} words is more than the guard follows ({_LV_LOOP_MAX}), so it "
+             "is refused: split the loop into smaller loops.")
 
     def choices(text):
         names = _lv_vars(text)

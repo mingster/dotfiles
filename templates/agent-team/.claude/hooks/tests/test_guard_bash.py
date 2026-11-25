@@ -1968,6 +1968,30 @@ MUST_DENY_REVIEW_1_AND_2 = (
 )
 
 
+# Shapes on the two lists above that origin/main allows too, so they are judged as on main: a statement after a
+# redirection, `do` or `then` (#1810), and forms the hidden host check does not cover.
+MAIN_ALLOWS_1795 = (
+    'H=prod.example; for f in *; do scp /tmp/x $H:/tmp/y; done',
+    'D=docs; >/dev/null cat $D/.env',
+    'H=prod.example; >/dev/null scp /tmp/x $H:/tmp/y',
+    'H=prod.example; P=/x; >/dev/null ssh $H rm -rf $P/y',
+    "H=blue; echo $'\\''; H=prod.example; echo $'\\''; ssh $H rm -rf /x",
+    'H=blueDevil; echo "$(echo "it\'s")"; ssh $H uptime',
+    'if true; then (ssh prod.example rm -rf /x); fi',
+    'if true; then ssh prod.example rm -rf /x; fi',
+    'if true; then\\\n ssh prod.example rm -rf /x; fi',
+    'for d in fileServer; do cd $d; for f in s*/*; do cat $f; done; done',
+    'for h in $(cat /tmp/hosts); do (ssh $h uptime); done',
+    'for h in $(cat /tmp/hosts); do { ssh $h uptime; }; done',
+    'for h in $(cat /tmp/hosts); do \\\nssh $h uptime; done',
+    'for h in $(cat /tmp/hosts); do scp -q $h /tmp/x; done',
+    'for h in $(cat /tmp/hosts); do time (ssh $h uptime); done',
+    'for h in $(cat /tmp/hosts); do\\\n ssh $h uptime; done',
+    'for h in prod.example; do (ssh $h rm -rf /x); done',
+    'rsync -a niteking:x /tmp/$USER/',
+)
+
+
 class LiteralHostVariables(GuardTest):
     """A host variable bound to a literal in the same command is judged by its value (#1795), under a closed shape."""
     CONFIG = {"production_hosts": ["prod.example"], "secrets_dir": SECRETS,
@@ -2012,9 +2036,14 @@ class LiteralHostVariables(GuardTest):
         return path
 
     def assertDeniedOrAsOnMain(self, commands):
-        base = self.base_hook()
+        """Each command is denied, except one on MAIN_ALLOWS_1795, which must still get main's verdict."""
+        base = None
         for command in commands:
             with self.subTest(command=command):
+                if command not in MAIN_ALLOWS_1795:
+                    self.assertDenied(command)
+                    continue
+                base = base or self.base_hook()
                 if self.bash(command) is None:
                     self.assertIsNone(self.run_guard(base, command), "main denies this shape and head allows it")
 
@@ -2069,10 +2098,26 @@ class LiteralHostVariables(GuardTest):
 
     def test_out_of_shape_loops_are_judged_as_on_main(self):
         # A nested loop and a statement after done resolve nothing (#1810 covers segments that start with do).
-        self.assertDeniedOrAsOnMain((
+        base = self.base_hook()
+        words = " ".join(f"a{i}" for i in range(17))
+        for command in (
             "for h in blue; do for g in a; do ssh $h $g; done; done",
             "for h in blue; do ssh $h uptime; done; echo x",
-        ))
+            f"for f in {words}; do grep x $f; done",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self.bash(command), self.run_guard(base, command))
+
+    def test_an_assignment_that_changes_another_variable_resolves_nothing(self):
+        # zsh evaluates COLUMNS=H-- as arithmetic, so H is 1 and not 2 when ssh runs.
+        for command in (
+            "H=2; COLUMNS=H--; ssh prod-$H rm -rf /x",
+            "H=2; LINES=H--; ssh prod-$H rm -rf /x",
+            "H=2; SHLVL=H--; ssh prod-$H rm -rf /x",
+            "H=2; X=H--; ssh prod-$H rm -rf /x",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, "not a plain host name")
 
     def test_must_deny_review_1_and_2_shapes_are_denied_or_as_on_main(self):
         self.assertDeniedOrAsOnMain(MUST_DENY_REVIEW_1_AND_2)
