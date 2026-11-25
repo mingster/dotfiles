@@ -3462,10 +3462,12 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         Only a new commit does. A worker that holds unpushed commits or changed files is never stopped.
         """
         laddered.add(did)
-        if did in waiting:
+        if did in waiting or worker_settled_kind(w) or worker_terminal_released(w):
             ladder.pop(did, None)
             return
-        head = head_of(w) or ''
+        # A remote checkout is not on this disk; a local path with the same name proves nothing.
+        remote = worker_execution_host_id(w) != 'local'
+        head = '' if remote else head_of(w) or ''
         rec = ladder.get(did)
         if isinstance(rec, dict) and head and rec.get('head') and head != rec['head']:
             ladder.pop(did, None)
@@ -3488,21 +3490,24 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         if not rec.get('nudged_at'):
             if windows < STALL_NUDGE_WINDOWS:
                 return
-            rec['nudged_at'] = now
+            # Only a nudge that reached the worker starts the last window, so no worker is stopped unwarned.
             term = worker_terminal_handle(w)
-            if term:
-                text = STALL_NUDGE_TEXT % (int(now - float(rec['since'])) // 60, stall_limit // 60)
-                try:
-                    rpc_call('terminal', 'send', '--terminal', term, '--text', text, '--enter',
-                             *(('--environment', environment) if environment else ()))
-                except SEND_ERRORS as error:
-                    log_send_failed(term, error)
+            if not term:
+                return
+            text = STALL_NUDGE_TEXT % (int(now - float(rec['since'])) // 60, stall_limit // 60)
+            try:
+                rpc_call('terminal', 'send', '--terminal', term, '--text', text, '--enter',
+                         *(('--environment', environment) if environment else ()))
+            except SEND_ERRORS as error:
+                log_send_failed(term, error)
+                return
+            rec['nudged_at'] = now
             log_bits.append('stall_nudge=%s' % did)
             return
         if windows < STALL_RELEASE_WINDOWS or now - float(rec['nudged_at']) < stall_limit:
             return
         rec['done'] = True
-        if holds_work(w):
+        if remote or holds_work(w):
             log_bits.append('stall_hold=%s' % did)
             notices.append(Urgent(
                 'stalled worker %s: no new commit for %d windows after a nudge, but it holds unpushed commits '
@@ -9830,6 +9835,7 @@ def relay_done_board(messages, workers, config, state, board_of, set_status, pr_
 
     in-review while its PR is open, completed when it has no PR or the PR is closed (#1842).
     A card already in in-review, completed or archived is left as the worker set it.
+    board_of returns None when the board cannot be read (retried next pass), 'absent' when it has no card.
     """
     handled = state.setdefault('board_done', [])
     if not isinstance(handled, list):
@@ -9854,7 +9860,8 @@ def relay_done_board(messages, workers, config, state, board_of, set_status, pr_
         if current is None:
             continue
         target = None
-        if current not in ('in-review', 'completed', 'archived'):
+        # 'absent': the board list read fine but has no card for this checkout, so there is nothing to move.
+        if current not in ('in-review', 'completed', 'archived', 'absent'):
             number = worker_pr_number(worker)
             if number:
                 repo = repo_for_worker(worker, config)
@@ -10222,7 +10229,7 @@ def _main():
                         boards[env] = None
                 if boards[env] is None:
                     return None
-                return boards[env].get(worker_checkout_path(worker).rstrip('/'))
+                return boards[env].get(worker_checkout_path(worker).rstrip('/'), 'absent')
 
             try:
                 for line in relay_done_board(inv['messages'], workers, config, state, board_of, board_status, pr_of):

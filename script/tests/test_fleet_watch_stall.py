@@ -960,6 +960,54 @@ class StallLadder(unittest.TestCase):
                              waiting={'disp_ladder'})
         self.assertEqual(self.sends(), [])
 
+    def test_failed_nudge_never_leads_to_a_stop(self):
+        state, w = {}, self.issue_worker()
+        start = T0 - WINDOW - 60
+        self.run_pass(state, T0, start, w)
+
+        def no_send(*a):
+            self.calls.append(a)
+            if a[:2] == ('terminal', 'send'):
+                raise fw.OrcaReadError('send failed')
+            return {}
+
+        for now in (start + 2 * WINDOW, start + 3 * WINDOW + 1, start + 4 * WINDOW):
+            _, bits = fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, no_send, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+            self.assertNotIn('stall_nudge=disp_ladder', bits)
+        self.assertEqual(self.stops(), [])
+
+    def test_remote_worker_with_clean_local_path_is_not_stopped(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        silent = [tool_message(int((T0 - 10 * WINDOW) * 1000))]
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': silent, 'nextCursor': None}}
+            return {}
+
+        start = T0 - WINDOW - 60
+        notices = []
+        for now in (T0, start + 2 * WINDOW, start + 3 * WINDOW + 1):
+            n, _bits = fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+            notices += n
+        self.assertEqual(self.stops(), [])
+        self.assertTrue(any('did not stop' in str(n) for n in notices), notices)
+
+    def test_settled_worker_leaves_the_ladder(self):
+        state, w = {}, self.issue_worker()
+        self.climb_to_nudge(state, w)
+        settled = dict(w, workerState='succeeded')
+        self.run_pass(state, T0 + 10 * WINDOW, T0 - 2 * WINDOW, settled)
+        self.assertEqual(self.stops(), [])
+        self.assertNotIn('disp_ladder', state['stall_ladder'])
+
     def test_own_verifier_still_restarts_instead(self):
         state = mark_own({}, 'disp_ladder')
         w = self.issue_worker()
@@ -1031,6 +1079,43 @@ class DoneRelayBoard(unittest.TestCase):
         self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
         moved, state = self.relay(base_worker(dispatchId='disp_done'), pr_row=None)
         self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
+
+    def test_checkout_missing_from_board_is_marked_handled(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), board='absent',
+                                  pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], ['m1']))
+
+    def test_main_pass_lists_the_board_and_sets_the_card(self):
+        calls = []
+        worker = base_worker(dispatchId='disp_done', githubPullRequestNumber=None,
+                             resource={'worktreeId': 'repo-x::/w/fixture/done'})
+        inventory = {'messages': [done_message()], 'workers': [worker], 'alive': {'run_fixture': True}, 'leads': {}}
+
+        def rpc(*args):
+            calls.append(args)
+            if args[:2] == ('worktree', 'list'):
+                return {'worktrees': [{'path': '/w/fixture/done', 'workspaceStatus': 'in-progress'}]}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps({'runs': list(STALL_RUNS), 'worker_stall': {'label_repo': 'o/r'}}))
+            state.write_text('{}')
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw, 'read_orca_inventory', return_value=inventory), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw.time, 'time', return_value=T0):
+                fw.main()
+                saved = json.loads(state.read_text())
+        sets = [c for c in calls if c[:2] == ('worktree', 'set')]
+        self.assertIn(('worktree', 'set', '--worktree', 'path:/w/fixture/done', '--workspace-status', 'completed'), sets)
+        self.assertEqual(saved.get('board_done'), ['m1'])
 
     def test_bounced_or_failed_done_is_skipped(self):
         self.relay(base_worker(dispatchId='disp_done'), state={'bounced_done': ['m1']},
