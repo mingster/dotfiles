@@ -1764,7 +1764,7 @@ def check_hidden_hosts(segment, base, args):
         deny(f"The guard cannot read the words of this {base} command, so it is refused. Write it with plain words.")
     raw_args = raw[len(tokens) - len(args):]
     for i in [ssh_argv(args)[1]] if base == "ssh" else operands_indices(base, args):
-        if i is not None and i < len(raw_args) and hidden_host(raw_args[i]):
+        if i is not None and i < len(raw_args) and hidden_host(raw_args[i]) and raw_args[i] not in LIFTED_HOST_WORDS:
             deny(f"`{raw_args[i]}` in {base} is not a plain host name: the shell would build it from $, a backtick, "
                  "braces, a glob, a backslash or quotes, so the guard cannot tell whether it is production. No "
                  "approval covers it. Write the host literally.")
@@ -3074,6 +3074,13 @@ def check_segment(segment, depth=0, cwd=None):
             script = next((a for a in args if not a.startswith("-")), None)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
                 deny(f"{os.path.basename(script)} runs only inside the deploy pipeline (the deploy wrapper).")
+            if script and "$" in script:  # #1795: each variable in the name could be any text
+                parts = re.split(r"(\$(?:\w+|\{[^}]*\}))", os.path.basename(script))
+                name = re.compile("".join(".*" if p.startswith("$") else re.escape(p) for p in parts), re.I)
+                hit = next((b for b in sorted(BLOCKED_SCRIPTS) if name.fullmatch(b)), None)
+                if hit:
+                    deny(f"`{script}` could name {hit}, which runs only inside the deploy pipeline (the deploy "
+                         "wrapper). Write the script name literally.")
 
     # 3. PayPal with the read only credentials: GET requests and the token request only.
     if base in {"curl", "wget", "http", "https", "xh"} and any("paypal.com/" in a for a in args):
@@ -4031,6 +4038,223 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
+# ---------------------------------------------------------------- Literal host variables (#1795)
+# A command that fits a closed shape (a prelude of NAME=literal statements, flat statements, at most one trailing
+# `for NAME in WORD...; do ...; done`) has known variable values. Only the hidden host deny is lifted, and only
+# for a word whose every value is a plain host. The raw command keeps every other check, and each copy with the
+# values filled in is checked too, so a copy can add a deny but never remove one. Anything outside the shape
+# returns no copies and is judged exactly as before.
+
+LIFTED_HOST_WORDS: set[str] = set()
+_LV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_LV_VAR = re.compile(r"\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})")
+_LV_VAR_RE = r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})"
+_LV_TOKEN = re.compile(r"(?P<sp>[ \t]+)|(?P<op>&&|\|\||[;\n|])"
+                       r"|(?P<uword>(?:[A-Za-z0-9_./:@%+,=~*?\[\]-]|" + _LV_VAR_RE + r")+)"
+                       r"|(?P<qword>\"(?:[A-Za-z0-9_./:@%+,=-]|[ ]|" + _LV_VAR_RE + r")*\")")
+_LV_VALUE = re.compile(r"[A-Za-z0-9_./:@%+,-]+\Z")
+_LV_HEADS = {"echo", "ls", "cat", "head", "tail", "stat", "file", "wc", "ssh", "scp", "bash", "sh"}
+_LV_LOOP_MAX = 16
+_LV_SPECIAL = {
+    "IFS", "PATH", "HOME", "CDPATH", "REPLY", "ENV", "SHELLOPTS", "BASHOPTS", "PWD", "OLDPWD", "OPTIND",
+    "OPTARG", "GLOBIGNORE", "HISTFILE", "ZDOTDIR", "TMPDIR", "SHELL", "FPATH", "MAILPATH", "MAIL", "TERM",
+    "USER", "LOGNAME", "SECONDS", "RANDOM", "LINENO", "HOSTNAME", "PPID", "UID", "EUID", "TMOUT", "NULLCMD",
+    "READNULLCMD", "WORDCHARS", "KEYTIMEOUT", "FIGNORE", "POSIXLY_CORRECT", "PROMPT_COMMAND", "MAILCHECK",
+    "path", "cdpath", "fpath", "manpath", "module_path", "mailpath", "psvar", "status", "argv", "pipestatus",
+    "prompt", "options", "commands", "functions", "aliases", "builtins", "parameters", "reply", "match",
+    "mbegin", "mend", "signals", "history", "historywords", "jobstates", "jobtexts", "jobdirs", "dirstack",
+    "funcstack", "widgets", "termcap", "terminfo", "modules", "nameddirs", "userdirs", "sysparams", "_",
+}
+_LV_SPECIAL_PREFIX = ("LC_", "BASH", "LD_", "DYLD_", "ZSH", "GIT_", "PS", "PROMPT", "HIST", "SSH_", "SUDO")
+
+
+class _LVMiss(Exception):
+    """The command is outside the closed shape: judge it exactly as before."""
+
+
+def _lv_tokens(command):
+    out, pos, prev = [], 0, "op"
+    while pos < len(command):
+        m = _LV_TOKEN.match(command, pos)
+        if not m:
+            raise _LVMiss
+        kind = m.lastgroup
+        if kind in ("uword", "qword"):
+            if prev in ("uword", "qword"):  # a quote in the middle of a word
+                raise _LVMiss
+            out.append((kind, m.group()))
+        elif kind == "op":
+            out.append(("op", m.group()))
+        prev = kind
+        pos = m.end()
+    return out
+
+
+def _lv_statements(tokens):
+    """[(separator before, [(kind, text), ...])]. Blank lines drop out; any other empty statement is a miss."""
+    out, cur, sep = [], [], "\n"
+    for kind, text in tokens:
+        if kind != "op":
+            cur.append((kind, text))
+        elif cur:
+            out.append((sep, cur))
+            cur, sep = [], text
+        elif text != "\n":
+            raise _LVMiss
+    if cur:
+        out.append((sep, cur))
+    elif sep not in (";", "\n"):
+        raise _LVMiss
+    return out
+
+
+def _lv_name(name, bound):
+    if not _LV_NAME.match(name) or name in bound or name in _LV_SPECIAL or name.startswith(_LV_SPECIAL_PREFIX):
+        raise _LVMiss
+    return name
+
+
+def _lv_vars(text):
+    """The names in `text`; a variable followed by `:`, `[`, `$` or `{` (a zsh modifier or subscript) is a miss."""
+    names = []
+    for m in _LV_VAR.finditer(text):
+        if text[m.end():m.end() + 1] in (":", "[", "$", "{"):
+            raise _LVMiss
+        names.append(m.group(1) or m.group(2))
+    return names
+
+
+def _lv_sub(text, values):
+    return _LV_VAR.sub(lambda m: values[m.group(1) or m.group(2)], text)
+
+
+def _lv_literal(word):
+    """A plain word as the shell keeps it: `~` only alone or before `/`, no `..` component, a closed charset."""
+    if word == "~" or word.startswith("~/"):
+        word = os.path.expanduser("~") + word[1:]
+    if "/../" in f"/{word}/" or not _LV_VALUE.match(word):
+        raise _LVMiss
+    return word
+
+
+def literal_variable_copies(command):
+    """Set LIFTED_HOST_WORDS and return the copies of `command` with the values filled in, or [] outside the shape."""
+    LIFTED_HOST_WORDS.clear()
+    stmts = _lv_statements(_lv_tokens(command))
+    prelude, i = {}, 0
+    while i < len(stmts) and len(stmts[i][1]) == 1 and stmts[i][0] in (";", "\n"):
+        kind, text = stmts[i][1][0]
+        name, eq, value = text.partition("=")
+        if kind != "uword" or not eq or not _LV_NAME.match(name):
+            break
+        if "$" in value or "=" in value or any(c in value for c in "*?[]"):
+            raise _LVMiss
+        if i + 1 < len(stmts) and stmts[i + 1][0] not in (";", "\n"):
+            raise _LVMiss
+        prelude[_lv_name(name, prelude)] = _lv_literal(value)
+        i += 1
+    if not prelude and not any(s[1][0][1] == "for" for s in stmts):
+        return []
+    flat, loop = stmts[i:], None
+    k = next((j for j, s in enumerate(flat) if s[1][0] == ("uword", "for")), None)
+    if k is not None:
+        flat, rest = flat[:k], flat[k:]
+        sep, header = rest[0]
+        if sep not in (";", "\n") or len(header) < 4 or header[2] != ("uword", "in"):
+            raise _LVMiss
+        if any(kind != "uword" for kind, _ in header):
+            raise _LVMiss
+        var = _lv_name(header[1][1], prelude)
+        words = [t for _, t in header[3:]]
+        if any(w in ("for", "do", "done") for w in words):
+            raise _LVMiss
+        if len(words) > _LV_LOOP_MAX:
+            deny(f"A loop over {len(words)} words is more than the guard follows ({_LV_LOOP_MAX}), so it is "
+                 "refused: split the loop into smaller loops.")
+        body = rest[1:]
+        if len(body) < 2 or body[-1][1] != [("uword", "done")] or body[-1][0] not in (";", "\n"):
+            raise _LVMiss
+        body = body[:-1]
+        first_sep, first = body[0]
+        if first_sep not in (";", "\n") or first[0] != ("uword", "do"):
+            raise _LVMiss
+        body = ([(first_sep, first[1:])] if len(first) > 1 else []) + body[1:]
+        if not body or any(t[1] in ("for", "do", "done") for _, s in body for t in s):
+            raise _LVMiss
+        values = []
+        for w in words:
+            if any(n not in prelude for n in _lv_vars(w)) or "=" in w or "[" in w or "]" in w:
+                raise _LVMiss
+            w = _lv_sub(w, prelude)
+            if "*" in w or "?" in w:
+                _lv_literal(w.replace("*", "x").replace("?", "x"))
+                values = None
+            elif values is not None:
+                values.append(_lv_literal(w))
+        loop = (var, values, [(sep, [("uword", _lv_sub(t, prelude)) for _, t in header])], body)
+    bound = set(prelude) | ({loop[0]} if loop else set())
+    for part, names in ((flat, set(prelude)), (loop[3] if loop else [], bound)):
+        for _, stmt in part:
+            _lv_check_statement(stmt, names, bound)
+
+    def choices(text):
+        names = _lv_vars(text)
+        if loop and loop[0] in names:
+            return [_lv_sub(text, {**prelude, loop[0]: v}) for v in loop[1]]
+        return [_lv_sub(text, prelude)]
+
+    def values_of(name):
+        return loop[1] if loop and name == loop[0] else [prelude[name]]
+
+    for _, stmt in flat + (loop[3] if loop else []):
+        if stmt[0][1] not in ("ssh", "scp"):
+            continue
+        for kind, text in stmt[1:]:
+            names = _lv_vars(text)
+            if not names or any(values_of(n) is None for n in names):
+                continue
+            if kind == "qword" and any(":" in v for n in names for v in values_of(n)):
+                continue  # a quoted remote path: the value must not add a host
+            vals = [v[1:-1] if kind == "qword" else v for v in choices(text)]
+            if not any(hidden_host(v) for v in vals):
+                LIFTED_HOST_WORDS.add(text)
+
+    def render(stmts_, values):
+        out = []
+        for sep, stmt in stmts_:
+            text = " ".join(_lv_sub(t, values) for _, t in stmt)
+            out.append(text if not out else f"{sep} {text}")
+        return " ".join(out)
+
+    if not loop:
+        return [render(flat, prelude)] if flat else []
+    var, vals, head, body = loop
+    if vals is None:
+        return [render(flat + head + body, {**prelude, var: "$" + var})]
+    return [render(flat + head + body, {**prelude, var: v}) for v in vals]
+
+
+def _lv_check_statement(stmt, names, bound):
+    texts = [t for _, t in stmt]
+    for t in texts:
+        if any(n not in names for n in _lv_vars(t)):
+            raise _LVMiss
+        if t in bound:
+            raise _LVMiss
+    if texts[0] == "[":
+        if (len(stmt) != 4 or texts[1] not in ("-d", "-f", "-e") or texts[3] != "]" or stmt[2][0] != "uword"
+                or any(c in texts[2] for c in "=[]")):
+            raise _LVMiss
+        return
+    if stmt[0][0] != "uword" or texts[0] not in _LV_HEADS:
+        raise _LVMiss
+    for kind, t in stmt:
+        if kind == "qword" and texts[0] == "echo":
+            continue
+        if any(c in t for c in "=[]") or "++" in t or "--" in t:
+            raise _LVMiss
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4086,11 +4310,28 @@ def main():
     RAW_COMMAND = command
     check_background_wait(command)
     try:
+        copies = literal_variable_copies(command)
+    except SystemExit:
+        raise
+    except Exception:  # _LVMiss, or a shape the resolver cannot read: judge the command exactly as before
+        LIFTED_HOST_WORDS.clear()
+        copies = []
+    try:
         check_command(command)
+        for copy in copies:
+            check_command(copy)
     except SystemExit:
         raise
     except Exception:
-        return
+        if not LIFTED_HOST_WORDS:
+            return
+        LIFTED_HOST_WORDS.clear()  # a copy failed to check: judge the raw command as before, with no lift
+        try:
+            check_command(command)
+        except SystemExit:
+            raise
+        except Exception:
+            return
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+guard-bash: a host variable bound to a literal in the same command (`for h in a b; do ssh $h ...; done`, `S=/tmp/sp; scp x:y "$S/"`) is judged by its values instead of being refused as a hidden host; the guard also checks each copy with the values filled in, and a variable in a shell script name that could name a blocked script is denied (#1795).
