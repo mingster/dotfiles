@@ -2201,9 +2201,10 @@ cat >"$ghbin/gh" <<'EOS'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$GH_STUB_LOG"
 [ "${GH_STUB_FAIL:-}" != 1 ] || exit 1
+view_default='{"labels":[],"title":"feat: x"}'
 case "$1 $2" in
   "issue list") printf '%s\n' "$GH_STUB_ISSUES" ;;
-  "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1; printf '%s\n' "${GH_STUB_VIEW:-0}" ;;
+  "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1; printf '%s\n' "${GH_STUB_VIEW:-$view_default}" ;;
   "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
 esac
 EOS
@@ -2223,12 +2224,21 @@ GH_STUB_ISSUES=$held DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7
 [ "$route_ec" = 0 ] && ok || bad "a held or unready dotfiles issue must not block a start (ec=$route_ec) $(cat "$tmp/route.err")"
 GH_STUB_ISSUES='[]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "no ready dotfiles issue should let the start go on (ec=$route_ec) $(cat "$tmp/route.err")"
-GH_STUB_VIEW=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+GH_STUB_VIEW='{"labels":[{"name":"P0"}],"title":"fix: x"}' GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a P0 or bug project issue starts before a waiting dotfiles P2 (ec=$route_ec) $(cat "$tmp/route.err")"
 GH_STUB_VIEW_FAIL=1 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a failed gh issue view must not block the start (ec=$route_ec) $(cat "$tmp/route.err")"
-GH_STUB_VIEW=1 GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P0"}]}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+GH_STUB_VIEW='{"labels":[{"name":"P0"}],"title":"fix: x"}' GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P0"}]}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" -ne 0 ] && ok || bad "a waiting dotfiles P0 still goes before a project P0 (ec=$route_ec)"
+# #1818: the red main and red gate tier ranks ahead of P0 and bug in any repo, as issue_scan_queue_key does.
+GH_STUB_VIEW='{"labels":[{"name":"P1"}],"title":"main red: 123"}' GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P0"}],"title":"fix: y"}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a project main red fixer starts before a waiting dotfiles P0 (ec=$route_ec) $(cat "$tmp/route.err")"
+GH_STUB_VIEW='{"labels":[{"name":"P1"}],"title":"red gate: shellcheck"}' GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"bug"}],"title":"fix: y"}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "a project red gate fixer starts before a waiting dotfiles bug (ec=$route_ec) $(cat "$tmp/route.err")"
+GH_STUB_VIEW='{"labels":[{"name":"P0"}],"title":"fix: x"}' GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P1"}],"title":"red gate: shellcheck"}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a waiting dotfiles P1 red gate fixer goes before a project P0 (ec=$route_ec)"
+GH_STUB_VIEW='{"labels":[{"name":"P1"}],"title":"main red: 456"}' GH_STUB_ISSUES='[{"number":5,"labels":[{"name":"ready-for-agent"},{"name":"P1"}],"title":"main red: 123"}]' DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#7950|fullstack-dev" claude claude-sonnet-5-5-medium
+[ "$route_ec" -ne 0 ] && ok || bad "a waiting dotfiles main red fixer goes before a project main red fixer (ec=$route_ec)"
 printf 'Refs acme/dots#9\n\n# fullstack-dev - issue 9\n\n%s\n' "$spec_saved" >"$spec_file"
 GH_STUB_ISSUES=$ready_issue DOTFILES_REPO=acme/dots PICK_STUB_MODE=sonnet route_run "#9|fullstack-dev" claude claude-sonnet-5-5-medium
 [ "$route_ec" = 0 ] && ok || bad "a dotfiles builder is never refused by the order rule (ec=$route_ec) $(cat "$tmp/route.err")"

@@ -1,0 +1,1 @@
+- `worker-startup.sh`: the dotfiles first start rule now follows the three fleet-watch tiers. A main red or red gate fixer in any repo starts ahead of a waiting dotfiles P0 or bug issue, and a waiting dotfiles main red or red gate fixer (labeled P1) holds back another repo's P0 or bug issue (#1818).
