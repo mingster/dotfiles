@@ -1408,7 +1408,8 @@ def admit(host, config, workers=None, env_names=None, repo=None, repo_lookup=Non
             }
         }
 
-    gate_lock = next(filter(None, (head_checks_gate_lock(name) for name in sorted(local_names))), None)
+    gate_names = sorted(local_names) if is_local else [host]
+    gate_lock = next(filter(None, (head_checks_gate_lock(name) for name in gate_names)), None)
     admitted = occupied_count < cap and not gate_lock
     if gate_lock:
         refusal = 'head checks hold the heavy gate on %s (%s)' % (host, gate_lock)

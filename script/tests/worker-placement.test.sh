@@ -511,7 +511,7 @@ cat >"$tmp/held-only.json" <<'EOS'
 }
 EOS
 ec=0; out=$(held_pick "$tmp/held-only.json") || ec=$?
-[ "$ec" = 1 ] && grep -Fq 'heavy-gate-held' <<<"$out" || fail "with only the held host the start is held (ec=$ec): $out"
+[ "$ec" = 1 ] && grep -Fq 'head checks hold the heavy gate on every eligible host' <<<"$out" || fail "with only the held host the start is held (ec=$ec): $out"
 sleep 0 & dead=$!; wait "$dead"
 echo "$dead" >"$hold_home/orca/workspaces/app/_db-host_remote__home_u_lead_train.lock/pid"
 out=$(held_pick "$tmp/held-only.json") || fail "a lock whose run exited must not hold the host: $out"

@@ -296,6 +296,10 @@ class HeadChecksGatePlacement(unittest.TestCase):
         # head-checks.sh keys db-host-2 as db_host_2, which shares the db_host_ prefix.
         self.hold('db_host_2', os.getpid())
         self.assertTrue(watch.admit('db_host', self.CONFIG, workers=[])['admitted'])
+        # The 'local' alias names the host fleet watch runs on, never a remote host.
+        self.hold('local', os.getpid())
+        self.assertTrue(watch.admit('db_host', self.CONFIG, workers=[])['admitted'])
+        self.assertIn('head checks hold the heavy gate on local', watch.admit('local', self.CONFIG, workers=[])['reason'])
 
 
 if __name__ == '__main__':

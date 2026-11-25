@@ -498,7 +498,11 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     pending = pending_starts(recent, known_dispatches)
     cores_per_worker = placement_float(config, 'cores_per_worker', DEFAULT_CORES_PER_WORKER)
     mem_per_worker = placement_float(config, 'mem_gb_per_worker', DEFAULT_MEM_GB_PER_WORKER)
-    gate_lock = load_fleet_watch().head_checks_gate_lock
+    try:
+        gate_lock = load_fleet_watch().head_checks_gate_lock
+    except Exception as exc:  # advisory like the worker count; never block placement on it
+        print('worker-placement: heavy gate holds unavailable (%s); placing without them' % exc, file=sys.stderr)
+        gate_lock = lambda _host: None  # noqa: E731
     considered: dict[str, float] = {}
     full: dict[str, str] = {}
     candidates: list[tuple[bool, float, float, int, str, float, float, int, int]] = []
@@ -572,6 +576,8 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
     if not considered:
         return {'ok': False, 'reason': 'no readable load for any eligible host', 'loads': {}}
     if full and len(full) == len(considered):
+        if all(v == 'heavy-gate-held' for v in full.values()):
+            return {'ok': False, 'reason': 'head checks hold the heavy gate on every eligible host', 'workers': full}
         return {'ok': False, 'reason': 'all eligible hosts at worker cap', 'workers': full}
     return {'ok': False, 'reason': 'all eligible hosts over load ceiling or worker cap', 'loads': considered,
             'workers': full}
