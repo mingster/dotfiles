@@ -83,9 +83,12 @@ class ShortPassCount(unittest.TestCase):
         state = dict(recent_state(), work_order_short_passes=2)
         supply, bits = run_pass(state, workers=live(1, title='#0|architect-pm|supply'))
         self.assertEqual(supply, [])
-        self.assertIn('supply_force=3', bits)
-        self.assertIn('supply_skip_live', bits)
-        self.assertEqual(state['work_order_short_passes'], 3)  # the next pass tries again
+        self.assertEqual(bits.count('supply_skip_live'), 1)
+        self.assertFalse([b for b in bits if b.startswith(('supply_force', 'unblock'))], bits)
+        self.assertEqual(state['work_order_short_passes'], 3)  # the first pass after it ends is forced
+        supply, bits = run_pass(state)
+        self.assertEqual(len(supply), 1, bits)
+        self.assertIn('supply_force=4', bits)
 
     def test_zero_open_issues_means_no_trigger(self):
         state = dict(recent_state(), work_order_short_passes=2)

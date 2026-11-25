@@ -5078,6 +5078,9 @@ def work_order_try_supply(
     except (TypeError, ValueError):
         short = 1
     state['work_order_short_passes'] = short
+    if _architect_pm_making_work(workers):
+        # Checked before the forced pass, so its gh reads wait until the live supply worker ends.
+        return ['supply_skip_live'], 0
     bits = []
     forced = False
     if short >= SUPPLY_FORCE_PASSES:
@@ -5090,8 +5093,6 @@ def work_order_try_supply(
             forced = True
             bits.append('supply_force=%d' % short)
             bits.extend((clear_blocked or clear_stale_blocked)(repos))
-    if _architect_pm_making_work(workers):
-        return bits + ['supply_skip_live'], 0
     scan = config.get('issue_scan') or {}
     interval = float(scan.get('triage_interval_hours', _TRIAGE_INTERVAL_HOURS)) * 3600
     try:
