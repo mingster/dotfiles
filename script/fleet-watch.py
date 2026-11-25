@@ -5986,6 +5986,12 @@ def pass_deadline_line():
     return 'pass deadline %ds: skipped %s' % (PASS_HARD_END, ','.join(_DEADLINE_SKIPPED)) if _DEADLINE_SKIPPED else ''
 
 
+def start_fits_pass(cost):
+    """True while elapsed + cost fits PASS_HARD_END, so the automation timeout never kills a start (#1820).
+    Verifier and fixer starts skip START_FINISH_BY (#1838) but not this. With no clock (tests, direct use) True."""
+    return _PASS_BEGAN is None or time.time() - _PASS_BEGAN + cost <= PASS_HARD_END
+
+
 def start_allowed(cost):
     """True while elapsed + cost fits START_FINISH_BY. Each start site calls it once, after it picks the agent
     and before it writes any state. with_coordinator_handle does not call it: a start a site let through runs."""
@@ -8057,6 +8063,10 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += step
             continue
+        if not start_fits_pass(agent_start_cost(agent)):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'deadline'))
+            log_bits.append('start_deadline=%s' % number)
+            continue
         if kind == 'verifier':
             # The pass list can be minutes old and may be cached, so read the open list again just before the start (#1706).
             live_state = pr_open_now(repo, number, pr_state_fetch or pr_fetch)
@@ -8085,6 +8095,7 @@ def babysit_pass(
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
             continue
         # No start_allowed hold here: a verifier starts on Review PASS within the usage gate and host caps (owner 2026-11-25, #1838).
+        # start_fits_pass above still holds a start that would end past PASS_HARD_END (#1820).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
         if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)

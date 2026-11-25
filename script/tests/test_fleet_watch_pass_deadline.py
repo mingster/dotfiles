@@ -71,6 +71,31 @@ class PassDeadline(unittest.TestCase):
         self.assertEqual(len(starts), 1, bits)
         self.assertIn('babysit_deadline=3', bits)
 
+    def babysit_at(self, elapsed):
+        starts = []
+        with tempfile.TemporaryDirectory() as root, \
+                patch.dict(os.environ, {'STANDING_VERIFIER_TRIAL_LOG': os.path.join(root, 't.tsv')}), \
+                patch.object(fw.time, 'time', Clock(elapsed)), patch.object(fw, 'start_allowed', return_value=True):
+            fw.begin_pass_clock(now=T0)
+            _n, _lines, bits = fw.babysit_pass(
+                tier_config(root), {}, [], pr_fetch=lambda _r: [tier_pr(2, BIG_CODE)],
+                start_worker=lambda c: starts.append(c) or fw.BabysitStartResult(0, '', 'ctx_1', 'term_x'),
+                pick=PICK, owner_check=lambda _pr, **_kw: None,
+                release_worker=lambda *_a, **_k: None, notify_worker=lambda *_a: None,
+                now=10_000.0, term_times={}, standing_io=FakeIO(),
+            )
+        return starts, bits
+
+    def test_a_babysit_start_that_would_end_past_the_deadline_is_held(self):
+        # #1820: a verifier or fixer start is held when elapsed plus its cost passes PASS_HARD_END, so the 280 s
+        # timeout never kills a start. The next pass starts it.
+        cost = fw.agent_start_cost('cursor')  # PICK picks cursor
+        starts, bits = self.babysit_at(fw.PASS_HARD_END - cost + 1)
+        self.assertEqual(starts, [], bits)
+        self.assertIn('start_deadline=2', bits)
+        starts, bits = self.babysit_at(fw.PASS_HARD_END - fw.START_COST_AGY - 1)
+        self.assertEqual(len(starts), 1, bits)
+
     def test_issue_scan_stops_at_the_deadline_before_any_pr_row(self):
         starts = []
         head = 'a' * 40

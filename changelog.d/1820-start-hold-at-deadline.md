@@ -1,0 +1,1 @@
+- fleet-watch holds a verifier or fixer start when the pass time so far plus the start's cost would pass 250 s, and logs `start_deadline=<PR>`; the next pass starts it, so the 280 s automation timeout never kills a start (#1820).
