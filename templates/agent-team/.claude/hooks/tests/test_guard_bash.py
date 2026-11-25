@@ -2218,7 +2218,20 @@ class LiteralHostVariables(GuardTest):
             "D=fileServer; ls $D; for f in a*; do cat $D/*/x.json; done",
             "D=fileServer; cat $D/s*/x.json",
             "D=file; cat ${D}Server/*/x.json",
+            "D=/; cat $D/U*/*/*/*/*/x.json",
+            "D=/; cat $D/p*/*/*/*/*/*/*/*/*/x.json",
+            "D=fileServer/Secrets; cat $D/x.json",
+            "for d in fileServer/Secrets; do cat $d/x.json; done",
+            "D=fileServer; S=Secrets; cat $D/$S/x.json",
         ))
+
+    def test_a_redirect_after_a_message_flag_is_still_a_read(self):
+        for command in (
+            'git commit -F - -m <fileServer/secrets/x.json "msg"',
+            'gh issue create --body-file - --title <fileServer/secrets/x.json "t"',
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command)
 
     def test_a_production_host_value_is_judged_as_that_host(self):
         self.assertDenied("for h in blue prod.example; do ssh $h rm -rf /x; done", "production host")

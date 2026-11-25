@@ -658,7 +658,10 @@ def message_free_args(base, args):
         return list(args)
     out, skip = [], False
     for a in args:
-        if skip:
+        if "<" in a or ">" in a:
+            out.append(a)  # the shell reads `-m <file` as a redirect, not a message: keep it
+            skip = False
+        elif skip:
             skip = False
         elif a in flags:
             skip = True
@@ -4253,6 +4256,8 @@ def _resolved_word_safe(word, cwd, absolute, relative):
         return False
     lit = word[:at]
     anchor = lit[:-1] if lit.endswith("/") else lit.rpartition("/")[0]
+    if lit.startswith("/") and os.path.normpath(anchor or "/") in ("/", "//"):
+        return False  # a glob from the root reaches every path
     if _directory_hit(anchor or ".", cwd, absolute, relative, ancestor=True):
         return False
     metas = {c for c in word[at:] if c in "*?[{$`"}
@@ -4274,6 +4279,8 @@ def _hidden_script_paths(command, cwd, absolute, relative):
     words = _annotate_cwd(_command_words(command), cwd)
     lifts = _hidden_lifts(command, words)
     for n, (text, literal, metas, path_cwd) in enumerate(words):
+        if n in lifts and any(_directory_hit(w, path_cwd, absolute, relative) for w in lifts[n]):
+            _deny_hidden()  # a resolved value names a protected path, in any letter case
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
             if n in lifts and all(_resolved_word_safe(w, path_cwd, absolute, relative) for w in lifts[n]):
                 continue
