@@ -1,0 +1,1 @@
+rule-checks hook: relative file paths resolve against the payload cwd for CHANGELOG.md and AGENTS.md checks, and Edit or MultiEdit dash warnings use fence state from the whole file, with file line numbers (#1800, #1793).
