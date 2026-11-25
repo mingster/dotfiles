@@ -19,6 +19,10 @@
 # --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
+# WORKER_STARTUP_AGY_SIGNIN=exit (fleet watch issue starts only, #1832): an antigravity start that lands on the sign-in screen after
+# the 60 s wait marks the host, stops the dispatch, releases it on the remote host and here, puts the issue labels back, removes the
+# worktree it created and exits 10. The last stderr line is "agy-signin: host=<h> notify" or "... known". A failed mark does not
+# exit 10: it falls back to claude in process. Without the variable the in process fallback is unchanged.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -676,9 +680,10 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
 
 # About a minute after an antigravity start, read the worker screen. The sign-in screen stops the dispatch and
 # returns 10 so the caller restarts the same brief on claude (#1240). Fleet watch marks the host and tells the owner.
+# A 4th argument `nostop` leaves the dispatch running: the caller undoes the start itself (agy_signin_hold).
 AGY_SIGNIN_EXIT=10
-surface_antigravity_screen() { # <agent> <worker-start json> [environment]
-  local agent=$1 start_json=$2 env=${3:-} dispatch handle shown screen
+surface_antigravity_screen() { # <agent> <worker-start json> [environment] [nostop]
+  local agent=$1 start_json=$2 env=${3:-} nostop=${4:-} dispatch handle shown screen
   [ "$agent" = antigravity ] || return 0
   dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_json" 2>/dev/null || true)
   [ -n "$dispatch" ] || die "antigravity start returned no dispatch"
@@ -691,9 +696,13 @@ surface_antigravity_screen() { # <agent> <worker-start json> [environment]
   [ -n "$handle" ] || return 0
   screen=$("$orca" terminal read --terminal "$handle" --screen --json ${env:+--environment "$env"} 2>/dev/null) || return 0
   "$python3" "$here/agy-signin.py" match <<<"$screen" || return 0
-  "$orca" orchestration worker-stop --dispatch "$dispatch" ${env:+--environment "$env"} >/dev/null 2>&1 \
-    || echo "worker-startup: could not stop $dispatch after the agy sign-in screen" >&2
+  [ "$nostop" = nostop ] || agy_stop_dispatch "$dispatch" "$env"
   return "$AGY_SIGNIN_EXIT"
+}
+
+agy_stop_dispatch() { # <dispatch> [environment]
+  "$orca" orchestration worker-stop --dispatch "$1" ${2:+--environment "$2"} >/dev/null 2>&1 \
+    || echo "worker-startup: could not stop $1 after the agy sign-in screen" >&2
 }
 
 agy_host_label() { # <environment> -> the host the worker runs on
@@ -1321,8 +1330,8 @@ run_mode() {
     bash "$here/grok-trust.sh" "$1" >&2
   }
   # A failed start removes the worktree this run created, so a retry does not leave a -2, -3 copy behind.
-  start_failed() { # <exit code>
-    local ec=$1 rm_args
+  start_failed() { # <exit code> [last stderr line]
+    local ec=$1 last=${2:-} rm_args
     if [ -n "${WORKER_STARTUP_PLACED_HOST:-}" ]; then
       "$python3" "$here/worker-placement.py" unrecord --host "$WORKER_STARTUP_PLACED_HOST" \
         ${WORKER_STARTUP_PLACED_CLAIM:+--claim "$WORKER_STARTUP_PLACED_CLAIM"} \
@@ -1334,7 +1343,28 @@ run_mode() {
       "$orca" "${rm_args[@]}" >/dev/null 2>&1 || echo "worker-startup: could not remove the worktree $wt after a failed start" >&2
     fi
     release_claim
+    [ -z "$last" ] || echo "$last" >&2 # last, so fleet watch reads it as the reason (_start_reason)
     exit "$ec"
+  }
+  # A signed out antigravity issue start (WORKER_STARTUP_AGY_SIGNIN=exit) undoes itself in this one call and exits 10, so fleet watch
+  # changes nothing (#1832). Order: mark the host, stop, release on the remote host, release here, then start_failed (labels back,
+  # worktree removed, placement unrecorded). Each call has its own ||. A failed mark returns 1: no exit 10, the caller falls back.
+  agy_signin_hold() { # <worker-start json>
+    local host dispatch mark
+    host=$(agy_host_label "$environment")
+    dispatch=$(jq -r '.result.dispatchId // empty' <<<"$1" 2>/dev/null || true)
+    if ! mark=$("$python3" "$here/agy-signin.py" mark "$host" 2>/dev/null) || [ -z "$mark" ]; then
+      echo "worker-startup: could not mark $host agy-unavailable, falling back to claude in process" >&2
+      return 1
+    fi
+    agy_stop_dispatch "$dispatch" "$environment"
+    if [ -n "$environment" ]; then
+      "$orca" orchestration worker-release --dispatch "$dispatch" --environment "$environment" >/dev/null 2>&1 \
+        || echo "worker-startup: could not release $dispatch on $environment after the agy sign-in screen" >&2
+    fi
+    "$orca" orchestration worker-release --dispatch "$dispatch" >/dev/null 2>&1 \
+      || echo "worker-startup: could not release $dispatch after the agy sign-in screen" >&2
+    start_failed "$AGY_SIGNIN_EXIT" "agy-signin: host=$host $mark"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
   if [ "${setup_mode:-}" = skip ]; then
@@ -1365,9 +1395,13 @@ run_mode() {
   }
   claim_issue "$spec" "$title" "${claim_repo_sel:-$repo}" "$wt"
   start_agent_worker
-  local agy_ec=0
-  surface_antigravity_screen "$agent" "$start_out" "$environment" || agy_ec=$?
+  local agy_ec=0 agy_nostop=
+  [ "${WORKER_STARTUP_AGY_SIGNIN:-}" != exit ] || agy_nostop=nostop
+  surface_antigravity_screen "$agent" "$start_out" "$environment" "$agy_nostop" || agy_ec=$?
   if [ "$agy_ec" -eq "$AGY_SIGNIN_EXIT" ]; then
+    if [ -n "$agy_nostop" ]; then
+      agy_signin_hold "$start_out" || agy_stop_dispatch "$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)" "$environment"
+    fi
     echo "agy-signin: host=$(agy_host_label "$environment") fell back to claude"
     agent=claude model=sonnet
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" --model "$model" >&2 \

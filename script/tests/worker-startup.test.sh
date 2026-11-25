@@ -1864,6 +1864,159 @@ grep -q 'is agy-unavailable, using claude' "$tmp/agy.out" && ok || bad "unavaila
 [ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "unavailable host starts once"
 grep -q -- '--agent claude --model sonnet' "$tmp/orca-agy.log" && ! grep -q -- '--agent antigravity' "$tmp/orca-agy.log" && ok || bad "unavailable host starts on claude only"
 
+# 1832: WORKER_STARTUP_AGY_SIGNIN=exit. A signed out antigravity start marks the host, stops and releases the dispatch,
+# puts the labels back, removes the worktree it made and exits 10; its last stderr line names the host and notify|known.
+agyx_gh="$tmp/agyx-gh"
+mkdir -p "$agyx_gh"
+cat >"$agyx_gh/gh" <<'EOS'
+#!/usr/bin/env bash
+printf 'gh %s\n' "$*" >>"$ORCA_STUB_LOG"
+case "$1 $2" in
+  "issue view") printf '%s\n' "${GH_LABELS:-}" ;;
+  "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
+esac
+exit 0
+EOS
+chmod +x "$agyx_gh/gh"
+cat >"$tmp/orca-agyx" <<'EOS'
+#!/usr/bin/env bash
+log="${ORCA_STUB_LOG:-/dev/null}"
+printf '%s\n' "$*" >>"$log"
+case "$*" in
+  *"worktree create"*) printf '%s\n' "{\"ok\":true,\"result\":{\"worktree\":{\"path\":\"${AGY_WT:?}\"}}}" ;;
+  *"worktree rm"*) printf '%s\n' '{"ok":true}' ;;
+  *"orchestration worker-start"*) printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_agy","taskId":"task_agy","runId":"run_agy","state":"ready","agent":"antigravity","terminal":"term_agy"}}' ;;
+  *"orchestration worker-stop"*) printf '%s\n' '{"ok":true,"result":{"stopped":true}}' ;;
+  *"orchestration worker-release --dispatch ctx_agy --environment"*)
+    [ -z "${AGY_REMOTE_RELEASE_FAIL:-}" ] || { echo "remote release refused" >&2; exit 1; }
+    printf '%s\n' '{"ok":true}' ;;
+  *"orchestration worker-release"*) printf '%s\n' '{"ok":true}' ;;
+  *"terminal read"*)
+    python3 -c '
+import json, os
+print(json.dumps({"ok": True, "result": {"terminal": {"tail": open(os.environ["AGY_SCREEN"]).read().splitlines()}}}))' ;;
+  *) printf 'unexpected orca: %s\n' "$*" >&2; exit 99 ;;
+esac
+EOS
+chmod +x "$tmp/orca-agyx"
+cp "$here/../agy-signin.py" "$helper_dir/agy-signin.py"
+cp "$here/../check-issue-overlap.sh" "$helper_dir/check-issue-overlap.sh"
+agyx_spec="$tmp/agyx-spec.txt"
+printf 'Refs acme/app#7950\n\n# fullstack-dev - issue 7950\n\n%s\n' "$(cat "$spec_file")" >"$agyx_spec"
+agyx_local() { # <title> [state file] (env WORKER_STARTUP_AGY_SIGNIN=exit unless AGY_X_NOENV)
+  : >"$tmp/orca-agyx.log"
+  set +e
+  unset -f python3 2>/dev/null || true
+  env -u BASH_ENV ${AGY_X_NOENV:-WORKER_STARTUP_AGY_SIGNIN=exit} \
+    PATH="$agyx_gh:$run_path" ORCA_CLI_COMMAND="$tmp/orca-agyx" ORCA_STUB_LOG="$tmp/orca-agyx.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" \
+    PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" GH_LABELS="${GH_LABELS:-}" \
+    AGY_WT="$wt_proof" AGY_SCREEN="$tmp/agy-login.txt" WORKER_STARTUP_AGY_WAIT=0 \
+    AGY_UNAVAILABLE_STATE="${2:-$tmp/agyx-state.json}" \
+    bash --noprofile --norc "$script" --run run_agy --spec "$agyx_spec" --title "$1" \
+    --agent antigravity --model gemini-4-argon-medium \
+    --from term_coord --name nagyx --repo "path:$clean" >"$tmp/agyx.out" 2>"$tmp/agyx.err"
+  agyx_ec=$?
+  set -e
+}
+host_label=$(hostname -s | tr '[:upper:]' '[:lower:]')
+rm -f "$tmp/agyx-state.json"
+export GH_LABELS=$'ready-for-agent\nP2'
+agyx_local "#7950|fullstack-dev"
+[ "$agyx_ec" = 10 ] && ok || bad "1832: a signed out issue start exits 10 ($agyx_ec) $(cat "$tmp/agyx.err")"
+[ "$(tail -n 1 "$tmp/agyx.err")" = "agy-signin: host=$host_label notify" ] && ok || bad "1832: last stderr line is the notify line ($(tail -n 2 "$tmp/agyx.err"))"
+AGY_UNAVAILABLE_STATE="$tmp/agyx-state.json" "$PYTHON" "$here/../agy-signin.py" unavailable "$host_label" && ok || bad "1832: the host is marked"
+grep -q 'orchestration worker-stop --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832: the dispatch is stopped"
+grep -q 'orchestration worker-release --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832: the dispatch is released"
+grep 'worker-stop\|worker-release' "$tmp/orca-agyx.log" | grep -q -- '--environment' && bad "1832: a local start passes no --environment" || ok
+grep -q 'worktree rm' "$tmp/orca-agyx.log" && ok || bad "1832: the worktree this start created is removed ($(cat "$tmp/orca-agyx.log"))"
+grep -Fq 'issue edit 7950 -R acme/app --add-label ready-for-agent --remove-label status:進行中' "$tmp/orca-agyx.log" && ok || bad "1832: the labels are put back ($(grep 'gh ' "$tmp/orca-agyx.log"))"
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agyx.log")" = 1 ] && ok || bad "1832: no second start in process"
+# The next start sees the mark and starts on claude; the pre-marked host does not print notify.
+agyx_local "#7950|fullstack-dev"
+[ "$agyx_ec" = 0 ] && ok || bad "1832: the next start on a marked host exits 0 ($agyx_ec) $(cat "$tmp/agyx.err")"
+grep -q -- '--agent claude --model sonnet' "$tmp/orca-agyx.log" && ! grep -q -- '--agent antigravity' "$tmp/orca-agyx.log" && ok || bad "1832: the next start is claude only"
+# A host notified less than 6 hours ago but whose mark ran out prints known.
+rm -f "$tmp/agyx-state2.json"
+AGY_UNAVAILABLE_STATE="$tmp/agyx-state2.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
+"$PYTHON" -c "
+import json,sys
+p=sys.argv[1]; d=json.load(open(p));
+for r in d.values(): r['until']=0
+json.dump(d,open(p,'w'))" "$tmp/agyx-state2.json"
+agyx_local "#7950|fullstack-dev" "$tmp/agyx-state2.json"
+[ "$agyx_ec" = 10 ] && ok || bad "1832: a host whose mark ran out exits 10 again ($agyx_ec)"
+[ "$(tail -n 1 "$tmp/agyx.err")" = "agy-signin: host=$host_label known" ] && ok || bad "1832: a recently notified host prints known ($(tail -n 2 "$tmp/agyx.err"))"
+# qa-sdet and a start whose claim failed: exit 10, no label edited.
+rm -f "$tmp/agyx-state.json"
+printf 'Refs acme/app#7951\n\n# qa-sdet - verify\n\n%s\n' "$(cat "$spec_file")" >"$agyx_spec"
+agyx_local "#7951|qa-sdet"
+[ "$agyx_ec" = 10 ] && ok || bad "1832: a qa-sdet issue start exits 10 too ($agyx_ec)"
+grep -q 'issue edit' "$tmp/orca-agyx.log" && bad "1832: a qa-sdet start edits no label" || ok
+rm -f "$tmp/agyx-state.json"
+printf 'Refs acme/app#7952\n\n# fullstack-dev - issue 7952\n\n%s\n' "$(cat "$spec_file")" >"$agyx_spec"
+cp "$agyx_gh/gh" "$agyx_gh/gh.real"
+cat >"$agyx_gh/gh" <<'EOS'
+#!/usr/bin/env bash
+printf 'gh %s\n' "$*" >>"$ORCA_STUB_LOG"
+[ "$1 $2" != "issue view" ] || exit 1
+exit 0
+EOS
+agyx_local "#7952|fullstack-dev"
+[ "$agyx_ec" = 10 ] && ok || bad "1832: an unclaimed builder start exits 10 ($agyx_ec)"
+grep -q 'issue edit' "$tmp/orca-agyx.log" && bad "1832: an unclaimed start edits no label" || ok
+mv "$agyx_gh/gh.real" "$agyx_gh/gh"
+# Without the variable (a verifier, fixer, rework or hand start) the in process fallback is unchanged.
+rm -f "$tmp/agyx-state.json"
+AGY_X_NOENV=A=B agyx_local "#7952|fullstack-dev"
+[ "$agyx_ec" = 0 ] && ok || bad "1832: without the variable the sign-in start falls back in process ($agyx_ec)"
+grep -q 'worker-release' "$tmp/orca-agyx.log" && bad "1832: without the variable nothing is released" || ok
+# Remote: the remote release fails, the coordinator release still runs, the start exits 10 and a reused worktree is kept.
+cat >"$helper_dir/start-remote-worker.sh" <<EOS
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$tmp/agyx-remote.args"
+printf '%s\n' '{"ok":true,"result":{"dispatchId":"ctx_agy","taskId":"task_agy","runId":"run_agy","state":"ready","agent":"antigravity","terminal":"term_agy"}}'
+EOS
+chmod +x "$helper_dir/start-remote-worker.sh"
+cat >"$tmp/fleet-agyx.json" <<EOF
+{"hosts": ["agy-box"], "repos": ["$clean"]}
+EOF
+agyx_remote() {
+  : >"$tmp/orca-agyx.log"; rm -f "$tmp/agyx-state.json" "$tmp/agyx-remote.args"
+  set +e
+  env -u BASH_ENV WORKER_STARTUP_AGY_SIGNIN=exit PATH="$agyx_gh:$run_path" ORCA_CLI_COMMAND="$tmp/orca-agyx" ORCA_STUB_LOG="$tmp/orca-agyx.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet-agyx.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    AGY_WT="$wt_proof" AGY_SCREEN="$tmp/agy-login.txt" WORKER_STARTUP_AGY_WAIT=0 AGY_UNAVAILABLE_STATE="$tmp/agyx-state.json" \
+    AGY_REMOTE_RELEASE_FAIL="${AGY_REMOTE_RELEASE_FAIL:-}" GH_LABELS="$GH_LABELS" \
+    bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_agy --spec "$agyx_spec" --title "#7952|fullstack-dev" --agent antigravity \
+    --model gemini-4-argon-medium --from term_coord --on agy-box --worktree-path /abs/wt >"$tmp/agyx.out" 2>"$tmp/agyx.err"
+  agyx_ec=$?
+  set -e
+}
+AGY_REMOTE_RELEASE_FAIL=1 agyx_remote
+[ "$agyx_ec" = 10 ] && ok || bad "1832: a failed remote release still exits 10 ($agyx_ec) $(cat "$tmp/agyx.err")"
+grep -q 'worker-release --dispatch ctx_agy --environment agy-box' "$tmp/orca-agyx.log" && ok || bad "1832: the remote release runs with --environment"
+grep -q 'worker-release --dispatch ctx_agy$' "$tmp/orca-agyx.log" && ok || bad "1832: the coordinator release still runs ($(grep release "$tmp/orca-agyx.log"))"
+grep -q 'worker-stop --dispatch ctx_agy --environment agy-box' "$tmp/orca-agyx.log" && ok || bad "1832: the remote stop carries --environment"
+[ "$(tail -n 1 "$tmp/agyx.err")" = "agy-signin: host=agy-box notify" ] && ok || bad "1832: remote last line names the remote host ($(tail -n 2 "$tmp/agyx.err"))"
+grep -q 'worktree rm' "$tmp/orca-agyx.log" && bad "1832: a reused worktree (--worktree-path) is not removed" || ok
+# The mark fails: no exit 10, the dispatch is still stopped and the start falls back to claude in process.
+cp "$helper_dir/agy-signin.py" "$tmp/agy-signin.real.py"
+cat >"$helper_dir/agy-signin.py" <<'EOS'
+#!/usr/bin/env python3
+import sys
+if sys.argv[1:2] == ['mark']:
+    raise SystemExit(1)
+raise SystemExit(0 if sys.argv[1:2] == ['match'] else 1)
+EOS
+agyx_remote
+[ "$agyx_ec" = 0 ] && ok || bad "1832: a failed mark does not exit 10 ($agyx_ec) $(cat "$tmp/agyx.err")"
+grep -q 'could not mark' "$tmp/agyx.err" && ok || bad "1832: a failed mark is logged"
+grep -q 'worker-stop --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832: a failed mark still stops the antigravity dispatch"
+grep -q -- '--agent claude' "$tmp/agyx-remote.args" && ok || bad "1832: a failed mark falls back to claude ($(cat "$tmp/agyx-remote.args"))"
+cp "$tmp/agy-signin.real.py" "$helper_dir/agy-signin.py"
+unset GH_LABELS
+
 # 1221: a worker that vanishes at startup is started once more; a healthy or non-startup failure is not retried.
 cat >"$tmp/orca-retry" <<'EOS'
 #!/usr/bin/env bash
