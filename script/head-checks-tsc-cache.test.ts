@@ -25,6 +25,7 @@ function setup() {
 while [ $# -gt 0 ]; do [ "$1" = --tsBuildInfoFile ] && f=$2; shift; done
 printf '%s|%s\\n' "$(basename "$PWD")" "$( [ -f "$f" ] && cat "$f" || echo none )" >> "$FAKE_LOG"
 printf 'info-from-%s-%s' "$(basename "$PWD")" "$RANDOM" > "$f"
+[ -z "\${FAKE_HANG:-}" ] || { sleep 300 & echo $! > "$FAKE_CHILD"; sleep 300; }
 [ -z "\${FAKE_FAIL:-}" ] || exit 2
 `,
 		{ mode: 0o755 },
@@ -111,6 +112,51 @@ test("runs at once leave one whole cache file and no temp files", async () => {
 		rmSync(t.root, { recursive: true, force: true });
 	}
 });
+
+function alive(pid: number) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+test("a tsc run past HEAD_CHECKS_TSC_TIMEOUT_SECONDS is stopped with its children and leaves the cache alone", async () => {
+	const t = setup();
+	try {
+		const a = t.tree("wt-a");
+		expect(await t.run(a).exited).toBe(0);
+		const before = new Map(
+			t.entries().map((n) => [n, readFileSync(join(t.cache, n), "utf8")]),
+		);
+		const childFile = join(t.root, "child.pid");
+		const proc = t.run(a, {
+			HEAD_CHECKS_TSC_TIMEOUT_SECONDS: "1",
+			FAKE_HANG: "1",
+			FAKE_CHILD: childFile,
+		});
+		const started = Date.now();
+		const [code, stderr] = await Promise.all([
+			proc.exited,
+			new Response(proc.stderr).text(),
+		]);
+		expect(Date.now() - started).toBeLessThan(10_000);
+		expect(code).toBe(124);
+		expect(stderr).toContain("HEAD_CHECKS_TSC_TIMEOUT_SECONDS=1");
+		const after = new Map(
+			t.entries().map((n) => [n, readFileSync(join(t.cache, n), "utf8")]),
+		);
+		expect(after).toEqual(before);
+		const child = Number(readFileSync(childFile, "utf8").trim());
+		for (let i = 0; i < 20 && alive(child); i++) {
+			await Bun.sleep(100);
+		}
+		expect(alive(child)).toBe(false);
+	} finally {
+		rmSync(t.root, { recursive: true, force: true });
+	}
+}, 20_000);
 
 test("a failing tsc still exits non-zero and keeps the cache", async () => {
 	const t = setup();

@@ -1,0 +1,1 @@
+head-checks-tsc: a tsc run past HEAD_CHECKS_TSC_TIMEOUT_SECONDS (default 600) is stopped with its process group and exits 124, so a hung check no longer holds memory until someone kills it (Refs #1844).
