@@ -9491,10 +9491,11 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
     return notices
 
 
-def release_green_successes(messages, workers, config, state, release, pr_of):
+def release_green_successes(messages, workers, config, state, release, pr_of, set_status=None):
     """Release a worker once when worker_done succeeded and its PR checks are green.
 
-    The in-memory row is marked released so this pass stops counting the seat.
+    The in-memory row is marked released so this pass stops counting the seat. When the PR has
+    already merged, the card moves to completed; an open PR leaves it in in-review (#1842).
     """
     released_ids = state.setdefault('auto_released', [])
     if not isinstance(released_ids, list):
@@ -9530,6 +9531,8 @@ def release_green_successes(messages, workers, config, state, release, pr_of):
             continue
         release(dispatch)
         _mark_worker_released(worker)
+        if set_status is not None and (pr_row.get('state') or '').upper() == 'MERGED':
+            set_status(worker, 'completed')
         released_ids.append(dispatch)
         seen.add(dispatch)
         done.append(dispatch)
@@ -9706,6 +9709,126 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
         seen.add(message_id)
         lines.append('bounce %s#%s %s' % (repo, number, reason))
     return lines
+
+
+_AGENT_STATE_PATH_RE = re.compile(r'~/agent-state/([^\s`\'"()<>\[\],]+)')
+_HEX_RE = re.compile(r'\b[0-9a-f]{7,40}\b')
+AGENT_STATE_REFUSAL = (
+    'worker_done refused: it names %s, which is not on the coordinator. Commit and push that file in '
+    '~/agent-state and name the commit sha in the body, or put its content in the body, then send worker_done again.'
+)
+
+
+def agent_state_dir():
+    return os.environ.get('AGENT_STATE_DIR') or os.path.join(os.path.expanduser('~'), 'agent-state')
+
+
+def agent_state_commit_exists(directory, sha):
+    try:
+        proc = subprocess.run(['git', '-C', directory, 'cat-file', '-e', sha + '^{commit}'],
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+def missing_agent_state_path(body, directory=None):
+    """The first ~/agent-state path a worker_done body names that the coordinator cannot see, or ''.
+
+    A worker on another host writes to its own ~/agent-state, so the path alone proves nothing here.
+    The body passes when every named path exists, or when it names a real agent-state commit (#1842).
+    """
+    directory = directory or agent_state_dir()
+    missing = ''
+    for match in _AGENT_STATE_PATH_RE.finditer(body or ''):
+        rel = match.group(1).rstrip('.:;')
+        if not os.path.exists(os.path.join(directory, rel)):
+            missing = '~/agent-state/' + rel
+            break
+    if not missing:
+        return ''
+    if any(agent_state_commit_exists(directory, sha) for sha in set(_HEX_RE.findall(body))):
+        return ''
+    return missing
+
+
+def _done_body(message, payload):
+    return '\n'.join(str(v) for v in (message.get('body'), payload.get('body')) if isinstance(v, str) and v)
+
+
+def refuse_agent_state_dones(messages, workers, notify, state, directory=None):
+    """Send one notice back to a worker whose worker_done names an agent-state file the coordinator lacks.
+
+    Returns the refused message ids; the rest of the pass treats those dones as not sent.
+    """
+    refused = state.setdefault('refused_done', [])
+    if not isinstance(refused, list):
+        refused = state['refused_done'] = []
+    by_dispatch = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
+            continue
+        message_id = message.get('id')
+        if not isinstance(message_id, str) or not message_id or message_id in refused:
+            continue
+        payload = _message_payload(message)
+        worker = by_dispatch.get(payload.get('dispatchId') or payload.get('dispatch_id') or '')
+        if worker is None:
+            continue
+        missing = missing_agent_state_path(_done_body(message, payload), directory)
+        if not missing:
+            continue
+        mail_worker(notify, worker, AGENT_STATE_REFUSAL % missing, allow_settled=True)
+        refused.append(message_id)
+    del refused[:-200]
+    return set(refused)
+
+
+def relay_done_board(messages, workers, config, state, board_of, set_status, pr_of):
+    """Move the card of a worker that sent worker_done but left its board column alone.
+
+    in-review while its PR is open, completed when it has no PR or the PR is closed (#1842).
+    A card already in in-review, completed or archived is left as the worker set it.
+    """
+    handled = state.setdefault('board_done', [])
+    if not isinstance(handled, list):
+        handled = state['board_done'] = []
+    bounced = set(state.get('bounced_done') or [])
+    by_dispatch = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
+    moved = []
+    for message in messages or []:
+        if not isinstance(message, dict) or message.get('type') != 'worker_done' or worker_done_rejected(message):
+            continue
+        message_id = message.get('id')
+        if not isinstance(message_id, str) or not message_id or message_id in handled or message_id in bounced:
+            continue
+        payload = _message_payload(message)
+        if _message_outcome(message, payload) in ('failed', 'failure'):
+            continue
+        dispatch = payload.get('dispatchId') or payload.get('dispatch_id') or ''
+        worker = by_dispatch.get(dispatch)
+        if worker is None:
+            continue
+        current = board_of(worker)
+        if current is None:
+            continue
+        target = None
+        if current not in ('in-review', 'completed', 'archived'):
+            number = worker_pr_number(worker)
+            if number:
+                repo = repo_for_worker(worker, config)
+                row = pr_of(repo, number) if repo else None
+                if not isinstance(row, dict):
+                    continue
+                target = 'in-review' if (row.get('state') or 'OPEN').upper() == 'OPEN' else 'completed'
+            else:
+                target = 'completed'
+            if not set_status(worker, target):
+                continue
+            moved.append('%s:%s' % (dispatch, target))
+        handled.append(message_id)
+    del handled[:-200]
+    return moved
 
 
 def _agy_signin():
@@ -9988,6 +10111,12 @@ def _main():
                 log_send_failed(terminal, error)
 
         try:
+            refused = refuse_agent_state_dones(inv['messages'], workers, _notify_bounce, state)
+            if refused:
+                inv['messages'] = [m for m in inv['messages'] if not (isinstance(m, dict) and m.get('id') in refused)]
+        except Exception as error:
+            print('fleet-watch: agent-state check skipped: %s' % (repr(error),), file=sys.stderr)
+        try:
             for line in bounce_builder_dones(
                 inv['messages'], workers, fetch_pr_body, _notify_bounce, state, config,
             ):
@@ -10028,13 +10157,41 @@ def _main():
                 w.get('dispatchId'): remote_environment(w)
                 for w in workers if isinstance(w, dict) and worker_is_remote(w, config)
             }
+            def pr_of(repo, number):
+                return next(
+                    (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
+                    None,
+                )
+
+            def board_status(worker, status):
+                return set_board_status(rpc, worker, status, env_of.get(worker.get('dispatchId')) or '')
+
+            boards = {}
+
+            def board_of(worker):
+                env = env_of.get(worker.get('dispatchId')) or ''
+                if env not in boards:
+                    try:
+                        listed = rpc('worktree', 'list', *(('--environment', env) if env else ()))
+                        boards[env] = {
+                            (row.get('path') or '').rstrip('/'): row.get('workspaceStatus') or ''
+                            for row in (listed or {}).get('worktrees') or [] if isinstance(row, dict)
+                        }
+                    except SEND_ERRORS:
+                        boards[env] = None
+                if boards[env] is None:
+                    return None
+                return boards[env].get(worker_checkout_path(worker).rstrip('/'))
+
+            try:
+                for line in relay_done_board(inv['messages'], workers, config, state, board_of, board_status, pr_of):
+                    print('fleet-watch: board %s' % line)
+            except Exception as error:
+                print('fleet-watch: board relay skipped: %s' % (repr(error),), file=sys.stderr)
             freed = release_green_successes(
                 inv['messages'], workers, config, state,
                 lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),
-                lambda repo, number: next(
-                    (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
-                    None,
-                ),
+                pr_of, set_status=board_status,
             )
             freed += release_dead_followups(
                 workers, state, lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),

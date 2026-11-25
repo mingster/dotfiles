@@ -990,3 +990,123 @@ class RemoteReadRetry(unittest.TestCase):
 
         self.assertEqual(fw.remote_worker_activity(rpc, 'd', 'env', T0, WINDOW), 'unknown')
         self.assertEqual(len(calls), 2)
+
+
+def done_message(mid='m1', dispatch='disp_done', body='', outcome='succeeded'):
+    return {'id': mid, 'type': 'worker_done', 'body': body, 'payload': {'dispatchId': dispatch, 'outcome': outcome}}
+
+
+class DoneRelayBoard(unittest.TestCase):
+    def setUp(self):
+        self.set_calls = []
+
+    def set_status(self, worker, status):
+        self.set_calls.append((worker['dispatchId'], status))
+        return True
+
+    def relay(self, worker, board='in-progress', pr_row=None, state=None, messages=None):
+        state = {} if state is None else state
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            return fw.relay_done_board(
+                messages or [done_message()], [worker], stall_test_config(), state,
+                lambda _w: board, self.set_status, lambda _repo, _n: pr_row), state
+
+    def test_open_pr_moves_to_in_review(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [('disp_done', 'in-review')])
+        self.assertEqual(moved, ['disp_done:in-review'])
+        self.relay(base_worker(dispatchId='disp_done'), pr_row={'number': 99, 'state': 'OPEN'}, state=state)
+        self.assertEqual(len(self.set_calls), 1)
+
+    def test_no_pr_moves_to_completed(self):
+        self.relay(base_worker(dispatchId='disp_done', githubPullRequestNumber=None))
+        self.assertEqual(self.set_calls, [('disp_done', 'completed')])
+
+    def test_board_the_worker_set_is_left_alone(self):
+        self.relay(base_worker(dispatchId='disp_done'), board='in-review', pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [])
+
+    def test_unknown_board_or_pr_waits_for_next_pass(self):
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), board=None)
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
+        moved, state = self.relay(base_worker(dispatchId='disp_done'), pr_row=None)
+        self.assertEqual((moved, self.set_calls, state['board_done']), ([], [], []))
+
+    def test_bounced_or_failed_done_is_skipped(self):
+        self.relay(base_worker(dispatchId='disp_done'), state={'bounced_done': ['m1']},
+                   pr_row={'number': 99, 'state': 'OPEN'})
+        self.relay(base_worker(dispatchId='disp_done'), messages=[done_message(outcome='failed')],
+                   pr_row={'number': 99, 'state': 'OPEN'})
+        self.assertEqual(self.set_calls, [])
+
+
+class ReleaseBoardStatus(unittest.TestCase):
+    def run_release(self, pr_state):
+        calls = []
+        pr_row = {'number': 99, 'state': pr_state, 'statusCheckRollup': [
+            {'name': 'checks', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}]}
+        with patch.object(fw, 'repo_for_worker', return_value='o/r'):
+            freed = fw.release_green_successes(
+                [done_message()], [base_worker(dispatchId='disp_done')], stall_test_config(), {},
+                lambda _d: None, lambda _r, _n: pr_row, set_status=lambda w, s: calls.append(s) or True)
+        return freed, calls
+
+    def test_merged_pr_release_sets_completed(self):
+        freed, calls = self.run_release('MERGED')
+        self.assertEqual(freed, ['disp_done'])
+        self.assertEqual(calls, ['completed'])
+
+    def test_open_pr_release_keeps_the_card(self):
+        freed, calls = self.run_release('OPEN')
+        self.assertEqual(freed, ['disp_done'])
+        self.assertEqual(calls, [])
+
+
+class AgentStateRefusal(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = self.tmp.name
+        Path(self.dir, 'audits').mkdir()
+        Path(self.dir, 'audits', 'here.md').write_text('x')
+        git = ['git', '-C', self.dir, '-c', 'user.email=t@example.invalid', '-c', 'user.name=t']
+        subprocess.run(['git', 'init', '-q', self.dir], check=True)
+        subprocess.run(git + ['add', '-A'], check=True)
+        subprocess.run(git + ['commit', '-q', '-m', 'seed'], check=True)
+        self.sha = subprocess.run(['git', '-C', self.dir, 'rev-parse', 'HEAD'], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def refuse(self, body, state=None):
+        sent = []
+        state = {} if state is None else state
+        refused = fw.refuse_agent_state_dones(
+            [done_message(body=body)], [base_worker(dispatchId='disp_done')],
+            lambda term, text: sent.append((term, text)), state, directory=self.dir)
+        return refused, sent, state
+
+    def test_missing_path_is_refused_once(self):
+        refused, sent, state = self.refuse('Report in ~/agent-state/audits/gone.md.')
+        self.assertEqual(refused, {'m1'})
+        self.assertEqual(len(sent), 1)
+        self.assertIn('~/agent-state/audits/gone.md', sent[0][1])
+        _, again, _ = self.refuse('Report in ~/agent-state/audits/gone.md.', state)
+        self.assertEqual(again, [])
+
+    def test_existing_path_passes(self):
+        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/here.md.')
+        self.assertEqual((refused, sent), (set(), []))
+
+    def test_agent_state_commit_sha_passes(self):
+        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md, agent-state %s' % self.sha[:10])
+        self.assertEqual((refused, sent), (set(), []))
+
+    def test_unrelated_hex_does_not_pass(self):
+        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md at head deadbeefcafe1234')
+        self.assertEqual(refused, {'m1'})
+        self.assertEqual(len(sent), 1)
+
+    def test_body_without_agent_state_path_passes(self):
+        refused, sent, _ = self.refuse('PR #99 is green.')
+        self.assertEqual((refused, sent), (set(), []))
