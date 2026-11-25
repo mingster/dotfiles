@@ -1,0 +1,1 @@
+- fleet-watch: brief-lint output that is not valid UTF-8 no longer kills the issue scan pass; bad bytes are replaced and a decode error counts as "brief-lint failed" (#1884).
