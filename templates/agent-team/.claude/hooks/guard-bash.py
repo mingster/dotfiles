@@ -3949,11 +3949,11 @@ def _xargs_reaches(words, absolute, relative):
 
 
 def _hidden_script_paths(command, cwd, absolute, relative):
-    words = _annotate_cwd(_command_words(command), cwd)
+    # bash expands `~+` to the working directory and `~-` to the previous one: judge both as `./`, for cd,
+    # find and xargs as well as expansions.
+    words = _annotate_cwd([("." + t[2:], "." + lit[2:], m) if t[:2] in ("~+", "~-") and t[2:3] in ("", "/")
+                           else (t, lit, m) for t, lit, m in _command_words(command)], cwd)
     for text, literal, metas, path_cwd in words:
-        # bash expands `~+` to the working directory and `~-` to the previous one: judge both as `./`.
-        if text[:2] in ("~+", "~-") and text[2:3] in ("", "/"):
-            text, literal = "." + text[2:], "." + literal[2:]
         if _expansion_hits(literal, text, metas, path_cwd, absolute, relative):
             _deny_hidden()
     programs = _programs(words)
@@ -4075,14 +4075,16 @@ def check_blocked_script_mentions(command):
         _deny_unplain_mention()
 
 
-# The end of an expansion: a `$name` (greedy, so `$Xaw.sh` is `$Xaw` then `.sh`), a special parameter, or the
-# closing `}`, `)` or backtick of `${...}`, `$(...)` or `...`, or a glob character (#1870).
-EXPANSION_END = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|[}`)*?\]]")
+# A `$name` (greedy, so `$Xaw.sh` is `$Xaw` then `.sh`) or a special parameter, matched before quotes drop so a
+# quote or backslash ends the name as bash does. Each becomes `}`, the end of an expansion, as do the closing `}`,
+# `)` or backtick of `${...}`, `$(...)` or `...`, and a glob character (#1870).
+PARAMETER = re.compile(r"\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]")
+EXPANSION_END = re.compile(r"[}`)*?\]]")
 
 
 def check_built_blocked_names(command):
     """Deny an expansion followed directly by a 5+ character tail of a blocked script name, read as text."""
-    flat = re.sub(r"[\"'\\]", "", command).lower()
+    flat = re.sub(r"[\"'\\]", "", PARAMETER.sub("}", command)).lower()
     tails = {name.lower()[i:] for name in BLOCKED_SCRIPTS for i in range(len(name) - 4)}
     for match in EXPANSION_END.finditer(flat):
         rest = flat[match.end():]
@@ -4096,12 +4098,12 @@ def check_built_blocked_names(command):
 
 def check_secrets_dir_by_variable(command):
     """Deny a `$` in a reading segment when the command names every component of a configured secrets dir."""
-    folded = command.lower()
+    folded = re.sub(r"[\"'\\]", "", command).lower()
     named = [rel for rel in SECRETS_DIR_RELPATHS
              if all(part.lower() in folded for part in _path_parts(rel))]
     if not named:
         return
-    for seg in segments(command):
+    for seg in (seg for text in (command, *substitutions(command)) for seg in segments(text)):
         prog, _args = program_and_args(words(seg))
         if prog and os.path.basename(prog) not in SECRETS_NONREAD and "$" in seg:
             _deny_hidden()

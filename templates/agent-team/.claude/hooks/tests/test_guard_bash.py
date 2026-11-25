@@ -1930,6 +1930,21 @@ class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
             with self.subTest(command=command):
                 self.assertAllowed(command)
 
+    def test_review_bypasses_denied(self):
+        # PR #1874 cold review: a quote or backslash ends `$S`, `~+` reaching cd, find and xargs, a reader
+        # inside `$(...)`, and a quoted secrets dir component.
+        for command in ('S=deploy-; bash bin/"$S"raw.sh', 'S=deploy-; bash bin/$S"raw.sh"',
+                        "S=deploy-; bash bin/$S'raw.sh'", "S=deploy-; bash bin/$S\\raw.sh",
+                        'S=d; bash bin/"$S"eploy-raw.sh',
+                        "cd ~+/fileServer && cat */x.json", "find ~+/fileServer -exec cat {} +",
+                        "find ~+ -exec cat {} +", "find ~+/fileServer -print | xargs cat",
+                        'D=fileServer/secrets; ls "$(cat $D/x.json)"', 'D=fileServer/secrets; test -n "$(cat $D/x.json)"',
+                        'D=fileServer/secrets; X="$(cat $D/x.json >&2)"',
+                        'D=file"Server"/secrets; cat $D/x.json', 'D=fileServer/sec"rets"; cat $D/x.json',
+                        "D=file\\Server/secrets; cat $D/x.json"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
 
 class DenyMessagesNameRewrite(ProjectConfigGuardTest):
     """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""
