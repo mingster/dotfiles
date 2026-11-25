@@ -10,6 +10,9 @@ gate_spec.loader.exec_module(gate)
 fw_spec = importlib.util.spec_from_file_location('fleet_watch', base / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(fw_spec)
 fw_spec.loader.exec_module(fw)
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', base / 'tests' / 'fleet_watch_test_env.py')
+_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(_env)
 
 BODY = """## Acceptance
 - [x] Done.

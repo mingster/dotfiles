@@ -5,6 +5,9 @@ path_no_asdf=$(printf '%s\n' "${PATH//:/$'\n'}" | grep -v '/\.asdf/shims$' | pas
 PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 [ -x "$PYTHON" ] || PYTHON="$(ASDF_DATA_DIR="${ASDF_DATA_DIR:-$HOME/.asdf}" asdf which python3 2>/dev/null || true)"
 [ -x "$PYTHON" ] || { echo "missing python3" >&2; exit 1; }
+log_tmp=$(mktemp -d)
+trap 'rm -rf "$log_tmp"' EXIT
+export FLEET_WATCH_LOG_PATH="$log_tmp/fleet-watch-test.log"
 "$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util, json, os, pathlib, subprocess, sys, tempfile, unittest
 from unittest import mock

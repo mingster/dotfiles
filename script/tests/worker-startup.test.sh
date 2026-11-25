@@ -23,6 +23,7 @@ tmp=$(mktemp -d)
 export WORKER_PLACEMENT_RECENT_FILE="$tmp/no-such-dir/placement-recent.json"
 mkdir -p "$tmp" && : >"$tmp/no-such-dir"
 trap 'rm -rf "$tmp"' EXIT
+export FLEET_WATCH_LOG_PATH="$tmp/fleet-watch-test.log"
 unset -f python3 2>/dev/null || true
 # shellcheck source=lib/git-identity.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/git-identity.sh"

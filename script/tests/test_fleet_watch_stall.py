@@ -1201,9 +1201,6 @@ LOADS_FLEET_WATCH = re.compile(
     r"spec_from_file_location\([^)]*fleet-watch\.py|load\('fleet_watch', 'fleet-watch\.py'\)"
     r"|\$\{?PYTHON\b[^\n]*fleet-watch\.py|\bpython3?\b[^\n]*(?<![\w-])fleet-watch\.py")
 ISOLATION_CHILD = 'FLEET_WATCH_LOG_ISOLATION_CHILD'
-# Load fleet-watch.py without logging, and sit outside the fleet-watch test globs (#1864).
-LOG_EXEMPT = frozenset({'agy-signin.test.sh', 'worker-startup.test.sh',
-                        'test_pr_body_gate_builder.py', 'test_tier0_audit_1730.py'})
 
 
 class TestLogIsolation(unittest.TestCase):
@@ -1216,7 +1213,7 @@ class TestLogIsolation(unittest.TestCase):
     def test_every_file_that_loads_fleet_watch_isolates_the_log(self):
         missing = []
         for path in sorted(self.TESTS.iterdir()):
-            if path.suffix not in ('.py', '.sh') or path.name in LOG_EXEMPT or path == Path(__file__).resolve():
+            if path.suffix not in ('.py', '.sh') or path == Path(__file__).resolve():
                 continue
             text = path.read_text()
             if not LOADS_FLEET_WATCH.search(text):
