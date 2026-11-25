@@ -28,7 +28,7 @@ cat > "$tmp/bin/orca" <<'FAKE'
 case "$*" in
   'terminal list --json') cat "$FAKE_DIR/terminals.json" ;;
   'status --json') echo '{"ok":true,"result":{"runtime":{"state":"ready"}}}' ;;
-  'repo list --json') jq -n --arg p "$ROUND_REPO" '{ok:true,result:{repos:[{path:$p,kind:"git"}]}}' ;;
+  'repo list --json') jq -n --arg p "$ROUND_REPO" --arg q "${ROUND_REPO_EXTRA:-}" '{ok:true,result:{repos:([$p, $q] | map(select(. != "") | {path:., kind:"git"}))}}' ;;
   'environment list --json') cat "$FAKE_DIR/envs.json" ;;
   'worktree list --environment peer --json') cat "$FAKE_DIR/peer-worktrees.json" ;;
   'orchestration worker-list --json') [ -z "${FAKE_ORCA_WORKERS_FAIL:-}" ] || exit 1; echo '{"ok":true,"result":{"workers":[],"page":{"hasMore":false}}}' ;;
@@ -63,6 +63,8 @@ export WRAP_UP_SCHEDULED_LOAD_CMD='echo 0.1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4
 echo '[]' > "$tmp/prs.json"
 echo '{"ok":true,"result":{"environments":[]}}' > "$tmp/envs.json"
 echo '{"ok":true,"result":{"terminals":[]}}' > "$tmp/terminals.json"
+# #1853: the prune runs only in the repos the private coordinator.conf lists as prune-repo.
+prune_repos() { printf 'prune-repo %s\nprune-repo %s\n' "$tmp/repo" "$tmp/p"; }
 
 git init -q --bare "$tmp/origin"
 git init -q -b main "$tmp/repo"
@@ -111,6 +113,7 @@ done
 # Logs: old and new in each place the job cleans, plus ones it must leave.
 mkdir -p "$tmp/workspaces/proj" "$tmp/agent-state"
 git -C "$tmp/agent-state" init -q
+prune_repos > "$tmp/agent-state/coordinator.conf"
 echo l > "$tmp/home/Library/Logs/old.log"; echo l > "$tmp/home/Library/Logs/new.log"
 echo l > "$tmp/home/.orca/logs/rotated.log.1"; echo l > "$tmp/home/.orca/logs/live.log"
 echo l > "$tmp/agent-state/untracked.log"; echo l > "$tmp/agent-state/tracked.log"
@@ -175,7 +178,7 @@ check 'runs brew cleanup -s' tool_called 'brew cleanup -s'
 check 'runs bun pm cache rm' tool_called 'bun pm cache rm'
 
 # The 10 minute round is gone (#1533), so the coordinator's daily round also moves finished board cards to Done and cleans old ones.
-board_conf="$tmp/coordinator.conf"; printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+board_conf="$tmp/coordinator.conf"; { printf 'coordinator %s\n' "$(hostname -s)"; prune_repos; } > "$board_conf"
 for step in done clean; do
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$FAKE_DIR/board-%s-calls"\nexit 0\n' "$step" > "$tmp/board-$step-stub"
 done
@@ -188,7 +191,7 @@ rm -f "$tmp/board-done-calls" "$tmp/board-clean-calls"
 bash "$root/script/wrap-up.sh" --daily --dry-run > "$tmp/output" 2>&1
 check 'coordinator daily dry run asks board-done not to set cards' grep -Fq -- '--fleet --dry-run' "$tmp/board-done-calls"
 rm -f "$tmp/board-done-calls" "$tmp/board-clean-calls"
-printf 'coordinator someone-else\n' > "$board_conf"
+{ printf 'coordinator someone-else\n'; prune_repos; } > "$board_conf"
 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
 check 'a non-coordinator daily round leaves the board alone' bash -c '! test -e "$1" && ! test -e "$2"' _ "$tmp/board-done-calls" "$tmp/board-clean-calls"
 unset BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE WRAP_UP_BOARD_CLEAN
@@ -217,7 +220,7 @@ check 'a cleaner timeout is named in the round line' bash -c 'tail -n1 "$1" | gr
 # #1726: board-clean timing out is reported in the round line, never silent, and does not fail the repo round. The board steps
 # keep their share of the round: the repos get the round limit less the reserve.
 rm -f "$tmp/state/wrap-up-daily.failures"
-printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+{ printf 'coordinator %s\n' "$(hostname -s)"; prune_repos; } > "$board_conf"
 printf '#!/usr/bin/env bash\nexit 124\n' > "$tmp/board-clean-slow"; chmod +x "$tmp/board-clean-slow"
 printf '#!/usr/bin/env bash\necho "$WRAP_UP_TOTAL_TIMEOUT" >> "$FAKE_DIR/child-limits"\nexit 0\n' > "$tmp/child-limit-probe"; chmod +x "$tmp/child-limit-probe"
 rc=0
@@ -233,7 +236,7 @@ check 'the repo child leaves the board reserve out of its limit' test "$(head -n
 # #1853: the prune, in a repo of its own with a fake remote. Keep set: main, production, staging, an open PR head, a live
 # worker's worktree, a dirty worktree, and (origin only) a branch checked out on a paired host. Everything else goes.
 export ROUND_REPO="$tmp/p" BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-stub"
-printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+{ printf 'coordinator %s\n' "$(hostname -s)"; prune_repos; } > "$board_conf"
 plog="$tmp/agent-state/branch-prune/$(date +%F).tsv"
 rm -f "$plog"
 git init -q --bare -b main "$tmp/p-origin"
@@ -320,9 +323,51 @@ bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
 check 'an unreadable paired host keeps every origin branch' origin_has fc-pr
 check 'an unreadable paired host still prunes local branches' local_gone fc-pr
 
+# A paired host reports hosts paired with it, not with the coordinator, as omitted (seen on the coordinator). The coordinator
+# reads each of its own environments directly, so a remote's foreign omitted hosts do not stop origin deletes.
+echo '{"ok":true,"result":{"worktrees":[],"hostScope":{"omittedHostIds":["runtime:foreign-a","runtime:foreign-b"]}}}' > "$tmp/peer-worktrees.json"
+mkbr remote-foreign push; : > "$tmp/round-detail.log"
+rc=0; bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+check 'a paired host omitting its own paired hosts does not block origin deletes' origin_gone remote-foreign
+check 'and the round names no fleet unreadable failure' bash -c '! grep -Fq "fleet unreadable" "$1"' _ "$tmp/round-detail.log"
+check 'and exits 0' test "$rc" -eq 0
+# The local list still must cover every host: an omitted id that is no environment of this host stops origin deletes.
+echo '{"ok":true,"result":{"worktrees":[],"hostScope":{"omittedHostIds":[]}}}' > "$tmp/peer-worktrees.json"
+cat > "$tmp/orca-local-omits" <<FAKE
+#!/usr/bin/env bash
+if [ "\$*" = 'worktree list --json' ]; then echo '{"ok":true,"result":{"worktrees":[],"hostScope":{"omittedHostIds":["runtime:unknown"]}}}'; exit 0; fi
+"$tmp/bin/orca" "\$@"
+FAKE
+chmod +x "$tmp/orca-local-omits"
+printf '#!/usr/bin/env bash\nORCA_CLI_COMMAND=%q exec bash %q "$@"\n' "$tmp/orca-local-omits" "$root/script/wrap-up.sh" > "$tmp/child-local-omits"
+mkbr local-omits push
+WRAP_UP_SCHEDULED_WRAP_UP="$tmp/child-local-omits" bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'a local list omitting an unknown host still keeps every origin branch' origin_has local-omits
+check 'and names the fleet unreadable' detail_has 'fleet unreadable'
+
+# Scope: a third repo the conf does not list keeps every worktree and branch, while the listed repo is pruned in the same round.
+git init -q --bare -b main "$tmp/x-origin"
+git init -q -b main "$tmp/x"
+xg() { git -C "$tmp/x" -c user.name=Test -c user.email=test@example.invalid "$@"; }
+xg commit -qm x1 --allow-empty; xg remote add origin "$tmp/x-origin"; xg push -q origin main
+mkdir -p "$tmp/x/.agents"; : > "$tmp/x/.agents/head-checks.conf"
+xg branch x-gone main; xg checkout -q x-gone; xg commit -qm 'x work' --allow-empty; xg checkout -q main; xg push -q origin x-gone
+xg worktree add -q -b x-old "$tmp/x-wt-old" main
+git -C "$tmp/x-wt-old" -c user.name=Test -c user.email=test@example.invalid commit -qm "x only here" --allow-empty
+gd=$(git -C "$tmp/x-wt-old" rev-parse --absolute-git-dir); find "$tmp/x-wt-old" "$gd" -exec touch -t "$old" {} +
+git -C "$tmp/x-wt-old" status --porcelain >/dev/null; touch -t "$old" "$gd/HEAD" "$gd/index"
+mkbr listed-gone push
+ROUND_REPO_EXTRA="$tmp/x" bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'an unlisted repo keeps its local branch' xg show-ref --verify --quiet refs/heads/x-gone
+check 'an unlisted repo keeps its origin branch' git -C "$tmp/x-origin" show-ref --verify --quiet refs/heads/x-gone
+check 'an unlisted repo keeps its idle worktree with unpushed work' present "$tmp/x-wt-old"
+check 'an unlisted repo writes nothing to the restore log' bash -c '! grep -Fq "$1" "$2"' _ "$(printf '\t%s\t' "$tmp/x")" "$plog"
+check 'says the prune is off there' detail_has "prune off in $tmp/x (not a prune-repo in coordinator.conf)"
+check 'the listed repo is still pruned in the same round' origin_gone listed-gone
+
 # A fleet host (not the coordinator) prunes local branches and leaves origin to the coordinator.
 echo '{"ok":true,"result":{"worktrees":[],"hostScope":{"omittedHostIds":[]}}}' > "$tmp/peer-worktrees.json"
-printf 'coordinator someone-else\n' > "$board_conf"
+{ printf 'coordinator someone-else\n'; prune_repos; } > "$board_conf"
 mkbr fleet-only push
 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
 check 'a fleet host deletes its local branch' local_gone fleet-only
