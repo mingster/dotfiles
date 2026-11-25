@@ -676,10 +676,13 @@ start_with_startup_retry() { # worker-start wrapper args...; sets start_out like
 
 # About a minute after an antigravity start, read the worker screen. The sign-in screen stops the dispatch and
 # returns 10 so the caller restarts the same brief on claude (#1240). Fleet watch marks the host and tells the owner.
+# Fleet watch sets WORKER_STARTUP_AGY_DEFER=1 on its own starts: the wait is skipped, and its next pass reads the
+# screen, stops a signed out worker and marks the host, so later starts there go to claude (#1820).
 AGY_SIGNIN_EXIT=10
 surface_antigravity_screen() { # <agent> <worker-start json> [environment]
   local agent=$1 start_json=$2 env=${3:-} dispatch handle shown screen
   [ "$agent" = antigravity ] || return 0
+  [ "${WORKER_STARTUP_AGY_DEFER:-}" != 1 ] || return 0
   dispatch=$(jq -r '.result.dispatchId // empty' <<<"$start_json" 2>/dev/null || true)
   [ -n "$dispatch" ] || die "antigravity start returned no dispatch"
   sleep "${WORKER_STARTUP_AGY_WAIT:-60}"

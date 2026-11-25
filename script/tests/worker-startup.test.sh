@@ -1828,7 +1828,7 @@ agy_run() { # <screen file> <stderr>
   : >"$tmp/orca-agy.log"
   set +e
   unset -f python3 2>/dev/null || true
-  env -u BASH_ENV \
+  env -u BASH_ENV ${AGY_RUN_ENV:+"$AGY_RUN_ENV"} \
     PATH="$run_path" ORCA_CLI_COMMAND="$tmp/orca-agy" ORCA_STUB_LOG="$tmp/orca-agy.log" \
     FLEET_PULL_CONFIG="$tmp/fleet.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" \
     PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
@@ -1851,6 +1851,11 @@ agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 grep -q 'agy-signin' "$tmp/agy.out" && bad "normal antigravity screen must not fall back" || ok
 [ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "normal antigravity screen starts once"
 grep -q 'worker-stop' "$tmp/orca-agy.log" && bad "normal antigravity screen must not stop the worker" || ok
+# 1820: a fleet-watch start (WORKER_STARTUP_AGY_DEFER=1) skips the screen wait; fleet-watch reads the screen later.
+AGY_RUN_ENV=WORKER_STARTUP_AGY_DEFER=1 agy_run "$tmp/agy-login.txt" "$tmp/agy-defer.err"
+[ "$agy_ec" = 0 ] && ok || bad "deferred antigravity start exits 0 ($agy_ec) $(cat "$tmp/agy-defer.err")"
+[ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 1 ] && ok || bad "deferred antigravity start starts once"
+grep -q 'worker-stop\|terminal read' "$tmp/orca-agy.log" && bad "deferred antigravity start must not read or stop ($(cat "$tmp/orca-agy.log"))" || ok
 # A host already marked agy-unavailable starts on claude without the first antigravity start.
 agy_unavailable_run() {
   : >"$tmp/orca-agy.log"

@@ -28,6 +28,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
@@ -2069,6 +2070,7 @@ def template_pin_notices(config, state, now, dotfiles=None, sync_state=None, ori
 
 
 TEMPLATE_SYNC_RETRY = 6 * 3600
+TEMPLATE_SYNC_CLEAN_RECHECK = 1800
 TEMPLATE_SYNC_LOG_DEFAULT = os.path.expanduser('~/.claude/state/template-sync-reconcile.log')
 
 
@@ -2117,6 +2119,7 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
     check = check or (lambda path: _default_template_check(path, dotfiles))
     launch = launch or (lambda path, verdict_from: _default_template_launch(path, verdict_from, dotfiles))
     tried = state.setdefault('template_sync_run', {})
+    clean = state.setdefault('template_sync_clean', {})
     last = _git_out(dotfiles, 'log', '-1', '--format=%H %s', 'origin/main', '--', *TEMPLATE_PATHS)
     head, _, subject = (last or '').partition(' ')
     found = re.search(r'\(#(\d+)\)\s*$', subject)
@@ -2132,9 +2135,15 @@ def template_sync_reconcile(config, state, now, dotfiles=None, check=None, launc
         entry = tried.get(repo) or {}
         if entry.get('sha') == head and now - entry.get('at', 0) < TEMPLATE_SYNC_RETRY:
             continue
+        # A clean check is trusted for TEMPLATE_SYNC_CLEAN_RECHECK seconds at the same template commit (#1820).
+        seen_clean = clean.get(repo) or {}
+        if seen_clean.get('sha') == head and now - seen_clean.get('at', 0) < TEMPLATE_SYNC_CLEAN_RECHECK:
+            continue
         if not check(path):
             tried.pop(repo, None)
+            clean[repo] = {'sha': head, 'at': now}
             continue
+        clean.pop(repo, None)
         try:
             launch(path, verdict_from)
         except (OSError, subprocess.SubprocessError) as error:
@@ -2174,8 +2183,19 @@ def changelog_fragment_notices(config, state, origin_of=None):
     return notices
 
 
-def stale_worktree_notices(config, run=None):
-    """One notice per stale worktree in each repo_roots checkout on this host (#1188), from check-stale-worktrees.sh."""
+STALE_WORKTREE_EVERY = 1800
+
+
+def stale_worktree_notices(config, state=None, now=None, run=None):
+    """One notice per stale worktree in each repo_roots checkout on this host (#1188), from check-stale-worktrees.sh.
+
+    The check takes 6 to 9 s per checkout, so with `state` it runs once per STALE_WORKTREE_EVERY seconds (#1820)."""
+    if state is not None:
+        now = time.time() if now is None else now
+        last = state.get('stale_worktree_at')
+        if last is not None and now - float(last) < STALE_WORKTREE_EVERY:
+            return []
+        state['stale_worktree_at'] = now
     run = run or subprocess.run
     script = str(Path(__file__).with_name('check-stale-worktrees.sh'))
     notices = []
@@ -2300,6 +2320,31 @@ class PassCounts:
         self.sent = 0
         self.send_failed = 0
         self.reasons = {}
+        self.phases = []
+        self._phase_name = None
+        self._phase_started = None
+        self.starts = []
+
+    def phase(self, name, now=None):
+        """Close the running phase and open `name` (None closes only)."""
+        now = time.time() if now is None else now
+        if self._phase_name is not None:
+            self.phases.append((self._phase_name, now - self._phase_started))
+        self._phase_name = name
+        self._phase_started = now if name is not None else None
+
+    def phases_line(self, now=None):
+        """`phases a=1.2,b=0.3`, with the phase still running last, so a killed pass names where it stopped."""
+        rows = list(self.phases)
+        if self._phase_name is not None:
+            now = time.time() if now is None else now
+            rows.append((self._phase_name, now - self._phase_started))
+        if not rows:
+            return ''
+        line = 'phases ' + ','.join('%s=%.1f' % (name, seconds) for name, seconds in rows)
+        if self.starts:
+            line += ' starts=' + ','.join('%.1f' % seconds for seconds in self.starts)
+        return line
 
     def line(self):
         fields = ' '.join('%s=%d' % (name, getattr(self, name)) for name in (
@@ -2320,6 +2365,38 @@ def begin_pass_counts():
     _ENV_PASS_ID = id(_PASS)
     _ENV_NAMES_CACHE = None
     return _PASS
+
+
+# No new worker start begins this many seconds after main() began. One start takes 35 to 45 s,
+# so a pass ends well under the wrapper's 280 s timeout; the rest wait for the next pass (#1820).
+# main() sets PASS_STARTED; a direct call (tests, one off tools) has no budget.
+START_BUDGET_SECONDS = 90
+START_BUDGET_REASON = 'start_budget'
+PASS_STARTED = None
+
+
+def start_budget_spent(now=None):
+    if PASS_STARTED is None:
+        return False
+    now = time.time() if now is None else now
+    return now - PASS_STARTED >= START_BUDGET_SECONDS
+
+
+def pass_phase(name):
+    """Mark the start of a pass phase; the previous phase ends here."""
+    if _PASS is not None:
+        _PASS.phase(name)
+
+
+def pass_phases_line():
+    return _PASS.phases_line() if _PASS is not None else ''
+
+
+def log_killed_pass(started, now=None):
+    """The wrapper's TERM at its timeout: log the phases so far, so a killed pass names its slow phase."""
+    now = time.time() if now is None else now
+    phases = pass_phases_line()
+    log_fleet_watch('pass killed %.1fs; %s' % (now - started, phases or 'phases none'))
 
 
 def pass_counts_line():
@@ -4550,6 +4627,9 @@ def issue_scan_try_backlog_sweep(
         if command is None:
             log_bits.append('backlog_sweep_skip=%s' % role)
             continue
+        if start_budget_spent():
+            log_bits.append('backlog_sweep_budget=%s' % role)
+            break
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
@@ -4714,6 +4794,8 @@ def work_order_try_supply(
     command = build_supply_command(config, repos, chosen[0], chosen[1])
     if command is None:
         return ['supply_skip_root'], 0
+    if start_budget_spent():
+        return ['supply_budget'], 0
     if start_worker(command) != 0:
         count_failed()
         return ['supply_fail'], 0
@@ -4851,6 +4933,9 @@ def issue_scan_try_triage(
         if live_start_title(command, workers):
             log_bits.append('triage_skip_live')
             continue
+        if start_budget_spent():
+            log_bits.append('triage_budget')
+            break
         if start_worker(command) == 0:
             last_starts[repo] = now
             if isinstance(backlog, dict):
@@ -5617,12 +5702,18 @@ def with_coordinator_handle(config, start):
     handle = babysit_settings(config)[2]
 
     def start_with_handle(command):
+        # Past the budget the start waits for the next pass, the same as a host placement refusal (#1820).
+        if start_budget_spent():
+            return BabysitStartResult(4, START_BUDGET_REASON)
         set_handle = bool(handle) and not os.environ.get('ORCA_TERMINAL_HANDLE')
         if set_handle:
             os.environ['ORCA_TERMINAL_HANDLE'] = handle
+        began = time.time()
         try:
             return start(command)
         finally:
+            if _PASS is not None:
+                _PASS.starts.append(time.time() - began)
             if set_handle:
                 os.environ.pop('ORCA_TERMINAL_HANDLE', None)
     return start_with_handle
@@ -7195,7 +7286,7 @@ def standing_route(
                             prs_done=len(rec['prs_assigned']), headroom_pct=headroom if headroom is not None else '')
                 return 'assigned'
         command = build_babysit_command(config, repo, pr_row, 'verifier', cfg['agent'], cfg['model'], builder, tag, standing_host=host)
-        if command is None:
+        if command is None or start_budget_spent():
             return 'fallback'
         result = start_worker(command)
         code, reason = start_result_parts(result)
@@ -7929,6 +8020,10 @@ def _issue_scan_pass(
                 if verdict_age_seconds(pr_row, now) < SHIP_FALLBACK_AFTER:
                     log_bits.append('ship_wait=%d' % pr_num)
                     continue
+                if start_budget_spent():
+                    # Before shipped[head]: a refused ship is never retried, a budget wait is (#1820).
+                    log_bits.append('ship_budget=%d' % pr_num)
+                    continue
                 shipped[head] = True
                 if persist_state:
                     persist_state()
@@ -8305,6 +8400,10 @@ def _issue_scan_pass(
                 count_refused('usage_gate')
                 log_bits.append('issue_scan_gate=%s' % gate_reason)
                 break
+        if start_budget_spent():
+            # Not defer_issue: running out of pass time is not a reason to escalate the issue (#1820).
+            log_bits.append('issue_start_budget=%d' % row['number'])
+            break
         attempts += 1
         issue_pending.setdefault(repo, []).append(row['number'])
         if persist_state:
@@ -9371,15 +9470,20 @@ def _agy_signin():
     return _sibling('agy_signin', 'agy-signin.py')
 
 
-def agy_signin_notices(config, workers, read=None, now=None):
+def agy_signin_notices(config, workers, read=None, now=None, stop=None):
     """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
 
     One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
     A plain `agy -p` probe over ssh cannot tell, so the worker screen is the check.
+    Fleet watch's own starts skip worker-startup's screen wait (#1820), so a signed out worker is also stopped
+    here; its work starts again by the usual paths, on claude, since the host is now marked.
     """
     agy = _agy_signin()
     notices = []
     seen = set()
+    if stop is None:
+        def stop(dispatch, host):
+            rpc('orchestration', 'worker-stop', '--dispatch', dispatch, *(['--environment', host] if host else []))
     for w in workers or []:
         if not isinstance(w, dict) or worker_agent_id(w) not in ('antigravity', 'agy'):
             continue
@@ -9390,7 +9494,7 @@ def agy_signin_notices(config, workers, read=None, now=None):
             continue
         remote = worker_is_remote(w, config)
         host = remote_environment(w) if remote else (config.get('local_host') or 'local')
-        if not host or host in seen:
+        if not host:
             continue
         try:
             if read is not None:
@@ -9401,6 +9505,14 @@ def agy_signin_notices(config, workers, read=None, now=None):
         except SEND_ERRORS:
             continue
         if not agy.is_sign_in_screen(screen):
+            continue
+        dispatch = w.get('dispatchId')
+        if isinstance(dispatch, str) and dispatch:
+            try:
+                stop(dispatch, host if remote else '')
+            except SEND_ERRORS as error:
+                print('fleet-watch: could not stop signed out agy worker %s: %s' % (dispatch, repr(error)), file=sys.stderr)
+        if host in seen:
             continue
         seen.add(host)
         try:
@@ -9470,6 +9582,8 @@ def format_seat_report(report):
 
 
 def main():
+    global PASS_STARTED
+    PASS_STARTED = time.time()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=False, default=None)
     parser.add_argument('--state', type=Path, required=False)
@@ -9593,9 +9707,18 @@ def main():
         return 0
     pass_start = time.time()
     now = pass_start
+    # worker-startup skips its 60 s antigravity screen wait; agy_signin_notices reads the screen instead (#1820).
+    os.environ['WORKER_STARTUP_AGY_DEFER'] = '1'
+
+    def on_term(_signum, _frame):
+        log_killed_pass(pass_start)
+        os._exit(143)
+
+    signal.signal(signal.SIGTERM, on_term)
     workers = []
     notices = []
     inventory_ok = True
+    pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
         workers = inv['workers']
@@ -9645,6 +9768,7 @@ def main():
     term_times = {}
     term_branches = {}
     terminal_list_ok = True
+    pass_phase('terminals')
     try:
         term_out = rpc('terminal', 'list', '--json')
         term_times = terminal_last_output_map(term_out)
@@ -9664,6 +9788,7 @@ def main():
             return None
         return [row for row in rows if _babysit_closed(row)]
 
+    pass_phase('release')
     if inventory_ok:
         try:
             env_of = {
@@ -9686,7 +9811,9 @@ def main():
         except Exception as error:
             print('fleet-watch: auto-release skipped: %s' % (repr(error),), file=sys.stderr)
 
+    pass_phase('pr_notices')
     notices += pr_notices(config, state, now, fetch=fetch_once)
+    pass_phase('notices')
     notices += usage_notices(config)
     workflow_watch_prior = copy.deepcopy(state.get('workflow_watch') or {})
     notices += workflow_notices(config, state, now)
@@ -9701,11 +9828,12 @@ def main():
     notices += template_pin_notices(config, state, now)
     notices += template_sync_reconcile(config, state, now)
     notices += changelog_fragment_notices(config, state)
-    notices += stale_worktree_notices(config)
+    notices += stale_worktree_notices(config, state, now)
 
     def persist_scan_state():
         save_state(args.state, state)
 
+    pass_phase('babysit')
     babysit_notices, babysit_lines, babysit_log = babysit_pass(
         config, state, workers, persist_state=persist_scan_state,
         now=now, term_times=term_times, pr_fetch=fetch_once, closed_fetch=closed_from_pass,
@@ -9714,6 +9842,7 @@ def main():
     for line in babysit_lines:
         print(line)
     notices += babysit_notices
+    pass_phase('audit')
     try:
         audit_lines, audit_log = tier0_audit_pass(config, state, now, persist_state=persist_scan_state)
         for line in audit_lines:
@@ -9721,6 +9850,7 @@ def main():
         babysit_log = list(babysit_log) + audit_log
     except Exception as error:
         print('fleet-watch: tier 0 audit skipped: %s' % (repr(error),), file=sys.stderr)
+    pass_phase('issue_scan')
     scan_extra, scan_log = issue_scan_pass(
         config, state, now, workers,
         pr_fetch=fetch_once,
@@ -9739,15 +9869,18 @@ def main():
             notices += agy_signin_notices(config, workers, now=now)
         except Exception as error:
             print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
+    pass_phase('stall')
     stall_extra, stall_log = worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
         inventory_ok=inventory_ok)
     notices += stall_extra
+    pass_phase('signal')
     signal_extra, signal_log = worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok)
     notices += signal_extra
+    pass_phase('nudge')
     nudge_log = []
     if inventory_ok and terminal_list_ok:
         try:
@@ -9756,6 +9889,7 @@ def main():
             print('fleet-watch: unread nudge skipped: %s' % (repr(error),), file=sys.stderr)
     notices += coordinator
     notices += drain_notices(config)
+    pass_phase('deliver')
 
     duration = time.time() - pass_start
     parts = []
@@ -9794,7 +9928,9 @@ def main():
             print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))
         save_state(args.state, state)
     finally:
-        finish_pass('; '.join(parts))
+        pass_phase(None)
+        phases = pass_phases_line()
+        finish_pass('; '.join(parts + ([phases] if phases else [])))
     return 0
 
 

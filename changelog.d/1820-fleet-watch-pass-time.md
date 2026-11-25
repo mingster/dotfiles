@@ -1,0 +1,1 @@
+- Fleet watch passes log the time of each phase and each worker start, stop starting workers 90 seconds into a pass, skip the 60 second antigravity screen wait (the next pass stops a signed out worker instead), and run the stale worktree and template drift checks at most every 30 minutes, so a pass ends well before the 280 second timeout (#1820).

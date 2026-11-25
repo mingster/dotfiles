@@ -72,9 +72,30 @@ class Pass(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.config = {'local_host': 'hosta'}
+        self.stopped = []
 
     def sweep(self, workers, screens, now):
-        return watch.agy_signin_notices(self.config, workers, read=lambda term, host: screens[term], now=now)
+        return watch.agy_signin_notices(self.config, workers, read=lambda term, host: screens[term], now=now,
+                                        stop=lambda dispatch, host: self.stopped.append((dispatch, host)))
+
+    def test_signed_out_workers_are_stopped_and_the_host_marked_in_the_same_pass(self):
+        # 1820: fleet-watch starts skip the 60 s screen wait, so this sweep stops every signed out worker.
+        workers = [worker('d1', 't1', host='hostb'), worker('d2', 't2', host='hostb'), worker('d3', 't3', host='hostc'),
+                   worker('d4', 't4')]
+        notices = self.sweep(workers, {'t1': SIGN_IN, 't2': SIGN_IN, 't3': WORKING, 't4': SIGN_IN}, 1000)
+        self.assertEqual(self.stopped, [('d1', 'hostb'), ('d2', 'hostb'), ('d4', '')])
+        self.assertTrue(agy.is_unavailable('hostb', 1000))
+        self.assertTrue(agy.is_unavailable('hosta', 1000))
+        self.assertFalse(agy.is_unavailable('hostc', 1000))
+        self.assertEqual(len(notices), 2)
+
+    def test_a_failed_stop_still_marks_the_host(self):
+        def stop(_dispatch, _host):
+            raise OSError('orca down')
+        notices = watch.agy_signin_notices(self.config, [worker('d1', 't1', host='hostb')],
+                                           read=lambda term, host: SIGN_IN, now=1000, stop=stop)
+        self.assertEqual(len(notices), 1)
+        self.assertTrue(agy.is_unavailable('hostb', 1000))
 
     def test_signed_out_worker_marks_host_and_notifies_once(self):
         workers = [worker('d1', 't1', host='hostb'), worker('d2', 't2', host='hostb')]
