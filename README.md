@@ -41,18 +41,37 @@ An agent team, run inside Orca, that follows the [Matt Pocock](https://github.co
 * **Production:** a change reaches the live site only after staging tests pass. While the live site holds only test data, a full regression run must pass first. Once a real store is live, nothing goes to production without the owner's go. Production always takes a backup first.
 * **Owner's time:** the owner decides only money rules and prices, spending and contracts, customer messages, deleting data for good, going to production once a real store is live, and one look at a new feature or page. The coordinator decides the rest and writes the decision down.
 
+### Targets
+
+| Measure | Target |
+| --- | --- |
+| Start to merge, median | 60 minutes or less |
+| Checks fail on first pass | 15% or less |
+| Reopened or hotfix | 2% or less |
+| P0 reaching production | 0 per month |
+| Ready to worker start | 15 minutes |
+| Build | 40 minutes |
+| Checks | 10 minutes |
+| Review | 10 minutes |
+| Daily staging tests | 15 minutes |
+
+Missing data reads as unknown, never zero.
+
 ## How one task flows
 
 ```mermaid
-flowchart LR
-    Issue["Issue: what done means"] --> Start["Coordinator starts one builder"]
-    Start --> Build["Builder writes and tests the change"]
-    Build --> PR["Pull request"]
-    PR --> Check["Automatic checks and cold review"]
-    Check --> Verdict["Reviewer from another model family"]
-    Verdict --> Merge["Merge and clean up"]
-    Merge --> Staging["Daily test site run"]
-    Staging --> Prod["Production after the gates"]
+flowchart TD
+    Req["Request from the owner or the coordinator"] --> Intake["Intake: the planner asks questions until it is clear"]
+    Intake --> Design["Design, features only: one document, one owner approval"]
+    Intake & Design --> Ready["Issue is ready: it says what done means"]
+    Ready --> Build["Builder: writes the test first, makes the change, opens a pull request"]
+    Build --> Checks["Automatic checks and cold review"]
+    Checks --> Verdict["Pass or fail from a reviewer of another model family"]
+    Verdict -->|"Fix needed"| Build
+    Verdict --> Ship["Merge, then read it back"]
+    Ship --> Wrap["Wrap-up: the agent stops, its copy and branches are deleted"]
+    Ship --> Staging["Test site: daily at 19:00, automatic tests and a phone size check"]
+    Staging --> Gates["Gates: regression pass, owner's go once a real store is live"] --> Prod["Production: backup, deploy, quick check"]
 ```
 
 1. Someone writes an issue that says what "done" looks like.
