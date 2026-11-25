@@ -1,0 +1,1 @@
+- brief-lint: a brief with Chinese (multibyte) text no longer stops BSD awk with "towc: multibyte conversion failure"; awk runs under LC_ALL=C, so the brief lints like its ASCII twin (#1886).

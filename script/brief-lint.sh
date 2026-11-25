@@ -45,7 +45,9 @@ if [ -n "$repo_dir" ] && [ -d "$repo_dir" ] && [ ! -f "$repo_dir/script/checks-l
   need_checks_local=0
 fi
 
-awk -v need_checks_local="$need_checks_local" -v need_refs="$need_refs" -v repo_root="${repo_dir:-$lint_here/..}" '
+# Bytes, not characters: BSD awk in a UTF-8 locale dies with "towc: multibyte conversion failure" when match()
+# and substr() split a multibyte character (#1886). Every pattern below is ASCII, so byte mode matches the same.
+LC_ALL=C awk -v need_checks_local="$need_checks_local" -v need_refs="$need_refs" -v repo_root="${repo_dir:-$lint_here/..}" '
 # The script path when cmd runs an installer (interpreter, arguments, or a ./ or ~/ path), else "".
 # A bare name such as `install.sh` is a mention, not a run.
 function installer_run(cmd,    c, interp, path, rest, base) {
