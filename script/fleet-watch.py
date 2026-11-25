@@ -3196,6 +3196,26 @@ def set_board_status(rpc_call, worker, status, environment=''):
     return True
 
 
+def stop_and_release_stalled(rpc_call, worker, dispatch_id, environment=''):
+    """The one place the stall ladder stops and releases a worker and archives its card (#1842).
+
+    Returns '' on success, else the stop failure code; nothing is released when the stop fails.
+    """
+    try:
+        rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id)
+    except SEND_ERRORS as exc:
+        return orchestration_failure_log_code(exc) or 'error'
+    # A remote dispatch is released on its host first, then on the coordinator.
+    for where in ((('--environment', environment),) if environment else ()) + ((),):
+        try:
+            rpc_call('orchestration', 'worker-release', '--dispatch', dispatch_id, *where)
+        except SEND_ERRORS:
+            pass
+    _mark_worker_released(worker)
+    set_board_status(rpc_call, worker, 'archived', environment)
+    return ''
+
+
 def worktree_head(worker):
     """HEAD sha of a worker checkout on this machine, or '' when it cannot be read."""
     path = safe_workspace_path(worker_checkout_path(worker))
@@ -3519,20 +3539,11 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                 'or changed files (or its checkout is on another host), so fleet-watch did not stop it'
                 % (did, STALL_RELEASE_WINDOWS)))
             return
-        try:
-            rpc_call('orchestration', 'worker-stop', '--dispatch', did)
-        except SEND_ERRORS as exc:
-            log_bits.append('stall_stop_failed=%s:%s' % (did, orchestration_failure_log_code(exc) or 'error'))
+        failed = stop_and_release_stalled(rpc_call, w, did, environment)
+        if failed:
+            log_bits.append('stall_stop_failed=%s:%s' % (did, failed))
             rec.pop('done', None)
             return
-        # A remote dispatch is released on its host first, then on the coordinator.
-        for where in ((('--environment', environment),) if environment else ()) + ((),):
-            try:
-                rpc_call('orchestration', 'worker-release', '--dispatch', did, *where)
-            except SEND_ERRORS:
-                pass
-        _mark_worker_released(w)
-        set_board_status(rpc_call, w, 'archived', environment)
         number = release_issue(w, label_target(w))
         log_bits.append('stall_release=%s' % did)
         notices.append(Urgent(
@@ -9766,89 +9777,6 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config):
     return lines
 
 
-_AGENT_STATE_PATH_RE = re.compile(r'~/agent-state/([^\s`\'"()<>\[\],]+)')
-_HEX_RE = re.compile(r'\b[0-9a-f]{7,40}\b')
-AGENT_STATE_REFUSAL = (
-    'worker_done refused: it names %s, which is not on the coordinator. Commit and push that file in '
-    '~/agent-state and name the commit sha in the body, or put its content in the body, then send worker_done again.'
-)
-
-
-def agent_state_dir():
-    return os.environ.get('AGENT_STATE_DIR') or os.path.join(os.path.expanduser('~'), 'agent-state')
-
-
-def agent_state_commit_exists(directory, sha):
-    try:
-        proc = subprocess.run(['git', '-C', directory, 'cat-file', '-e', sha + '^{commit}'],
-                              capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return proc.returncode == 0
-
-
-def missing_agent_state_path(body, directory=None):
-    """The first ~/agent-state path a worker_done body names that the coordinator cannot see, or ''.
-
-    A worker on another host writes to its own ~/agent-state, so the path alone proves nothing here.
-    The body passes when every named path exists, or when it names a real agent-state commit (#1842).
-    """
-    directory = directory or agent_state_dir()
-    missing = ''
-    for match in _AGENT_STATE_PATH_RE.finditer(body or ''):
-        rel = match.group(1).rstrip('.:;')
-        if not os.path.exists(os.path.join(directory, rel)):
-            missing = '~/agent-state/' + rel
-            break
-    if not missing:
-        return ''
-    if any(agent_state_commit_exists(directory, sha) for sha in set(_HEX_RE.findall(body))):
-        return ''
-    return missing
-
-
-def _done_body(message, payload):
-    return '\n'.join(str(v) for v in (message.get('body'), payload.get('body')) if isinstance(v, str) and v)
-
-
-def refuse_agent_state_dones(messages, workers, send, state, directory=None):
-    """Send one notice back to a worker whose worker_done names an agent-state file the coordinator lacks.
-
-    send(worker, text) delivers to the worker's terminal on its own host and raises SEND_ERRORS on failure.
-    A refusal is kept only once its notice is delivered (or the worker is released, so no notice can land);
-    a failed send is tried again next pass. Returns the refused message ids; the rest of the pass treats
-    those dones as not sent. A done Orca rejected is checked too, since a remote relay can reject one.
-    """
-    refused = state.setdefault('refused_done', [])
-    if not isinstance(refused, list):
-        refused = state['refused_done'] = []
-    by_dispatch = {w.get('dispatchId'): w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId')}
-    pending = set()
-    for message in messages or []:
-        if not isinstance(message, dict) or message.get('type') != 'worker_done':
-            continue
-        message_id = message.get('id')
-        if not isinstance(message_id, str) or not message_id or message_id in refused or message_id in pending:
-            continue
-        payload = _message_payload(message)
-        worker = by_dispatch.get(payload.get('dispatchId') or payload.get('dispatch_id') or '')
-        if worker is None:
-            continue
-        missing = missing_agent_state_path(_done_body(message, payload), directory)
-        if not missing:
-            continue
-        try:
-            mail_worker(lambda _term, text: send(worker, text), worker, AGENT_STATE_REFUSAL % missing,
-                        allow_settled=True)
-        except SEND_ERRORS as error:
-            log_send_failed(worker_terminal_handle(worker), error)
-            pending.add(message_id)
-            continue
-        refused.append(message_id)
-    del refused[:-200]
-    return set(refused) | pending
-
-
 def relay_done_board(messages, workers, config, state, board_of, set_status, pr_of):
     """Move the card of a worker that sent worker_done but left its board column alone.
 
@@ -10142,14 +10070,6 @@ def _main():
     notices = []
     inventory_ok = True
 
-    def _send_to_worker(worker, text):
-        terminal = worker_terminal_handle(worker)
-        if not terminal:
-            return
-        environment = remote_environment(worker) if worker_is_remote(worker, config) else ''
-        rpc('terminal', 'send', '--terminal', terminal, '--text', text, '--enter',
-            *(('--environment', environment) if environment else ()))
-
     pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
@@ -10164,12 +10084,6 @@ def _main():
             notices += unanswered_ask_notices(state, now, inv['messages'], workers)
         except Exception as error:
             print('fleet-watch: live count check skipped: %s' % (repr(error),), file=sys.stderr)
-        try:
-            refused = refuse_agent_state_dones(inv['messages'], workers, _send_to_worker, state)
-            if refused:
-                inv['messages'] = [m for m in inv['messages'] if not (isinstance(m, dict) and m.get('id') in refused)]
-        except Exception as error:
-            print('fleet-watch: agent-state check skipped: %s' % (repr(error),), file=sys.stderr)
         try:
             notices += reconcile_remote_completions(config, state, workers, inv['messages'], rpc)
             for failed in workers:

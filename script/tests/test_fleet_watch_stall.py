@@ -1026,6 +1026,27 @@ class StallLadder(unittest.TestCase):
         self.assertNotIn('disp_ladder', state['stall_ladder'])
         self.assertEqual(self.stops(), [])
 
+    def test_remote_worker_quiet_one_window_after_an_hour_is_not_nudged(self):
+        state = {}
+        w = self.issue_worker()
+        w['projection'] = dict(w['projection'], host={'id': 'otherHost'})
+        # server.asOf is an hour old, but the transcript shows tool activity until one window ago.
+        start = T0 - 3 * WINDOW
+        quiet = T0 - WINDOW - 60
+
+        def rpc(*a):
+            self.calls.append(a)
+            if a[:2] == ('orchestration', 'worker-read'):
+                return {'transcript': {'messages': [tool_message(int(quiet * 1000))], 'nextCursor': None}}
+            return {}
+
+        for now in (T0, T0 + 120):
+            fw.worker_stall_pass(
+                stall_test_config(), state, now, [w], {'term_fix': int(start * 1000)}, rpc, act=self.act,
+                head_of=lambda _w: 'sha1', holds_work=lambda _w: False)
+        self.assertEqual(state['stall_ladder']['disp_ladder']['since'], quiet)
+        self.assertEqual(self.sends(), [])
+
     def test_settled_worker_leaves_the_ladder(self):
         state, w = {}, self.issue_worker()
         self.climb_to_nudge(state, w)
@@ -1171,67 +1192,3 @@ class ReleaseBoardStatus(unittest.TestCase):
         freed, calls = self.run_release('OPEN')
         self.assertEqual(freed, ['disp_done'])
         self.assertEqual(calls, [])
-
-
-class AgentStateRefusal(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.dir = self.tmp.name
-        Path(self.dir, 'audits').mkdir()
-        Path(self.dir, 'audits', 'here.md').write_text('x')
-        git = ['git', '-C', self.dir, '-c', 'user.email=t@example.invalid', '-c', 'user.name=t']
-        subprocess.run(['git', 'init', '-q', self.dir], check=True)
-        subprocess.run(git + ['add', '-A'], check=True)
-        subprocess.run(git + ['commit', '-q', '-m', 'seed'], check=True)
-        self.sha = subprocess.run(['git', '-C', self.dir, 'rev-parse', 'HEAD'], capture_output=True, text=True,
-                                  check=True).stdout.strip()
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def refuse(self, body, state=None):
-        sent = []
-        state = {} if state is None else state
-        refused = fw.refuse_agent_state_dones(
-            [done_message(body=body)], [base_worker(dispatchId='disp_done')],
-            lambda worker, text: sent.append((worker['dispatchId'], text)), state, directory=self.dir)
-        return refused, sent, state
-
-    def test_failed_send_is_tried_again_next_pass(self):
-        state = {}
-
-        def fail(_worker, _text):
-            raise fw.OrcaReadError('send failed')
-
-        refused = fw.refuse_agent_state_dones(
-            [done_message(body='Report in ~/agent-state/audits/gone.md.')], [base_worker(dispatchId='disp_done')],
-            fail, state, directory=self.dir)
-        self.assertEqual(refused, {'m1'})
-        self.assertEqual(state['refused_done'], [])
-        _, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md.', state)
-        self.assertEqual(len(sent), 1)
-
-    def test_missing_path_is_refused_once(self):
-        refused, sent, state = self.refuse('Report in ~/agent-state/audits/gone.md.')
-        self.assertEqual(refused, {'m1'})
-        self.assertEqual(len(sent), 1)
-        self.assertIn('~/agent-state/audits/gone.md', sent[0][1])
-        _, again, _ = self.refuse('Report in ~/agent-state/audits/gone.md.', state)
-        self.assertEqual(again, [])
-
-    def test_existing_path_passes(self):
-        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/here.md.')
-        self.assertEqual((refused, sent), (set(), []))
-
-    def test_agent_state_commit_sha_passes(self):
-        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md, agent-state %s' % self.sha[:10])
-        self.assertEqual((refused, sent), (set(), []))
-
-    def test_unrelated_hex_does_not_pass(self):
-        refused, sent, _ = self.refuse('Report in ~/agent-state/audits/gone.md at head deadbeefcafe1234')
-        self.assertEqual(refused, {'m1'})
-        self.assertEqual(len(sent), 1)
-
-    def test_body_without_agent_state_path_passes(self):
-        refused, sent, _ = self.refuse('PR #99 is green.')
-        self.assertEqual((refused, sent), (set(), []))
