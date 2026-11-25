@@ -1,0 +1,1 @@
+- Fleet watch passes log the time of each phase and each worker start at the end of the `pass ok` line, a pass the precheck wrapper kills logs `pass killed <s>s; phases ...` and exits 143, and the stale worktree check and a clean template drift check run at most every 30 minutes (#1820).

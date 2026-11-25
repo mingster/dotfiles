@@ -114,7 +114,8 @@ class PassCounts(unittest.TestCase):
         for key in ('started', 'refused', 'parked', 'failed', 'sent', 'send_failed'):
             self.assertIn('%s=0' % key, line)
             self.assertIn('%s=0' % key, summary)
-        self.assertTrue(line.endswith(summary), (line, summary))
+        self.assertIn(summary, line)
+        self.assertRegex(line, r' phases inventory=[\d.]+(,[a-z_]+=[\d.]+)*$')  # 1820: the phases end the line
         self.assertNotIn('no change', line)
         self.assertNotIn('no change', summary)
         self.assertRegex(summary, r'refused_reasons=$')
