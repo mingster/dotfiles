@@ -214,7 +214,7 @@ SECRETS_DIR = re.compile(r"(?:^|[/\s='\"<(])\.secrets(?:/|$|[\s'\"\)])")
 SECRETS_STDIN_OK = [re.compile(r"pass")]
 PY
 printf '## Project facts the roles point to\n\nScratch DB: keep-me\n' > "$scratch/AGENTS.md"
-printf '---\nname: local-only\n---\n' > "$scratch/.agents/skills/local-only/SKILL.md"
+printf -- '---\nname: local-only\n---\n' > "$scratch/.agents/skills/local-only/SKILL.md"
 before=$(cd "$scratch" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort)
 bash "$SCRIPT" project "$scratch" --project-name scratch >/dev/null 2>&1
 bash "$SCRIPT" sync "$scratch" >/dev/null 2>&1
@@ -222,6 +222,7 @@ bash "$SCRIPT" check "$scratch" >/dev/null 2>&1
 after=$(cd "$scratch" && find . -path ./.git -prune -o -type f -print | LC_ALL=C sort)
 if grep -q 'keep-me' "$scratch/AGENTS.md" \
   && [ -f "$scratch/.agents/skills/local-only/SKILL.md" ] \
+  && grep -q '^name: local-only$' "$scratch/.agents/skills/local-only/SKILL.md" \
   && python3 - "$scratch" <<'PY'
 import json, os, sys
 g = json.load(open(os.path.join(sys.argv[1], ".claude/hooks/guard-config.json")))
