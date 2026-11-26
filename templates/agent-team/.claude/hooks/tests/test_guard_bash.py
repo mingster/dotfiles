@@ -2126,6 +2126,73 @@ class BlockedScriptsOnlyRunGuard(ProjectConfigGuardTest):
             with self.subTest(command=command):
                 self.assertDenied(command, BlockedScriptRunGuard.RUN)
 
+    def test_second_review_bypasses_denied(self):
+        # Second review: text the old parse dropped that bash runs (quoted `$(`, a `$'` in a comment line,
+        # `<(`, nested quotes in `${`, `function` and `coproc` bodies, `time --`, glued `env -S`).
+        for command in (
+            "A=deploy-; B=raw.sh; : $(case x in esac) $'\\''; bash bin/$A$B; : $'\\''",
+            "A=deploy-; B=raw.sh; X='`' bash bin/$A$B",
+            "A=deploy-; B=raw.sh; X='$(' bash bin/$A$B",
+            'S=deploy-; X=\'`\' eval \'bash bin/$\'S\'"raw.sh"\'',
+            "A=deploy-; B=raw.sh\necho '$' # '' <<'EOF'\nbash bin/$A$B\nEOF",
+            'A=deploy-; B=raw.sh; < bin/$A$B bash',
+            'A=deploy-; B=raw.sh; <bin/$A$B sh',
+            'A=deploy-; B=raw.sh; bash <(echo bash bin/$A$B)',
+            "A=deploy-; B=raw.sh; echo $\\\n'a\\'b # '; bash bin/$A$B",
+            'A=deploy-; B=raw.sh; echo "${x:-"\'"}"; bash bin/$A$B # \'',
+            'A=deploy-; B=raw.sh; : esac case x in\n(bash bin/$A$B)',
+            'A=deploy-; B=raw.sh; function f { bash bin/$A$B; }; f',
+            'A=deploy-; B=raw.sh; coproc f { bash bin/$A$B; }',
+            'A=deploy-; B=raw.sh; time -- bash bin/$A$B',
+            'S=deploy-; builtin -- eval \'bash bin/$\'S\'"raw.sh"\'',
+            "A=deploy-; B=raw.sh; env -S'bash bin/$A$B' true",
+            "A=deploy-; B=raw.sh; env --split-string='bash bin/$A$B' true",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_second_review_benign_allowed(self):
+        for command in (
+            'case "$a $b" in\n  *) echo hi ;;\nesac',
+            "grep '\\xdg' docs/a.md",
+            "grep '\\ubuntu' docs/a.md",
+            'cd /tmp && cd ~-/docs && ls',
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_reader_edges_denied(self):
+        # The reader: heredocs inside `$(`, comments after a backslash newline, case inside `$(`, backticks and
+        # non ASCII words.
+        for command in (
+            "A=deploy-; B=raw.sh; X=$(cat <<'EOF'\nit's )\nEOF\n); bash bin/$A$B",
+            'echo "it\'s"; $C',
+            'cat <<EOF\n$(bash bin/$A$B)\nEOF',
+            'A=deploy-; B=raw.sh; echo a\\\n#x; bash bin/$A$B',
+            "echo $'\\''; $C",
+            'case $x in (a) bash bin/$A$B;; esac',
+            'x=$(case a in a) echo;; esac); $C',
+            '{ bash bin/$A$B; }',
+            'for case in a; do $C; done',
+            'echo `echo hi`; `echo $C`',
+            'echo hi # comment \\\n$C',
+            'A=deploy-; B=raw.sh; cat <<EOF; bash bin/$A$B\nx\nEOF',
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_reader_edges_allowed(self):
+        for command in (
+            'git commit -m "$(cat <<\'EOF\'\nfix: it\'s (x) done `eval` $C\nEOF\n)"',
+            'echo ${HOME}/x; ls',
+            'echo "${arr[@]}"',
+            'echo 測試 café; ls',
+            'X=$(git rev-parse --show-toplevel); cd "$X"',
+            'gh pr view 1 --json body -q .body | grep -c x',
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
     def test_review_false_refusals_allowed(self):
         for command in ('B=$(basename "$f")', "X=$(cat $F)", "out=$(python3 $SP/p.py)", "X=`cat $F`",
                         "git commit -m \"$(cat <<'EOF'\nrefuse `eval` and `$C` here\nEOF\n)\"",
