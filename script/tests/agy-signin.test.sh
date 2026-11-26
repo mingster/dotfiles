@@ -178,6 +178,85 @@ class HostScript(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertEqual(list(marks), ['hostb'])
 
+class FakeHost:
+    """Fake orca for one probe: worktree list, terminal create, wait, read, close. Records every call."""
+    def __init__(self, screen='', wait_error=False):
+        self.screen, self.wait_error, self.calls = screen, wait_error, []
+    def __call__(self, *args):
+        self.calls.append(args)
+        if args[:2] == ('worktree', 'list'):
+            return {'worktrees': [{'path': '/w/main', 'isMainWorktree': True}]}
+        if args[:2] == ('terminal', 'create'):
+            return {'terminal': {'handle': 'term_probe'}}
+        if args[:2] == ('terminal', 'wait') and self.wait_error:
+            raise watch.OrcaReadError('timeout')
+        if args[:2] == ('terminal', 'read'):
+            return self.screen
+        return {}
+    def closed(self):
+        return [c for c in self.calls if c[:2] == ('terminal', 'close')]
+
+class Probe(unittest.TestCase):
+    """#1968: one agy models probe per pass marks a signed out host before a worker is wasted there."""
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        patcher = mock.patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(self.tmp / 'agy.json')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.config = {'local_host': 'hosta', 'host_caps': {'hosta': 2, 'hostb': 2}}
+
+    def probe_with(self, fake):
+        return lambda host: watch.agy_probe(host, rpc_call=fake, local=watch._is_local_coordinator_host(host, self.config))
+
+    def test_sign_in_line_marks_hostb_and_placement_skips_it(self):
+        fake = FakeHost({'terminal': {'screen': 'Please sign in to view available models'}})
+        state = {'agy_probe': {'hosta': {'at': 1000, 'result': 'in'}}}
+        notices = watch.agy_probe_notices(self.config, state, 1000, probe=self.probe_with(fake))
+        self.assertEqual(len(notices), 1)
+        self.assertIn('host=hostb', notices[0])
+        self.assertEqual(state['agy_probe']['hostb']['result'], 'out')
+        self.assertTrue(all('hostb' in c for c in fake.calls))
+        self.assertEqual(len(fake.closed()), 1)
+        # pick --agent antigravity asks this same check (worker-placement.test.sh covers the pick itself).
+        self.assertFalse(agy.usable('antigravity', 'hostb', self.config, now=1001))
+        self.assertTrue(agy.usable('antigravity', 'hosta', self.config, now=1001))
+
+    def test_no_answer_writes_no_cache_and_the_host_is_due_next_pass(self):
+        for fake in (FakeHost({}), FakeHost({'terminal': {'tail': []}}), FakeHost(wait_error=True)):
+            state = {'agy_probe': {'hosta': {'at': 1000, 'result': 'in'}}}
+            self.assertEqual(watch.agy_probe_notices(self.config, state, 1000, probe=self.probe_with(fake)), [])
+            self.assertNotIn('hostb', state['agy_probe'])
+            self.assertEqual(len(fake.closed()), 1, 'closed on success and on a wait timeout')
+        self.assertFalse((self.tmp / 'agy.json').exists())
+
+    def test_a_failed_mark_writes_no_cache(self):
+        state = {'agy_probe': {'hosta': {'at': 1000, 'result': 'in'}}}
+        with mock.patch.object(watch._agy_signin(), 'mark', side_effect=OSError('disk full')):
+            self.assertEqual(watch.agy_probe_notices(self.config, state, 1000, probe=lambda h: 'out'), [])
+        self.assertNotIn('hostb', state['agy_probe'])
+
+    def test_one_host_per_pass_longest_ago_first_each_every_30_minutes(self):
+        seen = []
+        probe = lambda h: seen.append(h) or 'in'
+        state = {}
+        for t in (0, 1, 2, 1801):
+            watch.agy_probe_notices(self.config, state, t, probe=probe)
+        self.assertEqual(seen, ['hosta', 'hostb', 'hosta'])
+
+    def test_a_local_host_caps_key_probes_with_no_environment_flag(self):
+        config = {'local_host': 'hosta', 'host_caps': {'local': 1}}
+        fake = FakeHost({'terminal': {'screen': 'gemini-4-pro-high    Gemini 4 Pro'}})
+        probe = lambda h: watch.agy_probe(h, rpc_call=fake, local=watch._is_local_coordinator_host(h, config))
+        watch.agy_probe_notices(config, {}, 1000, probe=probe)
+        self.assertTrue(fake.calls)
+        self.assertFalse([c for c in fake.calls if '--environment' in c])
+
+    def test_main_probes_before_the_first_phase_that_starts_a_worker(self):
+        src = (root / 'fleet-watch.py').read_text()
+        main = src[src.index('def _main('):]
+        self.assertLess(main.index("run_phase('agy_probe'"), main.index("run_phase('idle_seat'"))
+        self.assertLess(main.index("run_phase('idle_seat'"), main.index("run_phase('supply_first'"))
+
 class Cli(unittest.TestCase):
     """The command line: help, mistyped commands, and the exit codes callers read."""
     def setUp(self):
