@@ -1,9 +1,13 @@
 """#1963: the idle orphan terminal sweep, on #1958's fleet_rows and close_worker_terminal."""
 import copy
+import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fleet_watch_test_env import isolated_main_env
 from test_fleet_watch_start_unknown import Base, CONFIG, COORD, FIXTURE, Fleet, NOW, fw, local_row
 
 IDLE = (NOW - 16 * 60) * 1000
@@ -84,6 +88,41 @@ class OrphanSweep(Base):
         body = source[source.index('\ndef _main('):]
         self.assertLess(body.index("run_phase('reap'"), body.index("run_phase('sweep'"))
         self.assertLess(body.index("run_phase('sweep'"), body.index("pass_phase('babysit')"))
+
+
+class MainPassWithoutInventory(unittest.TestCase):
+    def test_a_failed_inventory_runs_no_reap_or_sweep_and_keeps_the_reaper_book(self):
+        book = {'ctx_u': {'at': NOW - 900, 'resent_at': NOW - 300}}
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            state = Path(directory) / 'state.json'
+            config.write_text(json.dumps(CONFIG))
+            state.write_text(json.dumps({'start_unknown': book}))
+            closes = []
+
+            def rpc(*args):
+                if args[:2] == ('terminal', 'list'):
+                    return {'terminals': [term('term_live', '#7|fullstack-dev')]}
+                if args[:2] == ('terminal', 'close'):
+                    closes.append(args)
+                return {}
+            with isolated_main_env(directory), \
+                    patch('sys.argv', ['fleet-watch', '--config', str(config), '--state', str(state)]), \
+                    patch.object(fw, 'rpc', side_effect=rpc), \
+                    patch.object(fw, 'read_orca_inventory', side_effect=fw.OrcaReadError('inbox timed out')), \
+                    patch.object(fw, 'environment_name_by_id', return_value={}), \
+                    patch.object(fw.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)), \
+                    patch.object(fw, 'pr_notices', return_value=[]), \
+                    patch.object(fw, 'usage_notices', return_value=[]), \
+                    patch.object(fw, 'deliver_notices', return_value=None), \
+                    patch.object(fw.time, 'time', return_value=NOW), \
+                    patch.object(fw, 'start_unknown_reaper', wraps=fw.start_unknown_reaper) as reap, \
+                    patch.object(fw, 'orphan_terminal_sweep', wraps=fw.orphan_terminal_sweep) as sweep:
+                self.assertEqual(fw.main(), 0)
+                saved = json.loads(state.read_text())
+        self.assertEqual((reap.call_count, sweep.call_count), (0, 0))
+        self.assertEqual(closes, [])
+        self.assertEqual(saved.get('start_unknown'), book)
 
 
 if __name__ == "__main__":

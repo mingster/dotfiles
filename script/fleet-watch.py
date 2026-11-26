@@ -11966,11 +11966,12 @@ def _main():
 
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
     notices += idle_extra
-    notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc, _release_row), [])
-    swept = run_phase('sweep', lambda: orphan_terminal_sweep(config, now, rpc, sweep_hosts(config), workers), [])
-    if swept:
-        print('fleet-watch: closed %d orphan terminal(s): %s' % (len(swept), ' '.join(swept)))
     if inventory_ok:
+        # Without the pass rows every worker looks gone: no reap, no sweep, and the reaper book is kept.
+        notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc, _release_row), [])
+        swept = run_phase('sweep', lambda: orphan_terminal_sweep(config, now, rpc, sweep_hosts(config), workers), [])
+        if swept:
+            print('fleet-watch: closed %d orphan terminal(s): %s' % (len(swept), ' '.join(swept)))
         notices += supply_done_notices(inv['messages'], workers, state)
 
     def supply_first():
