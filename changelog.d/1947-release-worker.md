@@ -1,0 +1,1 @@
+Every fleet watch release now goes through one function that stops and releases the worker on its host and here, then closes its terminal on that host. A hand release uses script/release-worker.sh (#1958).

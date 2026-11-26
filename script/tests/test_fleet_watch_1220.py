@@ -89,7 +89,7 @@ class ReconcileRemoteCompletions(unittest.TestCase):
         row['dispatchStatus'] = 'running'
         rec = Recorder()
         fw.reconcile_remote_completions({}, {}, [row], [], rec)
-        order = [c[1] for c in rec.calls]
+        order = [c[1] for c in rec.calls if c[1] in ('worker-stop', 'worker-release')]
         self.assertEqual(order[0], 'worker-stop')
         self.assertIn('worker-release', order)
 
@@ -119,7 +119,7 @@ class DeferredPrRelease(unittest.TestCase):
                 messages = [dict(rejected)]
                 workers = [remote_row('ctx_d', pr=7)]
                 fw.reconcile_remote_completions(config, state, workers, messages, Recorder())
-                fw.release_green_successes(messages, workers, config, state, released.append, pr_of)
+                fw.release_green_successes(messages, workers, config, state, (lambda row: released.append(row['dispatchId']) or 'closed'), pr_of)
                 if not green:
                     self.assertEqual(released, [])
         self.assertEqual(released, ['ctx_d'])
@@ -197,15 +197,16 @@ class SeatReport(unittest.TestCase):
 
 class ReleaseWorkerEnvironment(unittest.TestCase):
     def test_default_release_passes_environment_for_remote(self):
-        with patch.object(fw, 'rpc') as rpc:
-            fw._default_release_worker('ctx_a', 'env-1')
+        with patch.object(fw, 'rpc', return_value={}) as rpc:
+            fw._release_row({'dispatchId': 'ctx_a', '_host': 'env-1'})
         rpc.assert_any_call('orchestration', 'worker-release', '--dispatch', 'ctx_a', '--environment', 'env-1')
         rpc.assert_any_call('orchestration', 'worker-release', '--dispatch', 'ctx_a')
 
     def test_default_release_local_unchanged(self):
-        with patch.object(fw, 'rpc') as rpc:
-            fw._default_release_worker('ctx_a')
-        rpc.assert_called_once_with('orchestration', 'worker-release', '--dispatch', 'ctx_a')
+        with patch.object(fw, 'rpc', return_value={}) as rpc:
+            fw._release_row({'dispatchId': 'ctx_a', '_host': ''})
+        releases = [c.args for c in rpc.call_args_list if c.args[1] == 'worker-release']
+        self.assertEqual(releases, [('orchestration', 'worker-release', '--dispatch', 'ctx_a')])
 
 
 class RemoteSeatFreed(unittest.TestCase):

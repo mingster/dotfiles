@@ -564,3 +564,17 @@ case28_template_doc_claims_selected() {
 }
 
 case28_template_doc_claims_selected
+
+# #1958: release-worker.sh and the agy sign-in fixtures feed only fleet-watch tests, so they must not pull the full suite.
+case29_release_worker_and_agy_fixtures_stay_scoped() {
+  local out path
+  for path in script/release-worker.sh script/tests/fixtures/agy-signin-stopped-remote.json script/tests/fixtures/agy-signin-stopped-local.json; do
+    out=$(list_selector_output "$path")
+    grep -Fxq 'Selected: script/tests/test_fleet_watch_release.py' <<<"$out" \
+      || fail "case29 $path must select test_fleet_watch_release.py: $out"
+    grep -Fq 'Fallback:' <<<"$out" && fail "case29 $path must not fall back to the full suite: $out"
+  done
+  ok "case29 release-worker.sh and agy sign-in fixtures select fleet-watch tests"
+}
+
+case29_release_worker_and_agy_fixtures_stay_scoped

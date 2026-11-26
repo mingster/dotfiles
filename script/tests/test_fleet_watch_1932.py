@@ -39,7 +39,7 @@ class Harness:
         return fw.babysit_pass(
             self.config, self.state, list(workers), pr_fetch=lambda _repo: [pr or verifier_pr()],
             start_worker=self.start, pick=PICK, owner_check=lambda _pr: None,
-            release_worker=lambda did, *_env: self.released.append(did),
+            release_worker=lambda row: self.released.append(row['dispatchId']) or 'closed',
         )
 
 

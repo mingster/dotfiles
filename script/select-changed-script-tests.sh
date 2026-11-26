@@ -205,6 +205,9 @@ map_file() {
     script/setup-agent-skills.sh)
       add_if_exists "script/tests/setup-user-level-team.test.sh"
       ;;
+    script/release-worker.sh)
+      add_if_exists "script/tests/test_fleet_watch_release.py"
+      ;;
     script/start-remote-worker.sh)
       map_script_sh_base "start-remote-worker"
       add_if_exists "script/tests/test_remote_worker.py"
@@ -231,6 +234,9 @@ map_file() {
       ;;
     script/tests/fixtures/orca-worker-list.json)
       add_if_exists "script/tests/test_usage_gate.py"
+      ;;
+    script/tests/fixtures/agy-signin-*.json)
+      map_script_py_base "fleet-watch"
       ;;
     script/tests/fixtures/fleet-watch/*)
       map_script_py_base "fleet-watch"

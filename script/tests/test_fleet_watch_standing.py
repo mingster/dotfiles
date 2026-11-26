@@ -35,7 +35,7 @@ def pr(number, verdict=False, **extra):
 def standing_row(dispatch='ctx_s1', terminal='term_s1'):
     return {
         'dispatchId': dispatch, 'taskId': 'task_s1', 'terminalState': 'active', 'dispatchStatus': 'dispatched',
-        'terminal': terminal,
+        'terminal': terminal, '_host': HOST,  # fleet_rows sets the row's host (#1958)
         'projection': {'role': 'worker', 'outcome': 'in_progress', 'liveness': {'verdict': 'live'}},
         '_task_title': '#7|qa-sdet|standing',
     }
@@ -45,7 +45,6 @@ class FakeIO:
     def __init__(self):
         self.screens = {}
         self.sent = []
-        self.stopped = []
         self.sleeps = []
         self.wakes = True
         self.tick = 100
@@ -64,9 +63,6 @@ class FakeIO:
             self.tick += 1
             self.screens[terminal] = ('Thinking', self.tick)
         return True
-
-    def stop(self, dispatch_id, host):
-        self.stopped.append((dispatch_id, host))
 
     def sleep(self, seconds):
         self.sleeps.append(seconds)
@@ -109,7 +105,7 @@ class StandingVerifier(unittest.TestCase):
             start_worker=self.start_worker,
             pick=lambda _role, **_kw: {'selected': {'provider': 'antigravity', 'model': 'm', 'eligible': True, 'headroom': 50}},
             owner_check=lambda _pr, **_kw: None,
-            release_worker=lambda did, env=None: self.released.append((did, env)),
+            release_worker=lambda row: self.released.append((row['dispatchId'], row.get('_host') or None)) or 'closed',
             notify_worker=lambda *_a: None,
             now=self.now, term_times={}, standing_io=self.io,
         )
@@ -190,7 +186,6 @@ class StandingVerifier(unittest.TestCase):
         self.assertEqual(len(state['standing_verifiers'][HOST]['prs_assigned']), 5)
         _n, _lines, log_bits = self.run_pass([pr(5, verdict=True)], state)
         self.assertEqual(state['standing_verifiers'], {})
-        self.assertEqual(self.io.stopped, [('ctx_s1', HOST)])
         self.assertEqual(self.released, [('ctx_s1', HOST)])
         self.assertIn('standing_retire=ctx_s1:max_prs', log_bits)
         retire = [r for r in self.trial_rows() if r['event'] == 'retire'][0]
@@ -203,7 +198,7 @@ class StandingVerifier(unittest.TestCase):
         self.io.screens['term_s1'] = ('work\nctx: 85%', 100)
         self.run_pass([pr(7, verdict=True), pr(8)], state)
         self.assertEqual(self.io.sent, [])
-        self.assertEqual(self.io.stopped, [('ctx_s1', HOST)])
+        self.assertEqual(self.released, [('ctx_s1', HOST)])
         self.assertEqual(len(self.starts), 2)
         self.assertEqual(self.starts[1][self.starts[1].index('--title') + 1], '#8|qa-sdet|standing')
         retire = [r for r in self.trial_rows() if r['event'] == 'retire'][0]
@@ -225,7 +220,6 @@ class StandingVerifier(unittest.TestCase):
         _n, _lines, log_bits = self.run_pass([pr(7, verdict=True), pr(8)], state)
         self.assertEqual(self.io.sleeps, [5, 10])
         self.assertIn('standing_wake_fail=ctx_s1:o/r#8', log_bits)
-        self.assertEqual(self.io.stopped, [('ctx_s1', HOST)])
         self.assertEqual(self.released, [('ctx_s1', HOST)])
         self.assertEqual(state['standing_verifiers'], {})
         self.assertEqual(len(self.starts), 2)
@@ -246,7 +240,7 @@ class StandingVerifier(unittest.TestCase):
         self.io.screens['term_s1'] = ('> ', 100)
         _n, _lines, log_bits = self.run_pass([pr(7)], state)
         self.assertIn('standing_wake_fail=ctx_s1:o/r#7', log_bits)
-        self.assertEqual(self.io.stopped, [('ctx_s1', HOST)])
+        self.assertEqual(self.released, [('ctx_s1', HOST)])
         self.assertEqual(len(self.starts), 2)
         self.assertNotIn('--on', self.starts[1])
 
@@ -257,7 +251,7 @@ class StandingVerifier(unittest.TestCase):
         state['standing_verifiers'][HOST].update(wake_verified=False, assigned_at=self.now - 120, assigned_last=100)
         self.io.screens['term_s1'] = ('Thinking', 105)
         self.run_pass([pr(7)], state)
-        self.assertEqual(self.io.stopped, [])
+        self.assertEqual(self.released, [])
         self.assertTrue(state['standing_verifiers'][HOST]['wake_verified'])
 
     def test_an_exited_standing_verifier_is_dropped_and_replaced(self):

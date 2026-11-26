@@ -1182,7 +1182,7 @@ class ReleaseBoardStatus(unittest.TestCase):
         with patch.object(fw, 'repo_for_worker', return_value='o/r'):
             freed = fw.release_green_successes(
                 [done_message()], [base_worker(dispatchId='disp_done')], stall_test_config(), {},
-                lambda _d: None, lambda _r, _n: pr_row, set_status=lambda w, s: calls.append(s) or True)
+                lambda _row: 'closed', lambda _r, _n: pr_row, set_status=lambda w, s: calls.append(s) or True)
         return freed, calls
 
     def test_merged_pr_release_sets_completed(self):
