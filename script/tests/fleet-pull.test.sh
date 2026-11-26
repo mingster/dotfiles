@@ -59,7 +59,7 @@ state1_tip=$(git --git-dir="$state1_bare" rev-parse refs/heads/main)
 repo1_tip=$(git --git-dir="$repo1_bare" rev-parse refs/heads/main)
 
 set +e
-out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -eq 0 ] && ok "clean pull via state_dir/fleet-pull.json exits 0" || bad "clean pull exit $ec: $out"
@@ -83,7 +83,7 @@ advance_origin "$repo2_bare" "repo2-advance"
 repo2_tip=$(git --git-dir="$repo2_bare" rev-parse refs/heads/main)
 
 set +e
-out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state2" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state2" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -eq 0 ] && [ "$(git -C "$repo2" rev-parse HEAD)" = "$repo2_tip" ] \
@@ -93,7 +93,7 @@ set -e
 # 3.Dirty checkout exits non-zero and names host and repo
 echo uncommitted >>"$repo1/file.txt"
 set +e
-out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 git -C "$repo1" checkout -q -- file.txt
@@ -104,7 +104,7 @@ git -C "$repo1" checkout -q -- file.txt
 # 3b. Untracked files alone do not block a fast-forward
 echo scratch >"$repo1/untracked.tmp"
 set +e
-out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 rm -f "$repo1/untracked.tmp"
@@ -117,7 +117,7 @@ echo local_diverge >>"$repo1/file.txt"
 git -C "$repo1" commit -qam local_diverge
 advance_origin "$repo1_bare" "remote_diverge"
 set +e
-out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -ne 0 ] && grep -q "local" <<<"$out" && grep -qF "$repo1" <<<"$out" && grep -Eqi "diverged|not fast-forward" <<<"$out" \
@@ -143,7 +143,7 @@ exec "$real_git" "\$@"
 EOS
 chmod +x "$stub_bin/git"
 set +e
-out=$(PATH="$stub_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(PATH="$stub_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -ne 0 ] && grep -q "local" <<<"$out" && grep -qF "$repo1" <<<"$out" && grep -qi "behind" <<<"$out" \
@@ -167,7 +167,7 @@ exit 255
 EOS
 chmod +x "$ssh_bin/ssh"
 set +e
-out=$(PATH="$ssh_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(PATH="$ssh_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -ne 0 ] && grep -q "host-unreachable" <<<"$out" && grep -qF "$repo1" <<<"$out" && grep -qi "unreachable" <<<"$out" \
@@ -191,7 +191,7 @@ git -C "$state1" commit -qam tilde_repo
 git -C "$state1" push -q origin main
 echo uncommitted >>"$repo1/file.txt"
 set +e
-out=$(HOME="$tmp" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(HOME="$tmp" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 git -C "$repo1" checkout -q -- file.txt
@@ -211,7 +211,7 @@ mkdir -p "$remote_home"
 git clone -q "$(git -C "$state1" remote get-url origin)" "$remote_home/agent-state"
 git -C "$remote_home/agent-state" reset -q --hard HEAD~1
 set +e
-out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$(git -C "$remote_home/agent-state" rev-parse HEAD)" = "$(git -C "$state1" rev-parse HEAD)" ] && grep -q "ok   host-a .*agent-state" <<<"$out" \
@@ -249,7 +249,7 @@ EOF
 git -C "$state1" commit -qam normal_host_cfg
 git -C "$state1" push -q origin main
 set +e
-out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$ec" -ne 0 ] \
@@ -265,7 +265,7 @@ EOF
 git -C "$state1" commit -qam agent_host_cfg
 git -C "$state1" push -q origin main
 set +e
-out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out=$(HOME="$remote_home" PATH="$ssh_ok_bin:$PATH" env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec=$?
 set -e
 [ "$(git -C "$dirty_repo" branch --show-current)" = main ] \
@@ -392,7 +392,7 @@ for hdir in "$local_home" "$rem_home"; do
 done
 
 set +e
-out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out8=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec8=$?
 set -e
 
@@ -436,7 +436,7 @@ git -C "$state1" commit -qam agent_host
 git -C "$state1" push -q origin main
 rm -f "$rem_home/agent-team-machine.log"
 set +e
-out9=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out9=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec9=$?
 set -e
 if [ "$ec9" -eq 0 ] && [ "$(cat "$rem_home/agent-team-machine.log" 2>/dev/null)" = machine ]; then
@@ -448,7 +448,7 @@ fi
 # 842: a failed render names the host and the last error line, and the run exits non-zero
 touch "$rem_home/agent-team-fail"
 set +e
-out10=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out10=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec10=$?
 set -e
 rm -f "$rem_home/agent-team-fail"
@@ -461,7 +461,7 @@ fi
 # 1409: a host whose display keys drifted is named after the pull, and only the key is printed
 printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
 set +e
-out13=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out13=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec13=$?
 set -e
 if [ "$ec13" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(display key verbose: true in \.claude/settings.json\)$' <<<"$out13" \
@@ -474,7 +474,7 @@ fi
 # 1682: --fix-display repairs the drift (python3, no jq on the host), leaves other keys, and fleet-pull then reports no display drift
 printf '{"env":{"TOKEN":"s3cret"},"verbose":true,"spinnerTipsEnabled":false,"tui":"fullscreen"}\n' >"$rem_home/.claude/settings.json"
 set +e
-out14=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" --fix-display 2>&1)
+out14=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" --fix-display 2>&1)
 set -e
 if grep -Eq '^fix  host-a [^ ]*/dotfiles \(display keys set in \.claude/settings.json\)$' <<<"$out14" \
   && ! grep -Eq 'display key [A-Za-z]+:' <<<"$out14" && ! grep -q s3cret <<<"$out14" \
@@ -488,7 +488,7 @@ fi
 # 1416: a settings hook pointing at a removed dotfiles script is named after the pull, and only its path is printed
 printf '{"env":{"TOKEN":"s3cret"},"verbose":false,"spinnerTipsEnabled":false,"prefersReducedMotion":true,"tui":"fullscreen","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"$HOME/dotfiles/script/gone.sh"}]}]}}\n' >"$rem_home/.claude/settings.json"
 set +e
-out11=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out11=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec11=$?
 set -e
 if [ "$ec11" -ne 0 ] && grep -Eq '^fail host-a [^ ]*/dotfiles \(stale hook SessionStart: \$HOME/dotfiles/script/gone.sh\)$' <<<"$out11" && ! grep -q s3cret <<<"$out11"; then
@@ -511,7 +511,7 @@ export HOME="$rem_home"
 exec env PATH="$bare_bin" sh -c "\$*"
 EOS
     set +e
-    out12=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+    out12=$(HOME="$local_home" PATH="$ssh_rem_bin:/usr/bin:/bin:$jq_dir" env -u FLEET_PULL_CONFIG -u DOTFILES AGENT_STATE_DIR="$state1" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
     set -e
     if grep -q 'stale hook SessionStart' <<<"$out12" && ! grep -q 'requires jq' <<<"$out12"; then
       ok "remote run without a Homebrew prefix on PATH still finds jq"
@@ -568,7 +568,7 @@ git -C "$rep_ahead" commit -qam local_only
 git -C "$rep_dirty" checkout -q --detach
 echo uncommitted >>"$rep_dirty/file.txt"
 set +e
-out10=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state10" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out10=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state10" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec10=$?
 set -e
 if [ "$ec10" -ne 0 ] \
@@ -609,7 +609,7 @@ git -C "$rep_main_ahead" commit -qam unpushed
 main_ahead_tip=$(git -C "$rep_main_ahead" rev-parse refs/heads/main)
 git -C "$rep_main_ahead" checkout -q --detach origin/main
 set +e
-out13=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state11" SECRETS_SYNC_CONFIG="$tmp/no-secrets.json" bash "$pull_script" 2>&1)
+out13=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state11" SECRETS_GATE="$tmp/no-gate" bash "$pull_script" 2>&1)
 ec13=$?
 set -e
 if [ "$ec13" -ne 0 ] \
@@ -619,6 +619,23 @@ if [ "$ec13" -ne 0 ] \
   ok "detached HEAD on origin/main with local main ahead fails, stays detached, and keeps the unpushed commit on main"
 else
   bad "detached HEAD with local main ahead should fail, stay detached, and keep main (ec=$ec13): $out13"
+fi
+
+# 30. SECRETS_GATE pointing at a missing gate skips secrets-sync without running sudo or any gate
+sync_bin="$tmp/sync-bin"
+mkdir -p "$sync_bin"
+printf '#!/usr/bin/env bash\ntouch "%s"\n' "$tmp/sudo-called" >"$sync_bin/sudo"
+printf '#!/usr/bin/env bash\ntouch "%s"\n' "$tmp/fake-gate-called" >"$tmp/fake-gate"
+chmod +x "$sync_bin/sudo" "$tmp/fake-gate"
+set +e
+sync_out=$(PATH="$sync_bin:$PATH" SECRETS_GATE="$tmp/no-gate" bash "$root/script/secrets-sync.sh" 2>&1)
+sync_ec=$?
+set -e
+if [ "$sync_ec" -eq 0 ] && grep -qF "skipped" <<<"$sync_out" \
+  && [ ! -e "$tmp/sudo-called" ] && [ ! -e "$tmp/fake-gate-called" ]; then
+  ok "SECRETS_GATE at a missing path skips secrets-sync without calling sudo or a gate"
+else
+  bad "SECRETS_GATE at a missing path should skip without sudo (ec=$sync_ec): $sync_out"
 fi
 
 echo "fleet-pull: $pass passed, $fail failed"

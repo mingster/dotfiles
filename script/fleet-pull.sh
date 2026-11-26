@@ -250,7 +250,7 @@ for h in $(jq -r '(.hosts // [])[]' "$cfg"); do
   fi
 done
 
-# Then push the secrets folder to the same hosts (skipped without script/secrets-sync.config.json).
+# Then push the secrets folder to the same hosts (skipped when the gate at /opt/secrets-gate/secrets-gate, or $SECRETS_GATE, is not installed).
 if [ -x "$here/secrets-sync.sh" ]; then
    "$here/secrets-sync.sh" || status=1
 fi
