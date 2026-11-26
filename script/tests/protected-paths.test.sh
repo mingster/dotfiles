@@ -176,6 +176,95 @@ else
   bad "unfetched pull/<pr>/head and origin/main base are fetched before checking intent acceptance receipt" "rc=$rc out=$out"
 fi
 
+# Intent trailer form: Owner-approved: intent <owner/repo>#<pr> accepted <date>.
+# A fake gh serves the cited PR and the cited repo's default branch files from $tmp/gh.
+mkdir -p "$tmp/gh/files/docs/intent/2026-11-27-example"
+printf '{"state":"MERGED","files":[{"path":"docs/intent/2026-11-27-example/intent.md"}]}\n' > "$tmp/gh/pr-77.json"
+printf '{"state":"OPEN","files":[{"path":"docs/intent/2026-11-27-example/intent.md"}]}\n' > "$tmp/gh/pr-78.json"
+printf '# Example\n\nStatus: Proposed 2026-11-26 · Accepted 2026-11-27\n' > "$tmp/gh/files/docs/intent/2026-11-27-example/intent.md"
+# shellcheck disable=SC2016 # literal Markdown backticks
+printf '# Example: spec\n\n## Owner steps\n- `AGENTS.md`: add the new rule.\n\n## Rollout\n- `docs/agents/team.md` is named here, outside Owner steps.\n' \
+  > "$tmp/gh/files/docs/intent/2026-11-27-example/spec.md"
+
+run_gate_gh() { # <head> <path> <diff>
+  local head_sha=$1 path=$2 diff_text=$3
+  # shellcheck disable=SC2034,SC2329
+  (
+    set -euo pipefail
+    cd "$repo"
+    gh() {
+      case "$1 $2" in
+        "pr view") cat "$tmp/gh/pr-$3.json" ;;
+        "api -H") local p=${4#repos/*/*/contents/}; cat "$tmp/gh/files/$p" ;;
+        *) return 1 ;;
+      esac
+    }
+    head=$head_sha
+    files=$(jq -n --arg p "$path" '[$p]')
+    diff=$diff_text
+    info=$(jq -n --arg b "$base" '{baseRefOid:$b,comments:[]}')
+    field() { jq -r "$1" <<<"$info"; }
+    refuse() { printf 'REFUSED:%s\n' "$*"; exit 7; }
+    die() { printf 'DIE:%s\n' "$*"; exit 8; }
+    verdict_carry() { return 1; }
+    check_protected_paths
+    printf 'ALLOWED\n'
+  )
+}
+
+expect_gh() { # <name> <allow|refuse> <head> <path> <diff> [needle]
+  local out rc
+  out=$(run_gate_gh "$3" "$4" "$5" 2>&1)
+  rc=$?
+  if [ "$2" = allow ] && [ "$rc" -eq 0 ] && [ "$out" = ALLOWED ]; then ok "$1"
+  elif [ "$2" = refuse ] && [ "$rc" -eq 7 ] && [[ "$out" == *"$6"* ]]; then ok "$1"
+  else bad "$1" "rc=$rc out=$out"; fi
+}
+
+intent_msg() { printf 'touch path\n\nOwner-approved: intent example/repo#%s accepted %s\n' "$1" "$2"; }
+
+reset_branch
+intent_msg 77 2026-11-27 > "$tmp/msg"
+commit_path AGENTS.md
+expect_gh "an intent trailer passes when the file is in the cited spec's Owner steps" allow "$(git -C "$repo" rev-parse HEAD)" AGENTS.md ""
+
+reset_branch
+intent_msg 77 2026-11-27 > "$tmp/msg"
+commit_path docs/agents/team.md
+expect_gh "an intent trailer refuses a file outside the cited spec's Owner steps" refuse "$(git -C "$repo" rev-parse HEAD)" docs/agents/team.md "" "is not listed under Owner steps"
+
+reset_branch
+intent_msg 78 2026-11-27 > "$tmp/msg"
+commit_path AGENTS.md
+expect_gh "an intent trailer refuses when the cited PR is not merged" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "is not merged"
+
+reset_branch
+intent_msg 77 2026-11-20 > "$tmp/msg"
+commit_path AGENTS.md
+expect_gh "an intent trailer refuses when the date is not the intent's accepted date" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "not Accepted 2026-11-20"
+
+reset_branch
+intent_msg 79 2026-11-27 > "$tmp/msg"
+commit_path AGENTS.md
+expect_gh "an intent trailer refuses when the cited PR cannot be read" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "cannot read"
+
+reset_branch
+{ intent_msg 77 2026-11-27; printf 'Owner-approved: mingster 2026-11-27 (chat)\n'; } > "$tmp/msg"
+commit_path docs/agents/team.md
+expect_gh "an intent trailer outside Owner steps refuses even beside a plain trailer" refuse "$(git -C "$repo" rev-parse HEAD)" docs/agents/team.md "" "is not listed under Owner steps"
+
+reset_branch
+intent_msg 77 2026-11-27 > "$tmp/msg"
+commit_path docs/intent/example.md
+expect_gh "an intent trailer does not accept an intent" refuse "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
+
+for p in .claude/hooks/guard-bash.py .claude/settings.json; do
+  reset_branch
+  intent_msg 77 2026-11-27 > "$tmp/msg"
+  commit_path "$p"
+  expect_gh "an intent trailer does not open owner only $p" refuse "$(git -C "$repo" rev-parse HEAD)" "$p" "" "waits for the owner"
+done
+
 for p in .claude/model-routing.md templates/agent-team/.claude/model-routing.md model-routing.md web/AGENTS.md AGENTS.md; do
   if text_lane_role_path "$p"; then ok "$p is owner-gated"; else bad "$p is owner-gated" "not matched"; fi
 done

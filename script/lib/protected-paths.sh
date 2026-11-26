@@ -58,7 +58,7 @@ owner_waiver_applies() { # <path>...
   base_sha=$(field .baseRefOid)
   ensure_commit_in_store "$head" && ensure_commit_in_store "$base_sha" || return 1
   ancestor=$(git merge-base "$base_sha" "$head" 2>/dev/null) || return 1
-  load_owner_receipts "$ancestor..$head" "$@" || return 1
+  load_owner_receipts owner "$ancestor..$head" "$@" || return 1
   { [ "$owner_receipt_count" -gt 0 ] && [ -z "$owner_receipt_missing" ]; } || return 1
   echo "ship: owner-only path waived until $date (pre go-live rule)" >&2
 }
@@ -86,26 +86,75 @@ protected_path() { # <path>
 }
 
 # %(trailers) puts each value on its own line, so %x1e ends the commit and keeps those lines together.
-# owner_receipt_missing is the first sha with no non-whitespace Owner-approved value.
-# It stays empty when every listed commit has a non-whitespace value.
-load_owner_receipts() { # <rev-range> <path>...
-  local range=$1 raw record sha values
-  shift
+# owner_receipt_missing is the first sha with no Owner-approved value that counts, and owner_receipt_reason
+# says why when a cited intent failed. In owner mode a value in the intent form never counts (hooks,
+# settings, rules and intent acceptance keep the owner's own trailer). In intent mode it counts only when
+# the cited intent covers the commit's files (intent_receipt_covers); a failing one refuses the commit.
+load_owner_receipts() { # <owner|intent> <rev-range> <path>...
+  local mode=$1 range=$2 raw record sha values v approved why
+  shift 2
   owner_receipt_count=0
   owner_receipt_missing=""
+  owner_receipt_reason=""
   raw=$(git log --format='%H%x1f%(trailers:key=Owner-approved,valueonly)%x1e' "$range" -- "$@" 2>/dev/null) || return 1
   while IFS= read -r -d $'\x1e' record || [ -n "$record" ]; do
-    record=${record//$'\n'/}
-    [ -n "$record" ] || continue
     sha=${record%%$'\x1f'*}
-    values=${record#*$'\x1f'}
+    sha=${sha//[[:space:]]/}
     [ -n "$sha" ] || continue
+    values=${record#*$'\x1f'}
     owner_receipt_count=$((owner_receipt_count + 1))
-    values=${values//[[:space:]]/}
-    if [ -z "$values" ] && [ -z "$owner_receipt_missing" ]; then
+    approved=false why=""
+    while IFS= read -r v; do
+      v=$(printf '%s' "$v" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+      [ -n "$v" ] || continue
+      if [[ "$v" =~ $intent_trailer_re ]]; then
+        [ "$mode" = intent ] || continue
+        if why=$(intent_receipt_covers "$sha" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}" "$@"); then
+          approved=true
+        else
+          break
+        fi
+      else
+        approved=true
+      fi
+    done <<<"$values"
+    [ -z "$why" ] || approved=false
+    if [ "$approved" = false ] && [ -z "$owner_receipt_missing" ]; then
       owner_receipt_missing=$sha
+      owner_receipt_reason=$why
     fi
   done <<<"$raw"
+}
+
+# Owner-approved: intent <owner/repo>#<pr> accepted <YYYY-MM-DD> cites the merged PR that added an accepted intent.md.
+intent_trailer_re='^intent ([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)#([0-9]+) accepted ([0-9]{4}-[0-9]{2}-[0-9]{2})$'
+
+# The cited repo's default branch, never this PR's head, so a PR cannot widen its own Owner steps.
+cited_repo_file() { # <owner/repo> <path>
+  local out
+  out=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/$1/contents/$2" 2>/dev/null) || return 1
+  printf '%s\n' "$out"
+}
+
+# Passes when the cited PR is merged, its intent.md says Accepted <date>, and every gated file the
+# commit touches is a backticked path under "## Owner steps" in the spec.md beside that intent.
+# Otherwise prints the reason and fails.
+intent_receipt_covers() { # <sha> <owner/repo> <pr> <date> <path>...
+  local sha=$1 r=$2 n=$3 d=$4 pr_json intent spec steps f
+  shift 4
+  pr_json=$(gh pr view "$n" --repo "$r" --json state,files 2>/dev/null) || { echo "cannot read $r#$n"; return 1; }
+  [ "$(jq -r '.state // empty' <<<"$pr_json")" = MERGED ] || { echo "$r#$n is not merged"; return 1; }
+  intent=$(jq -r '[.files[]?.path | select(test("(^|/)intent\\.md$"))][0] // empty' <<<"$pr_json")
+  [ -n "$intent" ] || { echo "$r#$n adds no intent.md"; return 1; }
+  grep -Eq "^Status:.*Accepted ${d}([^0-9]|$)" <<<"$(cited_repo_file "$r" "$intent")" \
+    || { echo "$intent in $r is not Accepted $d"; return 1; }
+  spec=${intent%intent.md}spec.md
+  # shellcheck disable=SC2016 # the backticks are literal Markdown
+  steps=$(cited_repo_file "$r" "$spec" | awk '/^## /{on=($0 ~ /^## Owner steps[[:space:]]*$/); next} on' | grep -o '`[^`]*`' | tr -d '`') || true
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    grep -Fxq -- "$f" <<<"$steps" || { echo "$f is not listed under Owner steps in $spec of $r"; return 1; }
+  done < <(git diff-tree --no-commit-id --name-only -r --root "$sha" -- "$@")
 }
 
 ensure_commit_in_store() { # <sha>
@@ -132,7 +181,7 @@ intent_acceptance_receipt() {
   ensure_commit_in_store "$base_sha" || die "cannot read base $base_sha for intent acceptance receipt"
   ancestor=$(git merge-base "$base_sha" "$head" 2>/dev/null) || die "cannot find merge base for intent acceptance receipt"
   while IFS= read -r f; do
-    load_owner_receipts "$ancestor..$head" "$f" || die "cannot list commits for intent acceptance receipt"
+    load_owner_receipts owner "$ancestor..$head" "$f" || die "cannot list commits for intent acceptance receipt"
     [ "$owner_receipt_count" -gt 0 ] || refuse "$msg"
     [ -z "$owner_receipt_missing" ] || refuse "$msg"
   done <<<"$accepted"
@@ -164,8 +213,9 @@ text_lane_owner_receipt() {
   ensure_commit_in_store "$head" || die "cannot read head $head for owner receipt"
   ensure_commit_in_store "$base_sha" || die "cannot read base $base_sha for owner receipt"
   ancestor=$(git merge-base "$base_sha" "$head") || die "cannot find merge base for owner receipt"
-  load_owner_receipts "$ancestor..$head" "${owner_receipt_paths[@]}" \
+  load_owner_receipts intent "$ancestor..$head" "${owner_receipt_paths[@]}" \
     || die "cannot list commits for owner receipt"
+  [ -z "$owner_receipt_reason" ] || refuse "commit ${owner_receipt_missing:0:12} cites an intent that does not cover it: $owner_receipt_reason"
   [ -z "$owner_receipt_missing" ] || refuse "commit ${owner_receipt_missing:0:12} touches owner-gated paths without Owner-approved trailer"
 }
 

@@ -90,6 +90,12 @@ if [[ "$out" == *REFUSED:*"$needle"* ]]; then ok "same model family verifier ref
 out=$(run_gate "$h" .claude/hooks/guard.py 2026-11-19 gpt-5 FAIL)
 if [[ "$out" == *REFUSED:*"$needle"* ]]; then ok "Review FAIL refuses"; else bad "Review FAIL refuses" "$out"; fi
 
+h4=$(commit_path .claude/hooks/guard.py "fix guard
+
+Owner-approved: intent example/repo#77 accepted 2026-11-19")
+out=$(run_gate "$h4" .claude/hooks/guard.py 2026-11-19 gpt-5 PASS)
+if [[ "$out" == *REFUSED:*"$needle"* ]]; then ok "an intent trailer is no owner receipt for the waiver"; else bad "an intent trailer is no owner receipt for the waiver" "$out"; fi
+
 owner_script=bin/owner-approve.sh
 h3=$(commit_path "$owner_script" "$trailer_msg")
 out=$(run_gate "$h3" "$owner_script" 2026-11-19 gpt-5 PASS)
