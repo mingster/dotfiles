@@ -2533,6 +2533,11 @@ sweep_browsers() {
   printf 'browsers closed=%s kept=%s\n' "$browser_closed" "$browser_kept"
 }
 [ "$host_wide" -eq 0 ] || sweep_browsers
+# Orphan test and build runners (#1954): the same script fleet-watch runs each pass. Real ps only, never under a test seam.
+if [ "$host_wide" -eq 1 ] && [ "$browser_sweep" -eq 1 ] && [ -z "${WRAP_UP_PS_CMD:-}" ]; then
+  reap_args=(); [ "$apply" -eq 1 ] || reap_args=(--dry-run)
+  bash "$here/reap-orphan-tests.sh" ${reap_args[@]+"${reap_args[@]}"} || echo 'Warning: reap-orphan-tests failed.' >&2
+fi
 # Grayed-out workspaces (issue 953): every non-main Orca worktree with no terminal attached goes, with its branch kept.
 # Uncommitted tracked changes keep it, named in the report. Runs on a fleet host too, ahead of its early exit below.
 idle_worktree_guard() { # <path>: prints the Kept line and returns 0 when the worktree must stay

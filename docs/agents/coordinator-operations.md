@@ -144,6 +144,7 @@ Once a `completed` (Done) or `archived` card is 30 minutes old, `script/board-cl
 | `script/orca-reply.sh` | Replies to a worker's orchestration message and nudges its terminal so an idle session wakes up. |
 | `script/fleet-pull.sh` | Fast-forwards clean `main` checkouts across fleet hosts (for hosts in `agent_hosts`, resets configured repositories to `origin/main` and cleans untracked files while keeping ignored files and fast-forwarding `~/agent-state` only) and runs `secrets-sync.sh`. |
 | `script/fleet-watch.py` | 5-minute watchdog checking inbox waiters, host caps, stalled workers, backup freshness, PR checks, `heavy-gate` wait times, `wrap-up` freshness and `coordinator_watch` (see [Fleet watch](fleet-watch.md)). A start that would end the pass past 140 seconds is held and logs `<site>_budget=<id>` in `~/.orca/logs/fleet-watch.log`; the next pass starts it (about two starts per pass). |
+| `script/reap-orphan-tests.sh` | Orphan test runners are reaped by reap-orphan-tests; do not kill by hand unless it fails. Fleet-watch and `wrap-up.sh` run it (`--dry-run` lists only). |
 | `script/fleet-workers.py` | Lists active Orca workers across local and remote fleet environments. |
 | `script/worker-startup.sh` | Daily `--host-check` and unified worker launcher (aligns `~/dotfiles`, Orca presets, repo `main`, Node and Bun pins, checks `usage-gate.py`, and starts the worker). |
 | `script/start-remote-worker.sh` | Checks `usage-gate.py`, probes the remote CLI in an Orca terminal, refreshes `~/dotfiles` and presets, and calls `worker-start --on`. |

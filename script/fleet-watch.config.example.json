@@ -28,6 +28,7 @@
     }
   },
   "board_stale_check": false,
+  "orphan_reaper": {"enabled": true},
   "leads": [],
   "pr_watch": {
     "repos": ["mingster/dotfiles", "mingster/project-a"],
