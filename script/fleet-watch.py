@@ -2955,9 +2955,6 @@ def worker_row_is_live(w):
     w = w or {}
     if w.get(GONE_REMOTE_KEY):
         return False
-    # fleet_rows puts a remote host's own state in `_state`; the coordinator's stub can still say ready.
-    if w.get('_host') and w.get('_state') in _FINISHED_WORKER_STATES:
-        return False
     if 'dispatchStatus' in w or 'projection' in w:
         proj = w.get('projection') or {}
         liv = proj.get('liveness') or {}
@@ -2972,6 +2969,14 @@ def worker_row_is_live(w):
     return (w.get('state') not in _FINISHED_WORKER_STATES
             and w.get('stage') != 'released' and w.get('terminalState') != 'released'
             and w.get('liveness') != 'exited')
+
+
+def holds_pass_terminal(w):
+    """True when a fleet_rows row's terminal and worktree stay open this pass. A remote row whose own host says
+    it finished (`_state`) does not hold them, though the coordinator's stub can still say ready."""
+    if (w or {}).get('_host') and w.get('_state') in _FINISHED_WORKER_STATES:
+        return False
+    return worker_row_is_live(w)
 
 
 def _server_as_of_epoch_seconds(w):
@@ -3663,7 +3668,7 @@ def protect_pass_terminals(config, workers):
                 if isinstance(row.get(key), str) and row[key].strip():
                     _PROTECTED_HANDLES.add(row[key].strip())
     for w in workers or []:
-        if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w):
+        if isinstance(w, dict) and w.get('dispatchId') and holds_pass_terminal(w):
             handle = w.get('_host_terminal') or worker_terminal_handle(w)
             if handle:
                 _LIVE_TERMINALS[handle] = w['dispatchId']
@@ -3811,7 +3816,7 @@ def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
         host = row.get('_host') or ''
         if row.get('_host_read') is False:
             unread.add(names.get(host) or host)
-        if not worker_row_is_live(row):
+        if not holds_pass_terminal(row):
             continue
         live_handles.add(row.get('_host_terminal') or worker_terminal_handle(row))
         ws = row.get('_host_workspace') or worker_checkout_path(row)

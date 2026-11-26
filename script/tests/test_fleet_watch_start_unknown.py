@@ -1,7 +1,6 @@
 """#1962: the start_unknown reaper, on #1958's fleet_rows and release_worker."""
 import copy
 import json
-import subprocess
 import importlib.util
 import unittest
 from pathlib import Path
@@ -119,16 +118,15 @@ class StartUnknownReaper(Base):
         did = stub['dispatchId']
         fleet = Fleet(workers={'host-b': [hosted]}, briefs={stub['taskId']: 'BRIEF'})
         state = {'own_dispatches': {did: {'kind': 'issue', 'repo': 'o/r'}}}
-        gh, ok = [], subprocess.CompletedProcess([], 0)
-        # Only rpc and the gh process are faked: the reaper's defaults release through release_worker and relabel
-        # through run_gh.
+        gh = []
+        # Only rpc is faked: the release is the production default, _release_row (release_worker on fw.rpc).
         with patch.object(fw, 'environment_name_by_id', return_value={env_id: 'host-b'}), \
-                patch.object(fw, 'rpc', fleet), \
-                patch.object(fw.subprocess, 'run', side_effect=lambda argv, **_k: gh.append(argv) or ok):
+                patch.object(fw, 'rpc', fleet):
             def reap(t):
                 rows = fw.fleet_rows(CONFIG, [dict(copy.deepcopy(stub), _task_title='#77|fullstack-dev')],
                                      ['', 'host-b'], fleet, state)
-                return fw.start_unknown_reaper(CONFIG, state, t, rows, fleet, fw._release_row)
+                return fw.start_unknown_reaper(CONFIG, state, t, rows, fleet, fw._release_row,
+                                               act=lambda argv: gh.append(argv) or 0)
             reap(NOW)
             reap(NOW + 600)
             sends = fleet.sends()
