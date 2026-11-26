@@ -39,13 +39,26 @@ Roles (customer, Store operator, platform admin...) and the product areas or int
 ## Constraints
 Deadlines, budgets, laws, platform limits, things that must not change.
 
+## Success measure
+One number and a window, for example "booking drop off under 20 percent within 7 days of ship". An agent reads it 7 days after ship and posts met or not met.
+
+## Never list
+What the build must not touch without asking the owner again: billing, refunds, pricing, legal, privacy, data deletion. Add any other item for this intent.
+
+## Rollback trigger
+What turns the switch off, for example "not met at 7 days" or "any refund error".
+
 ## Open questions
 What the owner does not know yet. The riskiest assumption goes first.
 ```
 
+Success measure, Never list and Rollback trigger are required. An intent without them is not ready to accept.
+
 ## Status
 
 The header keeps the history on one line: `Status: Proposed 2026-09-28 · Accepted 2026-09-30 · Shipped 2026-10-12 (#1234)`. Outside a team the owner is the only approver; in an agent team the coordinator accepts intents, and the owner only those that set money rules or prices (`team.md`, Owner pauses). Rejected intents stay in place as the record. After the spec is accepted, the intent is frozen.
+
+Accepting the intent is the one owner approval for the program. The spec, its ADRs and the gated file edits the spec lists under Owner steps inherit it, and their commits carry `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, where the PR is the merged one that added this intent (`team.md`, Owner approval at intent).
 
 ## Writing rules
 
