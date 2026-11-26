@@ -2294,6 +2294,38 @@ def orphan_reaper_notices(config, rpc_call=None, run=None):
     return notices
 
 
+MAILBOX_ALERT_TIMEOUT = 60  # a hung mailbox must not push the pass past PASS_HARD_END and the 280 s precheck
+
+
+def mailbox_alert_pass(config):
+    """Run each repo_roots checkout's bin/support-mailbox-alert.py with the escalation send command (#1976).
+
+    The script appends --subject/--body, sends and dedups by mail UID itself, so it is run once and never
+    resent here. A checkout without it is skipped. Returns one `mailbox_alert=` log part per script run."""
+    runs = config_runs(config)
+    run_id = (runs[0].get('id') or '') if runs else ''
+    sender = terminal_handle_for_configured_run(config, run_id)
+    if not sender:
+        return []
+    send = shlex.split(os.environ.get('ORCA_CLI_COMMAND', 'orca')) + [
+        'orchestration', 'send', '--to', 'run:%s' % run_id, '--run', run_id, '--from', sender, '--type', 'escalation']
+    parts = []
+    for path in iter_repo_root_paths(config.get('repo_roots')):
+        script = Path(path, 'bin', 'support-mailbox-alert.py')
+        if not script.is_file():
+            continue
+        try:
+            result = subprocess.run([sys.executable, str(script), '--'] + send, stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, errors='replace', timeout=MAILBOX_ALERT_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            parts.append('mailbox_alert=unknown')
+            continue
+        for line in result.stdout.splitlines():
+            print('fleet-watch: ' + line)
+        parts.append('mailbox_alert=0' if result.returncode == 0 else 'mailbox_alert=unknown')
+    return parts
+
+
 def wrap_up_notices(config, state, now, stamp_age=None, act=None, issue_exists=None):
     """Open one issue per host when the last wrap-up round line is older than the stale limit."""
     block = config.get('wrap_up') or {}
@@ -11332,6 +11364,7 @@ def _main():
     notices += changelog_fragment_notices(config, state)
     notices += stale_worktree_notices(config, state, now)
     notices += orphan_reaper_notices(config)
+    mailbox_log = run_phase('mailbox_alert', lambda: mailbox_alert_pass(config), [])
 
     def persist_scan_state():
         save_state(args.state, state)
@@ -11444,6 +11477,7 @@ def _main():
         parts.extend(heavy_log)
     if wrap_log:
         parts.extend(wrap_log)
+    parts.extend(mailbox_log)
     if stall_log:
         parts.append('stall ' + ','.join(stall_log))
     if signal_log:
