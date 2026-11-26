@@ -207,18 +207,18 @@ safe_mkdir() {
   done
 }
 
+# lands <relative path>: true when receive would move a staged file of this name into the folder.
+lands() {
+  case "/$1/" in */../*|*/./*|*//*|*/.stage.*) return 1 ;; esac
+  case $1 in .DS_Store|*/.DS_Store) return 1 ;; esac
+}
+
 # The rsync server side. Reached only through the forced command in root's authorized_keys. Its arguments and the
 # client's command line (SSH_ORIGINAL_COMMAND) are ignored: rsync starts with a fixed list (no -l, -K, -L, -o, -g,
 # -D, --delete, no caller path) into a fresh staging folder inside the root 700 folder. Only regular files are then
 # moved into place; links and anything else are dropped. The folder mirrors the push: whatever is not a regular file
 # also in the staging folder is removed (links are removed, never followed), then empty directories. Other .stage.*
 # folders are left alone. When rsync fails or nothing landable is staged, nothing is deleted and the exit is not zero.
-
-# lands <relative path>: true when receive would move a staged file of this name into the folder.
-lands() {
-  case "/$1/" in */../*|*/./*|*//*|*/.stage.*) return 1 ;; esac
-  case $1 in .DS_Store|*/.DS_Store) return 1 ;; esac
-}
 
 cmd_receive() {
   [ "$#" -eq 0 ] || refuse "receive takes no argument"
@@ -236,7 +236,9 @@ cmd_receive() {
   while IFS= read -r -d '' f; do
     rel=${f#./}
     dest=$real_dir/$rel
-    lands "$rel" && [ -f "$dest" ] && [ ! -L "$dest" ] && [ -f "$stage/$rel" ] && continue
+    lands "$rel" && [ -f "$dest" ] && [ ! -L "$dest" ] && [ -f "$stage/$rel" ] && [ ! -L "$stage/$rel" ] && continue
+    # the parent is checked again right before the removal
+    case $rel in */*) d=${rel%/*}; [ "$(cd -P -- "$real_dir/$d" && pwd -P)" = "$real_dir/$d" ] || continue ;; esac
     rm -f -- "$dest" || fail "receive: cannot remove $rel"
   done < <(cd "$real_dir" && find -P . -mindepth 1 ! -type d ! -path './.stage.*' -print0)
   # deepest first; rmdir refuses a directory that still holds something
