@@ -183,7 +183,7 @@ printf '{"state":"MERGED","files":[{"path":"docs/intent/2026-11-27-example/inten
 printf '{"state":"OPEN","files":[{"path":"docs/intent/2026-11-27-example/intent.md"}]}\n' > "$tmp/gh/pr-78.json"
 printf '# Example\n\nStatus: Proposed 2026-11-26 · Accepted 2026-11-27\n' > "$tmp/gh/files/docs/intent/2026-11-27-example/intent.md"
 # shellcheck disable=SC2016 # literal Markdown backticks
-printf '# Example: spec\n\n## Owner steps\n- `AGENTS.md`: add the new rule.\n\n## Rollout\n- `docs/agents/team.md` is named here, outside Owner steps.\n' \
+printf '# Example: spec\n\n## Owner steps\n- `AGENTS.md`: add the new rule.\n- `.claude/hooks/guard-bash.py`: add the guard.\n- `.claude/settings.json`: wire the guard.\n\n## Rollout\n- `docs/agents/team.md` is named here, outside Owner steps.\n' \
   > "$tmp/gh/files/docs/intent/2026-11-27-example/spec.md"
 
 run_gate_gh() { # <head> <path> <diff>
@@ -266,6 +266,13 @@ run_gate_waiver() { # <head> <path>
   (
     set -euo pipefail
     cd "$repo"
+    gh() {
+      case "$1 $2" in
+        "pr view") cat "$tmp/gh/pr-$3.json" ;;
+        "api -H") local p=${4#repos/*/*/contents/}; cat "$tmp/gh/files/$p" ;;
+        *) return 1 ;;
+      esac
+    }
     head=$head_sha
     files=$(jq -n --arg p "$path" '[$p]')
     diff=""
