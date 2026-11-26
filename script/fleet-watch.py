@@ -2947,10 +2947,16 @@ def waiting_on_coordinator(state, workers):
             if not row.get('answered') and row['dispatch'] in live}
 
 
+_FINISHED_WORKER_STATES = ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+
+
 def worker_row_is_live(w):
     """True when this worker-list row is an in-progress supervised worker (both JSON shapes)."""
     w = w or {}
     if w.get(GONE_REMOTE_KEY):
+        return False
+    # fleet_rows puts a remote host's own state in `_state`; the coordinator's stub can still say ready.
+    if w.get('_host') and w.get('_state') in _FINISHED_WORKER_STATES:
         return False
     if 'dispatchStatus' in w or 'projection' in w:
         proj = w.get('projection') or {}
@@ -2963,7 +2969,7 @@ def worker_row_is_live(w):
                 and w.get('dispatchStatus') not in ('completed', 'failed', 'cancelled', 'abandoned')
                 and (proj.get('outcome') or 'in_progress') == 'in_progress'
                 and ver != 'exited')
-    return (w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+    return (w.get('state') not in _FINISHED_WORKER_STATES
             and w.get('stage') != 'released' and w.get('terminalState') != 'released'
             and w.get('liveness') != 'exited')
 
@@ -3542,6 +3548,7 @@ def set_board_status(rpc_call, worker, status, environment=''):
 # handle -> dispatch for every live worker the pass saw (#1947).
 _PROTECTED_HANDLES = set()
 _LIVE_TERMINALS = {}
+_UNREAD_WORKER_HOSTS = set()  # hosts whose worker list fleet_rows could not read this pass
 # worker-stop answers this for a dispatch that is already gone, so there is nothing left to stop (#1958).
 _STOP_SETTLED_CODES = frozenset(('dispatch_not_found',))
 
@@ -3792,12 +3799,12 @@ _RUN_WORKTREE_RE = re.compile(r'^auto-[\w.-]+-run-\d+')
 def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
     """Close a worker (`#N|role`), automation run (`<job> run N`) or `auto-<job>-run-<n>` worktree terminal that no
     live row holds and that has been idle 15 minutes or more, on each fleet host (#1963). `hosts` are environment
-    names, '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, or whose
-    rows carry `_host_read: False`, is skipped. A terminal with no lastOutputAt counts as not idle. Closing goes
+    names, '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, whose
+    rows carry `_host_read: False`, or whose worker list fleet_rows could not read, is skipped. A terminal with no lastOutputAt counts as not idle. Closing goes
     through close_worker_terminal, so close_guard keeps the coordinator's and live terminals. With `dry_run`, each
     terminal it would close is passed to dry_run as one line and nothing is closed. Returns the handles closed."""
     names = environment_name_by_id() if any(hosts or ()) else {}
-    unread, live_handles, live_paths = set(), set(), set()
+    unread, live_handles, live_paths = set(_UNREAD_WORKER_HOSTS), set(), set()
     for row in rows or ():
         if not isinstance(row, dict):
             continue
@@ -3864,9 +3871,11 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
     """The pass's worker rows, one per dispatchId (#1958). The coordinator row is the base; for a remote
     dispatch the host's own row adds `_state` and the terminal handle (`_host_terminal`). The host fields stay
     in underscore keys, so the passes that read `terminal` or `projection` see the row as before.
-    A host that cannot be read sets `_host_read: False` on its rows. Host rows the coordinator lacks are dropped."""
+    A host that cannot be read sets `_host_read: False` on its rows and is kept in _UNREAD_WORKER_HOSTS, even with
+    no coordinator row on it. Host rows the coordinator lacks are dropped."""
     names = environment_name_by_id() if any(hosts or ()) else {}
     on_host, unread = {}, set()
+    _UNREAD_WORKER_HOSTS.clear()
     for env in hosts or ():
         if not env:
             continue
@@ -3876,6 +3885,7 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
             listed = None
         if listed is None:
             unread.add(env)
+            _UNREAD_WORKER_HOSTS.add(env)
             continue
         for w in listed:
             if w.get('dispatchId'):

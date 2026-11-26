@@ -66,8 +66,10 @@ class Base(unittest.TestCase):
     def setUp(self):
         fw._PROTECTED_HANDLES.clear()
         fw._LIVE_TERMINALS.clear()
+        fw._UNREAD_WORKER_HOSTS.clear()
         self.addCleanup(fw._PROTECTED_HANDLES.clear)
         self.addCleanup(fw._LIVE_TERMINALS.clear)
+        self.addCleanup(fw._UNREAD_WORKER_HOSTS.clear)
 
 
 class StartUnknownReaper(Base):

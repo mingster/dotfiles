@@ -65,6 +65,31 @@ class OrphanSweep(Base):
         with patch.object(fw, 'environment_name_by_id', return_value={'env-b': 'host-b'}):
             self.assertEqual(fw.orphan_terminal_sweep(CONFIG, NOW, fleet, ['', 'host-b'], rows), ['term_l'])
 
+    def test_a_remote_worker_finished_on_its_host_is_not_live_for_the_sweep(self):
+        # The coordinator's --full stub still says ready and dispatched; host-b's own row says stopped.
+        stub = FIXTURE['worker_list_full_row_started']
+        env_id = stub['server']['environmentId']
+        hosted = dict(FIXTURE['worker_list_host_row_start_unknown'], state='stopped')
+        fleet = Fleet(workers={'host-b': [hosted]},
+                      terminals={'host-b': [term(hosted['terminal'], '#77|fullstack-dev', path='/w/b77')]})
+        with patch.object(fw, 'environment_name_by_id', return_value={env_id: 'host-b'}):
+            rows = fw.fleet_rows(CONFIG, [copy.deepcopy(stub)], ['', 'host-b'], fleet)
+            fw.protect_pass_terminals(CONFIG, rows)
+            self.assertNotIn(hosted['terminal'], fw._LIVE_TERMINALS)
+            closed = fw.orphan_terminal_sweep(CONFIG, NOW, fleet, ['', 'host-b'], rows)
+        self.assertEqual(closed, [hosted['terminal']])
+        self.assertEqual(self.closed(fleet), [(hosted['terminal'], 'host-b')])
+
+    def test_a_host_whose_worker_list_fails_is_skipped_with_no_coordinator_row_on_it(self):
+        fleet = Fleet(terminals={'host-b': [term('term_run', 'wrap-up-daily run 4')], '': [term('term_l', '#6|qa-sdet')]})
+        fleet.fail = {('orchestration', 'worker-list')}
+        with patch.object(fw, 'environment_name_by_id', return_value={'env-b': 'host-b'}):
+            rows = fw.fleet_rows(CONFIG, [], ['', 'host-b'], fleet)
+            closed = fw.orphan_terminal_sweep(CONFIG, NOW, fleet, ['', 'host-b'], rows)
+        self.assertEqual(rows, [])
+        self.assertEqual(closed, ['term_l'])
+        self.assertEqual(self.closed(fleet), [('term_l', '')])
+
     def test_dry_run_closes_nothing_and_lists_what_it_would_close(self):
         fleet = Fleet(terminals={'': [term('term_o', '#5|fullstack-dev')]})
         lines = []
