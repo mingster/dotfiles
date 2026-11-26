@@ -1,0 +1,1 @@
+- fleet-watch: a pass holds a worker start unless the start plus 25 s of end of pass work fits the 250 s hard end, so passes with several slow starts no longer run to 252 to 258 s (#1820).
