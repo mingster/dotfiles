@@ -165,9 +165,9 @@ rmdir "$HS/sub"
 : >"$TMP/sudo.log"
 out=$(run --role source --dir "$D" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "source run exits 0" || bad "source run rc $rc: $out"
-lock=$(grep -n "^chown -h root:.* -- $D\$" "$TMP/sudo.log" | head -1 | cut -d: -f1)
+lock=$(grep -n "^chown -h -- root:.* $D\$" "$TMP/sudo.log" | head -1 | cut -d: -f1)
 look=$(grep -n "^find -P $D " "$TMP/sudo.log" | head -1 | cut -d: -f1)
-all=$(grep -n "^chown -R -P root:.* -- $D\$" "$TMP/sudo.log" | head -1 | cut -d: -f1)
+all=$(grep -n "^chown -R -P -- root:.* $D\$" "$TMP/sudo.log" | head -1 | cut -d: -f1)
 if [ -n "$lock" ] && [ -n "$look" ] && [ -n "$all" ] && [ "$lock" -lt "$look" ] && [ "$look" -lt "$all" ]; then ok "order: lock the top, look for links as root, then chown -R -P"; else bad "order: lock=$lock look=$look all=$all: $(cat "$TMP/sudo.log")"; fi
 grep -qF "$(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate sync" "$TMP/captured/sudoers" && ok "installed sudoers is the sync entry" || bad "installed sudoers: $(cat "$TMP/captured/sudoers" 2>/dev/null)"
 grep -qxF "$(id -un) ALL=(root) NOPASSWD: $TMP/opt/secrets-gate run *" "$TMP/captured/sudoers" && ok "source sudoers also allows passwordless run" || bad "source sudoers lacks run: $(cat "$TMP/captured/sudoers" 2>/dev/null)"
@@ -185,7 +185,7 @@ mkdir -p "$WD"; chmod 700 "$WD"
 out=$(run --role source --dir "$WD" --hosts hostA 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "an option shaped folder name with a space is handled" || bad "odd name rc $rc: $out"
 if grep -E '^(chown|chmod) ' "$TMP/sudo.log" | grep -vF -- " -- " | grep -q .; then bad "a chown or chmod lacks --: $(cat "$TMP/sudo.log")"; else ok "every chown and chmod has -- before the name"; fi
-grep -qF -- "-- $WD" "$TMP/sudo.log" && ok "the odd name arrives as one quoted argument" || bad "odd name split: $(cat "$TMP/sudo.log")"
+grep -qF -- " $WD" "$TMP/sudo.log" && ok "the odd name arrives as one quoted argument" || bad "odd name split: $(cat "$TMP/sudo.log")"
 
 # Fresh host: the gate directory does not exist yet and no --dir is given (the documented first step)
 FRESH="$TMP/fresh"
@@ -212,6 +212,41 @@ mkdir -p "$TMP/openparent"; chmod 777 "$TMP/openparent"
 refused_fresh_out=$(HOME="$TMP" PATH="$TMP/bin:$PATH" SECRETS_SYNC_CONFIG="$TMP/sync.json" SG_TRUST_UID="$(id -u)" SG_GATE_DIR="$TMP/openparent/secrets-gate" \
   bash "$SETUP" --dry-run --role source --hosts hostA 2>&1); rc=$?
 [ "$rc" -eq 1 ] && grep -qF "writable" <<<"$refused_fresh_out" && ok "fresh host under a writable parent is refused" || bad "writable parent accepted: rc $rc $refused_fresh_out"
+
+# BSD chown (macOS) reads options, then the owner, then only paths, so a `--` after the owner is a file name.
+# The folder here is owned by the user, so step 3 takes the "not root 700" branch and runs both chowns.
+BSD="$TMP/bsd"
+mkdir -p "$BSD"
+cat >"$BSD/chown" <<'EOF'
+#!/bin/sh
+# Stand-in for BSD chown: options (stop at --), then the owner, then only paths.
+while [ $# -gt 0 ]; do case $1 in --) shift; break ;; -*) shift ;; *) break ;; esac; done
+[ $# -gt 0 ] || { echo "usage: chown" >&2; exit 1; }
+shift
+for p; do
+  if [ "$p" = -- ] || [ ! -e "$p" ]; then
+    echo "chown: $p: No such file or directory" >&2
+    touch "$(dirname "$0")/chown.fail"
+    exit 1
+  fi
+done
+exit 0
+EOF
+cat >"$BSD/sudo" <<'EOF'
+#!/bin/sh
+# chown is checked with BSD argument rules first, then handed to the shared stub that logs it.
+if [ "$1" = chown ]; then shift; "$(dirname "$0")/chown" "$@" || exit $?; set -- chown "$@"; fi
+exec "$(dirname "$0")/../bin/sudo" "$@"
+EOF
+chmod +x "$BSD/chown" "$BSD/sudo"
+: >"$TMP/sudo.log"
+out=$(HOME="$TMP" PATH="$BSD:$TMP/bin:$PATH" SECRETS_SYNC_CONFIG="$TMP/sync.json" SG_TRUST_UID="$(id -u)" \
+  SG_GATE_DIR="$TMP/opt" SG_SUDOERS_FILE="$TMP/sudoers" SG_PAM_DIR="$TMP/pam" SG_SSHD_DIR="$TMP/ssh" SG_ROOT_HOME="$TMP/roothome" \
+  bash "$SETUP" --role source --dir "$D" --hosts hostA 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ ! -e "$BSD/chown.fail" ] && ok "step 3 on an existing folder that is not root 700 passes BSD chown argument order" \
+  || bad "BSD chown order: rc $rc, failed: $([ -e "$BSD/chown.fail" ] && echo yes || echo no), out: $out"
+grep -qE "^chown -h -- root:[^ ]+ $D\$" "$TMP/sudo.log" && ok "the top is handed over as: chown -h -- root:group dir" || bad "top chown: $(cat "$TMP/sudo.log")"
+grep -qE "^chown -R -P -- root:[^ ]+ $D\$" "$TMP/sudo.log" && ok "the folder is handed over as: chown -R -P -- root:group dir" || bad "folder chown: $(cat "$TMP/sudo.log")"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
