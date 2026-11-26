@@ -1,0 +1,1 @@
+- secrets-gate receiver setup writes `PermitRootLogin prohibit-password` (OpenSSH 10.6 aborts root login under `forced-commands-only`); the `authorized_keys` line still confines the key. Re-run setup on a receiver to rewrite the drop in (#1936).

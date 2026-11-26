@@ -15,7 +15,7 @@
 #   --deploy   file names `deploy-read` may print, default none
 #   --pubkey   receiver only: the line printed by `sudo cat /opt/secrets-gate/id_ed25519.pub` on the source
 # Receiver: root's authorized_keys gets one line, `restrict,command="<gate> receive" <pubkey>`, and sshd gets a drop in
-# with `PermitRootLogin forced-commands-only`, so root login works for that command only and nothing runs as the
+# with `PermitRootLogin prohibit-password`, so root logs in by key only and that key is confined to the receive command by its line above, so nothing runs as the
 # shared worker account. Every privileged step goes through `sudo`. The SG_* variables move the targets for tests only.
 set -euo pipefail
 print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
@@ -180,8 +180,8 @@ else
   else
     step "would: add that line to $ak (an older gate line is replaced, other lines stay)"
   fi
-  # 5r. sshd: root may log in with a key, for a forced command only.
-  printf '# Managed by secrets-gate-setup.sh\nPermitRootLogin forced-commands-only\n' >"$tmp/sshd.conf"
+  # 5r. sshd: root may log in with a key (the key itself is limited to the forced command).
+  printf '# Managed by secrets-gate-setup.sh\nPermitRootLogin prohibit-password\n' >"$tmp/sshd.conf"
   dropin="$sshd_dir/sshd_config.d/100-secrets-gate.conf"
   step "sshd drop in:"; show "$tmp/sshd.conf"
   grep -qsE '^[[:space:]]*Include[[:space:]].*sshd_config\.d' "$sshd_dir/sshd_config" \
@@ -195,7 +195,7 @@ else
     fi
     step "note:  sshd reads the drop in on the next connection (macOS). On Linux reload it: sudo systemctl reload ssh"
   fi
-  step "note:  check: sudo sshd -T | grep -i permitrootlogin   must say forced-commands-only"
+  step "note:  check: sudo sshd -T | grep -i permitrootlogin   must say prohibit-password"
 fi
 
 # 5. Sudoers, both roles: the fixed helpers (`run *`), plus the fixed sync on the source, passwordless. `receive` is
