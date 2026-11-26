@@ -1,6 +1,7 @@
 """#1962: the start_unknown reaper, on #1958's fleet_rows and release_worker."""
 import copy
 import json
+import subprocess
 import importlib.util
 import unittest
 from pathlib import Path
@@ -115,13 +116,19 @@ class StartUnknownReaper(Base):
         stub = FIXTURE['worker_list_full_row_started']
         env_id = stub['server']['environmentId']
         hosted = FIXTURE['worker_list_host_row_start_unknown']
+        did = stub['dispatchId']
         fleet = Fleet(workers={'host-b': [hosted]}, briefs={stub['taskId']: 'BRIEF'})
-        state = {}
-        with patch.object(fw, 'environment_name_by_id', return_value={env_id: 'host-b'}):
-            def rows():
-                return fw.fleet_rows(CONFIG, [dict(copy.deepcopy(stub), _task_title='#77|fullstack-dev')],
-                                     ['', 'host-b'], fleet)
-            reap, released = self.reaper(CONFIG, state, rows, fleet)
+        state = {'own_dispatches': {did: {'kind': 'issue', 'repo': 'o/r'}}}
+        gh, ok = [], subprocess.CompletedProcess([], 0)
+        # Only rpc and the gh process are faked: the reaper's defaults release through release_worker and relabel
+        # through run_gh.
+        with patch.object(fw, 'environment_name_by_id', return_value={env_id: 'host-b'}), \
+                patch.object(fw, 'rpc', fleet), \
+                patch.object(fw.subprocess, 'run', side_effect=lambda argv, **_k: gh.append(argv) or ok):
+            def reap(t):
+                rows = fw.fleet_rows(CONFIG, [dict(copy.deepcopy(stub), _task_title='#77|fullstack-dev')],
+                                     ['', 'host-b'], fleet, state)
+                return fw.start_unknown_reaper(CONFIG, state, t, rows, fleet, fw._release_row)
             reap(NOW)
             reap(NOW + 600)
             sends = fleet.sends()
@@ -129,9 +136,16 @@ class StartUnknownReaper(Base):
             self.assertIn(hosted['terminal'], sends[0])
             self.assertEqual(sends[0][sends[0].index('--environment') + 1], env_id)
             notices = reap(NOW + 1200)
-        self.assertEqual(released, [stub['dispatchId']])
+        verbs = [(c[1], c[c.index('--environment') + 1] if '--environment' in c else '')
+                 for c in fleet.calls if c[:2] in (('orchestration', 'worker-stop'), ('orchestration', 'worker-release'),
+                                                   ('terminal', 'close'))]
+        self.assertEqual(verbs, [('worker-stop', env_id), ('worker-stop', ''), ('worker-release', env_id),
+                                 ('worker-release', ''), ('close', env_id)])
+        self.assertEqual(gh, [['gh', 'issue', 'edit', '77', '--repo', 'o/r', '--add-label', 'ready-for-agent',
+                               '--remove-label', fw.ISSUE_CLAIM_LABEL]])
         self.assertEqual(len(notices), 1)
-        self.assertIn('repo unknown here', notices[0])
+        self.assertIn('o/r#77 back to ready-for-agent', notices[0])
+        self.assertTrue(state['start_unknown'][did]['reaped'])
 
     def test_an_unread_host_row_is_skipped(self):
         rows = [local_row('ctx_x', terminal='term_x', _host='env-b', _host_read=False)]
