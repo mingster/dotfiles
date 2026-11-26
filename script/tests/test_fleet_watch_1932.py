@@ -101,10 +101,31 @@ class DeadVerifier(unittest.TestCase):
         self.h.run([stopped('ctx_v1')])
         self.assertEqual(len(self.h.starts), 1)
 
-    def test_stall_restarted_verifier_that_is_stopped_is_replaced(self):
+    def test_abandoned_exited_and_gone_remote_rows_are_replaced(self):
+        for row in ({'dispatchStatus': 'abandoned'}, {'dispatchStatus': 'dispatched', 'liveness': 'exited'},
+                    {'dispatchStatus': 'dispatched', fw.GONE_REMOTE_KEY: True}):
+            self.setUp()
+            self.h.run([dict(row, dispatchId='ctx_v1')])
+            self.assertEqual(len(self.h.starts), 2, row)
+
+    def test_done_hold_keeps_the_verifier(self):
+        self.h.state['done_hold'] = {'ctx_v1': {'reason': 'path missing'}}
+        self.h.run([stopped('ctx_v1')])
+        self.assertEqual((len(self.h.starts), self.h.released), (1, []))
+
+    def test_deferred_or_parked_stall_restart_is_left_to_the_stall_pass(self):
+        self.h.state['stall_pending_start'] = {'task': {'old_dispatch': 'ctx_v1'}}
+        self.h.run([stopped('ctx_v1')])
+        self.h.state['stall_pending_start'] = {}
+        self.h.state['own_dispatches']['ctx_v1']['parked'] = True
+        self.h.run([stopped('ctx_v1')])
+        self.assertEqual(len(self.h.starts), 1)
+
+    def test_stopped_stall_restart_parks_the_head(self):
         fw._record_stall_restart(self.h.state, 'ctx_v1', fw.BabysitStartResult(0, '', 'ctx_r'), 0, [], {})
-        self.h.run([stopped('ctx_v1'), stopped('ctx_r')])
-        self.assertEqual(len(self.h.starts), 2)
+        notices, _lines, _log = self.h.run([stopped('ctx_v1'), stopped('ctx_r')])
+        self.assertEqual((len(self.h.starts), self.h.released), (1, ['ctx_r']))
+        self.assertTrue(any('twice' in str(n) for n in notices), notices)
 
 
 if __name__ == '__main__':

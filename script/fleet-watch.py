@@ -6435,28 +6435,36 @@ def startup_retry_taken(state, key):
 
 
 def _verifier_row_dead(worker):
-    """True when the dispatch ended without succeeding: stopped, failed or cancelled."""
+    """True when the dispatch ended or its agent is gone without succeeding."""
     kind = worker_settled_kind(worker)
     if kind:
         return kind != 'succeeded'
-    return worker_inventory_status(worker) in ('failed', 'stopped', 'cancelled')
+    status = worker_inventory_status(worker)
+    if status in ('failed', 'stopped', 'cancelled', 'abandoned') or worker.get(GONE_REMOTE_KEY):
+        return True
+    return status != 'completed' and worker_liveness_verdict(worker) == 'exited'
 
 
 def dead_verifier(state, workers, repo, number, head):
     """(dispatch id, worker row or None) of the verifier recorded for this head that was stopped, failed or
     is gone from the list, else ('', None). The caller checks that no Verdict is posted.
 
-    An empty list proves nothing (the Orca read may have failed), so nothing in it counts as gone. A row
-    marked restarted belongs to the stall pass, which still owes it a restart."""
+    An empty list proves nothing (the Orca read may have failed), so nothing in it counts as gone. A dispatch
+    the stall pass restarted, still owes a restart or parked is its business. A done hold keeps the dispatch
+    unreleased (#1849), except after a startup failure, where no worker_done is in play."""
     by_id = {w.get('dispatchId'): w for w in workers or []}
     for did, row in (state.get('own_dispatches') or {}).items():
-        if not isinstance(row, dict) or row.get('startup_handled') or row.get('restarted'):
+        if not isinstance(row, dict) or row.get('startup_handled') or row.get('restarted') or row.get('parked'):
+            continue
+        if _dispatch_is_pending(state.get('stall_pending_start') or {}, did):
             continue
         if (row.get('repo'), row.get('pr'), row.get('head')) != (repo, number, head):
             continue
         if _retry_recorded(state, did):
             continue
         worker = by_id.get(did)
+        if release_held(state, did) and not worker_startup_failed(worker):
+            continue
         if by_id and (worker is None or _verifier_row_dead(worker)):
             return did, worker
     return '', None
@@ -8360,7 +8368,8 @@ def babysit_pass(
                     else:
                         release_worker(failed_did)
                 park_key = park_id('verifier', repo, number, head)
-                if startup_retry_taken(state, park_key):
+                # A dispatch that is itself a stall restart already was the one retry.
+                if not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
                     state['babysit'][repo].pop(str(number), None)
                     log_bits.append('verifier_startup_retry=%s' % number)
                 else:
