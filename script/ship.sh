@@ -19,6 +19,8 @@
 # (dotfiles origin/main when the head has no pin; the same {{PROJECT_NAME}} substitution agent-team.sh uses),
 # and a deletion of a generated copy that check demands. Any other generated copy still needs --verdict-from.
 # A pin must be an ancestor of dotfiles origin/main and must not move behind the base's pin.
+# A PR whose base is not the default branch merges only while an open PR still has that base as its head (a live
+# stack). Otherwise it refuses and asks for a retarget to the default branch and a rebase (#1952). No auto retarget.
 # After a dotfiles merge that touched the team template, template-sync-pr.sh opens the pin bump PRs (#1247).
 set -euo pipefail
 print_usage() { sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
@@ -201,7 +203,7 @@ if [[ "$origin_url" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
 fi
 
 read_pr() {
-  info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,body,comments,statusCheckRollup) \
+  info=$(gh pr view "$pr" --repo "$repo" --json state,title,isDraft,mergeable,headRefName,headRefOid,baseRefOid,baseRefName,body,comments,statusCheckRollup) \
     || refuse "cannot read PR $pr"
 }
 read_pr
@@ -244,6 +246,18 @@ rm -rf "$trailer_dir"
 # were MERGEABLE about 20s later, so reread a few times, then refuse.
 [ "$(field .state)" = OPEN ] || refuse "PR $pr is not open (state=$(field .state))"
 [ "$(field '.isDraft // false')" = false ] || refuse "PR $pr is a draft"
+# 1b. A stacked PR (base is another branch) merges only while an open PR still has that base as its head (a live stack).
+# Once the base PR has merged, the change would land in a dead branch and never reach the default branch (#1952).
+base_ref=$(field .baseRefName)
+default_branch=$(gh repo view "$repo" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null) \
+  || refuse "cannot read the default branch of $repo"
+[ -n "$default_branch" ] || refuse "cannot read the default branch of $repo"
+if [ "$base_ref" != "$default_branch" ]; then
+  open_on_base=$(gh pr list --repo "$repo" --state open --head "$base_ref" --json number) \
+    || refuse "cannot list open PRs on base $base_ref"
+  jq -e 'length > 0' <<<"$open_on_base" >/dev/null \
+    || refuse "base $base_ref is merged; retarget to $default_branch and rebase"
+fi
 mergeable_wait=${SHIP_MERGEABLE_WAIT:-4}
 mergeable_rereads=${SHIP_MERGEABLE_REREADS:-15}
 [[ "$mergeable_wait" =~ ^[0-9]+$ ]] || mergeable_wait=4
