@@ -233,6 +233,17 @@ expect_rc "sync turns a receiver file into a folder" 0 g sync
 rm -rf "$D/swap"; mv "$TMP/b.keep" "$D/sub/b.key"
 expect_rc "sync restores the folder" 0 g sync
 
+# an unreadable source file stops sync before any host is contacted, so no receiver drops its copy
+chmod 000 "$D/c.key"
+: >"$TMP/ssh.log"
+before_r=$(snap)
+expect_rc "sync refuses an unreadable source file" 1 g sync
+[[ "$LAST_OUT" == *"secrets-gate: sync: cannot read c.key"* ]] && ok "the refusal names the unreadable file" || bad "unreadable refusal text: $LAST_OUT"
+[[ ! -s "$TMP/ssh.log" ]] && ok "no host is contacted when a source file is unreadable" || bad "ssh called for an unreadable source"
+[[ "$(snap)" == "$before_r" && "$(cat "$R/c.key")" == fake-value-3 ]] && ok "receivers keep every file when a source file is unreadable" || bad "receiver changed on unreadable source"
+chmod 600 "$D/c.key"
+expect_rc "sync succeeds again once the file is readable" 0 g sync
+
 # the dry run says receivers drop the rest
 expect_rc "sync dry run for the mirror note" 0 g sync --dry-run
 [[ "$LAST_OUT" == *"receivers drop anything not in this list"* ]] && ok "dry run says receivers drop the rest" || bad "dry run note: $LAST_OUT"

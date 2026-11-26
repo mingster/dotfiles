@@ -175,6 +175,11 @@ cmd_sync() {
     echo "receivers drop anything not in this list"
     return 0
   fi
+  # An unreadable file makes the sender's rsync skip it, and every receiver then drops its copy. Refuse before any push.
+  local f
+  while IFS= read -r f; do
+    [ -r "$f" ] || fail "sync: cannot read ${f#"$DIR"/}"
+  done < <(find -P "$DIR" -type f ! -name .DS_Store ! -name '.stage.*')
   [ -f "$key" ] && [ -f "$known" ] || fail "no ssh key or known_hosts next to the config (rerun secrets-gate-setup.sh)"
   # ssh ignores every user editable file: no config (-F /dev/null), one root owned key, one root owned known_hosts.
   local rsh="ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes -o IdentityFile=$key"
