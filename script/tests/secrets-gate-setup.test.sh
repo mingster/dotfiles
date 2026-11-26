@@ -93,11 +93,13 @@ out=$(run --role receiver --dir "$D" --pubkey "$KEY" 2>&1); rc=$?
 [ "$(sed -n 2p "$TMP/captured/100-secrets-gate.conf" 2>/dev/null)" = "PermitRootLogin prohibit-password" ] && ok "sshd drop in installed" || bad "drop in missing"
 grep -q ' -- ' "$TMP/sudo.log" && ok "privileged commands put -- before the names" || bad "no -- in the sudo log"
 # Re-run over an older drop in: forced-commands-only is overwritten with prohibit-password
-printf '# Managed by secrets-gate-setup.sh\nPermitRootLogin prohibit-password\n' >"$TMP/ssh/sshd_config.d/100-secrets-gate.conf"
+printf '# Managed by secrets-gate-setup.sh\nPermitRootLogin forced-commands-only\n' >"$TMP/ssh/sshd_config.d/100-secrets-gate.conf"
+rm -f "$TMP/captured/100-secrets-gate.conf"
 out=$(run --role receiver --dir "$D" --pubkey "$KEY" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "receiver re-run exits 0" || bad "receiver re-run rc $rc: $out"
-[ "$(sed -n 2p "$TMP/ssh/sshd_config.d/100-secrets-gate.conf" 2>/dev/null)" = "PermitRootLogin prohibit-password" ] && ok "re-run overwrites forced-commands-only with prohibit-password" || bad "old drop in kept: $(cat "$TMP/ssh/sshd_config.d/100-secrets-gate.conf" 2>/dev/null)"
-! grep -q forced-commands-only "$TMP/ssh/sshd_config.d/100-secrets-gate.conf" && ok "re-run leaves no forced-commands-only" || bad "forced-commands-only still present"
+[ "$(sed -n 2p "$TMP/captured/100-secrets-gate.conf" 2>/dev/null)" = "PermitRootLogin prohibit-password" ] && ok "re-run overwrites forced-commands-only with prohibit-password" || bad "old drop in kept: $(cat "$TMP/captured/100-secrets-gate.conf" 2>/dev/null)"
+! grep -q forced-commands-only "$TMP/captured/100-secrets-gate.conf" && ok "re-run leaves no forced-commands-only" || bad "forced-commands-only still present"
+rm -f "$TMP/ssh/sshd_config.d/100-secrets-gate.conf"
 
 # --helpers: fixed helpers installed root 755 into <gate dir>/helpers, on both roles
 HS="$TMP/hsrc"
