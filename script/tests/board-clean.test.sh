@@ -55,6 +55,10 @@ json.dump({"ok": True, "result": {"truncated": False, "worktrees": [
     card("/w/failed", "refs/heads/feat-failed", activity=old),
     card("/w/failed-push", "refs/heads/feat-failed-push", activity=old),
     card("/w/pushed", "refs/heads/feat-pushed", activity=old),
+    card("/w/arch", "refs/heads/feat-arch", status="archived", activity=old),
+    card("/w/arch-young", "refs/heads/feat-arch-young", status="archived", activity=young),
+    card("/w/arch-dirty", "refs/heads/feat-arch-dirty", status="archived", activity=old),
+    card("/w/arch-busy", "refs/heads/feat-arch-busy", status="archived", activity=old),
 ]}}, open(path, "w"))
 PY
 python3 - "$FAKE_UP" "$old" <<'PY'
@@ -72,7 +76,11 @@ cat > "$FAKE_WORKERS" <<'JSON'
  {"state":"succeeded","liveness":"exited","terminalState":"released","workspace":"repo::/w/young"},
  {"state":"failed","liveness":"exited","terminalState":"released","workspace":"repo::/w/failed"},
  {"state":"failed","liveness":"exited","terminalState":"released","workspace":"repo::/w/failed-push"},
- {"state":"stopped","liveness":"exited","workspace":"repo::/w/pushed"}
+ {"state":"stopped","liveness":"exited","workspace":"repo::/w/pushed"},
+ {"state":"stopped","liveness":"exited","terminalState":"released","workspace":"repo::/w/arch"},
+ {"state":"stopped","liveness":"exited","terminalState":"released","workspace":"repo::/w/arch-young"},
+ {"state":"stopped","liveness":"exited","terminalState":"released","workspace":"repo::/w/arch-dirty"},
+ {"state":"ready","outcome":"in_progress","liveness":"live","terminalState":"active","workspace":"repo::/w/arch-busy"}
 ]}}
 JSON
 cat > "$FAKE_UP_WORKERS" <<'JSON'
@@ -90,6 +98,10 @@ json.dump({
     "/w/failed-push": {"dirty": False, "unpushed": True, "unmerged": True},
     "/remote/verify": {"dirty": False, "unpushed": True, "unmerged": True},
     "/w/pushed": {"dirty": False, "unpushed": False, "unmerged": True, "pr": "none"},
+    "/w/arch": {"dirty": False, "unpushed": False, "unmerged": False},
+    "/w/arch-young": {"dirty": False, "unpushed": False, "unmerged": False},
+    "/w/arch-dirty": {"dirty": True, "unpushed": False, "unmerged": False},
+    "/w/arch-busy": {"dirty": False, "unpushed": False, "unmerged": False},
 }, open(sys.argv[1], "w"))
 PY
 passed=0 failed=0
@@ -113,10 +125,18 @@ grep -Fq '[dry-run] would clean /remote/verify (worktree, local branch, remote b
   && ok 'names the remote throwaway card' || bad 'names the remote throwaway card' "$out"
 grep -Fq "[dry-run] would keep /w/pushed (pushed branch not merged and has no PR) environment=local" <<<"$out" \
   && ok "a pushed, unmerged, no-PR branch stays" || bad "a pushed, unmerged, no-PR branch stays" "$out"
+grep -Fq '[dry-run] would clean /w/arch (worktree, local branch, remote branch, terminals, session) environment=local' <<<"$out" \
+  && ok 'a released archived card is cleaned' || bad 'a released archived card is cleaned' "$out"
+grep -Fq '[dry-run] would keep /w/arch-young (Done for less than 30 minutes) environment=local' <<<"$out" \
+  && ok 'an archived card under 30 minutes stays' || bad 'an archived card under 30 minutes stays' "$out"
+grep -Fq '[dry-run] would keep /w/arch-dirty (unsaved changes) environment=local' <<<"$out" \
+  && ok 'an archived card with unsaved changes stays' || bad 'an archived card with unsaved changes stays' "$out"
+grep -Fq '[dry-run] would keep /w/arch-busy (unreleased worker) environment=local' <<<"$out" \
+  && ok 'an archived card with an unreleased worker stays' || bad 'an archived card with an unreleased worker stays' "$out"
 grep -Fq '/w/open' <<<"$out" && bad 'an open card is not a cleanup decision' "$out" || ok 'an open card is not a cleanup decision'
 grep -Fq 'board-clean: skip down (unreachable), retry next round' <<<"$out" && ok 'unreachable host is skipped and retried' || bad 'unreachable host is skipped and retried' "$out"
 grep -Fq 'gone' <<<"$out" && bad 'unreachable host is not treated as gone' "$out" || ok 'unreachable host is not treated as gone'
-grep -Fq 'dry-run: clean=3 keep=4 skipped_hosts=1' <<<"$out" && ok 'dry run counts every named card' || bad 'dry run counts every named card' "$out"
+grep -Fq 'dry-run: clean=4 keep=7 skipped_hosts=1' <<<"$out" && ok 'dry run counts every named card' || bad 'dry run counts every named card' "$out"
 grep -Eq 'worktree (rm|set) ' "$ORCA_LOG" && bad 'dry run does not remove or comment' "$(cat "$ORCA_LOG")" || ok 'dry run does not remove or comment'
 
 : > "$ORCA_LOG"
@@ -124,6 +144,8 @@ out=$(python3 "$here/board-clean.py" --fleet --apply 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok 'apply exits 0' || bad 'apply exits 0' "rc=$rc $out"
 grep -Fxq 'worktree rm --worktree path:/w/clean --delete-branch --json' "$ORCA_LOG" \
   && ok 'apply removes the local card' || bad 'apply removes the local card' "$(cat "$ORCA_LOG")"
+grep -Fxq 'worktree rm --worktree path:/w/arch --delete-branch --json' "$ORCA_LOG" \
+  && ok 'apply removes the archived card' || bad 'apply removes the archived card' "$(cat "$ORCA_LOG")"
 grep -Fxq 'worktree rm --worktree path:/remote/verify --delete-branch --environment up --json' "$ORCA_LOG" \
   && ok 'apply cleans on the dispatch host' || bad 'apply cleans on the dispatch host' "$(cat "$ORCA_LOG")"
 grep -Fq "branch -D 'verify-1'" "$ORCA_LOG" && grep -Fq 'push origin --delete' "$ORCA_LOG" \
