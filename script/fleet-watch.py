@@ -3698,7 +3698,11 @@ def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
     book = state.setdefault('start_unknown', {})
     seen, notices = set(), []
     for w in rows or []:
-        if not isinstance(w, dict) or not w.get('dispatchId') or w.get('_host_read') is False:
+        if not isinstance(w, dict) or not w.get('dispatchId'):
+            continue
+        if w.get('_host_read') is False:
+            if w['dispatchId'] in book:
+                seen.add(w['dispatchId'])
             continue
         if (w.get('_state') or _worker_state(w)) != 'start_unknown':
             continue
@@ -3716,7 +3720,8 @@ def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
                     entry['resent_at'] = now
                 log_fleet_watch('start_unknown %s: brief resent%s' % (did, '' if sent else ' failed, retry next pass'))
             continue
-        if now - entry['at'] < START_UNKNOWN_REAP_SECONDS:
+        if (now - entry['at'] < START_UNKNOWN_REAP_SECONDS
+                or now - entry['resent_at'] < START_UNKNOWN_REAP_SECONDS - START_UNKNOWN_RESEND_SECONDS):
             continue
         closed = release(w)
         if closed not in ('closed', 'kept:no_handle'):
@@ -3826,8 +3831,9 @@ def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
                 continue
             if handle in live_handles or (path and path in live_paths) or close_guard(handle):
                 continue
-            last = t.get('lastOutputAt')
-            if not isinstance(last, (int, float)) or now - last / 1000.0 < ORPHAN_IDLE_SECONDS:
+            last = t.get('lastOutputAt')  # ms; 0 or a bool is no known output time
+            if (isinstance(last, bool) or not isinstance(last, (int, float)) or last <= 0
+                    or now - last / 1000.0 < ORPHAN_IDLE_SECONDS):
                 continue
             if dry_run is not None:
                 dry_run('orphan sweep: would close %s (%s) on %s, idle %dm' % (
@@ -5539,7 +5545,7 @@ def _live_row_names_issue(w, number):
     refs = ' '.join(_SPEC_REFS_LINE_RE.findall(str(w.get('_task_spec') or '')))
     if re.search(r'#%d(?![0-9])' % number, refs):
         return True
-    for name in (worker_branch_name(w), worker_checkout_path(w)):
+    for name in (worker_branch_name(w), worker_checkout_path(w), w.get('_host_workspace')):
         match = _BRANCH_ISSUE_RE.search(str(name or '').rstrip('/'))
         if match and int(match.group(1)) == number:
             return True

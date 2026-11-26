@@ -40,6 +40,18 @@ class OrphanSweep(Base):
         self.assertEqual(self.closed(fleet), [('term_auto', 'host-b'), ('term_orphan', 'host-b'),
                                               ('term_orphan_local', ''), ('term_run', 'host-b')])
 
+    def test_a_terminal_with_no_output_time_is_not_closed(self):
+        fw.protect_pass_terminals(CONFIG, [])
+        fleet = Fleet(terminals={'': [term(COORD, '#0|elon'), term('term_zero', '#9|fullstack-dev', last=0),
+                                      term('term_false', '#9|fullstack-dev', last=False),
+                                      term('term_idle', '#9|fullstack-dev')]})
+        closed = fw.orphan_terminal_sweep(CONFIG, NOW, fleet, [''], [])
+        self.assertEqual(closed, ['term_idle'])
+
+    def test_a_remote_row_worktree_names_its_issue(self):
+        self.assertTrue(fw._live_row_names_issue({'_host_workspace': 'ws::/w/b12'}, 12))
+        self.assertFalse(fw._live_row_names_issue({'_host_workspace': 'ws::/w/b12'}, 13))
+
     def test_a_host_whose_terminal_list_or_rows_cannot_be_read_is_skipped(self):
         fleet = Fleet(terminals={'host-b': [term('term_o', '#5|fullstack-dev')], '': [term('term_l', '#6|qa-sdet')]})
         fleet.fail = {('terminal', 'list')}

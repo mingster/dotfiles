@@ -543,7 +543,9 @@ printf 'Worker role: fullstack-dev\n\nFix a typo in the README.\n' >"$tmp/light-
 lo_pick() { # <config> <brief>
   FLEET_LOAD_SCRIPT="$tmp/load-light.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" pick --spec "$2" --json
 }
-for brief in heavy-brief heavy-flag-brief release-brief; do
+printf 'Worker role: fullstack-dev\n\nVerify: bunx tsc --noEmit\n' >"$tmp/tsc-brief.md"
+printf 'Worker role: fullstack-dev\n\nVerify: psql -c "select 1"\n' >"$tmp/db-brief.md"
+for brief in heavy-brief heavy-flag-brief release-brief tsc-brief db-brief; do
   ec=0; out=$(lo_pick "$tmp/lo.json" "$tmp/$brief.md" 2>"$tmp/lo.err") || ec=$?
   [ "$ec" = 1 ] || fail "$brief with room only on a light-only host must be held (ec=$ec): $out"
   grep -Fq 'worker-placement: heavy start held (light-only hosts: host-light)' "$tmp/lo.err" \

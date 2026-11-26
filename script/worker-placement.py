@@ -164,7 +164,7 @@ def task_kind(spec_path: Path | None) -> str:
 
 
 HEAVY_LINE = re.compile(r'^Heavy:\s*yes\b', re.IGNORECASE | re.MULTILINE)
-HEAVY_WORDS = re.compile(r'playwright|regression|xcodebuild|build-and-test\.sh|bun run build|\bfull tsc\b', re.IGNORECASE)
+HEAVY_WORDS = re.compile(r'playwright|regression|xcodebuild|build-and-test\.sh|bun run build|head-checks-tsc|\btsc\b|\b(?:createdb|dropdb|psql|pg_dump|pg_restore)\b', re.IGNORECASE)
 
 
 def heavy_start(spec_path: Path | None) -> bool:

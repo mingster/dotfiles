@@ -141,6 +141,36 @@ class StartUnknownReaper(Base):
         self.assertEqual(released, [])
         self.assertNotIn('ctx_x', state.get('start_unknown', {}))
 
+    def test_an_unread_pass_keeps_the_clock_and_the_stall_protection(self):
+        rows = [local_row('ctx_k', terminal='term_k', _host='env-b')]
+        state = {}
+        reap, released = self.reaper(CONFIG, state, lambda: rows, Fleet(briefs={'task_ctx_k': 'B'}))
+        reap(NOW)
+        reap(NOW + 600)
+        rows[0]['_host_read'] = False
+        reap(NOW + 900)
+        self.assertEqual(state['start_unknown']['ctx_k']['at'], NOW)
+        self.assertIn('ctx_k', fw.reaper_owned(state))
+        rows[0]['_host_read'] = True
+        reap(NOW + 1200)
+        self.assertEqual(released, ['ctx_k'])
+
+    def test_a_late_resend_gets_ten_minutes_before_the_release(self):
+        rows = [local_row('ctx_l', terminal='term_l')]
+        fleet = Fleet(briefs={'task_ctx_l': 'B'})
+        state = {}
+        reap, released = self.reaper(CONFIG, state, rows, fleet)
+        reap(NOW)
+        fleet.fail = {('terminal', 'send')}
+        reap(NOW + 600)
+        fleet.fail = set()
+        reap(NOW + 1150)
+        reap(NOW + 1200)
+        reap(NOW + 1749)
+        self.assertEqual(released, [])
+        reap(NOW + 1750)
+        self.assertEqual(released, ['ctx_l'])
+
     def test_a_failed_resend_or_release_is_tried_again(self):
         rows = [local_row('ctx_r', terminal='term_r')]
         fleet = Fleet(briefs={'task_ctx_r': 'B'})
