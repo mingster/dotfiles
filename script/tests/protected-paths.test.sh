@@ -258,11 +258,51 @@ intent_msg 77 2026-11-27 > "$tmp/msg"
 commit_path docs/intent/example.md
 expect_gh "an intent trailer does not accept an intent" refuse "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
 
+# Pre go-live waiver fixture: the gate must reach load_owner_receipts owner. A plain Owner-approved trailer
+# passes under it, so an intent trailer that is refused under the same fixture is refused by owner mode.
+run_gate_waiver() { # <head> <path>
+  local head_sha=$1 path=$2
+  # shellcheck disable=SC2034,SC2329
+  (
+    set -euo pipefail
+    cd "$repo"
+    head=$head_sha
+    files=$(jq -n --arg p "$path" '[$p]')
+    diff=""
+    export SHIP_TODAY=2026-11-19
+    info=$(jq -n --arg b "$base" --arg h "$head_sha" '{
+      baseRefOid: $b,
+      body: "Builder: agent=claude model=sonnet\n",
+      comments: [
+        {body: ("Review: PASS head=" + $h)},
+        {body: ("Verdict: PASS head=" + $h + " verifier=qa author=dev agent=codex model=gpt-5")}
+      ]}')
+    field() { jq -r "$1" <<<"$info"; }
+    refuse() { printf 'REFUSED:%s\n' "$*"; exit 7; }
+    die() { printf 'DIE:%s\n' "$*"; exit 8; }
+    check_protected_paths
+    printf 'ALLOWED\n'
+  ) 2>&1
+}
+
+expect_waiver() { # <name> <allow|refuse> <head> <path> [needle]
+  local out rc
+  out=$(run_gate_waiver "$3" "$4")
+  rc=$?
+  if [ "$2" = allow ] && [ "$rc" -eq 0 ] && [[ "$out" == *"owner-only path waived until "* && "$out" == *ALLOWED ]]; then ok "$1"
+  elif [ "$2" = refuse ] && [ "$rc" -eq 7 ] && [[ "$out" == *"$5"* ]]; then ok "$1"
+  else bad "$1" "rc=$rc out=$out"; fi
+}
+
 for p in .claude/hooks/guard-bash.py .claude/settings.json; do
   reset_branch
   intent_msg 77 2026-11-27 > "$tmp/msg"
   commit_path "$p"
-  expect_gh "an intent trailer does not open owner only $p" refuse "$(git -C "$repo" rev-parse HEAD)" "$p" "" "waits for the owner"
+  expect_waiver "an intent trailer does not open owner only $p under the pre go-live waiver" refuse "$(git -C "$repo" rev-parse HEAD)" "$p" "waits for the owner"
+  reset_branch
+  printf '%s' "$owner_msg_one" > "$tmp/msg"
+  commit_path "$p"
+  expect_waiver "a plain Owner-approved trailer passes $p under the pre go-live waiver" allow "$(git -C "$repo" rev-parse HEAD)" "$p"
 done
 
 for p in .claude/model-routing.md templates/agent-team/.claude/model-routing.md model-routing.md web/AGENTS.md AGENTS.md; do
