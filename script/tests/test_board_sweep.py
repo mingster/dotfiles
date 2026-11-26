@@ -8,6 +8,11 @@ import tempfile
 import textwrap
 import unittest
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "lib"))
+import asdf_pin  # noqa: E402
+
+asdf_pin.pin()  # before any test sets HOME
+
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "board-sweep.py"
 REPLY = """echo '{"ok":true,"result":{"environments":[],"worktrees":[],"workers":[],"scope":{"source":"all"}}}'"""
 

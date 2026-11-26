@@ -9,8 +9,12 @@ ok() { pass=$((pass + 1)); }
 bad() { fail=$((fail + 1)); echo "FAIL: $1"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# shellcheck source=lib/asdf-pin.sh
+. "$here/lib/asdf-pin.sh"
+# shellcheck source=lib/git-identity.sh
+. "$here/lib/git-identity.sh"
 export HOME="$tmp/home"; mkdir -p "$HOME"
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+use_test_git_identity "$tmp"
 
 git init -q -b main "$tmp/origin.git" --bare
 git clone -q "$tmp/origin.git" "$tmp/repo" 2>/dev/null
@@ -76,8 +80,10 @@ fake="$tmp/fake-script"; mkdir -p "$fake"
 printf '#!/usr/bin/env bash\necho "#$2: Owner decision 2026-11-21: verifier is another family"\n' >"$fake/owner-decisions.sh"
 WORKER_BRIEF_DIR="$tmp/briefs"; mkdir -p "$WORKER_BRIEF_DIR"
 die() { echo "$*" >&2; exit 1; }
-# shellcheck disable=SC1090
-. <(awk '/^issue_ref_from_spec\(\)/,/^}/; /^started_issue_ref\(\)/,/^}/; /^with_owner_decisions\(\)/,/^}/' "$script")
+# A file, not <(...): macOS /bin/bash 3.2 sources nothing from a process substitution.
+awk '/^issue_ref_from_spec\(\)/,/^}/; /^started_issue_ref\(\)/,/^}/; /^with_owner_decisions\(\)/,/^}/' "$script" >"$tmp/funcs.sh"
+# shellcheck disable=SC1091
+. "$tmp/funcs.sh"
 here_saved=$here; here=$fake
 printf 'Task text\nRefs mingster/dotfiles#1305\n' >"$tmp/spec.txt"
 for a in antigravity grok; do
