@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # automation-precheck-wrapper.sh: traceable start and end lines, and the result line and exit code Orca records.
 set -uo pipefail
+# The preflight (#1916) would fetch the real ~/dotfiles on every wrapper call below. Skip it here; the
+# fast-forward test at the end unsets this for its own run.
+export DOTFILES_FRESH_DONE=1
 root=$(cd "$(dirname "$0")/../.." && pwd -P)
 wrapper="$root/script/automation-precheck-wrapper.sh"
 tmp=$(mktemp -d)
@@ -110,6 +113,25 @@ check 'INT run exits 130' test "$int_rc" -eq 130
 check 'INT run writes exactly one phase=end line' test "$(grep -c 'phase=end' "$log")" -eq 1
 check 'INT run records exit=130 in phase=end' grep -q 'phase=end exit=130 ' "$log"
 pkill -P "$wpid" 2>/dev/null || true
+
+# Preflight: a behind and clean DOTFILES_DIR is fast-forwarded before the inner command runs (#1916).
+g() { git -c user.email=t@t -c user.name=t "$@"; }
+fx="$tmp/fresh"; mkdir -p "$fx"
+git init -q --bare -b main "$fx/origin.git"
+git clone -q "$fx/origin.git" "$fx/up" 2>/dev/null
+echo a >"$fx/up/f"; g -C "$fx/up" add -A; g -C "$fx/up" commit -qm one; g -C "$fx/up" push -q origin HEAD:main
+git clone -q "$fx/origin.git" "$fx/co" 2>/dev/null
+echo b >>"$fx/up/f"; g -C "$fx/up" commit -qam two; g -C "$fx/up" push -q origin HEAD:main
+want=$(git -C "$fx/up" rev-parse HEAD)
+seen="$tmp/seen-head"
+: >"$log"
+env -u DOTFILES_FRESH_DONE DOTFILES_DIR="$fx/co" SESSION_SYNC_FETCH_TIMEOUT=2 \
+  bash "$wrapper" test-fresh "$log" -- bash -c "git -C '$fx/co' rev-parse HEAD >'$seen'" >"$tmp/out" 2>"$tmp/err"
+rc=$?
+check 'behind clean DOTFILES_DIR is fast-forwarded before the inner command runs' test "$(cat "$seen" 2>/dev/null)" = "$want"
+check 'fast-forward run still exits 1 so Orca starts no agent' test "$rc" -eq 1
+check 'fast-forward run prints nothing on stderr' test ! -s "$tmp/err"
+check 'fast-forward is logged to the run log' grep -q 'session-sync: co fast-forwarded' "$log"
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

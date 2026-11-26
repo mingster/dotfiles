@@ -46,7 +46,7 @@ check "fetch failure continues" "$rc" 0
 
 # The lint
 s="$tmp/scripts"; mkdir -p "$s/lib"
-for f in worker-startup.sh ship.sh head-checks.sh; do
+for f in worker-startup.sh ship.sh head-checks.sh automation-precheck-wrapper.sh; do
   printf '#!/usr/bin/env bash\nhere=x\n. "$here/lib/dotfiles-fresh.sh"\n' >"$s/$f"
 done
 bash "$here/check-dotfiles-fresh.sh" "$s" 2>/dev/null; check "lint passes when all source it" "$?" 0
@@ -54,6 +54,11 @@ printf '#!/usr/bin/env bash\n' >"$s/ship.sh"
 out=$(bash "$here/check-dotfiles-fresh.sh" "$s" 2>&1); rc=$?
 check "lint fails when ship.sh drops it" "$rc" 1
 case "$out" in *ship.sh*) echo "ok: names the script"; ;; *) echo "FAIL: $out"; fail=1 ;; esac
+printf '#!/usr/bin/env bash\nhere=x\n. "$here/lib/dotfiles-fresh.sh"\n' >"$s/ship.sh"
+printf '#!/usr/bin/env bash\n' >"$s/automation-precheck-wrapper.sh"
+out=$(bash "$here/check-dotfiles-fresh.sh" "$s" 2>&1); rc=$?
+check "lint fails when the wrapper drops it" "$rc" 1
+case "$out" in *automation-precheck-wrapper.sh*) echo "ok: names the wrapper"; ;; *) echo "FAIL: $out"; fail=1 ;; esac
 bash "$here/check-dotfiles-fresh.sh" 2>/dev/null; check "lint passes on the real scripts" "$?" 0
 out=$(bash "$here/check-dotfiles-fresh.sh" --help 2>&1); rc=$?
 check "lint --help exits 0" "$rc" 0

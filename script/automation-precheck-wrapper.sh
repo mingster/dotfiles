@@ -19,6 +19,9 @@ shift 2
 }
 
 mkdir -p "$(dirname "$log")"
+here=$(cd "$(dirname "$0")" && pwd)
+# Preflight (#1211, #1916): fast-forward DOTFILES_DIR before the inner command. Its output goes to the run log.
+. "$here/lib/dotfiles-fresh.sh" >>"$log" 2>&1
 host=$(hostname -s 2>/dev/null || hostname | cut -d. -f1)
 rid=$$
 started=$SECONDS
