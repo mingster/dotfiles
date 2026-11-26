@@ -1,0 +1,1 @@
+- fleet-watch: run each project's support mailbox alert check every pass; new alert mail reaches the coordinator as an escalation (#1976).
