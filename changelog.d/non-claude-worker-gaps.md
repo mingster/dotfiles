@@ -1,0 +1,1 @@
+Antigravity and Grok workers get git hooks in their worktree that refuse an Owner-approved trailer and a secret path, and their brief carries the owner decisions on the issue. fleet-watch logs when a verifier pick took the builder from the dispatch because the PR body had no Builder line. The model routing template drops three stale lines about Antigravity.

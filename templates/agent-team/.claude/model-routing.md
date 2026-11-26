@@ -53,7 +53,7 @@ Different family review: qa-sdet uses a model family different from the one full
 
 ## Worker flags by provider
 
-Antigravity workers still require the local host until remote attach works.
+Antigravity workers and verifiers run on remote hosts too (`--on <host>`). A host whose agy is signed out gets Claude instead.
 
 The user's standing choice: pass these on every `worker-start`. Ids checked 2026-10-25 (Claude `claude --help`, Antigravity `agy models`); re-check when they drift.
 
@@ -66,7 +66,7 @@ The user's standing choice: pass these on every `worker-start`. Ids checked 2026
 Light order: Claude `haiku`, then Antigravity `gemini-3.8-flash`, then Grok `grok-4.7`.
 
 - Antigravity puts the effort in the model id: pass no `--effort`.
-- Antigravity defaults to Claude models, so it does not give a different family when the author ran on Claude. Non Claude verifier: `--agent antigravity --model gemini-4-argon-high` (checked 2026-10-17).
+- Antigravity runs `gemini-4-argon` (Gemini family), so it is a different family from a Claude author. Verifier: `--agent antigravity --model gemini-4-argon-high`.
 - After each start, compare `launch.requested` with `launch.effective` in the receipt and report the effective model.
 
 ## Argon builds, Claude debugs (user 2026-11-01)

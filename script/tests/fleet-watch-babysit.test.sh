@@ -522,6 +522,11 @@ if [ "$(starts)" = 1 ] && grep -q -- '--model opus' "$BABYSIT_STARTS" && ! grep 
 else
   bad "dispatch record refuses the builder pair ($(cat "$BABYSIT_STARTS"))"
 fi
+if grep -q 'builder taken from its dispatch: agent=cursor model=grok-4.7-high' "$FLEET_WATCH_LOG_PATH"; then
+  ok "the pass logs that the builder came from the dispatch"
+else
+  bad "the pass logs that the builder came from the dispatch"
+fi
 
 # --- default cap is 2 dispatches per pass, across both watched repos ---
 empty_repos
@@ -816,6 +821,19 @@ assert len(notices) == 1 and "owner/app#41" in str(notices[0]), notices
 assert bits.count("unknown_builder=41") == 3, bits
 assert sum("unknown-builder-parked" in l for l in lines) == 2, lines
 assert not starts and not picks, (starts, picks)
+# #1940: the Builder line added to the body on the same head lifts the park.
+pr["body"] += "\nBuilder: agent=claude model=claude-sonnet-5-5\n"
+notices, lines, bits = run()
+assert "unknown_builder_cleared=41" in bits, bits
+assert not any("unknown-builder" in l for l in lines), lines
+assert not state["babysit_unknown_builder"]["owner/app"].get("41"), state
+# A Builder line whose model has no known family does not lift the park (no alert loop).
+pr["body"] = pr["body"].replace("Builder: agent=claude model=claude-sonnet-5-5", "Builder: agent=mystery model=zzz-1")
+state["babysit_unknown_builder"]["owner/app"]["41"] = {"head": head_a, "refusals": fw.UNKNOWN_BUILDER_REFUSALS}
+notices, lines, bits = run()
+assert "unknown_builder_cleared=41" not in bits, bits
+assert any("unknown-builder-parked" in l for l in lines), lines
+pr["body"] = pr["body"].replace("Builder: agent=mystery model=zzz-1", "")
 pr["headRefOid"] = head_b
 pr["comments"] = [{"body": "Review: PASS head=%s\n" % head_b}]
 notices, lines, bits = run()

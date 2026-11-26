@@ -6850,13 +6850,19 @@ def route_rework_head(pr, workers, state, repo, now, term_times, release, notify
     return 'live'
 
 
-def builder_pair(pr, workers=None):
-    """Builder agent and model from the PR body, else a matching dispatch record."""
+def builder_pair_from_body(pr):
+    """Builder agent and model from the last Builder line of the PR body, else None."""
     found = None
     for line in (pr.get('body') or '').splitlines():
         match = _BUILDER_LINE_RE.match(line.strip()) or _BUILDER_SLASH_RE.match(line.strip())
         if match:
             found = (_AGENT_ALIASES.get(match.group(1).lower(), match.group(1)), match.group(2))
+    return found
+
+
+def builder_pair(pr, workers=None):
+    """Builder agent and model from the PR body, else the dispatch that owns the PR (#1940)."""
+    found = builder_pair_from_body(pr)
     if found:
         return found
     number = pr.get('number')
@@ -7066,6 +7072,10 @@ def unknown_builder_parked(state, repo, number, head):
     entry = ((state.get('babysit_unknown_builder') or {}).get(repo) or {}).get(str(number))
     return isinstance(entry, dict) and entry.get('head') == head \
         and int(entry.get('refusals') or 0) >= UNKNOWN_BUILDER_REFUSALS
+
+
+def unknown_builder_clear(state, repo, number):
+    ((state.get('babysit_unknown_builder') or {}).get(repo) or {}).pop(str(number), None)
 
 
 def unknown_builder_prune(state, repo, open_numbers):
@@ -8349,6 +8359,10 @@ def babysit_pass(
         if not re.fullmatch(r'[0-9a-f]{40}', head):
             lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
             continue
+        if unknown_builder_parked(state, repo, number, head) and _avoid_family(builder_pair(pr_row, workers)):
+            # The Builder line (or a matching dispatch) turned up on the same head: lift the park (#1940).
+            unknown_builder_clear(state, repo, number)
+            log_bits.append('unknown_builder_cleared=%s' % number)
         if unknown_builder_parked(state, repo, number, head):
             lines.append(_babysit_line(repo, number, head, 'skip', 'unknown-builder-parked'))
             continue
@@ -8470,6 +8484,11 @@ def babysit_pass(
             count_refused('host_cap')
             continue
         builder = builder_pair(pr_row, workers)
+        if builder and kind == 'verifier' and not builder_pair_from_body(pr_row):
+            log_bits.append('builder_from_dispatch=%s:%s/%s' % (number, builder[0], builder[1]))
+            if not dry_run:
+                log_fleet_watch('%s#%s head %s: no Builder line in the PR body, builder taken from its dispatch: agent=%s model=%s'
+                                % (repo, number, head[:8], builder[0], builder[1]))
         avoid = builder if kind == 'verifier' else None
         avoid_fam = _avoid_family(avoid) if avoid else None
         if kind == 'verifier' and not avoid_fam:

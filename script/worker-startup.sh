@@ -718,10 +718,29 @@ agy_host_label() { # <environment> -> the host the worker runs on
 }
 
 # The brief copy a worker gets: finish block and Builder line for this agent and model, refs line, role preamble.
+# Antigravity and Grok load no MEMORY.md and run no owner-decisions-stop.py hook, so a decided item gets asked again (checked
+# with a read only agy run, #1940). Their brief carries the owner decisions on its issue. Best effort: no issue, no repo, no
+# decision or a failed gh read adds nothing.
+with_owner_decisions() { # <spec_file> <title> <agent>
+  local spec_file=$1 title=$2 agent=$3 ref repo num decisions out
+  case "$agent" in antigravity|grok) ;; *) printf '%s\n' "$spec_file"; return 0 ;; esac
+  ref=$(started_issue_ref "$spec_file" "$title")
+  repo=${ref%%#*} num=${ref##*#}
+  case "$num" in ''|*[!0-9]*) printf '%s\n' "$spec_file"; return 0 ;; esac
+  [ -n "$repo" ] && [ "$repo" != "$ref" ] || { printf '%s\n' "$spec_file"; return 0; }
+  decisions=$(bash "$here/owner-decisions.sh" "$repo" "$num" 2>/dev/null) || decisions=""
+  if [ -z "$decisions" ]; then printf '%s\n' "$spec_file"; return 0; fi
+  out=$(mktemp "$WORKER_BRIEF_DIR/spec.XXXXXX") || die "cannot write the spec copy"
+  cp "$spec_file" "$out"
+  printf '\n## Owner decisions (already decided; do not ask them again)\n%s\n' "$decisions" >>"$out"
+  printf '%s\n' "$out"
+}
+
 build_brief_spec() { # <orig_spec> <run> <title> <agent> <model>
   local s
   s=$(with_finish_block "$1" "$2" "$4" "$5")
   s=$(with_refs_line "$s" "$3")
+  s=$(with_owner_decisions "$s" "$3" "$4")
   s=$(prepend_role_preamble "$s" "$3")
   stamp_worker_role "$s" "$3"
 }
@@ -1475,6 +1494,22 @@ run_mode() {
     "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
     [ "$rc" = 0 ]
   }
+  remote_install_agent_hooks() { # <remote worktree path>: the same hooks, installed by the remote copy of this script (#1940)
+    local term_json term_handle read_json rc="" tries=0
+    term_json=$("$orca" terminal create --environment "$environment" --worktree "path:$1" --json \
+      --command "bash \"\$HOME/dotfiles/script/worker-startup.sh\" --install-agent-hooks $(printf '%q' "$1"); echo HOOKS_RC=\$?") || return 1
+    term_handle=$(printf '%s' "$term_json" | jq -r '.result.terminal.handle // empty')
+    [ -n "$term_handle" ] || return 1
+    while [ "$tries" -lt "${WORKER_STARTUP_GIT_ONLY_TRIES:-60}" ]; do
+      read_json=$("$orca" terminal read --environment "$environment" --terminal "$term_handle" --json 2>/dev/null) || read_json=""
+      rc=$(printf '%s' "$read_json" | jq -r '[.result.terminal.tail[]? | capture("^HOOKS_RC=(?<rc>[0-9]+)$").rc] | first // empty' 2>/dev/null)
+      [ -z "$rc" ] || break
+      tries=$((tries + 1))
+      sleep 2
+    done
+    "$orca" terminal close --environment "$environment" --terminal "$term_handle" --json >/dev/null 2>&1 || true
+    [ "$rc" = 0 ]
+  }
   grok_trust_worktree() { # <worktree path>: Grok blocks on its folder-trust question in a new worktree (#1312)
     bash "$here/grok-trust.sh" "$1" >&2
   }
@@ -1527,6 +1562,15 @@ run_mode() {
   local brief
   brief=$(cat "$spec")
   pr_review_gates_launch_record_worktree "$wt" "$agent" "$model"
+  case "$agent" in
+    antigravity|grok)
+      if [ -z "$environment" ]; then
+        install_agent_hooks "$wt" || echo "worker-startup: WARNING: git hooks not installed in $wt" >&2
+      else
+        remote_install_agent_hooks "$wt" || echo "worker-startup: WARNING: git hooks not installed in $wt on $environment" >&2
+      fi
+      ;;
+  esac
   board_status_set "path:$wt" in-progress "$environment"
   board_display_name_set "path:$wt" "$title" "$environment"
   # A start that failed after Orca created its dispatch (the brief submit, #10098) did start: a retry would make a second
@@ -1626,6 +1670,97 @@ close_after_fails() { # --repo owner/name --pr N --comment-file FILE
   return "$rc"
 }
 
+# Antigravity and Grok load none of the Claude PreToolUse guards (#1940). Their worktree gets git hooks that refuse
+# what the guards refuse, at commit time: an Owner-approved: trailer (only the coordinator adds one, after an owner yes)
+# and a secret path. Hooks already in effect (core.hooksPath or the repo hooks dir) still run after these.
+install_agent_hooks() { # <absolute worktree>
+  local wt=$1 gitdir prior dir hook
+  [ -d "$wt" ] || { echo "install-agent-hooks: no such worktree: $wt" >&2; return 1; }
+  gitdir=$(git -C "$wt" rev-parse --absolute-git-dir) || { echo "install-agent-hooks: not a git worktree: $wt" >&2; return 1; }
+  dir="$gitdir/agent-hooks"
+  if [ -f "$dir/prior" ]; then
+    prior=$(cat "$dir/prior")
+  else
+    prior=$(git -C "$wt" config --get core.hooksPath 2>/dev/null || true)
+    case "$prior" in
+      '') prior=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)/hooks ;;
+      /*) ;;
+      *) prior=$(git -C "$wt" rev-parse --show-toplevel)/$prior ;;
+    esac
+  fi
+  mkdir -p "$dir"
+  printf '%s\n' "$prior" >"$dir/prior"
+  cat >"$dir/guard.sh" <<'GUARD'
+#!/usr/bin/env bash
+# Written by worker-startup.sh --install-agent-hooks (#1940). Usage: guard.sh <commit-msg|pre-commit|pre-push> [args]
+hook=$1; shift
+dir=$(cd "$(dirname "$0")" && pwd)
+prior=$(cat "$dir/prior" 2>/dev/null || true)
+stdin_copy=""
+[ "$hook" != pre-push ] || stdin_copy=$(cat)
+refuse() { echo "agent-hook ($hook): refused: $*" >&2; exit 1; }
+secret_path() { # <path>
+  local p; p=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case "$p" in *.example|*.sample|*.template) return 1 ;; esac
+  case "$p" in
+    secrets/*|*/secrets/*|.env|*/.env|.env.*|*/.env.*|*approval-secret*|id_rsa|*/id_rsa|id_ed25519|*/id_ed25519) return 0 ;;
+  esac
+  return 1
+}
+check_paths() { # <source>; one path per line on stdin
+  local f
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    ! secret_path "$f" || refuse "$1 touches a secret path ($f). Agents never commit secrets."
+  done
+}
+check_message() { # <source>; message on stdin
+  if grep -v '^#' | grep -qiE '^[[:space:]]*owner-approved:'; then
+    refuse "$1 has an Owner-approved: trailer. Only the coordinator adds one, after an owner yes."
+  fi
+}
+case "$hook" in
+  commit-msg)
+    check_message "this commit message" <"$1"
+    if [ -f "$HOME/dotfiles/script/check-commit-trailers.sh" ]; then
+      out=$(bash "$HOME/dotfiles/script/check-commit-trailers.sh" --file "$1" 2>&1) || refuse "$out"
+    fi
+    ;;
+  pre-commit)
+    check_paths "this commit" <<<"$(git diff --cached --name-only --diff-filter=ACMR)"
+    ;;
+  pre-push)
+    zero=0000000000000000000000000000000000000000
+    while read -r _lref lsha _rref rsha; do
+      [ -n "$lsha" ] && [ "$lsha" != "$zero" ] || continue
+      if [ "$rsha" != "$zero" ] && git cat-file -e "$rsha^{commit}" 2>/dev/null; then
+        commits=$(git rev-list "$rsha..$lsha")
+      else
+        commits=$(git rev-list "$lsha" --not --remotes)
+      fi
+      for c in $commits; do
+        check_message "commit ${c:0:12}" <<<"$(git show -s --format=%B "$c")"
+        check_paths "commit ${c:0:12}" <<<"$(git diff-tree --no-commit-id --name-only -r --root -m --diff-filter=ACMR "$c")"
+      done
+    done <<<"$stdin_copy"
+    ;;
+esac
+if [ -n "$prior" ] && [ -x "$prior/$hook" ]; then
+  if [ "$hook" = pre-push ]; then printf '%s\n' "$stdin_copy" | "$prior/$hook" "$@" || exit $?
+  else "$prior/$hook" "$@" || exit $?; fi
+fi
+exit 0
+GUARD
+  for hook in commit-msg pre-commit pre-push; do
+    printf '#!/usr/bin/env bash\nexec bash "$(dirname "$0")/guard.sh" %s "$@"\n' "$hook" >"$dir/$hook"
+    chmod +x "$dir/$hook"
+  done
+  chmod +x "$dir/guard.sh"
+  git -C "$wt" config extensions.worktreeConfig true
+  git -C "$wt" config --worktree core.hooksPath "$dir"
+  echo "worker-startup: installed git hooks for a non Claude worker in $wt" >&2
+}
+
 # One line per successful start: duration_s feeds team-audit.sh --report (#1330).
 log_startup_duration() { # <run id> <seconds>
   local line
@@ -1652,6 +1787,9 @@ case "${1:-}" in
   --close-after-fails)
     shift
     close_after_fails "$@"
+    ;;
+  --install-agent-hooks)
+    install_agent_hooks "${2:-}"
     ;;
   -h|--help)
     echo "Usage: worker-startup.sh --host-check | --run ..." >&2
