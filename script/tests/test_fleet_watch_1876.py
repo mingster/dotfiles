@@ -3,6 +3,8 @@ import importlib.util
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules load from any cwd
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 spec = importlib.util.spec_from_file_location('fleet_watch_1876', Path(__file__).parent.parent / 'fleet-watch.py')
@@ -24,7 +26,7 @@ def live(n, title='#99|fullstack-dev'):
     return triage.TriageWorker.live(None, n, title=title)
 
 
-def run_pass(state, issues=(), workers=(), open_count=5, blocked=(), ref_states=None, claimed=(), acts=None, now=NOW):
+def run_pass(state, issues=(), workers=(), open_count=5, blocked=(), ref_states=None, claimed=(), acts=None, now=NOW, prs=()):
     config = scan_config('/work/app')
     config['work_order'] = dict(ORDER)
     starts = []
@@ -40,7 +42,8 @@ def run_pass(state, issues=(), workers=(), open_count=5, blocked=(), ref_states=
 
     with patch.object(fw, 'rpc', side_effect=fake_rpc):
         _n, bits = fw.issue_scan_pass(
-            config, state, now, list(workers), pr_fetch=lambda _r: [], list_issues=lambda _r: list(issues),
+            config, state, now, list(workers), pr_fetch=lambda _r: None if prs is None else list(prs),
+            list_issues=lambda _r: list(issues),
             gate_check=lambda _c: True, admit_fn=lambda *_a: {'admitted': True, 'occupied': 0},
             start_worker=start, act=act, repo_id_lookup=lambda _h, _r: 'repo-id',
             pick_fn=pick, list_backlog=lambda _r: 3,
@@ -176,6 +179,91 @@ class SupplyBrief(unittest.TestCase):
         text = Path(supply[0][supply[0].index('--spec') + 1]).read_text(encoding='utf-8')
         self.assertIn('## Claimed with no live worker\n\n- %s#41\n' % REPO, text)
         self.assertNotIn('#42\n', text.split('## Claimed with no live worker')[1])
+
+
+def spec_text(supply):
+    return Path(supply[0][supply[0].index('--spec') + 1]).read_text(encoding='utf-8')
+
+
+def open_pr(number, body=None):
+    return {'number': 900 + number, 'state': 'OPEN', 'body': body or 'Closes #%d' % number, 'headRefName': 'mingster/x'}
+
+
+class StaleClaimHolds(unittest.TestCase):
+    def stale(self, claimed, prs=None, pr_fetch=None):
+        return fw.stale_claimed_issues(
+            {}, NOW, [], lambda _r: list(claimed), [REPO],
+            pr_fetch if pr_fetch is not None else (None if prs is None else (lambda _r: prs)),
+        )
+
+    def test_fetch_claimed_issues_requests_labels(self):
+        seen = []
+
+        class Proc:
+            stdout = '[]'
+
+        def run(command, **_k):
+            seen.append(command)
+            return Proc()
+
+        fw.fetch_claimed_issues(REPO, run=run)
+        self.assertEqual(seen[0][seen[0].index('--json') + 1], 'number,labels')
+
+    def test_hold_labels_skip_the_claim_in_dict_and_string_form(self):
+        for hold in ('blocked', 'deferred', 'tracking', 'owner'):
+            claimed = [{'number': 51, 'labels': [{'name': 'status:進行中'}, {'name': hold}]},
+                       {'number': 52, 'labels': [hold]}]
+            self.assertEqual(self.stale(claimed), [], hold)
+
+    def test_rows_without_labels_or_other_labels_are_still_stale(self):
+        claimed = [{'number': 53}, {'number': 54, 'labels': [{'name': 'status:進行中'}]}]
+        self.assertEqual(self.stale(claimed), [(REPO, 53), (REPO, 54)])
+
+    def test_open_pr_for_the_issue_skips_the_claim(self):
+        self.assertEqual(self.stale([{'number': 61}], prs=[open_pr(61)]), [])
+
+    def test_unrelated_or_closed_pr_does_not_skip_the_claim(self):
+        closed = dict(open_pr(62), state='CLOSED')
+        self.assertEqual(self.stale([{'number': 62}], prs=[open_pr(63), closed]), [(REPO, 62)])
+
+    def test_unreadable_pr_list_leaves_the_claim_out(self):
+        self.assertEqual(self.stale([{'number': 64}], pr_fetch=lambda _r: None), [])
+
+    def test_issue_scan_pass_does_not_hand_over_a_claim_with_an_open_pr(self):
+        state = {'issue_scan_backlog_sweep_at': NOW}
+        supply, bits = run_pass(state, claimed=[{'number': 41}, {'number': 42}],
+                                workers=[dict(live(1)[0], _task_title='#42|fullstack-dev')], prs=[open_pr(41)])
+        self.assertEqual(len(supply), 1, bits)
+        self.assertNotIn('## Claimed with no live worker', spec_text(supply))
+
+    def test_issue_scan_pass_leaves_claim_out_when_pr_list_is_unreadable(self):
+        state = {'issue_scan_backlog_sweep_at': NOW}
+        supply, bits = run_pass(state, claimed=[{'number': 41}], prs=None,
+                                workers=[dict(live(1)[0], _task_title='#40|fullstack-dev')])
+        self.assertEqual(len(supply), 1, bits)
+        self.assertNotIn('## Claimed with no live worker', spec_text(supply))
+
+    def test_supply_first_passes_the_pr_list_to_the_stale_claim_check(self):
+        state = dict(recent_state(), work_order_short_passes=2)
+        captured = []
+
+        def capture(*args, **_k):
+            captured.append(args[-1])
+            return ([], 0)
+
+        config = scan_config('/work/app')
+        config['work_order'] = dict(ORDER)
+        with patch.object(fw, 'work_order_try_supply', side_effect=capture):
+            fw.issue_scan_supply_first(
+                config, state, NOW, [], gate_check=lambda _c: True,
+                admit_fn=lambda *_a: {'admitted': True, 'occupied': 0}, start_worker=lambda _c: 0,
+                act=lambda _c: 0, pick_fn=pick, count_open=lambda _r: 5,
+                list_blocked=lambda _r: [], ref_state=lambda r, n: None,
+                list_claimed=lambda _r: [{'number': 71}, {'number': 72}],
+                pr_fetch=lambda _r: [open_pr(71)],
+            )
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]([REPO]), [(REPO, 72)])
 
 
 if __name__ == '__main__':
