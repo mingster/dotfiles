@@ -145,6 +145,10 @@ round_failed() {
 # --daily helpers. One host, once a day: the strict cleanup child per repo, then old logs, package caches and free space.
 free_kb() { df -Pk "${WRAP_UP_DAILY_FREE_PATH:-$HOME}" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
 kb_gb() { awk -v k="${1:-0}" 'BEGIN { printf "%.1fG", k / 1048576 }'; }
+disk_note() { # <free KB before> <free KB after>: a disk that got fuller freed nothing
+  local freed=$((${2:-0} - ${1:-0})); [ "$freed" -gt 0 ] || freed=0
+  printf 'freed %s (disk free %s -> %s)' "$(kb_gb "$freed")" "$(kb_gb "$1")" "$(kb_gb "$2")"
+}
 # One repo child. With tee 1 (a dry run) the listing also reaches the terminal. Prefix assignments reach the child through env.
 daily_child() { # <kill limit> <wrap-up> <mode> <repo> <detail> <tee 0|1> [NAME=value...]
   local limit=$1 wu=$2 mode=$3 repo_path=$4 detail=$5 tee_out=$6
@@ -331,7 +335,7 @@ scheduled_round() {
   local free_note=''
   if [ "$round_kind" = daily ]; then
     daily_extras "$((round_limit-(SECONDS-started)))" "$detail_file" || fails="${fails:+$fails; }$extras_fail"
-    free_note=" $extras_note free $(kb_gb "$free_before")->$(kb_gb "$(free_kb)")"
+    free_note=" $extras_note $(disk_note "$free_before" "$(free_kb)")"
   fi
   [ -n "$fails" ] || guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this
@@ -2097,10 +2101,87 @@ prune_worktree_why() { # sets why, or reason for a removal
   elif in_use "$path"; then why=$busy
   fi
 }
+# An automation "Run now" leaves a mingster/auto-<job>-run-<n>-<time> worktree whose agent replies once and goes idle (#1946).
+# Such a worktree goes, whatever its board status, when it is clean, has no commit beyond origin/main and every terminal in
+# it has exited or been silent for 30 minutes. Anything else falls through to the other worktree rules.
+# One listing per run for all of them (#1314): the one this run already made, else one made at the first candidate.
+auto_listed=0
+auto_terminals() {
+  if [ "$auto_listed" -eq 0 ]; then
+    auto_listed=1
+    if [ -s "$tmp/local-terminals" ]; then cp "$tmp/local-terminals" "$tmp/auto-terminals"
+    else orca_call terminal list --json > "$tmp/auto-terminals" 2>/dev/null || : > "$tmp/auto-terminals"
+    fi
+  fi
+  jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/auto-terminals" >/dev/null 2>&1
+}
+automation_run_idle() { # <path> <branch> <head>; sets run_terminals to the handles still connected there
+  local ahead status_out rows handle at connected tp now gd real_path
+  run_terminals=()
+  case "${1##*/}" in auto-*-run-*) ;; *) return 1 ;; esac
+  case "${2##*/}" in auto-*-run-*) ;; *) return 1 ;; esac
+  ! worktree_budget_spent || return 1
+  [ "$locked" -eq 0 ] && [ -z "$prune_block" ] && [ "$inventory_read" -eq 1 ] || return 1
+  ! grep -Fxq '*' "$tmp/active" || return 1
+  ! protected "$2" && ! worktree_orca_pin_unknown && ! worktree_pinned_in_orca "$1" || return 1
+  ahead=$(git rev-list --count "origin/main..$3" 2>/dev/null) || return 1
+  [ "$ahead" = 0 ] || return 1
+  status_out=$(git -C "$1" status --porcelain --untracked-files=all) || return 1
+  [ -z "$status_out" ] || return 1
+  auto_terminals || return 1
+  rows=$(jq -r '.result.terminals[] | [.handle // "-", (.lastOutputAt | if type == "number" then floor else "-" end),
+    (if .connected == false or .writable == false then 0 else 1 end), .worktreePath // .cwd // "-"] | @tsv' "$tmp/auto-terminals") || return 1
+  real_path=$(real "$1")
+  now=$(date +%s)
+  while IFS=$'\t' read -r handle at connected tp; do
+    [ -n "$handle" ] || continue
+    case "$(real "$tp")" in "$real_path"|"$real_path"/*) ;; *) continue ;; esac
+    ! grep -Fxq -- "$handle" "$tmp/closing" || continue # this run already closed it
+    [ "$handle" != "${ORCA_TERMINAL_HANDLE:-}" ] || return 1
+    [ "$connected" = 1 ] || continue
+    [ "$at" != - ] && [ $((now - at / 1000)) -ge 1800 ] || return 1
+    run_terminals+=("$handle")
+  done <<< "$rows"
+  # No terminal at all also describes a run that is still starting, so the checkout itself must be 30 minutes old.
+  if [ ${#run_terminals[@]} -eq 0 ]; then
+    gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+    [ -z "$(find "$gd/HEAD" -mmin -30 2>/dev/null)" ] || return 1
+  fi
+}
+clean_automation_run() { # <path> <branch> <head>
+  local handle why='' how=ancestor
+  if [ "$apply" -eq 0 ]; then
+    printf 'Clean automation run %s (idle, no commits beyond origin/main)\n' "$1"
+    removed=$((removed+1)); printf '%s\n' "$1" >> "$tmp/removed-paths"; return 0
+  fi
+  for handle in ${run_terminals[@]+"${run_terminals[@]}"}; do
+    close_terminal --terminal "$handle" || { why=$close_terminal_err; break; }
+    term_closed=$((term_closed+1))
+  done
+  # A stopped agent can take a moment to let go of its directory.
+  if [ -z "$why" ]; then
+    for _ in 1 2 3 4 5; do in_use "$1" || break; sleep 1; done
+    [ "$prune" -eq 0 ] || { how=prune; prune_head=$3; }
+  fi
+  if [ -z "$why" ] && guarded_worktree_remove kept "worktree $1" "$1"; then
+    prune_head=''
+    removed=$((removed+1)); printf '%s\n' "$1" >> "$tmp/removed-paths"
+    if ! git show-ref --verify --quiet "refs/heads/$2" || guarded_local_branch_delete kept "local $2" "$2" "$how"; then
+      local_deleted=$((local_deleted+1))
+      printf 'Cleaned automation run %s (branch %s)\n' "$1" "$2"
+    fi
+    return 0
+  fi
+  prune_head=''
+  [ -z "$why" ] || keep "worktree $1" "$why"
+  printf '%s\n' "$1" >> "$tmp/kept-worktrees"
+  printf '%s\n' "$2" >> "$tmp/kept-branches"
+}
 process_worktree() {
   local why='' force='' dest=''
   reason='on a remote branch'
   if [ -z "$main_checkout" ]; then main_checkout=$path; why='main checkout'
+  elif automation_run_idle "$path" "$branch" "$head"; then clean_automation_run "$path" "$branch" "$head"; return 0
   elif [ "$prune" -eq 1 ]; then prune_worktree_why
   elif worktree_budget_spent; then why='worktree step budget spent, next round'
   elif [ -z "$branch" ] && case "${path##*/}" in _*) true ;; *) false ;; esac; then why='script-owned _ worktree'

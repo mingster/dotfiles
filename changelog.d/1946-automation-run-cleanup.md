@@ -1,0 +1,3 @@
+- wrap-up removes idle, clean `auto-*-run-*` automation worktrees with their terminals and branches (#1946).
+- The daily round line reads `freed XG (disk free A -> B)`.
+- A manual "Run now" of a script job no longer shows an error when the job printed ok (reinstall the automations to pick it up).
