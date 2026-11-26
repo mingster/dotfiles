@@ -346,7 +346,8 @@ class GreenSuccessRelease(unittest.TestCase):
             'payload': {'dispatchId': worker['dispatchId']},
         }]
         done = fw.release_green_successes(
-            messages, [worker], config, state, released.append,
+            messages, [worker], config, state,
+            lambda row: released.append(row['dispatchId']) or fw.release_worker(lambda *_a: {}, row),
             lambda repo, number: pr_row if repo == REPO and number == pr_row.get('number') else None,
         )
         after = fw.admit('local', config, [worker], env_names={})

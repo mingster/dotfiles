@@ -107,7 +107,7 @@ class UnknownTaskRejection(unittest.TestCase):
         with patch.object(fw, 'repo_for_worker', return_value='o/r'), \
                 patch.object(fw, 'pr_checks_all_success', return_value=True):
             fw.release_green_successes([dict(unknown_task_rejection('ctx_r'), payload={'dispatchId': 'ctx_r', 'outcome': 'succeeded', '_orcaLifecycleRejection': {'code': 'unknown_task'}})], [worker], {}, {},
-                                       released.append, lambda *_: {'x': 1})
+                                       (lambda row: released.append(row['dispatchId']) or 'closed'), lambda *_: {'x': 1})
         self.assertEqual(released, [])
 
 

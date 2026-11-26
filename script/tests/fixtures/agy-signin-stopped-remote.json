@@ -95,5 +95,19 @@
    "name": "host-b",
    "asOf": "2026-11-25T03:42:36Z"
   }
+ },
+ "worker_list_host_row_start_unknown_note": "#1958: host-b's own worker-list row (no --full) for the same dispatch. The keys are a real worker-list row captured 2026-11-26; state is start_unknown, the state the #1947 reaper waits for",
+ "worker_list_host_row_start_unknown": {
+  "dispatchId": "ctx_a3e0fbf0486a",
+  "taskId": "task_58ec63441b04",
+  "state": "start_unknown",
+  "outcome": "in_progress",
+  "liveness": "unknown",
+  "agent": "antigravity/gemini",
+  "terminal": "term_acafe9e8-9506-4d00-9015-61ec51cad6da",
+  "terminalState": "active",
+  "workspace": "a7cf6848-df01-4c02-b672-f10c692aa748::/home/user/orca/workspaces/dotfiles/_checks",
+  "host": "local",
+  "coordinatedFrom": "host-a"
  }
 }

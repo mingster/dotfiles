@@ -118,9 +118,9 @@ class DeadFollowup(unittest.TestCase):
         child = failed_worker('ctx_f', terminalState='active', follow_up_of_dispatch_id='ctx_p')
         released = []
         state = {}
-        done = fw.release_dead_followups([parent, child], state, released.append)
+        done = fw.release_dead_followups([parent, child], state, (lambda row: released.append(row['dispatchId']) or 'closed'))
         self.assertEqual(done, ['ctx_f'])
-        self.assertEqual(fw.release_dead_followups([parent, child], state, released.append), [])
+        self.assertEqual(fw.release_dead_followups([parent, child], state, (lambda row: released.append(row['dispatchId']) or 'closed')), [])
         self.assertEqual(released, ['ctx_f'])
 
     def test_followup_of_a_failed_parent_is_kept(self):
@@ -193,8 +193,9 @@ class WorkerShowEnrichment(unittest.TestCase):
             result.dispatch_id = 'ctx_v%d' % len(starts)
             return result
 
-        def release(did, environment=None):
-            releases.append((did, environment))
+        def release(row):
+            releases.append((row['dispatchId'], row.get('_host')))
+            return 'closed'
         with tempfile.TemporaryDirectory() as root:
             state = {}
             config = {
@@ -206,6 +207,7 @@ class WorkerShowEnrichment(unittest.TestCase):
             fw.babysit_pass(config, state, [], **kwargs)
             failed = bare_failed_row('ctx_v1')
             fw.enrich_failed_worker_show(failed, state, ShowRpc({'stage': 'agent_readiness', 'lastError': 'terminal_exited'}))
+            fw._set_row_host(failed, config, state)  # what fleet_rows does in the pass (#1958)
             fw.babysit_pass(config, state, [failed], **kwargs)
         self.assertEqual(len(starts), 2)
         self.assertEqual(releases, [('ctx_v1', 'env-1')])

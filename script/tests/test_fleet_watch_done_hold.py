@@ -325,16 +325,16 @@ class VerifierReleasesSkipHeld(unittest.TestCase):
     def test_closed_pr_verifier_is_not_released(self):
         released = []
         state = json.loads(json.dumps(self.HELD))
-        self.assertFalse(fw.release_closed_verifier(self.pr(), [self.verifier()], state, 'o/r', released.append))
+        self.assertFalse(fw.release_closed_verifier(self.pr(), [self.verifier()], state, 'o/r', (lambda row: released.append(row['dispatchId']) or 'closed')))
         self.assertEqual(released, [])
-        self.assertTrue(fw.release_closed_verifier(self.pr(), [self.verifier()], {}, 'o/r', released.append))
+        self.assertTrue(fw.release_closed_verifier(self.pr(), [self.verifier()], {}, 'o/r', (lambda row: released.append(row['dispatchId']) or 'closed')))
         self.assertEqual(released, ['ctx_v'])
 
     def test_idle_rework_verifier_is_not_released(self):
         released = []
         state = dict(json.loads(json.dumps(self.HELD)), verifier_head={'o/r': {'7': 'a' * 40}})
         result = fw.route_rework_head(self.pr(state='OPEN'), [self.verifier()], state, 'o/r', T0, {'term_v': T0 - 2 * fw.VERIFIER_REWORK_IDLE_SECONDS},
-                                      released.append, lambda *_a: None)
+                                      (lambda row: released.append(row['dispatchId']) or 'closed'), lambda *_a: None)
         self.assertEqual((result, released), ('live', []))
 
     def test_standing_verifier_is_not_retired(self):
@@ -403,7 +403,7 @@ class ConciseDoneOutcome(unittest.TestCase):
         released = []
         with patch.object(fw, 'repo_for_worker', return_value='o/r'):
             done = fw.release_green_successes([concise_done('ctx_ok')], [settled_row('ctx_ok', 'succeeded')], {},
-                                              {}, released.append, lambda repo, n: GREEN)
+                                              {}, (lambda row: released.append(row['dispatchId']) or 'closed'), lambda repo, n: GREEN)
         self.assertEqual(done, ['ctx_ok'])
         self.assertEqual(released, ['ctx_ok'])
 
@@ -411,7 +411,7 @@ class ConciseDoneOutcome(unittest.TestCase):
         released = []
         with patch.object(fw, 'repo_for_worker', return_value='o/r'):
             done = fw.release_green_successes([concise_done('ctx_f')], [settled_row('ctx_f', 'failed')], {}, {},
-                                              released.append, lambda repo, n: GREEN)
+                                              (lambda row: released.append(row['dispatchId']) or 'closed'), lambda repo, n: GREEN)
         self.assertEqual(done, [])
         self.assertEqual(released, [])
 

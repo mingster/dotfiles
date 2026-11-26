@@ -2256,10 +2256,7 @@ def reap_orphan_remote_lines(rpc_call, host):
         rpc_call('terminal', 'wait', '--environment', host, '--terminal', handle, '--for', 'exit', '--timeout-ms', '60000')
         read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
     finally:
-        try:
-            rpc_call('terminal', 'close', '--environment', host, '--terminal', handle)
-        except SEND_ERRORS:
-            pass
+        close_worker_terminal(rpc_call, handle, host)
     return [str(line) for line in ((read or {}).get('terminal') or {}).get('tail') or []]
 
 
@@ -3293,8 +3290,8 @@ def dispatch_id_from_start(result):
     return ''
 
 
-def record_own_dispatch(state, dispatch_id, kind, retry_of=None, restart_at=None, restarted=False):
-    """Remember a dispatch fleet-watch started. Empty ids are ignored."""
+def record_own_dispatch(state, dispatch_id, kind, retry_of=None, restart_at=None, restarted=False, repo=None):
+    """Remember a dispatch fleet-watch started. Empty ids are ignored. `repo` feeds fleet_rows' `_repo` (#1958)."""
     did = dispatch_id.strip() if isinstance(dispatch_id, str) else ''
     if not did:
         return
@@ -3313,13 +3310,15 @@ def record_own_dispatch(state, dispatch_id, kind, retry_of=None, restart_at=None
         row['restarted'] = True
     if restart_at is not None and row.get('restart_at') is None:
         row['restart_at'] = restart_at
+    if repo:
+        row.setdefault('repo', repo)
 
 
-def remember_started_dispatch(state, result, kind):
+def remember_started_dispatch(state, result, kind, repo=None):
     """Record a verifier, rework worker, or scanned issue. Other starts are not ours to restart."""
     if kind not in ('verifier', 'rework', 'issue'):
         return
-    record_own_dispatch(state, dispatch_id_from_start(result), kind)
+    record_own_dispatch(state, dispatch_id_from_start(result), kind, repo=repo)
 
 
 def _own_row(state, dispatch_id):
@@ -3534,25 +3533,310 @@ def set_board_status(rpc_call, worker, status, environment=''):
     return True
 
 
-def stop_and_release_stalled(rpc_call, worker, dispatch_id, environment='', stop_on_host=False):
+# Terminals a release never closes, refreshed each pass: coordinator and lead handles, and
+# handle -> dispatch for every live worker the pass saw (#1947).
+_PROTECTED_HANDLES = set()
+_LIVE_TERMINALS = {}
+# worker-stop answers this for a dispatch that is already gone, so there is nothing left to stop (#1958).
+_STOP_SETTLED_CODES = frozenset(('dispatch_not_found',))
+
+
+def _env_args(environment):
+    return ('--environment', environment) if environment else ()
+
+
+def _shown_terminal(shown):
+    if isinstance(shown, dict) and isinstance(shown.get('worker'), dict) and not shown.get('terminal'):
+        shown = shown['worker']
+    if not isinstance(shown, dict):
+        return ''
+    term = shown.get('terminal')
+    if isinstance(term, dict):
+        term = term.get('handle')
+    return term if isinstance(term, str) and term else worker_terminal_handle(shown)
+
+
+def resolve_worker_terminal(rpc_call, dispatch_id, environment='', handle=''):
+    """The dispatch's terminal handle, asked of the host that holds it first. A coordinator row for a remote
+    worker carries no terminal, so the handle comes from worker-show there (#1947). '' when none is known."""
+    if handle:
+        return handle
+    for where in ((_env_args(environment),) if environment else ()) + ((),):
+        try:
+            found = _shown_terminal(rpc_call('orchestration', 'worker-show', '--dispatch', dispatch_id, *where))
+        except SEND_ERRORS:
+            continue
+        if found:
+            return found
+    return ''
+
+
+def close_guard(handle, dispatch_id=''):
+    """Why `handle` must stay open, else ''. The coordinator's and leads' terminals, and a terminal another
+    live dispatch uses, are never closed (#1947)."""
+    if not handle:
+        return 'no_handle'
+    if handle in _PROTECTED_HANDLES or handle == (os.environ.get('ORCA_TERMINAL_HANDLE') or '').strip():
+        return 'coordinator'
+    owner = _LIVE_TERMINALS.get(handle)
+    if owner and owner != dispatch_id:
+        return 'live:' + owner
+    return ''
+
+
+def close_worker_terminal(rpc_call, handle, environment='', dispatch_id=''):
+    """Close a terminal on the host that holds it, through close_guard. worker-stop and worker-release leave a
+    remote terminal open (#1947). Returns 'closed', 'kept:<why>' or 'failed'."""
+    why = close_guard(handle, dispatch_id)
+    if why:
+        return 'kept:' + why
+    try:
+        rpc_call('terminal', 'close', *_env_args(environment), '--terminal', handle)
+    except SEND_ERRORS:
+        return 'failed'
+    log_fleet_watch('closed terminal %s%s%s' % (
+        handle, ' on ' + environment if environment else '', ' of ' + dispatch_id if dispatch_id else ''))
+    return 'closed'
+
+
+def release_worker(rpc_call, row):
+    """The one retire path (#1958): stop, release, close the terminal, mark the row released.
+
+    worker-stop and worker-release go to the row's host (`_host`, '' for this one) and, for a remote row, here
+    too. A stop error other than an already gone dispatch returns 'stop_failed:<code>' and does nothing else.
+    Returns 'closed', 'kept:<why>', 'failed' or 'stop_failed:<code>'."""
+    did = (row or {}).get('dispatchId') or ''
+    if not did:
+        return 'kept:no_dispatch'
+    host = row.get('_host') or ''
+    wheres = ((_env_args(host),) if host else ()) + ((),)
+    handle = resolve_worker_terminal(rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
+    for where in wheres:
+        try:
+            rpc_call('orchestration', 'worker-stop', '--dispatch', did, *where)
+        except SEND_ERRORS as exc:
+            code = orchestration_failure_log_code(exc) or 'error'
+            if code not in _STOP_SETTLED_CODES:
+                return 'stop_failed:' + code
+    for where in wheres:
+        try:
+            rpc_call('orchestration', 'worker-release', '--dispatch', did, *where)
+        except SEND_ERRORS:
+            pass
+    closed = close_worker_terminal(rpc_call, handle, host, did)
+    _mark_worker_released(row)
+    return closed
+
+
+def _release_row(row):
+    """The default release callback: one row in, release_worker's result out."""
+    return release_worker(rpc, row)
+
+
+def row_for_dispatch(rows, dispatch_id, host=''):
+    """The pass row for `dispatch_id`, else a minimal row that release_worker can still act on."""
+    for row in rows or []:
+        if isinstance(row, dict) and row.get('dispatchId') == dispatch_id:
+            return row
+    return {'dispatchId': dispatch_id, '_host': host or ''}
+
+
+def protect_pass_terminals(config, workers):
+    """Refresh the handles a release never closes, from the pass config and worker rows."""
+    _PROTECTED_HANDLES.clear()
+    _LIVE_TERMINALS.clear()
+    for row in list((config or {}).get('runs') or []) + list((config or {}).get('leads') or []):
+        if isinstance(row, dict):
+            for key in ('terminal', 'coordinator_handle', 'handle'):
+                if isinstance(row.get(key), str) and row[key].strip():
+                    _PROTECTED_HANDLES.add(row[key].strip())
+    for w in workers or []:
+        if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w):
+            handle = w.get('_host_terminal') or worker_terminal_handle(w)
+            if handle:
+                _LIVE_TERMINALS[handle] = w['dispatchId']
+
+
+def _worker_state(w):
+    """Worker state in either worker-list shape: workerState (--full), state, or projection.stage.worker."""
+    stage = (w.get('projection') or {}).get('stage') if isinstance(w.get('projection'), dict) else None
+    return w.get('workerState') or w.get('state') or (stage.get('worker') if isinstance(stage, dict) else None)
+
+
+ACTIVE_WORKER_PAGES = 10
+
+
+def host_workers(rpc_call, on):
+    """One host's worker rows: the newest page of the list plus every page of the active list (#1947).
+
+    The list runs to thousands of rows, so only its newest page is read; every running worker holds an
+    active terminal, so the active pages cover the rest. Returns None when the active list runs past
+    ACTIVE_WORKER_PAGES pages or a page is not a list. Raises the read error."""
+    first = rpc_call('orchestration', 'worker-list', *on) or {}
+    rows = first.get('workers') if isinstance(first, dict) else None
+    if not isinstance(rows, list):
+        return None
+    rows = [w for w in rows if isinstance(w, dict)]
+    cursor = None
+    for _page in range(ACTIVE_WORKER_PAGES):
+        args = ['orchestration', 'worker-list', '--terminal-state', 'active', *on]
+        if cursor:
+            args += ['--cursor', cursor]
+        page = rpc_call(*args) or {}
+        more = page.get('workers') if isinstance(page, dict) else None
+        if not isinstance(more, list):
+            return None
+        rows += [w for w in more if isinstance(w, dict)]
+        cursor = page.get('nextCursor') or None
+        if not cursor:
+            return rows
+    return None
+
+
+def sweep_hosts(config):
+    """'' for this host plus every Orca environment name except the coordinator's own."""
+    local = (config or {}).get('local_host')
+    return [''] + sorted(n for n in set(environment_name_by_id().values()) if n and n != local)
+
+
+def _set_row_host(row, config, state=None):
+    """Tag a coordinator row with `_host`, `_state` and `_repo`, the fields every release reads (#1958)."""
+    row['_host'] = remote_environment(row) if worker_is_remote(row, config) else ''
+    row['_state'] = _worker_state(row)
+    own = (state or {}).get('own_dispatches') or {}
+    rec = own.get(row.get('dispatchId')) if isinstance(own, dict) else None
+    row['_repo'] = repo_for_worker(row, config) or (rec.get('repo') if isinstance(rec, dict) else '') or ''
+    row.setdefault('_host_read', True)
+    return row
+
+
+def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
+    """The pass's worker rows, one per dispatchId (#1958). The coordinator row is the base; for a remote
+    dispatch the host's own row adds `_state` and the terminal handle (`_host_terminal`). The host fields stay
+    in underscore keys, so the passes that read `terminal` or `projection` see the row as before.
+    A host that cannot be read sets `_host_read: False` on its rows. Host rows the coordinator lacks are dropped."""
+    names = environment_name_by_id() if any(hosts or ()) else {}
+    on_host, unread = {}, set()
+    for env in hosts or ():
+        if not env:
+            continue
+        try:
+            listed = host_workers(rpc_call, _env_args(env))
+        except SEND_ERRORS:
+            listed = None
+        if listed is None:
+            unread.add(env)
+            continue
+        for w in listed:
+            if w.get('dispatchId'):
+                on_host.setdefault(w['dispatchId'], w)
+    rows, index = [], {}
+    for raw in coordinator_rows or []:
+        if not isinstance(raw, dict):
+            continue
+        did = raw.get('dispatchId')
+        row = dict(raw)
+        if did in index:
+            rows[index[did]].update({k: v for k, v in row.items() if v is not None})
+            continue
+        _set_row_host(row, config, state)
+        host = row['_host']
+        if host:
+            mine = on_host.get(did)
+            if mine is not None:
+                row['_state'] = _worker_state(mine) or row['_state']
+                handle = worker_terminal_handle(mine)
+                if handle:
+                    row['_host_terminal'] = handle
+            row['_host_read'] = (names.get(host) or host) not in unread
+        if did:
+            index[did] = len(rows)
+        rows.append(row)
+    return rows
+
+
+def release_worker_by_fragment(fragment, config, rpc_call, hosts, allow_live=False):
+    """release-worker.sh: release the one dispatch, or close the one terminal, whose id contains `fragment` (#1947).
+
+    Every host's worker list and terminal list is read. More than one match, or none, closes nothing. The
+    coordinator's terminal, the caller's and a terminal another live dispatch uses are never closed; a live
+    target needs allow_live. A dispatch goes through release_worker (#1958). Returns (exit code, message)."""
+    fragment = (fragment or '').strip()
+    if len(fragment) < 4:
+        return 2, 'give at least 4 characters of a dispatch, task or terminal id'
+    rows, terminals = [], []
+    for env in hosts:
+        on = _env_args(env)
+        try:
+            listed = host_workers(rpc_call, on)
+            if listed is None:
+                return 1, 'cannot read the worker list on %s; nothing closed' % (env or 'this host')
+            rows += [_set_row_host(dict(w), config) if not env else dict(w, _host=env) for w in listed]
+            for t in (rpc_call('terminal', 'list', *on) or {}).get('terminals') or []:
+                if isinstance(t, dict) and t.get('handle'):
+                    terminals.append((env, t))
+        except SEND_ERRORS as error:
+            return 1, 'cannot read %s: %r; nothing closed' % (env or 'this host', error)
+    protect_pass_terminals(config, rows)
+    try:
+        for run in (rpc_call('orchestration', 'run-list', '--full') or {}).get('runs') or []:
+            if isinstance(run, dict) and isinstance(run.get('coordinator_handle'), str):
+                _PROTECTED_HANDLES.add(run['coordinator_handle'].strip())
+    except SEND_ERRORS:
+        return 1, 'cannot read the run list to find the coordinator; nothing closed'
+    # A remote worker shows here without a terminal and on its host with one: the host's row comes first.
+    rows.sort(key=lambda w: not w.get('_host'))
+    found = {}
+    for w in rows:
+        did = w.get('dispatchId') or ''
+        if did and did not in found and any(fragment in i for i in (did, w.get('taskId') or '', worker_terminal_handle(w)) if i):
+            found[did] = w
+    matched_handles = {worker_terminal_handle(w) for w in found.values()}
+    bare = [(env, t) for env, t in terminals if fragment in t['handle'] and t['handle'] not in matched_handles]
+    if len(found) + len(bare) != 1:
+        names = sorted(found) + [t['handle'] for _e, t in bare]
+        return 1, ('no worker or terminal matches %s' % fragment if not names
+                   else '%s matches %d: %s; give more of the id' % (fragment, len(names), ' '.join(names)))
+    if bare:
+        env, t = bare[0]
+        handle, did, row = t['handle'], '', None
+    else:
+        did = next(iter(found))
+        row = row_for_dispatch(rows, did)
+        env = row.get('_host') or ''
+        handle = resolve_worker_terminal(rpc_call, did, env, worker_terminal_handle(row))
+        row['_host_terminal'] = handle
+    why = close_guard(handle, did)
+    if why and why != 'no_handle':
+        return 1, 'refused: %s is %s; nothing closed' % (handle, why)
+    if row is not None and worker_row_is_live(row) and not allow_live:
+        return 1, 'refused: %s is still live; pass --live to stop it; nothing closed' % did
+    result = release_worker(rpc_call, row) if row is not None else close_worker_terminal(rpc_call, handle, env)
+    if result != 'closed':
+        return 1, '%s released, terminal %s' % (did or handle, result)
+    try:
+        still = any(t.get('handle') == handle
+                    for t in (rpc_call('terminal', 'list', *_env_args(env)) or {}).get('terminals') or [])
+    except SEND_ERRORS:
+        return 1, '%s closed on %s, but the terminal list could not be read to confirm' % (handle, env or 'this host')
+    if still:
+        return 1, '%s still listed on %s after close' % (handle, env or 'this host')
+    return 0, '%s released; terminal %s closed on %s and gone from its terminal list' % (
+        did or '(no dispatch)', handle, env or 'this host')
+
+
+def stop_and_release_stalled(rpc_call, worker, dispatch_id, environment=''):
     """The one place the stall ladder stops and releases a worker and archives its card (#1842).
 
     Returns '' on success, else the stop failure code; nothing is released when the stop fails.
-    `stop_on_host` sends the stop with --environment too, for a remote worker (#1905).
+    The release goes through release_worker on the row's host (#1958); a row with no `_host` takes `environment`.
     """
-    on_host = ('--environment', environment) if stop_on_host and environment else ()
-    try:
-        rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch_id, *on_host)
-    except SEND_ERRORS as exc:
-        return orchestration_failure_log_code(exc) or 'error'
-    # A remote dispatch is released on its host first, then on the coordinator.
-    for where in ((('--environment', environment),) if environment else ()) + ((),):
-        try:
-            rpc_call('orchestration', 'worker-release', '--dispatch', dispatch_id, *where)
-        except SEND_ERRORS:
-            pass
-    _mark_worker_released(worker)
-    set_board_status(rpc_call, worker, 'archived', environment)
+    worker.setdefault('dispatchId', dispatch_id)
+    worker.setdefault('_host', environment or '')
+    result = release_worker(rpc_call, worker)
+    if result.startswith('stop_failed:'):
+        return result[len('stop_failed:'):]
+    set_board_status(rpc_call, worker, 'archived', worker['_host'])
     return ''
 
 
@@ -3726,7 +4010,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                 )
             return
         try:
-            rpc_call('orchestration', 'worker-stop', '--dispatch', did)
+            # A restart, not a retire: stop only, on the row's host, then start again (#1958).
+            rpc_call('orchestration', 'worker-stop', '--dispatch', did, *_env_args(w.get('_host') or ''))
             _remember_stall_stop(state, w, did, repo)
         except SEND_ERRORS as exc:
             reason, exit_code = exception_start_failure(exc)
@@ -3781,9 +4066,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                             repo=repo, pr=pr_num)
             return
         try:
-            environment = remote_environment(w) if worker_is_remote(w, config) else ''
-            rpc_call('orchestration', 'worker-release', '--dispatch', did,
-                     *(('--environment', environment) if environment else ()))
+            # A restart, not a retire: release only, on the row's host, then start again (#1958).
+            rpc_call('orchestration', 'worker-release', '--dispatch', did, *_env_args(w.get('_host') or ''))
         except SEND_ERRORS:
             pass
         try:
@@ -6998,7 +7282,7 @@ def idle_seat_pass(config, state, now, workers, term_times, messages, rpc_call, 
         if closed:
             if quiet < IDLE_SEAT_STOP_QUIET_SECONDS:
                 continue
-            code = stop_and_release_stalled(rpc_call, w, did, env, stop_on_host=True)
+            code = stop_and_release_stalled(rpc_call, w, did, env)
             if code:
                 bits.append('idle_stop_fail=%s:%s' % (did, code))
                 continue
@@ -7088,7 +7372,7 @@ def release_closed_verifier(pr, workers, state, repo, release):
     worker = live_verifier_worker(pr, workers)
     if worker is None or release_held(state, worker.get('dispatchId')):
         return False
-    release(worker.get('dispatchId') or '')
+    release(worker)
     _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
     return True
 
@@ -7100,7 +7384,7 @@ def release_idle_rework_verifier(pr, workers, state, repo, now, term_times, rele
         return False
     if verifier_idle_seconds(worker, term_times, now) < VERIFIER_REWORK_IDLE_SECONDS:
         return False
-    release(worker.get('dispatchId') or '')
+    release(worker)
     _verifier_head_bucket(state, repo).pop(str(pr.get('number')), None)
     return True
 
@@ -7122,7 +7406,7 @@ def route_rework_head(pr, workers, state, repo, now, term_times, release, notify
         if idle >= VERIFIER_REWORK_IDLE_SECONDS:
             if release_held(state, worker.get('dispatchId')):
                 return 'live'
-            release(worker.get('dispatchId') or '')
+            release(worker)
             bucket.pop(str(number), None)
             return 'released'
         mail_worker(
@@ -7954,21 +8238,6 @@ def build_babysit_command(config, repo, pr_row, kind, agent, model, builder, ver
     return command
 
 
-def _default_release_worker(dispatch_id, environment=None):
-    """Release a dispatch. A remote one is released on its host first, then on the coordinator."""
-    if not dispatch_id:
-        return
-    if environment:
-        try:
-            rpc('orchestration', 'worker-release', '--dispatch', dispatch_id, '--environment', environment)
-        except SEND_ERRORS:
-            pass
-    try:
-        rpc('orchestration', 'worker-release', '--dispatch', dispatch_id)
-    except SEND_ERRORS:
-        return
-
-
 def _default_notify_worker(terminal, text):
     if not terminal or not text:
         return
@@ -8120,7 +8389,7 @@ def terminal_from_text(text):
 
 
 class StandingIO:
-    """Terminal reads, sends, stops and sleeps for the standing verifier. Tests replace it."""
+    """Terminal reads, sends and sleeps for the standing verifier. Tests replace it."""
 
     def __init__(self, config):
         self.config = config
@@ -8170,12 +8439,6 @@ class StandingIO:
                 if isinstance(handle, str) and handle:
                     return handle
         return ''
-
-    def stop(self, dispatch_id, host):
-        try:
-            rpc('orchestration', 'worker-stop', '--dispatch', dispatch_id, *self._env(host))
-        except SEND_ERRORS:
-            return
 
     def sleep(self, seconds):
         time.sleep(seconds)
@@ -8232,15 +8495,14 @@ def standing_idle(rec, open_prs):
     return verdict_posted_for_head(dict(row, headRefOid=rec.get('current_head') or ''))
 
 
-def standing_retire(state, host, rec, reason, io, release_worker, now, log_bits, event='retire'):
+def standing_retire(state, host, rec, reason, rows, release_worker, now, log_bits, event='retire'):
     """Stop and release a standing verifier, clear its record, and log the retirement."""
     did = rec.get('dispatch_id') or ''
     if did and release_held(state, did):
         log_bits.append('standing_retire_held=%s:%s' % (did, reason))
         return
     if did:
-        io.stop(did, host)
-        release_worker(did, None if rec.get('local') else host)
+        release_worker(row_for_dispatch(rows, did, '' if rec.get('local') else host))
     standing_records(state).pop(host, None)
     trial_event(
         event, 'standing', host, now, dispatch_id=did, repo=rec.get('repo', ''), prs_done=len(rec.get('prs_assigned') or []),
@@ -8259,7 +8521,7 @@ def standing_housekeeping(config, state, workers, open_prs, io, release_worker, 
             continue
         worker = _standing_worker(rec, workers)
         if workers and (worker is None or not worker_row_is_live(worker)):
-            standing_retire(state, host, rec, 'gone', io, release_worker, now, log_bits)
+            standing_retire(state, host, rec, 'gone', workers, release_worker, now, log_bits)
             continue
         if not rec.get('current_pr'):
             continue
@@ -8271,7 +8533,7 @@ def standing_housekeeping(config, state, workers, open_prs, io, release_worker, 
             )
             rec['current_pr'] = None
             if len(rec.get('prs_assigned') or []) >= cfg['max_prs']:
-                standing_retire(state, host, rec, 'max_prs', io, release_worker, now, log_bits)
+                standing_retire(state, host, rec, 'max_prs', workers, release_worker, now, log_bits)
             continue
         if rec.get('wake_verified') is False and not rec.get('wake_checked') \
                 and now - (rec.get('assigned_at') or now) >= cfg['wake_timeout_seconds']:
@@ -8280,13 +8542,13 @@ def standing_housekeeping(config, state, workers, open_prs, io, release_worker, 
             if last == rec.get('assigned_last') and not STANDING_BUSY_RE.search(text or ''):
                 failed.add((rec.get('repo'), rec.get('current_pr')))
                 (state.get('babysit') or {}).get(rec.get('repo'), {}).pop(str(rec.get('current_pr')), None)
-                standing_wake_fail(state, host, rec, 'timeout', io, release_worker, now, log_bits)
+                standing_wake_fail(state, host, rec, 'timeout', workers, release_worker, now, log_bits)
             else:
                 rec['wake_verified'] = True
     return failed
 
 
-def standing_wake_fail(state, host, rec, reason, io, release_worker, now, log_bits):
+def standing_wake_fail(state, host, rec, reason, rows, release_worker, now, log_bits):
     did = rec.get('dispatch_id') or ''
     pr = rec.get('current_pr') or ''
     log_bits.append('standing_wake_fail=%s:%s#%s' % (did, rec.get('repo', ''), pr))
@@ -8294,7 +8556,7 @@ def standing_wake_fail(state, host, rec, reason, io, release_worker, now, log_bi
         'wake_fallback', 'standing', host, now, dispatch_id=did, repo=rec.get('repo', ''), pr=pr,
         head=rec.get('current_head', ''), reason=reason,
     )
-    standing_retire(state, host, rec, 'wake_fail', io, release_worker, now, log_bits, event='retire')
+    standing_retire(state, host, rec, 'wake_fail', rows, release_worker, now, log_bits, event='retire')
 
 
 def _pick_headroom(picked):
@@ -8374,7 +8636,7 @@ def standing_route(
             if len(rec.get('prs_assigned') or []) >= cfg['max_prs']:
                 reason = reason or 'max_prs'
             if reason:
-                standing_retire(state, host, rec, 'low_context' if reason != 'max_prs' else reason, io, release_worker, now, log_bits)
+                standing_retire(state, host, rec, 'low_context' if reason != 'max_prs' else reason, workers, release_worker, now, log_bits)
                 rec = None
             else:
                 pre_last = pre_last if pre_last is not None else term_times.get(terminal)
@@ -8383,7 +8645,7 @@ def standing_route(
                 alive = io.send(terminal, prompt, host) and _standing_wake(io, terminal, host, pre_last)
                 if not alive:
                     rec.update(current_pr=number, current_head=head)
-                    standing_wake_fail(state, host, rec, 'probe', io, release_worker, now, log_bits)
+                    standing_wake_fail(state, host, rec, 'probe', workers, release_worker, now, log_bits)
                     return 'fallback'
                 rec['prs_assigned'].append(key)
                 _standing_own_head(state, rec['dispatch_id'], repo, number, head)
@@ -8413,7 +8675,7 @@ def standing_route(
         }
         trial_event('start', 'standing', host, now, dispatch_id=did, repo=repo, pr=number, head=head,
                     prs_done=1, headroom_pct=headroom if headroom is not None else '')
-        remember_started_dispatch(state, result, 'verifier')
+        remember_started_dispatch(state, result, 'verifier', repo)
         _standing_own_head(state, did, repo, number, head)
         return 'started'
     return 'fallback'
@@ -8534,7 +8796,7 @@ def babysit_pass(
     if owner_check is None:
         owner_check = pr_owner_only_reason
     if release_worker is None:
-        release_worker = _default_release_worker
+        release_worker = _release_row
     if notify_worker is None:
         notify_worker = _default_notify_worker
     if now is None:
@@ -8666,11 +8928,7 @@ def babysit_pass(
                 # death parks the PR (#1221, #1932).
                 _own_row(state, failed_did)['startup_handled'] = True
                 if failed_row is not None:
-                    failed_env = remote_environment(failed_row) if worker_is_remote(failed_row, config) else ''
-                    if failed_env:
-                        release_worker(failed_did, failed_env)
-                    else:
-                        release_worker(failed_did)
+                    release_worker(row_for_dispatch(workers, failed_did))
                 park_key = park_id('verifier', repo, number, head)
                 # A dispatch that is itself a stall restart already was the one retry.
                 if not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
@@ -8872,7 +9130,7 @@ def babysit_pass(
             continue
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
-            remember_started_dispatch(state, started_worker, 'verifier')
+            remember_started_dispatch(state, started_worker, 'verifier', repo)
             own = _own_row(state, dispatch_id_from_start(started_worker))
             if own is not None:
                 own.update(repo=repo, pr=number, head=head)
@@ -9281,7 +9539,7 @@ def _issue_scan_pass(
                 log_bits.append('rework_deferred=%d%s' % (pr_num, suffix))
                 continue
             if code == 0:
-                remember_started_dispatch(state, started_worker, 'rework')
+                remember_started_dispatch(state, started_worker, 'rework', repo)
                 seen[head] = True
                 pending.pop(head, None)
                 conflict_only = (
@@ -9638,7 +9896,7 @@ def _issue_scan_pass(
             continue
         if code == 0:
             clear_issue_deferral(state, repo, row['number'])
-            remember_started_dispatch(state, started_worker, 'issue')
+            remember_started_dispatch(state, started_worker, 'issue', repo)
             if placement:
                 pass_starts[placement[0]] = pass_starts.get(placement[0], 0) + 1
             else:
@@ -10611,6 +10869,7 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
     for dispatch in sorted(rejected - listed - seen):
         shown = _shown_remote_worker(dispatch, rpc_call)
         if shown is not None:
+            _set_row_host(shown, config, state)
             candidates.append(shown)
             if isinstance(workers, list) and worker_is_remote(shown, config):
                 workers.append(shown)
@@ -10646,22 +10905,19 @@ def reconcile_remote_completions(config, state, workers, messages, rpc_call):
         present.add(synthesized['id'])
         if outcome == 'succeeded' and worker_pr_number(worker):
             continue
-        environment = remote_environment(worker)
-        try:
-            if worker_inventory_status(worker) not in ('completed', 'failed', 'cancelled', 'abandoned', 'stopped'):
-                rpc_call('orchestration', 'worker-stop', '--dispatch', dispatch)
-            if environment:
-                rpc_call('orchestration', 'worker-release', '--dispatch', dispatch, '--environment', environment)
-            rpc_call('orchestration', 'worker-release', '--dispatch', dispatch)
-        except SEND_ERRORS:
-            pass
-        _mark_worker_released(worker)
+        if '_host' not in worker:
+            _set_row_host(worker, config, state)
+        release_worker(rpc_call, worker)
         if dispatch in rejected:
             notices.append('remote worker %s finished %s; its rejected worker_done is settled '
                            'and released, no hand release needed' % (dispatch, outcome))
         else:
             notices.append('remote worker %s finished %s' % (dispatch, outcome))
     return notices
+
+
+# release_worker results that count as released for the auto_released and followup_released books (#1958).
+RELEASE_BOOKED = ('closed', 'kept:no_handle')
 
 
 def release_green_successes(messages, workers, config, state, release, pr_of, set_status=None):
@@ -10702,8 +10958,8 @@ def release_green_successes(messages, workers, config, state, release, pr_of, se
         pr_row = pr_of(repo, number)
         if not isinstance(pr_row, dict) or not pr_checks_all_success(pr_row):
             continue
-        release(dispatch)
-        _mark_worker_released(worker)
+        if release(worker) not in RELEASE_BOOKED:
+            continue
         if set_status is not None and (pr_row.get('state') or '').upper() == 'MERGED':
             set_status(worker, 'completed')
         released_ids.append(dispatch)
@@ -10747,8 +11003,8 @@ def release_dead_followups(workers, state, release):
             continue
         if worker_settled_kind(parent) != 'succeeded' and worker_inventory_status(parent) != 'completed':
             continue
-        release(dispatch)
-        _mark_worker_released(worker)
+        if release(worker) not in RELEASE_BOOKED:
+            continue
         released.append(dispatch)
         done.append(dispatch)
     return done
@@ -11087,6 +11343,9 @@ def _main():
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
     parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
     parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
+    parser.add_argument('--release-worker', metavar='FRAGMENT', default=None,
+                        help='Stop, release and close the terminal of the one worker whose id contains FRAGMENT')
+    parser.add_argument('--live', action='store_true', help='With --release-worker, allow a live worker')
     parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
 
@@ -11098,6 +11357,14 @@ def _main():
     if args.trial_summary:
         print(trial_summary(read_trial_rows()))
         return 0
+
+    if args.release_worker is not None:
+        cfg_path = args.config or Path(os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json'))
+        config = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        config, _adopted = resolve_pass_config(config, cfg_path)
+        code, message = release_worker_by_fragment(args.release_worker, config, rpc, sweep_hosts(config), args.live)
+        print('release-worker: ' + message, file=sys.stdout if code == 0 else sys.stderr)
+        return code
 
     if args.next_issue:
         if args.config is not None:
@@ -11163,6 +11430,9 @@ def _main():
             except Exception as error:
                 print('fleet-watch: Orca workers unavailable: %s' % (repr(error),), file=sys.stderr)
         dry = bool(args.babysit_dry_run)
+        # The default release callback acts on these rows, so they carry their host like a full pass's (#1958).
+        workers = fleet_rows(config, workers, [''] if args.workers_json else sweep_hosts(config), rpc, state)
+        protect_pass_terminals(config, workers)
 
         def persist_babysit():
             save_state(args.state, state)
@@ -11217,7 +11487,9 @@ def _main():
     pass_phase('inventory')
     try:
         inv = read_orca_inventory(config)
-        workers = inv['workers']
+        # One row per dispatch, tagged with its host, read once; every later phase uses this list (#1958).
+        workers = fleet_rows(config, inv['workers'], sweep_hosts(config), rpc, state)
+        protect_pass_terminals(config, workers)
         notices = alerts(
             config, state, now,
             inv['messages'], workers, inv['alive'], inv['leads'],
@@ -11297,10 +11569,6 @@ def _main():
     pass_phase('release')
     if inventory_ok and holds_ok:
         try:
-            env_of = {
-                w.get('dispatchId'): remote_environment(w)
-                for w in workers if isinstance(w, dict) and worker_is_remote(w, config)
-            }
             def pr_of(repo, number):
                 return next(
                     (row for row in (fetch_once(repo) or []) if isinstance(row, dict) and row.get('number') == number),
@@ -11308,12 +11576,12 @@ def _main():
                 )
 
             def board_status(worker, status):
-                return set_board_status(rpc, worker, status, env_of.get(worker.get('dispatchId')) or '')
+                return set_board_status(rpc, worker, status, worker.get('_host') or '')
 
             boards = {}
 
             def board_of(worker):
-                env = env_of.get(worker.get('dispatchId')) or ''
+                env = worker.get('_host') or ''
                 if env not in boards:
                     try:
                         listed = rpc('worktree', 'list', *(('--environment', env) if env else ()))
@@ -11333,13 +11601,9 @@ def _main():
             except Exception as error:
                 print('fleet-watch: board relay skipped: %s' % (repr(error),), file=sys.stderr)
             freed = release_green_successes(
-                inv['messages'], workers, config, state,
-                lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),
-                pr_of, set_status=board_status,
+                inv['messages'], workers, config, state, _release_row, pr_of, set_status=board_status,
             )
-            freed += release_dead_followups(
-                workers, state, lambda dispatch: _default_release_worker(dispatch, env_of.get(dispatch) or None),
-            )
+            freed += release_dead_followups(workers, state, _release_row)
             for dispatch_id in freed:
                 print('fleet-watch: released %s' % dispatch_id)
         except Exception as error:
