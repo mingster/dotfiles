@@ -3668,6 +3668,86 @@ def _worker_state(w):
     return w.get('workerState') or w.get('state') or (stage.get('worker') if isinstance(stage, dict) else None)
 
 
+START_UNKNOWN_RESEND_SECONDS = 10 * 60
+START_UNKNOWN_REAP_SECONDS = 20 * 60  # from first seen; the reap waits for a real resend too
+
+
+def resend_brief(rpc_call, row):
+    """Send the dispatch's brief into its terminal again, on the row's host. True when it was sent (#1962)."""
+    did = (row or {}).get('dispatchId') or ''
+    task = row.get('taskId')
+    host = row.get('_host') or ''
+    handle = resolve_worker_terminal(rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
+    if not task or not handle or close_guard(handle, did):
+        return False
+    try:
+        shown = rpc_call('orchestration', 'dispatch-show', '--task', task, '--preamble', *_env_args(host))
+        brief = shown.get('preamble') if isinstance(shown, dict) else None
+        if not isinstance(brief, str) or not brief.strip():
+            return False
+        rpc_call('terminal', 'send', *_env_args(host), '--terminal', handle, '--text', brief, '--enter')
+    except SEND_ERRORS:
+        return False
+    return True
+
+
+def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
+    """A worker still start_unknown after 10 minutes gets its brief once more; at 20 minutes, with the resend
+    done, it is released and its issue put back to ready-for-agent, with one Urgent (#1962). The book is
+    state['start_unknown']; a row whose host could not be read is left for a later pass. Returns the notices."""
+    book = state.setdefault('start_unknown', {})
+    seen, notices = set(), []
+    for w in rows or []:
+        if not isinstance(w, dict) or not w.get('dispatchId') or w.get('_host_read') is False:
+            continue
+        if (w.get('_state') or _worker_state(w)) != 'start_unknown':
+            continue
+        did = w['dispatchId']
+        if release_held(state, did):
+            continue
+        seen.add(did)
+        entry = book.setdefault(did, {'at': now})
+        if entry.get('reaped'):
+            continue
+        if not entry.get('resent_at'):
+            if now - entry['at'] >= START_UNKNOWN_RESEND_SECONDS:
+                sent = resend_brief(rpc_call, w)
+                if sent:
+                    entry['resent_at'] = now
+                log_fleet_watch('start_unknown %s: brief resent%s' % (did, '' if sent else ' failed, retry next pass'))
+            continue
+        if now - entry['at'] < START_UNKNOWN_REAP_SECONDS:
+            continue
+        closed = release(w)
+        if closed not in ('closed', 'kept:no_handle'):
+            log_fleet_watch('start_unknown %s: release %s, retry next pass' % (did, closed))
+            continue
+        entry['reaped'] = True
+        number = _worker_issue_number(w)
+        repo = w.get('_repo') or ''
+        back = ''
+        if number and not worker_pr_number(w):
+            if repo and (act or run_gh)(['gh', 'issue', 'edit', str(number), '--repo', repo, '--add-label',
+                                         'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
+                back = '; %s#%d back to ready-for-agent' % (repo, number)
+            else:
+                back = '; put issue #%d back to ready-for-agent by hand (%s)' % (
+                    number, 'gh edit failed' if repo else 'repo unknown here')
+        line = 'start_unknown %s did not start in %d minutes after a resent brief: released, terminal %s%s' % (
+            did, (now - entry['at']) // 60, closed, back)
+        log_fleet_watch(line)
+        notices.append(Urgent(line))
+    for did in list(book):
+        if did not in seen:
+            book.pop(did)
+    return notices
+
+
+def reaper_owned(state):
+    """Dispatches the start_unknown reaper is handling, which the stall ladder leaves alone."""
+    return set(state.get('start_unknown') or {})
+
+
 ACTIVE_WORKER_PAGES = 10
 
 
@@ -11804,6 +11884,7 @@ def _main():
 
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
     notices += idle_extra
+    notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc, _release_row), [])
     if inventory_ok:
         notices += supply_done_notices(inv['messages'], workers, state)
 
@@ -11860,7 +11941,8 @@ def _main():
     stall_extra, stall_log = run_phase('stall', lambda: worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
-        inventory_ok=inventory_ok, pr_list=fetch_once, waiting=waiting_on_coordinator(state, workers)), ([], []))
+        inventory_ok=inventory_ok, pr_list=fetch_once,
+        waiting=waiting_on_coordinator(state, workers) | reaper_owned(state)), ([], []))
     notices += stall_extra
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
