@@ -80,13 +80,14 @@ _mf_write_gh() {
 echo "gh $*" >> "$MF_GH_LOG"
 all_args=("$@")
 cmd="$1 ${2:-}"; shift 2 || true
-  want_commits="" pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr="" head_ref=""
+  want_commits="" pr="" commit_sha="" content="" body="" body_file="" json="" match="" base="" jq_expr="" head_ref=""
   case "$cmd" in
     api*) for a in "${all_args[@]}"; do case "$a" in
       repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;;
       repos/*/pulls/*/commits) pr=${a#*/pulls/}; pr=${pr%%/*}; want_commits=1 ;;
       repos/*/commits/*) commit_sha=${a##*/} ;;
       repos/*/compare/*) commit_sha=compare-${a##*/compare/} ;;
+      repos/*/contents/*) content=${a#repos/*/*/contents/} ;;
     esac; done ;;
     *)
       # A missing PR number means the PR of the current branch, as with the real gh.
@@ -149,6 +150,8 @@ case "$cmd" in
     save ".state = \"MERGED\" | .mergeCommit = {oid: \"$sha\"}" ;;
   api*) # a PR's commits come from .commits in its json (default none), as the pulls/N/commits endpoint prints them
     if [ -n "$want_commits" ]; then jq '.commits // []' "$file"; exit 0; fi
+    # a default branch file comes from $MF_GH_DIR/contents/<path>; a missing one is a 404
+    if [ -n "$content" ]; then cat "$MF_GH_DIR/contents/$content" 2>/dev/null || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }; exit 0; fi
     # a commit's files come from $MF_GH_DIR/commit-<sha>.txt, one path per line, as --jq prints them;
     # a compare range's files from commit-compare-<base>...<head>.txt
     if [ -n "$commit_sha" ]; then cat "$MF_GH_DIR/commit-$commit_sha.txt"

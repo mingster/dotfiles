@@ -41,6 +41,9 @@ How it fits the current code: data model changes, where the logic lives, screens
 ## Decisions and conflicts
 Which ADRs this relies on, amends or supersedes (link new ADRs). Any place where two policies cannot both be satisfied, and who must decide.
 
+## Owner steps
+Each owner gated file this program edits (role files, `AGENTS.md`, team docs), one backticked path per line with what changes, for example "- `AGENTS.md`: add the new rule". Commits to these files carry `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, and `ship.sh` refuses that trailer on a file not listed here. Hooks, `settings.json` and the approval tooling never go here: they keep the owner's own approval. Write "none" when the spec edits no gated file.
+
 ## Out of scope
 What this spec deliberately leaves out.
 
