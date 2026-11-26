@@ -219,7 +219,6 @@ lands() {
 # moved into place; links and anything else are dropped. The folder mirrors the push: whatever is not a regular file
 # also in the staging folder is removed (links are removed, never followed), then empty directories. Other .stage.*
 # folders are left alone. When rsync fails or nothing landable is staged, nothing is deleted and the exit is not zero.
-
 cmd_receive() {
   [ "$#" -eq 0 ] || refuse "receive takes no argument"
   local stage f rel d dest n=0
