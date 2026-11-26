@@ -162,13 +162,15 @@ automation_wrap() {
 }
 
 # Run now skips the precheck and starts the agent, so the prompt runs the same job and replies with its result line.
+# The agent's command exits 0 for an ok job (wrapper exit 1) and non zero otherwise, so an ok run shows no error.
 manual_prompt() {
   local name=$1 precheck=$2 timeout=$3
   if [ -n "${FLEET_AUTOMATIONS_PROMPT:-}" ]; then
     printf '%s' "$FLEET_AUTOMATIONS_PROMPT"
     return 0
   fi
-  printf 'Manual run of the %s script job. Run the shell command below once, exactly as written, with a timeout of %s seconds. It always exits non zero by design, so do not run it again or try to fix anything. Do not edit, commit or open anything. Then reply with only the line it printed that starts with "ok %s" or "FAILED %s".\n\n%s\n' \
+  precheck="${precheck%' || exit $?; exit 1'}; [ \$? -eq 1 ]"
+  printf 'Manual run of the %s script job. Run the shell command below once, exactly as written, with a timeout of %s seconds. Do not run it again or try to fix anything. Do not edit, commit or open anything. Then reply with only the line it printed that starts with "ok %s" or "FAILED %s".\n\n%s\n' \
     "$name" "$timeout" "$name" "$name" "$precheck"
 }
 

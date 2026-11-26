@@ -222,7 +222,13 @@ for a in d["automations"]:
 wrap_cmd=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["precheck"]["command"])')
 wrap_prompt=$(printf '%s' "$wrap_row" | python3 -c 'import json, sys; print(json.load(sys.stdin)["prompt"])')
 case "$wrap_cmd" in *' || exit $?; exit 1') check 'precheck passes the wrapper exit code to Orca' true ;; *) check 'precheck passes the wrapper exit code to Orca' false ;; esac
-case "$wrap_prompt" in *"$wrap_cmd"*) check 'manual run prompt carries the precheck command' true ;; *) check 'manual run prompt carries the precheck command' false ;; esac
+case "$wrap_prompt" in *"${wrap_cmd% || exit \$?; exit 1}"*) check 'manual run prompt runs the same wrapper command' true ;; *) check 'manual run prompt runs the same wrapper command' false ;; esac
+case "$wrap_prompt" in *'always exits non zero'*) check 'manual run prompt no longer says it always exits non zero' false ;; *) check 'manual run prompt no longer says it always exits non zero' true ;; esac
+# Run the prompt's command with the wrapper replaced by its exit code: 1 is ok, 2 is failed.
+manual_cmd=$(printf '%s\n' "$wrap_prompt" | grep -F 'automation-precheck-wrapper.sh')
+manual_rc() { local rc=0; bash -c "$(printf '%s' "$manual_cmd" | sed "s|bash '[^']*automation-precheck-wrapper.sh'.* --daily|sh -c 'exit $1'|")" >/dev/null 2>&1 || rc=$?; echo "$rc"; }
+[ "$(manual_rc 1)" -eq 0 ] && check 'manual run command exits 0 for an ok job' true || check 'manual run command exits 0 for an ok job' false
+[ "$(manual_rc 2)" -ne 0 ] && check 'manual run command exits non zero for a failed job' true || check 'manual run command exits non zero for a failed job' false
 case "$wrap_prompt" in *'"ok wrap-up-daily" or "FAILED wrap-up-daily"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
 [ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 8 ] \

@@ -145,6 +145,10 @@ round_failed() {
 # --daily helpers. One host, once a day: the strict cleanup child per repo, then old logs, package caches and free space.
 free_kb() { df -Pk "${WRAP_UP_DAILY_FREE_PATH:-$HOME}" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
 kb_gb() { awk -v k="${1:-0}" 'BEGIN { printf "%.1fG", k / 1048576 }'; }
+disk_note() { # <free KB before> <free KB after>: a disk that got fuller freed nothing
+  local freed=$((${2:-0} - ${1:-0})); [ "$freed" -gt 0 ] || freed=0
+  printf 'freed %s (disk free %s -> %s)' "$(kb_gb "$freed")" "$(kb_gb "$1")" "$(kb_gb "$2")"
+}
 # One repo child. With tee 1 (a dry run) the listing also reaches the terminal. Prefix assignments reach the child through env.
 daily_child() { # <kill limit> <wrap-up> <mode> <repo> <detail> <tee 0|1> [NAME=value...]
   local limit=$1 wu=$2 mode=$3 repo_path=$4 detail=$5 tee_out=$6
@@ -331,7 +335,7 @@ scheduled_round() {
   local free_note=''
   if [ "$round_kind" = daily ]; then
     daily_extras "$((round_limit-(SECONDS-started)))" "$detail_file" || fails="${fails:+$fails; }$extras_fail"
-    free_note=" $extras_note free $(kb_gb "$free_before")->$(kb_gb "$(free_kb)")"
+    free_note=" $extras_note $(disk_note "$free_before" "$(free_kb)")"
   fi
   [ -n "$fails" ] || guarded_round_rm f "$streak"
   # Board cards move to Done here, not in fleet-watch: that pass is frozen and only alerts, and this

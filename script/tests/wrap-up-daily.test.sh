@@ -150,9 +150,19 @@ check 'dry run runs no cleaner' bash -c '! test -e "$1"' _ "$tmp/tools.log"
 check 'dry run lists the nested build cache' out_has "Remove build cache $tmp/wt-dirty/web/node_modules/.cache"
 check 'dry run removes no build cache' present "$tmp/wt-dirty/node_modules/.cache"
 
-# Apply.
+# Apply. A fake df answers one value before the round and another after it.
+fake_df() { # <KB before> <KB after>
+  rm -f "$tmp/df.seen"
+  cat > "$tmp/bin/df" <<FAKE
+#!/usr/bin/env bash
+kb=$1; [ ! -e "$tmp/df.seen" ] || kb=$2; : > "$tmp/df.seen"
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted\n/dev/x 1 1 %s 1%% /\n' "\$kb"
+FAKE
+  chmod +x "$tmp/bin/df"
+}
+fake_df 268120883 279235789
 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
-check 'a round reports ok with free space before and after' grep -Eq 'wrap-up-daily \[[0-9]+\] round ok: repos=1 .* free [0-9.]+G->[0-9.]+G' "$tmp/round.log"
+check 'a round reports ok with free space before and after' grep -Eq 'wrap-up-daily \[[0-9]+\] round ok: repos=1 .* freed 10\.6G \(disk free 255\.7G -> 266\.3G\)' "$tmp/round.log"
 check 'removes the merged worktree' gone "$tmp/wt-merged"
 check 'removes the squash merged worktree (PR head not on any remote branch)' gone "$tmp/wt-squash"
 check 'keeps a worktree with uncommitted work' present "$tmp/wt-dirty"
@@ -170,6 +180,11 @@ check 'removes a merged PR branch that moved on after the merge (not active work
 check 'says why for each kept one' bash -c 'for r in "uncommitted changes" "open PR" "active or unknown Orca terminal" "changed in the last 180 minutes"; do grep -Fq -- "$r" "$1" || exit 1; done' _ "$tmp/round-detail.log"
 check 'drops build caches in a kept worktree, top level and one level down' bash -c '! test -e "$1/node_modules/.cache" && ! test -e "$1/web/.next" && ! test -e "$1/web/node_modules/.cache"' _ "$tmp/wt-dirty"
 check 'keeps node_modules itself' present "$tmp/wt-dirty/node_modules"
+cp "$tmp/round.log" "$tmp/round-first.log"
+fake_df 279235789 268120883
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
+check 'a round that freed nothing says freed 0.0G' bash -c 'tail -n 1 "$1" | grep -Fq "freed 0.0G (disk free 266.3G -> 255.7G)"' _ "$tmp/round.log"
+rm -f "$tmp/bin/df"
 check 'removes an old app log' gone "$tmp/home/Library/Logs/old.log"
 check 'keeps a new app log' present "$tmp/home/Library/Logs/new.log"
 check 'removes an old rotated Orca log' gone "$tmp/home/.orca/logs/rotated.log.1"
