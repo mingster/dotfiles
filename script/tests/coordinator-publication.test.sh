@@ -969,6 +969,11 @@ good_body
 make_feature feat-caller-diff
 out=$(cd "$decoy" && pub feat-caller-diff); code=$?
 say "$code" "body check ignores the caller checkout's diff" "$out"
+good_body
+make_feature feat-relative-body
+clear_receipt
+out=$(cd "$MF_DIR" && PUB_BODY_REL=1 bash "$PUB" --repo "$REPO_SLUG" --branch feat-relative-body --body-file body.md --worktree "$MF_REPO" 2>&1); code=$?
+say "$code" "relative --body-file is resolved before the body check runs in the worktree" "$out"
 
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]

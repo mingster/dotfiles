@@ -257,7 +257,9 @@ fi
 worktree=$(cd -P "$worktree" && pwd) || die "worktree not found: $worktree"
 # The same pr-body-gate review applies, run now so a builder fixes the body before the PR opens (#1676).
 # Run it inside the worktree being published: its Readers rule reads that checkout's diff, not the caller's.
-(cd "$worktree" && bash "$(dirname "$lib")/../check-pr-body.sh" ${title:+--title "$title"} --repo "$repo" "$body_file") || exit 1
+body_check=$(cd "$(dirname "$lib")/.." && pwd)/check-pr-body.sh
+body_abs=$(cd "$(dirname "$body_file")" && pwd)/$(basename "$body_file")
+(cd "$worktree" && bash "$body_check" ${title:+--title "$title"} --repo "$repo" "$body_abs") || exit 1
 
 cur_branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD 2>/dev/null) || die "cannot read branch in $worktree"
 [ "$cur_branch" = "$branch" ] || die "worktree is on $cur_branch but --branch $branch was given (never derive from upstream)"
