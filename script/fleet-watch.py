@@ -3361,9 +3361,10 @@ def release_and_close(rpc_call, dispatch_id, environment='', handle=''):
     if not dispatch_id:
         return 'kept:no_dispatch'
     handle = resolve_worker_terminal(rpc_call, dispatch_id, environment, handle)
-    for args in (('worker-stop', '--dispatch', dispatch_id, *_env_args(environment)),) + tuple(
-            ('worker-release', '--dispatch', dispatch_id, *where)
-            for where in ((_env_args(environment),) if environment else ()) + ((),)):
+    # A remote dispatch is stopped and released on its host, then its home row here (#1947).
+    wheres = ((_env_args(environment),) if environment else ()) + ((),)
+    for args in tuple(('worker-stop', '--dispatch', dispatch_id, *where) for where in wheres) + tuple(
+            ('worker-release', '--dispatch', dispatch_id, *where) for where in wheres):
         try:
             rpc_call('orchestration', *args)
         except SEND_ERRORS:
@@ -3412,6 +3413,12 @@ def resend_brief(rpc_call, worker, environment=''):
     return True
 
 
+def _worker_state(w):
+    """Worker state in either worker-list shape: workerState (--full), state, or projection.stage.worker."""
+    stage = (w.get('projection') or {}).get('stage') if isinstance(w.get('projection'), dict) else None
+    return w.get('workerState') or w.get('state') or (stage.get('worker') if isinstance(stage, dict) else None)
+
+
 def start_unknown_reaper(config, state, now, workers, rpc_call, act=None):
     """A worker Orca still calls start_unknown gets its brief once more after 10 minutes. Ten minutes after that,
     still start_unknown, it is stopped, its terminal closed and its issue put back to ready-for-agent, with one
@@ -3420,7 +3427,7 @@ def start_unknown_reaper(config, state, now, workers, rpc_call, act=None):
     seen = set()
     notices = []
     for w in workers or []:
-        if not isinstance(w, dict) or w.get('state') != 'start_unknown' or not w.get('dispatchId'):
+        if not isinstance(w, dict) or _worker_state(w) != 'start_unknown' or not w.get('dispatchId'):
             continue
         did = w['dispatchId']
         if release_held(state, did):
@@ -3429,17 +3436,22 @@ def start_unknown_reaper(config, state, now, workers, rpc_call, act=None):
         row = book.setdefault(did, {'at': now})
         if row.get('reaped'):
             continue
-        env = remote_environment(w) if worker_is_remote(w, config) else ''
+        env = w.get('_host') or (remote_environment(w) if worker_is_remote(w, config) else '')
         if not row.get('resent_at'):
             if now - row['at'] >= START_UNKNOWN_RESEND_SECONDS:
-                row['resent_at'] = now
+                # A failed resend is tried again next round, so the reap clock starts only on a real resend.
                 sent = resend_brief(rpc_call, w, env)
-                log_fleet_watch('start_unknown %s: brief resent%s' % (did, '' if sent else ' failed'))
+                if sent:
+                    row['resent_at'] = now
+                log_fleet_watch('start_unknown %s: brief resent%s' % (did, '' if sent else ' failed, retry next round'))
             continue
         if now - row['resent_at'] < START_UNKNOWN_REAP_SECONDS:
             continue
-        row['reaped'] = True
         closed = release_and_close(rpc_call, did, env, worker_terminal_handle(w))
+        if closed == 'failed':
+            log_fleet_watch('start_unknown %s: terminal close failed, retry next round' % did)
+            continue
+        row['reaped'] = True
         _mark_worker_released(w)
         number = _worker_issue_number(w)
         repo = repo_for_worker(w, config) or ''
@@ -3449,6 +3461,9 @@ def start_unknown_reaper(config, state, now, workers, rpc_call, act=None):
             if edit(['gh', 'issue', 'edit', str(number), '--repo', repo,
                      '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
                 back = '; %s#%d back to ready-for-agent' % (repo, number)
+        if number and not back and not worker_pr_number(w):
+            back = '; put issue #%d back to ready-for-agent by hand (%s)' % (
+                number, 'gh edit failed' if repo else 'repo unknown here')
         line = 'start_unknown %s did not start in %d minutes after a resent brief: stopped, terminal %s%s' % (
             did, (now - row['at']) // 60, closed, back)
         log_fleet_watch(line)
@@ -3457,6 +3472,22 @@ def start_unknown_reaper(config, state, now, workers, rpc_call, act=None):
         if did not in seen:
             book.pop(did)
     return notices
+
+
+def reaper_rows(rpc_call, hosts, workers):
+    """Rows for the start_unknown reaper: this host's rows plus each remote host's own rows, because the
+    coordinator's row for a remote dispatch is a stub that never says start_unknown (#1947). A remote row is
+    tagged with its host in `_host`. A host that cannot be read adds nothing."""
+    rows = list(workers or [])
+    for env in hosts:
+        if not env:
+            continue
+        try:
+            more = host_workers(rpc_call, _env_args(env)) or []
+        except SEND_ERRORS:
+            continue
+        rows += [dict(w, _host=env) for w in more if isinstance(w, dict)]
+    return rows
 
 
 def reaper_owned(state):
@@ -8539,6 +8570,14 @@ def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_work
     return blocked()
 
 
+def release_on_worker_host(config, workers, release=None):
+    """Release callback that sends a remote worker's release and close to its own host (#1947)."""
+    release = release or _default_release_worker
+    remote_env = {w.get('dispatchId'): remote_environment(w) for w in workers or []
+                  if isinstance(w, dict) and worker_is_remote(w, config)}
+    return lambda did: release(did, remote_env.get(did) or None)
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
@@ -8573,7 +8612,7 @@ def babysit_pass(
     if owner_check is None:
         owner_check = pr_owner_only_reason
     if release_worker is None:
-        release_worker = _default_release_worker
+        release_worker = release_on_worker_host(config, workers)
     if notify_worker is None:
         notify_worker = _default_notify_worker
     if now is None:
@@ -11451,7 +11490,8 @@ def _main():
         waiting=waiting_on_coordinator(state, workers) | reaper_owned(state)), ([], []))
     notices += stall_extra
     if inventory_ok:
-        notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc), [])
+        notices += run_phase('reap', lambda: start_unknown_reaper(
+            config, state, now, reaper_rows(rpc, sweep_hosts(config), workers), rpc), [])
         swept = run_phase('sweep', lambda: orphan_terminal_sweep(config, now, rpc, sweep_hosts(config), workers), [])
         if swept:
             print('fleet-watch: closed %d orphan terminal(s): %s' % (len(swept), ' '.join(swept)))
