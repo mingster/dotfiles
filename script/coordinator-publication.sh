@@ -251,13 +251,13 @@ esac
 [[ "$branch" =~ ^refs/ ]] && die "pass a branch name, not a ref ($branch)"
 
 bash "$lib" "$body_file" || exit 1
-# The same pr-body-gate review applies, run now so a builder fixes the body before the PR opens (#1676).
-bash "$(dirname "$lib")/../check-pr-body.sh" ${title:+--title "$title"} --repo "$repo" "$body_file" || exit 1
-
 if [ -z "$worktree" ]; then
   worktree=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git worktree; pass --worktree"
 fi
 worktree=$(cd -P "$worktree" && pwd) || die "worktree not found: $worktree"
+# The same pr-body-gate review applies, run now so a builder fixes the body before the PR opens (#1676).
+# Run it inside the worktree being published: its Readers rule reads that checkout's diff, not the caller's.
+(cd "$worktree" && bash "$(dirname "$lib")/../check-pr-body.sh" ${title:+--title "$title"} --repo "$repo" "$body_file") || exit 1
 
 cur_branch=$(git -C "$worktree" rev-parse --abbrev-ref HEAD 2>/dev/null) || die "cannot read branch in $worktree"
 [ "$cur_branch" = "$branch" ] || die "worktree is on $cur_branch but --branch $branch was given (never derive from upstream)"
