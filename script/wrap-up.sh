@@ -129,7 +129,7 @@ round_failed() {
   [ "$n" -ge 2 ] || return 0
   repo=${WRAP_UP_ISSUE_REPO:-} # set by the schedule, never defaulted: this repo is public and the title names the host
   if [ -z "$repo" ]; then round_log 'issue: WRAP_UP_ISSUE_REPO is not set; no issue opened'; return 0; fi
-  title="wrap-up: $round_kind rounds failing on $(hostname -s 2>/dev/null)"
+  title="wrap-up: $round_kind rounds failing on $(host_short)"
   if ! open=$(run_limited "$call_timeout" gh issue list --repo "$repo" --state open --search "$title in:title" --limit 100 --json title 2>/dev/null) \
     || ! open=$(printf '%s' "$open" | jq -r --arg t "$title" '[.[] | select(.title == $t)] | length' 2>/dev/null); then
     round_log 'issue: cannot read open issues; retried next failed round'; return 0
@@ -366,13 +366,15 @@ scheduled_round() {
   round_log "round ok: repos=$count seconds=$((SECONDS-started))${skipped:+ skipped=$skipped}$free_note$board_note"
   exit 0
 }
+# The short host name. hostname is missing on some Linux hosts, so fall back to uname -n (#1923).
+host_short() { hostname -s 2>/dev/null || uname -n 2>/dev/null | cut -d. -f1; }
 coordinator_conf() { printf '%s' "${BOARD_DONE_COORDINATOR_CONF:-${AGENT_STATE_DIR:-$HOME/agent-state}/coordinator.conf}"; }
 coordinator_runs_board_done() {
   local conf name here_name
   conf=$(coordinator_conf)
   [ -f "$conf" ] || return 1
   name=$(awk '$1 == "coordinator" { print $2; exit }' "$conf")
-  here_name=$(hostname -s 2>/dev/null || true)
+  here_name=$(host_short || true)
   [ -n "$name" ] && [ "$name" = "$here_name" ]
 }
 # The daily prune (#1853) runs only in a repo the private coordinator.conf lists as "prune-repo <path>" (absolute, or under
@@ -1564,7 +1566,7 @@ protected() {
     protected_reason='GitHub Pages branch'; return 0
   fi
   if [ "$prune" -eq 1 ]; then
-    case "$1" in main|staging|production|HEAD) return 0 ;; esac
+    case "$1" in main|staging|production|*/staging|*/production|HEAD) return 0 ;; esac
   else
     case "$1" in main|master|staging|production|web2/*|*/staging|*/production|HEAD|lead-queue|*/lead-queue) return 0 ;; esac
   fi
@@ -1784,7 +1786,7 @@ prune_log="${AGENT_STATE_DIR:-$HOME/agent-state}/branch-prune/$(date +%F).tsv"
 prune_record() { # stdin: scope<TAB>name or path<TAB>sha lines
   perl -MIO::Handle -e 'my ($f, $pre) = @ARGV; open(my $fh, ">>", $f) or exit 1;
     while (my $l = <STDIN>) { print {$fh} $pre, $l or exit 1 } $fh->flush or exit 1; $fh->sync or exit 1; close($fh) or exit 1;' \
-    "$prune_log" "$(date '+%Y-%m-%dT%H:%M:%S%z')"$'\t'"$(hostname -s 2>/dev/null || echo unknown)"$'\t'"$repo"$'\t' 2>/dev/null
+    "$prune_log" "$(date '+%Y-%m-%dT%H:%M:%S%z')"$'\t'"$(host_short || echo unknown)"$'\t'"$repo"$'\t' 2>/dev/null
 }
 prune_log_failed() { # <counter> <label>
   if [ "$prune_block" != 'restore log write failed' ]; then
@@ -2166,18 +2168,37 @@ fi
 # Release is after terminal and worktree cleanup. A failed release is recorded and does not undo a close.
 if [ "$terminals_read" -eq 1 ]; then release_finished_workers; fi
 # The prune deletes every local branch that is not named, checked out in a kept worktree, or the head of an open PR.
-prune_branch_why() { # <name> <sha>: sets why when the branch stays
+# A branch goes only when its tip commit is older than WRAP_UP_PRUNE_MIN_AGE seconds (default 1 day, #1923).
+prune_min_age=${WRAP_UP_PRUNE_MIN_AGE:-86400}
+case "$prune_min_age" in ''|*[!0-9]*) prune_min_age=86400 ;; esac
+prune_now=$(date +%s)
+# One round, one time limit for the branch deletes: a first prune on a host with hundreds of branches deletes what fits, in the
+# order oldest first, and the rest waits for the next round instead of the child being killed with nothing done (#1923).
+# WRAP_UP_PRUNE_STEP seconds, else what is left of the child's budget less 60 s for the steps after it.
+if [ -n "${WRAP_UP_PRUNE_STEP:-}" ]; then prune_deadline=$((SECONDS + WRAP_UP_PRUNE_STEP)); else prune_deadline=$((deadline - 60)); fi
+prune_time_up() { [ "$SECONDS" -ge "$prune_deadline" ]; }
+prune_time_up_noted=0
+prune_stop_note() {
+  [ "$prune_time_up_noted" -eq 0 ] || return 0
+  prune_time_up_noted=1
+  echo "Warning: prune stopped at its time limit; the rest waits for the next round." >&2
+}
+prune_branch_why() { # <name> <sha> <tip commit time>: sets why when the branch stays
   why=''
   if [ -n "$prune_block" ]; then why="prune stopped: $prune_block"
   elif protected "$1"; then why=$protected_reason
   elif grep -Fxq -- "$1" "$tmp/kept-branches"; then why='checked out in kept worktree'
   elif grep -Fxq -- "$1" "$tmp/open" || grep -Fxq -- "$2" "$tmp/open-heads"; then why='open PR'
+  elif [ $((prune_now - ${3:-0})) -lt "$prune_min_age" ]; then why="tip newer than $prune_min_age seconds"
   fi
 }
-while IFS= read -r branch; do
+while IFS=' ' read -r branch branch_sha branch_time; do
   if [ "$prune" -eq 1 ]; then
-    prune_branch_why "$branch" "$(git rev-parse "refs/heads/$branch")"
+    prune_branch_why "$branch" "$branch_sha" "$branch_time"
     if [ -n "$why" ]; then keep "local $branch" "$why"; printf '%s\n' "$branch" >> "$tmp/kept-branches"; continue; fi
+    if [ "$apply" -eq 1 ] && prune_time_up; then
+      prune_stop_note; keep "local $branch" 'prune time limit, next round'; printf '%s\n' "$branch" >> "$tmp/kept-branches"; continue
+    fi
     printf 'Delete local %s (not active work)\n' "$branch"
     if [ "$apply" -eq 0 ] || guarded_local_branch_delete kept "local $branch" "$branch" prune; then
       local_deleted=$((local_deleted+1))
@@ -2202,7 +2223,7 @@ while IFS= read -r branch; do
     fi
   else keep "local $branch" "$reason"
   fi
-done < <(git for-each-ref --format='%(refname:strip=2)' refs/heads)
+done < <(git for-each-ref --sort=committerdate --format='%(refname:strip=2) %(objectname) %(committerdate:unix)' refs/heads)
 # Build caches (WRAP_UP_BUILD_CACHE_DIRS, default .next) take up to 10G each. Drop them in every worktree kept above when no
 # process has its cwd or open files there and no process command line names it. Top level and one level down (web/.next).
 build_cache_dirs=${WRAP_UP_BUILD_CACHE_DIRS-.next}
@@ -2531,13 +2552,15 @@ if [ "$prune" -eq 1 ] && [ "$prune_remote" -eq 1 ] && [ -z "$prune_block" ] && !
   fail_item 'prune remote' "$prune_remote_block; no origin branch deleted"
 fi
 [ "$prune" -eq 0 ] || [ "$prune_remote" -eq 1 ] || echo 'Origin branches: left to the coordinator host round.'
-begin_optional
-while IFS= read -r ref; do
+# The prune deletes in batches of 50 that each stay done, so it gets a longer step than the 20 s default (#1923).
+if [ "$prune" -eq 1 ]; then begin_optional "${WRAP_UP_PRUNE_STEP:-120}"; else begin_optional; fi
+while IFS=' ' read -r ref ref_sha ref_time; do
   [ "$prune" -eq 0 ] || [ "$prune_remote" -eq 1 ] || break
+  [ "$prune" -eq 0 ] || [ "$apply" -eq 0 ] || ! prune_time_up || { prune_stop_note; break; }
   optional_ok || { optional_stop 'remote branch cleanup'; break; }
   branch=${ref#refs/remotes/origin/}
   if [ "$prune" -eq 1 ]; then
-    prune_branch_why "$branch" "$(git rev-parse "$ref")"
+    prune_branch_why "$branch" "$ref_sha" "$ref_time"
     if [ -z "$why" ] && [ -n "$prune_remote_block" ]; then why=$prune_remote_block
     elif [ -z "$why" ] && grep -Fxq -- "$branch" "$tmp/fleet-checkouts"; then why='checked out in an Orca worktree on the fleet'
     fi
@@ -2561,7 +2584,7 @@ while IFS= read -r ref; do
     [ ${#batch[@]} -lt 50 ] || flush_remote
   else keep "remote $branch" "$reason"
   fi
-done < <(git for-each-ref --format='%(refname)' refs/remotes/origin)
+done < <(git for-each-ref --sort=committerdate --format='%(refname) %(objectname) %(committerdate:unix)' refs/remotes/origin)
 flush_remote
 # Each Chrome launch leaves a code_sign_clone under the per-user temp dir (macOS), in the T dir or its sibling X dir.
 # Remove those no process holds open.
