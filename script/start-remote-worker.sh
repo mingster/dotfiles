@@ -2,6 +2,7 @@
 # Same arguments as Orca worker-start, requiring --on and --agent.
 # Usage: start-remote-worker.sh --on <environment> --agent <agent> [--worktree <selector>] [--model <model>] [--json] [other worker-start flags]
 # Refused (exit 2): --terminal, --environment, --pairing-code. -h and --help print the usage and exit 0.
+# Exit 4: --agent antigravity on a host marked signed out of agy (agy-signin.py usable).
 # Probe the execution environment's login-shell PATH before creating a worker.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -32,6 +33,10 @@ done
 [ -n "$environment" ] && [ -n "$agent" ] || {
   echo 'start-remote-worker: need --on <environment> --agent <agent>' >&2; exit 2;
 }
+# A host signed out of agy cannot start antigravity: refuse before any Orca call (#1966).
+if [ "$agent" = antigravity ] && ! python3 "$here/agy-signin.py" usable --agent "$agent" --host "$environment"; then
+  echo "start-remote-worker: refused: $environment is not signed in to agy" >&2; exit 4
+fi
 python3 "${USAGE_GATE_CLI:-$(dirname "$0")/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
   || { echo "start-remote-worker: refused by the usage gate" >&2; exit 3; }
 case "$agent" in

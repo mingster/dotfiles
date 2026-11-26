@@ -8,6 +8,7 @@ PYTHON=$(PATH="$path_no_asdf" type -P python3 2>/dev/null || true)
 log_tmp=$(mktemp -d)
 trap 'rm -rf "$log_tmp"' EXIT
 export FLEET_WATCH_LOG_PATH="$log_tmp/fleet-watch-test.log"
+export FLEET_WATCH_CONFIG="$log_tmp/no-fleet-config.json"
 "$PYTHON" - "$(cd "$(dirname "$0")/.." && pwd)" <<'PY'
 import importlib.util, json, os, pathlib, subprocess, sys, tempfile, unittest
 from unittest import mock
@@ -142,6 +143,44 @@ class Cli(unittest.TestCase):
         self.assertEqual(self.cli('mark', 'hostb').stdout.strip(), 'known')
         self.assertEqual(self.cli('unavailable', 'hostb').returncode, 0)
         self.assertEqual(self.cli('unavailable', 'hostc').returncode, 1)
+
+    def test_usable_cli_exit_codes(self):
+        # 1966: antigravity on a marked host is 1, claude on the same host is 0.
+        self.cli('mark', 'hostb')
+        self.assertEqual(self.cli('usable', '--agent', 'antigravity', '--host', 'hostb').returncode, 1)
+        self.assertEqual(self.cli('usable', '--agent', 'claude', '--host', 'hostb').returncode, 0)
+        self.assertEqual(self.cli('usable', '--agent', 'antigravity', '--host', 'hostc').returncode, 0)
+        self.assertEqual(self.cli('usable', '--agent', 'antigravity').returncode, 2)
+
+    def test_usable_cli_reads_local_host_from_config(self):
+        # 1966: a mark on local is found for the config local_host, and the other way round.
+        config = pathlib.Path(self.tmp) / 'fleet.json'
+        config.write_text(json.dumps({'local_host': 'HostA'}))
+        self.env['FLEET_WATCH_CONFIG'] = str(config)
+        self.cli('mark', 'local')
+        self.assertEqual(self.cli('usable', '--agent', 'antigravity', '--host', 'hosta').returncode, 1)
+        self.assertEqual(self.cli('usable', '--agent', 'antigravity', '--host', '', '--config', str(config)).returncode, 1)
+
+
+class HostKey(unittest.TestCase):
+    """1966: the key a mark writes is the key placement reads."""
+    def setUp(self):
+        self.path = pathlib.Path(tempfile.mkdtemp()) / 'agy-unavailable.json'
+
+    def test_mark_written_mixed_case_is_found_lowercase(self):
+        agy.mark('HostB', now=0, path=self.path)
+        self.assertFalse(agy.usable('antigravity', 'hostb', config={}, now=1, path=self.path))
+        self.assertTrue(agy.usable('claude', 'hostb', config={}, now=1, path=self.path))
+
+    def test_local_names_map_to_config_local_host(self):
+        config = {'local_host': 'HostA'}
+        this = agy.socket.gethostname().split('.')[0]
+        for name in ('', 'local', 'hosta', this):
+            self.assertEqual(agy.host_key(name, config), 'hosta', name)
+        self.assertEqual(agy.host_key('', {}), 'local')
+        self.assertEqual(agy.host_key('HostC', config), 'hostc')
+        agy.mark('local', now=0, path=self.path, config=config)
+        self.assertFalse(agy.usable('antigravity', 'HostA', config=config, now=1, path=self.path))
 
 unittest.main(argv=['agy-signin'], verbosity=1)
 PY

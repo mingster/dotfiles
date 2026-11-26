@@ -1113,6 +1113,66 @@ class IssueScanPass(unittest.TestCase):
         self.assertTrue(fw.rework_needed_at_head(row, {}, 'owner/dotfiles'))
 
 
+class IssueScanAgySignin(unittest.TestCase):
+    """1966: remote placement asks usable(agent, host) and skips a host signed out of agy."""
+    BRIEF = ('Refs owner/app#9\n\n## Acceptance\n- [ ] prove it\n\n## Out of scope\nother files\n\n'
+             '## Verify\nbash script/checks-local.sh\n\n## Finish\nSelf-review, run orca worktree set '
+             '--worktree active --workspace-status in-review, then worker_done.\n')
+
+    def setUp(self):
+        fleet_env.guard_gh_writes(self)
+        gh = patch.object(fw, 'run_gh', return_value=0)
+        gh.start()
+        self.addCleanup(gh.stop)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state_file = Path(tmp.name) / 'agy-unavailable.json'
+        env = patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(self.state_file),
+                                      'FLEET_WATCH_CONFIG': str(Path(tmp.name) / 'none.json')})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def run_scan(self, issues, marked):
+        for host in marked:
+            fw._agy_signin().mark(host, path=self.state_file, config={})
+        config = {
+            'issue_scan': {'enabled': True, 'repos': [REPO], 'run': 'run_x', 'from_terminal': 'term_coord',
+                           'host': 'local', 'agent': 'antigravity', 'model': 'gemini-m',
+                           'repo_roots': {REPO: '/tmp/app'}},
+            'host_caps': {'local': 1, 'hostb': 4, 'hostc': 4},
+            'worker_placement': {'repos': {'hostb': {REPO: 'id:b'}, 'hostc': {REPO: 'id:c'}}},
+        }
+        starts = []
+        _notices, log = fw.issue_scan_pass(
+            config, {'issue_scan_backlog_sweep_at': NOW}, NOW, [],
+            list_issues=lambda _repo: issues, pr_fetch=lambda _repo: [], gate_check=lambda _c: True,
+            admit_fn=lambda host, _c, _w: (
+                {'admitted': False, 'occupied': 1, 'reason': 'host cap exceeded: local 1/1'}
+                if host == 'local' else {'admitted': True, 'occupied': 0}),
+            start_worker=lambda cmd: starts.append(cmd) or 0,
+            repo_id_lookup=lambda host, _repo: 'id-%s' % host,
+            pick_fn=lambda _role, **_kw: {'selected': {'provider': 'claude', 'model': 'sonnet', 'eligible': True}},
+        )
+        return starts, log
+
+    def test_antigravity_skips_the_marked_host_and_starts_on_the_free_one(self):
+        starts, log = self.run_scan([issue(1, ['ready-for-agent'], body=self.BRIEF)], ['hostb'])
+        self.assertEqual(len(starts), 1, log)
+        self.assertEqual(starts[0][starts[0].index('--on') + 1], 'hostc')
+        self.assertEqual(starts[0][starts[0].index('--agent') + 1], 'antigravity')
+        self.assertIn('issue_scan_agy_hostb', log)
+
+    def test_a_later_non_agy_issue_still_starts_when_every_host_is_signed_out(self):
+        starts, log = self.run_scan([
+            issue(1, ['ready-for-agent'], body=self.BRIEF, created='2026-01-01T00:00:00Z'),
+            issue(2, ['ready-for-agent', 'size:S'], body=self.BRIEF, created='2026-01-02T00:00:00Z'),
+        ], ['hostb', 'hostc'])
+        self.assertIn('issue_deferred=1:agy_signin', log)
+        self.assertEqual(len(starts), 1, log)
+        self.assertEqual(starts[0][starts[0].index('--agent') + 1], 'claude')
+        self.assertEqual(starts[0][starts[0].index('--on') + 1], 'hostb')
+
+
 class LiveDuplicateRefusalDefers(unittest.TestCase):
     """worker-startup refuse_live_duplicate exits 2 (#1839). The issue defers and keeps its labels, it is not parked (#1838)."""
 

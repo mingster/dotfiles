@@ -3112,7 +3112,7 @@ def worker_stall_restart_start_args(w, old_dispatch_id, run_id, config):
         return None
     agent = worker_agent_id(w)
     model = worker_model_id(w)
-    if not agent:
+    if not agent or stall_restart_agy_unusable(w, config):
         return None
     rid = run_id_for_stall_restart(w, run_id)
     if not rid:
@@ -3128,6 +3128,12 @@ def worker_stall_restart_start_args(w, old_dispatch_id, run_id, config):
     if model:
         args.extend(['--model', model])
     return args
+
+
+def stall_restart_agy_unusable(w, config):
+    """True when an antigravity row's host is signed out of agy, so a restart there would fail (#1966)."""
+    host = host_cap_name((w or {}).get('_host') or remote_environment(w), config, None)
+    return not _agy_signin().usable(worker_agent_id(w), host, config or {})
 
 
 def worker_model_id(w):
@@ -3255,6 +3261,8 @@ def stall_restart_start_blocked_log(old_dispatch_id, config, w, run_id):
         return 'stall_pending_no_args=%s' % old_dispatch_id
     if not worker_agent_id(w):
         return 'stall_pending_no_args=%s' % old_dispatch_id
+    if stall_restart_agy_unusable(w, config):
+        return 'stall_restart_agy_unusable=%s' % old_dispatch_id
     rid = run_id_for_stall_restart(w, run_id) or default_list_run_id(config)
     if not rid:
         return 'stall_pending_no_args=%s' % old_dispatch_id
@@ -8950,7 +8958,7 @@ def standing_route(
     root = roots.get(repo) or ''
     records = standing_records(state)
     for host in cfg['hosts']:
-        if _agy_signin().is_unavailable(host):
+        if not _agy_signin().usable(cfg['agent'], host, config):
             continue
         rec = records.get(host)
         if isinstance(rec, dict) and not standing_idle(rec, open_prs):
@@ -10095,9 +10103,22 @@ def _issue_scan_pass(
             count_refused('host_cap')
             defer_rest('host_cap')
             break
+        # The route comes first so placement knows the agent and skips a host signed out of agy (#1966).
+        route = None
+        labelled = issue_scan_route(row)
+        if labelled:
+            if labelled[1] == 'qa-sdet' and (row.get('title') or '').startswith(TIER0_AUDIT_PREFIX):
+                chosen = tier0_audit_pick(row, pick_fn or pick_role)
+            else:
+                chosen = choose_pick((pick_fn or pick_role)(labelled[1], tier=labelled[2]))
+            if not chosen:
+                log_bits.append('issue_route_blocked=%d:%s' % (row['number'], labelled[1]))
+                continue
+            route = (labelled[0], chosen[0], chosen[1], chosen[2])
+        start_agent = route[1] if route else scan.get('agent') or 'claude'
         if remote_hosts:
             placed = False
-            unmapped = 0
+            unmapped = agy_out = 0
             for candidate in remote_hosts:
                 receipt = admit_fn(candidate, config, workers)
                 if not receipt.get('admitted'):
@@ -10111,6 +10132,10 @@ def _issue_scan_pass(
                 if (receipt.get('occupied') or 0) + pass_starts.get(candidate, 0) >= host_cap:
                     log_bits.append('issue_scan_full_%s' % candidate)
                     count_refused('host_cap')
+                    continue
+                if not _agy_signin().usable(start_agent, candidate, config):
+                    log_bits.append('issue_scan_agy_%s' % candidate)
+                    agy_out += 1
                     continue
                 if not _host_maps_repo(config, candidate, repo):
                     log_bits.append('issue_scan_no_repo_%s' % candidate)
@@ -10131,19 +10156,12 @@ def _issue_scan_pass(
                 if unmapped:
                     defer_issue(state, now, repo, row['number'], 'placement', deferred, notices, log_bits, persist_state)
                     continue
+                # Hosts signed out of agy refuse only antigravity starts: a later issue on another agent may still start.
+                if agy_out:
+                    defer_issue(state, now, repo, row['number'], 'agy_signin', deferred, notices, log_bits, persist_state)
+                    continue
                 defer_rest('host_cap')
                 return notices, log_bits
-        route = None
-        labelled = issue_scan_route(row)
-        if labelled:
-            if labelled[1] == 'qa-sdet' and (row.get('title') or '').startswith(TIER0_AUDIT_PREFIX):
-                chosen = tier0_audit_pick(row, pick_fn or pick_role)
-            else:
-                chosen = choose_pick((pick_fn or pick_role)(labelled[1], tier=labelled[2]))
-            if not chosen:
-                log_bits.append('issue_route_blocked=%d:%s' % (row['number'], labelled[1]))
-                continue
-            route = (labelled[0], chosen[0], chosen[1], chosen[2])
         command = build_issue_start_command(config, repo, row, placement, route)
         if command is None:
             log_bits.append('issue_scan_skip')

@@ -65,7 +65,9 @@ else: sys.exit(99)
         self.gate = self.home / 'gate.py'
         self.gate.write_text('import sys\nsys.exit(0)\n')
         self.env = dict(os.environ, ORCA_CLI_COMMAND=str(stub), REMOTE_FIXTURE=str(self.home),
-                        USAGE_GATE_CLI=str(self.gate), REMOTE_SHELL=shutil.which('dash') or '/bin/sh')
+                        USAGE_GATE_CLI=str(self.gate), REMOTE_SHELL=shutil.which('dash') or '/bin/sh',
+                        AGY_UNAVAILABLE_STATE=str(self.home / 'agy-unavailable.json'),
+                        FLEET_WATCH_CONFIG=str(self.home / 'no-fleet.json'))
 
     def launch(self, agent='antigravity', worktree='path:/srv/fixture'):
         return subprocess.run(['bash', str(ROOT / 'script/start-remote-worker.sh'),
@@ -108,6 +110,18 @@ else: sys.exit(99)
         result = self.run_args('--on', 'fixture-environment', '--agent', 'antigravity',
                                '--worktree', 'path:/srv/fixture', '--spec', 'x')
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_antigravity_on_a_host_signed_out_of_agy_exits_4_before_any_orca_call(self):
+        # 1966: --agent antigravity on a marked host is refused; claude on the same host is not.
+        subprocess.run([sys.executable, str(ROOT / 'script/agy-signin.py'), 'mark', 'fixture-environment'],
+                       env=self.env, capture_output=True, check=True)
+        result = self.launch()
+        self.assertEqual(result.returncode, 4)
+        self.assertIn('start-remote-worker: refused: fixture-environment is not signed in to agy', result.stderr)
+        self.assertFalse(self.log.exists())
+        (self.bin / 'claude').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'claude').chmod(0o700)
+        self.assertEqual(self.launch(agent='claude').returncode, 0)
 
     def test_usage_gate_refusal_stops_before_any_orca_call(self):
         self.gate.write_text('import sys\nsys.exit(3)\n')

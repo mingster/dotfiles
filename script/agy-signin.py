@@ -4,6 +4,8 @@
   agy-signin.py match               read a worker screen on stdin; exit 0 when it is the sign-in screen
   agy-signin.py unavailable <host>  exit 0 when the host is marked agy-unavailable
   agy-signin.py mark <host>         mark the host for 6 hours; print "notify" when a notice is due, else "known"
+  agy-signin.py usable --agent <a> --host <h> [--config <fleet config>]
+                                    exit 0 when the agent may start on the host, 1 when not (#1966)
 
 A plain `agy -p` probe over ssh says "authentication failed" on a signed in host (the keychain is not
 reachable from ssh), so the worker screen is the only check.
@@ -11,6 +13,7 @@ reachable from ssh), so the worker screen is the only check.
 import json
 import os
 import re
+import socket
 import sys
 import time
 from pathlib import Path
@@ -66,19 +69,46 @@ def _load(path):
     return data if isinstance(data, dict) else {}
 
 
-def is_unavailable(host, now=None, path=None):
+def _fleet_config(config):
+    """The fleet config, found the way worker-placement.py finds it, when the caller passes none."""
+    if config is not None:
+        return config
+    env = os.environ.get('FLEET_WATCH_CONFIG') or os.environ.get('FLEET_PLACEMENT_CONFIG')
+    return _load(Path(os.path.expanduser(env)) if env else Path.home() / '.config' / 'fleet-watch' / 'config.json')
+
+
+def host_key(host, config=None):
+    """The record key for a host: lowercase, with '', 'local', the config local_host and this machine's name
+    all mapped to the config local_host (or 'local' when the config names none)."""
+    local = (_fleet_config(config).get('local_host') or '')
+    local = local.strip().lower() if isinstance(local, str) else ''
+    key = (host or '').strip().lower()
+    this = socket.gethostname().split('.')[0].lower()
+    if key in ('', 'local', local, this):
+        return local or 'local'
+    return key
+
+
+def usable(agent, host, config=None, now=None, path=None):
+    """False only for antigravity on a host marked agy-unavailable; every other agent is usable (#1966)."""
+    if (agent or '').strip().lower() not in ('antigravity', 'agy'):
+        return True
+    return not is_unavailable(host, now=now, path=path, config=config)
+
+
+def is_unavailable(host, now=None, path=None, config=None):
     now = time.time() if now is None else now
-    row = _load(path or state_path()).get(host.lower())
+    row = _load(path or state_path()).get(host_key(host, config))
     until = row.get('until') if isinstance(row, dict) else None
     return isinstance(until, (int, float)) and not isinstance(until, bool) and now < until
 
 
-def mark(host, now=None, path=None):
+def mark(host, now=None, path=None, config=None):
     """Mark the host for 6 hours. True when the owner is due a notice: at most one per host per 6 hours."""
     now = time.time() if now is None else now
     path = path or state_path()
     data = _load(path)
-    key = host.lower()
+    key = host_key(host, config)
     row = data.get(key) if isinstance(data.get(key), dict) else {}
     notified = row.get('notified_at')
     due = not (isinstance(notified, (int, float)) and not isinstance(notified, bool)
@@ -108,6 +138,13 @@ def main(argv):
     if cmd == 'mark' and len(argv) == 3:
         print('notify' if mark(argv[2]) else 'known')
         return 0
+    if cmd == 'usable':
+        opts = dict(zip(argv[2::2], argv[3::2]))
+        if len(argv) % 2 or set(opts) - {'--agent', '--host', '--config'} or not {'--agent', '--host'} <= set(opts):
+            print(__doc__, file=sys.stderr)
+            return 2
+        config = _load(Path(opts['--config'])) if '--config' in opts else None
+        return 0 if usable(opts['--agent'], opts['--host'], config) else 1
     print(__doc__, file=sys.stderr)
     return 2
 
