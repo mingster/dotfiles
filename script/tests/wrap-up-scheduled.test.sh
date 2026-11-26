@@ -102,7 +102,7 @@ waitfor() { local i=0; while [ ! -e "$1" ] && [ "$i" -lt 200000 ]; do i=$((i+1))
 reset() {
   rm -rf "$calls" "$log" "$detail" "$ghlog" "$tmp/gh-open.json" "$tmp/state"/* "$tmp/app"/* "$tmp/home/.local/bin"/* "$tmp/home/.orca/cli/bin"/*
   FAKE_BLOCK=; FAKE_ORCA=ready; FAKE_REPOS=ok; FAKE_SLEEP=; LOAD=1; FAIL_REPO=none; ROUND_PATH=; APP_BIN=; ROUND_LIMIT=; CALL_TIMEOUT=; FAKE_GH_LIST_FAIL=; KILL_GRACE=; FAKE_GH_PUBLIC=; PRECHECK_TIMEOUT=; unset ISSUE_REPO
-  unset LOAD_CMD CORES_CMD BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE BOARD_DONE_CALLS WRAP_UP_BOARD_CLEAN BOARD_CLEAN_CALLS
+  unset LOAD_CMD CORES_CMD BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE BOARD_DONE_CALLS WRAP_UP_BOARD_CLEAN BOARD_CLEAN_CALLS BOARD_TIMEOUT
 }
 
 reset
@@ -534,6 +534,9 @@ printf 'import time\nprint("progress before the kill")\ntime.sleep(30)\n' > "$tm
 BOARD_TIMEOUT=10 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$tmp/board-slow.py" round
 check 'the cut short step was killed' has 'board-clean exit 124' "$log"
 check 'a cut short board step keeps its output in the detail log' has 'progress before the kill' "$detail"
+# reset must clear BOARD_TIMEOUT so a later check never inherits the budget (set plainly here, so the check tests reset alone).
+BOARD_TIMEOUT=10; reset
+check 'reset clears BOARD_TIMEOUT' test -z "${BOARD_TIMEOUT-}"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0
