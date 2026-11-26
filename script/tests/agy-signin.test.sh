@@ -78,6 +78,13 @@ class Pass(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(pathlib.Path(self.tmp) / 'agy-unavailable.json')})
         patcher.start()
         self.addCleanup(patcher.stop)
+        launches = pathlib.Path(self.tmp) / 'startup' / 'launches'
+        launches.mkdir(parents=True)
+        for d in ('d1', 'ctx_v1'):
+            (launches / ('%s.json' % d)).write_text(json.dumps({'agent': 'antigravity', 'model': 'gemini-4-neon-high'}))
+        startup = mock.patch.dict(os.environ, {'WORKER_STARTUP_STATE': str(pathlib.Path(self.tmp) / 'startup')})
+        startup.start()
+        self.addCleanup(startup.stop)
         self.config = {'local_host': 'hosta'}
 
     def sweep(self, workers, screens, now):
@@ -133,8 +140,10 @@ class FakeOrca:
         return [c for c in self.calls if c[1] == name]
 
 def remote_start_unknown(dispatch='d1'):
-    """A remote worker-list row as Orca prints it (fixtures/agy-signin-stopped-remote.json), in start_unknown."""
-    return {'dispatchId': dispatch, 'taskId': 'task_1', 'agent': 'antigravity', 'workerState': 'start_unknown',
+    """A remote worker-list --full row as Orca prints it (fixtures/agy-signin-stopped-remote.json), in start_unknown.
+
+    It has no agent field: the launch record worker-startup.sh wrote names the agent."""
+    return {'dispatchId': dispatch, 'taskId': 'task_1', 'provider': None, 'workerState': 'start_unknown',
             'dispatchStatus': 'dispatched', 'agentTerminalHandle': None, 'terminalState': None, 'resource': None,
             'server': {'environmentId': 'env-b', 'name': 'hostb'}, '_task_title': '#42|fullstack-dev'}
 
@@ -145,6 +154,13 @@ class StartUnknown(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(pathlib.Path(self.tmp) / 'agy-unavailable.json')})
         patcher.start()
         self.addCleanup(patcher.stop)
+        launches = pathlib.Path(self.tmp) / 'startup' / 'launches'
+        launches.mkdir(parents=True)
+        for d in ('d1', 'ctx_v1'):
+            (launches / ('%s.json' % d)).write_text(json.dumps({'agent': 'antigravity', 'model': 'gemini-4-neon-high'}))
+        startup = mock.patch.dict(os.environ, {'WORKER_STARTUP_STATE': str(pathlib.Path(self.tmp) / 'startup')})
+        startup.start()
+        self.addCleanup(startup.stop)
         self.config = {'local_host': 'hosta'}
         self.row = remote_start_unknown()
         self.state, self.reads = {}, []
@@ -159,8 +175,8 @@ class StartUnknown(unittest.TestCase):
         orca = FakeOrca()
         notices = self.sweep(orca)
         self.assertEqual(len(notices), 1)
-        self.assertIn('sign in to agy on env-b', notices[0])
-        self.assertTrue(agy.is_unavailable('env-b', 1000))
+        self.assertIn('sign in to agy on hostb', notices[0])
+        self.assertTrue(agy.is_unavailable('hostb', 1000), 'marked by the host name worker-startup.sh checks')
         self.assertEqual(orca.named('worker-show'), [('orchestration', 'worker-show', '--dispatch', 'd1', '--environment', 'env-b')])
         self.assertEqual(self.reads, [('t9', 'env-b')], 'terminal found with worker-show on the host')
         self.assertEqual(orca.named('worker-stop'), [('orchestration', 'worker-stop', '--dispatch', 'd1', '--environment', 'env-b')])
@@ -168,11 +184,25 @@ class StartUnknown(unittest.TestCase):
         self.assertFalse(watch.worker_row_is_live(self.row), 'the issue scan sees no live worker and restarts the issue (#1811)')
         self.assertFalse(watch.issue_has_live_dispatch([self.row], 42))
 
-    def test_screen_is_read_once_per_dispatch(self):
+    def test_failed_stop_tries_again_next_pass(self):
+        self.sweep(FakeOrca(fail={'worker-stop'}))
         orca = FakeOrca()
-        self.sweep(orca, screen=WORKING)
-        self.sweep(orca, screen=WORKING)
-        self.assertEqual(len(self.reads), 1)
+        self.sweep(orca)
+        self.assertEqual(len(orca.named('worker-stop')), 1)
+        self.sweep(orca)
+        self.assertEqual(len(orca.named('worker-stop')), 1, 'done once stopped')
+
+    def test_row_with_no_agent_and_no_launch_record_is_skipped(self):
+        orca = FakeOrca()
+        self.assertEqual(self.sweep(orca, rows=[remote_start_unknown('d_other')]), [])
+        self.assertEqual(orca.calls, [])
+
+    def test_working_screen_is_read_at_most_three_passes(self):
+        # A later pass reads again, since the sign-in screen may not have rendered on the first read.
+        orca = FakeOrca()
+        for _ in range(5):
+            self.sweep(orca, screen=WORKING)
+        self.assertEqual(len(self.reads), watch.AGY_START_UNKNOWN_TRIES)
         self.assertEqual(orca.named('worker-stop'), [])
 
     def test_no_terminal_yet_tries_again_up_to_three_passes(self):
@@ -274,8 +304,9 @@ class Probe(unittest.TestCase):
 
     def test_probe_text_only_trusts_the_signed_out_line(self):
         self.assertEqual(watch._agy_probe_text('Error: Please sign in to view available models.'), 'out')
-        self.assertEqual(watch._agy_probe_text('gemini-3-pro\n'), 'in')
-        self.assertEqual(watch._agy_probe_text('authentication failed'), 'in')
+        self.assertEqual(watch._agy_probe_text('gemini-4-neon-high             Gemini 4 Neon (High)\n'), 'in')
+        self.assertEqual(watch._agy_probe_text('authentication failed'), '')
+        self.assertEqual(watch._agy_probe_text(json.dumps({'terminal': {'tail': []}})), '', 'a blank screen is no answer')
         self.assertEqual(watch._agy_probe_text(''), '')
 
 class Cli(unittest.TestCase):

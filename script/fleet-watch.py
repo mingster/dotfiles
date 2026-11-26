@@ -10691,6 +10691,7 @@ def _agy_signin_stop(w, dispatch, host, remote, rpc_call):
     failure = stop_and_release_stalled(rpc_call, w, dispatch, remote_environment(w) if remote else '', stop_on_host=remote)
     print('fleet-watch: agy-signin %s %s on %s' % ('stop failed (%s) for' % failure if failure else 'stopped', dispatch, host),
           file=sys.stderr)
+    return failure
 
 
 AGY_START_UNKNOWN_TRIES = 3  # passes that may try to read a start_unknown worker's screen
@@ -10709,32 +10710,36 @@ def agy_signin_notices(config, workers, read=None, now=None, state=None, rpc_cal
     notices = []
     seen = set()
     for w in workers or []:
-        if not isinstance(w, dict) or worker_agent_id(w) not in ('antigravity', 'agy'):
+        if not isinstance(w, dict):
+            continue
+        # A --full worker-list row has no agent field, so the launch record names it (#1951).
+        agent = worker_agent_id(w) or (_launch_record_pair(w.get('dispatchId')) or ('',))[0]
+        if agent not in ('antigravity', 'agy'):
             continue
         if worker_settled_kind(w) is not None or worker_terminal_released(w):
             continue
         remote = worker_is_remote(w, config)
-        host = remote_environment(w) if remote else (config.get('local_host') or 'local')
+        env = remote_environment(w) if remote else ''
+        server = w.get('server') if isinstance(w.get('server'), dict) else {}
+        # The mark is keyed by the host name that host_caps and worker-startup.sh use, not the environment id.
+        host = (str(server.get('name') or '').strip() or env) if remote else (config.get('local_host') or 'local')
         dispatch = w.get('dispatchId') or ''
         unknown = bool(worker_start_unknown(w) and dispatch and 0 <= int(tries.get(dispatch, 0)) < AGY_START_UNKNOWN_TRIES)
         if unknown:
             tries[dispatch] = int(tries.get(dispatch, 0)) + 1
             for old in list(tries)[:-200]:
                 tries.pop(old, None)
-        terminal = worker_terminal_handle(w) or (
-            _shown_terminal(rpc_call, dispatch, host if remote else '') if unknown else '')
+        terminal = worker_terminal_handle(w) or (_shown_terminal(rpc_call, dispatch, env) if unknown else '')
         if not terminal or not host or (host in seen and not unknown):
             continue
         try:
             if read is not None:
-                screen = read(terminal, host if remote else '')
+                screen = read(terminal, env)
             else:
-                screen = json.dumps(rpc('terminal', 'read', '--terminal', terminal, '--screen',
-                                        *(['--environment', host] if remote else [])))
+                screen = json.dumps(rpc_call('terminal', 'read', '--terminal', terminal, '--screen',
+                                             *(['--environment', env] if remote else [])))
         except SEND_ERRORS:
             continue
-        if unknown:
-            tries[dispatch] = -1  # read: done with this dispatch
         if not agy.is_sign_in_screen(screen):
             continue
         seen.add(host)
@@ -10743,8 +10748,8 @@ def agy_signin_notices(config, workers, read=None, now=None, state=None, rpc_cal
         except OSError as error:
             print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
             continue
-        if unknown:
-            _agy_signin_stop(w, dispatch, host, remote, rpc_call)
+        if unknown and not _agy_signin_stop(w, dispatch, host, remote, rpc_call):
+            tries[dispatch] = -1  # stopped: done with this dispatch; a failed stop tries again next pass
         if due:
             notices.append(_agy_signin_line(host))
     return notices
@@ -10758,13 +10763,15 @@ def _agy_signin_line(host):
 AGY_PROBE_EVERY = 30 * 60
 AGY_PROBE_TITLE = 'agy-signin-probe'  # not '#N|role' or '<job> run N', so the orphan terminal sweep (#1947) leaves it
 AGY_PROBE_COMMAND = '"$HOME/dotfiles/bin/agy" models; exit'  # through bin/agy, like every agy start; the shell stays open without the exit, so wait --for exit never ends
+AGY_PROBE_SIGNED_IN = re.compile(r'[a-z][a-z0-9.]*-[a-z0-9.-]+ {2,}[a-z]')  # a model row of `agy models`: id, spaces, name (text is lowered)
 AGY_PROBE_SIGNED_OUT = 'please sign in to view available models'
 AGY_PROBE_WAIT_MS = 12000  # under the 15 s orca CLI timeout in rpc()
 
 
 def _agy_probe_text(text):
-    """'out' only on agy's own signed out line. Anything else, an error included, is not proof."""
-    return 'out' if AGY_PROBE_SIGNED_OUT in (text or '').lower() else 'in' if (text or '').strip() else ''
+    """'out' only on agy's own signed out line, 'in' on a model list. Anything else, an error included, is not proof."""
+    low = (text or '').lower()
+    return 'out' if AGY_PROBE_SIGNED_OUT in low else 'in' if AGY_PROBE_SIGNED_IN.search(low) else ''
 
 
 def _probe_worktree(rpc_call, env):
@@ -11215,6 +11222,14 @@ def _main():
             print('fleet-watch: early supply skipped: %s' % (repr(error),), file=sys.stderr)
             return []
 
+    def agy_probe_phase():
+        try:
+            return agy_probe_notices(config, state, now)
+        except Exception as error:
+            print('fleet-watch: agy probe skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
+    notices += run_phase('agy_probe', agy_probe_phase, [])
     supply_first_log = run_phase('supply_first', supply_first, [])
 
     pass_phase('babysit')
@@ -11256,14 +11271,6 @@ def _main():
             notices += agy_signin_notices(config, workers, now=now, state=state)
         except Exception as error:
             print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
-    def agy_probe_phase():
-        try:
-            return agy_probe_notices(config, state, now)
-        except Exception as error:
-            print('fleet-watch: agy probe skipped: %s' % (repr(error),), file=sys.stderr)
-            return []
-
-    notices += run_phase('agy_probe', agy_probe_phase, [])
     stall_extra, stall_log = run_phase('stall', lambda: worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
