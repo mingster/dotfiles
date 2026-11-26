@@ -203,15 +203,32 @@ class OrphanSweep(unittest.TestCase):
         self.assertEqual(fw.orphan_terminal_sweep(CONFIG, NOW, broken, ['hostB']), [])
         self.assertEqual(fleet.closed(), [])
 
-    def test_a_paged_worker_list_skips_the_host(self):
-        fleet = Fleet(terminals={'hostB': [term('term_o', '#5|fullstack-dev')]})
+    def test_a_live_worker_only_on_an_active_page_is_kept(self):
+        # The full list is paged (thousands of rows); a running worker past its first page is still found on
+        # the second page of the active list.
+        fleet = Fleet(terminals={'hostB': [term('term_old_live', '#5|fullstack-dev'), term('term_o', '#6|qa-sdet')]})
 
         def paged(*args):
             if args[:2] == ('orchestration', 'worker-list'):
-                return {'workers': [], 'nextCursor': 'c2'}
+                if '--terminal-state' not in args:
+                    return {'workers': [], 'nextCursor': 'full2'}
+                if '--cursor' not in args:
+                    return {'workers': [], 'nextCursor': 'act2'}
+                return {'workers': [row('ctx_old', terminal='term_old_live')], 'nextCursor': None}
             return fleet(*args)
 
-        self.assertEqual(fw.orphan_terminal_sweep(CONFIG, NOW, paged, ['hostB']), [])
+        self.assertEqual(fw.orphan_terminal_sweep(CONFIG, NOW, paged, ['hostB']), ['term_o'])
+
+    def test_an_active_list_past_the_page_cap_skips_the_host(self):
+        fleet = Fleet(terminals={'hostB': [term('term_o', '#5|fullstack-dev')]})
+
+        def endless(*args):
+            if args[:2] == ('orchestration', 'worker-list'):
+                return {'workers': [], 'nextCursor': 'again'}
+            return fleet(*args)
+
+        self.assertEqual(fw.orphan_terminal_sweep(CONFIG, NOW, endless, ['hostB']), [])
+        self.assertEqual(fleet.closed(), [])
 
 
 class AskUrgentAfterFiveMinutes(unittest.TestCase):

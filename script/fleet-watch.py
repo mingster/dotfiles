@@ -3469,25 +3469,52 @@ def _workspace_path(w):
     return sel.split('::')[-1] if sel else ''
 
 
+ACTIVE_WORKER_PAGES = 10
+
+
+def host_workers(rpc_call, on):
+    """One host's worker rows: the newest page of the full list plus every page of the active list (#1947).
+
+    The full list runs to thousands of rows, so only its newest page is read; every running worker holds an
+    active terminal, so the active pages cover the rest. Returns None when the active list runs past
+    ACTIVE_WORKER_PAGES pages or a page is not a list. Raises the read error."""
+    first = rpc_call('orchestration', 'worker-list', *on) or {}
+    rows = first.get('workers') if isinstance(first, dict) else None
+    if not isinstance(rows, list):
+        return None
+    rows = [w for w in rows if isinstance(w, dict)]
+    cursor = None
+    for _page in range(ACTIVE_WORKER_PAGES):
+        args = ['orchestration', 'worker-list', '--terminal-state', 'active', *on]
+        if cursor:
+            args += ['--cursor', cursor]
+        page = rpc_call(*args) or {}
+        more = page.get('workers') if isinstance(page, dict) else None
+        if not isinstance(more, list):
+            return None
+        rows += [w for w in more if isinstance(w, dict)]
+        cursor = page.get('nextCursor') or None
+        if not cursor:
+            return rows
+    return None
+
+
 def orphan_terminal_sweep(config, now, rpc_call, hosts, protected_workers=()):
     """Close a worker (`#N|role`) or automation run terminal with no live dispatch that has been idle 15 minutes
     or more, on each fleet host (#1947). `hosts` are environment names, '' for this host. A host whose terminal
-    or worker list cannot be read is skipped. Only the terminal is closed; worktrees stay for wrap-up.sh (#1946).
+    or worker list cannot be read is skipped (see host_workers). Only the terminal is closed; worktrees stay for wrap-up.sh (#1946).
     Returns the handles closed."""
     closed = []
     for env in hosts:
         on = _env_args(env)
         try:
             terms = (rpc_call('terminal', 'list', *on) or {}).get('terminals')
-            listed = rpc_call('orchestration', 'worker-list', *on) or {}
+            rows = host_workers(rpc_call, on)
         except SEND_ERRORS:
             continue
-        rows = listed.get('workers') if isinstance(listed, dict) else None
-        # A second worker page could hold a live worker, so a paged list skips the host.
-        more = isinstance(listed, dict) and (listed.get('nextCursor') or (listed.get('page') or {}).get('hasMore'))
-        if not isinstance(terms, list) or not isinstance(rows, list) or more:
+        if not isinstance(terms, list) or rows is None:
             continue
-        live = [w for w in list(rows) + list(protected_workers or []) if isinstance(w, dict) and worker_row_is_live(w)]
+        live = [w for w in rows + list(protected_workers or []) if isinstance(w, dict) and worker_row_is_live(w)]
         live_handles = {worker_terminal_handle(w) for w in live} - {''}
         live_paths = {_workspace_path(w) for w in live} - {''}
         for t in terms:
@@ -3527,9 +3554,10 @@ def release_worker_by_fragment(fragment, config, rpc_call, hosts, allow_live=Fal
     for env in hosts:
         on = _env_args(env)
         try:
-            for w in (rpc_call('orchestration', 'worker-list', *on) or {}).get('workers') or []:
-                if isinstance(w, dict):
-                    rows.append((env, w))
+            listed = host_workers(rpc_call, on)
+            if listed is None:
+                return 1, 'cannot read the worker list on %s; nothing closed' % (env or 'this host')
+            rows += [(env, w) for w in listed]
             for t in (rpc_call('terminal', 'list', *on) or {}).get('terminals') or []:
                 if isinstance(t, dict) and t.get('handle'):
                     terminals.append((env, t))
