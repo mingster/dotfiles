@@ -80,7 +80,7 @@ _mf_write_gh() {
 echo "gh $*" >> "$MF_GH_LOG"
 all_args=("$@")
 cmd="$1 ${2:-}"; shift 2 || true
-  want_commits="" pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr=""
+  want_commits="" pr="" commit_sha="" body="" body_file="" json="" match="" base="" jq_expr="" head_ref=""
   case "$cmd" in
     api*) for a in "${all_args[@]}"; do case "$a" in
       repos/*/pulls/*/files) pr=${a#*/pulls/}; pr=${pr%%/*} ;;
@@ -104,6 +104,7 @@ while [ $# -gt 0 ]; do
     -q|--jq) jq_expr=$2; shift ;;
     --match-head-commit) match=$2; shift ;;
     --base) base=$2; shift ;;
+    --head) head_ref=$2; shift ;;
     --repo|--limit|--state) shift ;;
   esac
   shift
@@ -125,7 +126,7 @@ case "$cmd" in
     jq --arg b "$body" '.comments += [{body:$b, author:"fixture", edited:false, minimized:false}]' "$file" > "$file.tmp" && mv "$file.tmp" "$file" ;;
   "pr edit") [ -n "$base" ] && save ".baseRefName = \"$base\"" ;;
   "pr list")
-    jq -s --arg b "${base:-}" '[.[] | select(.state=="OPEN" and ($b=="" or .baseRefName==$b)) | {number}]' "$MF_GH_DIR"/pr-*.json ;;
+    jq -s --arg b "${base:-}" --arg hd "${head_ref:-}" '[.[] | select(.state=="OPEN" and ($b=="" or .baseRefName==$b) and ($hd=="" or .headRefName==$hd)) | {number}]' "$MF_GH_DIR"/pr-*.json ;;
   "run list") # latest Checks run on main: $MF_GH_DIR/main-run.json holds one run object, green when absent; main-run-fails makes gh error
     [ ! -f "$MF_GH_DIR/main-run-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
     if [[ " ${all_args[*]} " == *" --status success "* ]]; then # the last green push run: main-base.json, none when absent
@@ -135,7 +136,7 @@ case "$cmd" in
   "repo view") # visibility: $MF_GH_DIR/visibility-<owner>__<name> holds PRIVATE, INTERNAL or PUBLIC (default); visibility-fails makes gh error
     [ ! -f "$MF_GH_DIR/visibility-fails" ] || { echo "gh: HTTP 502" >&2; exit 1; }
     vis=PUBLIC; [ ! -f "$MF_GH_DIR/visibility-${pr//\//__}" ] || vis=$(cat "$MF_GH_DIR/visibility-${pr//\//__}")
-    out=$(jq -n --arg v "$vis" '{visibility:$v}')
+    out=$(jq -n --arg v "$vis" '{visibility:$v, defaultBranchRef:{name:"main"}}')
     if [ -n "$jq_expr" ]; then jq -r "$jq_expr" <<<"$out"; else printf '%s\n' "$out"; fi ;;
   "pr merge")
     [ -f "$file" ] || { echo "no such PR $pr" >&2; exit 1; }

@@ -330,6 +330,39 @@ else
   bad "a Readers: section naming the changed function passes the body gate" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# 1952: a stacked PR (base is another branch) merges only while an open PR still has that base as its head.
+stack_case() { # <pr> <branch> <base branch>; sets SHIP_RC and SHIP_OUT
+  local n=$1 b=$2 base=$3 h
+  mf_pr_add "$n" "$b" "Body"
+  jq --arg base "$base" '.baseRefName = $base' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"; set_checks "$n" "$green_checks"; post_verdict "$n" PASS "$h"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+}
+mf_pr_add 3040 feat-base-merged "Body"
+jq '.state = "MERGED"' "$MF_GH_DIR/pr-3040.json" > "$MF_GH_DIR/pr-3040.tmp" && mv "$MF_GH_DIR/pr-3040.tmp" "$MF_GH_DIR/pr-3040.json"
+stack_case 3041 feat-stacked-merged feat-base-merged
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "base feat-base-merged is merged; retarget to main and rebase" <<<"$SHIP_OUT" \
+  && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "stacked PR whose base PR is merged refuses and names the default branch"
+else
+  bad "stacked PR whose base PR is merged refuses and names the default branch" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+mf_pr_add 3042 feat-base-live "Body"
+stack_case 3043 feat-stacked-live feat-base-live
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 3043 ]]; then
+  ok "stacked PR whose base PR is still open ships"
+else
+  bad "stacked PR whose base PR is still open ships" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+stack_case 3044 feat-default-base main
+if [ "$SHIP_RC" -eq 0 ] && [[ "$SHIP_OUT" =~ ^shipped\ PR\ 3044 ]]; then
+  ok "PR whose base is the default branch ships"
+else
+  bad "PR whose base is the default branch ships" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # 11. Edited FAIL still blocks an older PASS
 mf_pr_add 11 feat-edited-fail "Body"
 h11=$(jq -r .headRefOid "$MF_GH_DIR/pr-11.json")
