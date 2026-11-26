@@ -277,6 +277,22 @@ expect_rc "sync refuses an unlistable source folder" 1 g sync
 chmod 700 "$D/sub"
 expect_rc "sync succeeds again once the folder is listable" 0 g sync
 
+# a source folder with no file to push (empty, or only skipped names) is refused before any host is contacted
+mkdir -p "$TMP/home/empty"; chmod 700 "$TMP/home/empty"
+printf 'DIR=%s\nHOSTS=hostA\nDEPLOY=\n' "$TMP/home/empty" >"$TMP/empty.conf"
+ge() { SECRETS_GATE_CONF="$TMP/empty.conf" PATH="$TMP/bin:$PATH" timeout "$TMO" bash "$GATE" sync; }
+empty_case() {
+  local label=$1 ssh_before r_before
+  ssh_before=$(cat "$TMP/ssh.log") r_before=$(snap)
+  expect_rc "sync refuses $label" 1 ge
+  [[ "$LAST_OUT" == "secrets-gate: sync: folder $TMP/home/empty holds no file" ]] && ok "$label: the refusal names the empty folder" || bad "$label refusal text: $LAST_OUT"
+  [[ "$(cat "$TMP/ssh.log")" == "$ssh_before" ]] && ok "$label: no host contacted" || bad "$label: ssh was called"
+  [[ "$(snap)" == "$r_before" ]] && ok "$label: receiver untouched" || bad "$label: receiver changed"
+}
+empty_case "an empty source folder"
+: >"$TMP/home/empty/.DS_Store"; mkdir "$TMP/home/empty/.stage.x"; : >"$TMP/home/empty/.stage.x/f"
+empty_case "a source folder with only skipped files"
+
 # sync's ssh ignores everything the owner account can edit, and logs in as root
 for want in "-F /dev/null" "IdentitiesOnly=yes" "IdentityFile=$TMP/id_ed25519" "UserKnownHostsFile=$TMP/known_hosts" \
             "GlobalKnownHostsFile=/dev/null" "StrictHostKeyChecking=yes" "ProxyCommand=none" "ControlPath=none" "root@hostA"; do

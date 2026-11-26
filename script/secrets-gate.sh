@@ -179,6 +179,7 @@ cmd_sync() {
   # Same skips as the rsync call below (.DS_Store and .stage.* at any depth). A find that cannot list a folder also refuses.
   local f files
   files=$(find -P "$DIR" \( -name '.stage.*' -o -name .DS_Store \) -prune -o -type f -print) || fail "sync: cannot list the folder"
+  [ -n "$files" ] || fail "sync: folder $DIR holds no file"
   while IFS= read -r f; do
     [ -r "$f" ] || fail "sync: cannot read ${f#"$DIR"/}"
   done <<<"$files"
