@@ -10757,7 +10757,7 @@ def _agy_signin_line(host):
 
 AGY_PROBE_EVERY = 30 * 60
 AGY_PROBE_TITLE = 'agy-signin-probe'  # not '#N|role' or '<job> run N', so the orphan terminal sweep (#1947) leaves it
-AGY_PROBE_COMMAND = 'agy models; exit'  # the shell stays open without the exit, so wait --for exit never ends
+AGY_PROBE_COMMAND = '"$HOME/dotfiles/bin/agy" models; exit'  # through bin/agy, like every agy start; the shell stays open without the exit, so wait --for exit never ends
 AGY_PROBE_SIGNED_OUT = 'please sign in to view available models'
 AGY_PROBE_WAIT_MS = 12000  # under the 15 s orca CLI timeout in rpc()
 

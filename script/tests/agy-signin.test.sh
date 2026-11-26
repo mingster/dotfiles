@@ -257,7 +257,8 @@ class Probe(unittest.TestCase):
         create = orca.named('create')[0]
         self.assertEqual(create[create.index('--title') + 1], watch.AGY_PROBE_TITLE)
         self.assertNotRegex(watch.AGY_PROBE_TITLE, r'^#\d+\||\brun \d+$')
-        self.assertEqual(create[create.index('--command') + 1], 'agy models; exit', 'the shell must exit or the wait never ends')
+        self.assertEqual(create[create.index('--command') + 1], watch.AGY_PROBE_COMMAND)
+        self.assertTrue(watch.AGY_PROBE_COMMAND.endswith('; exit'), 'the shell must exit or the wait never ends')
         self.assertEqual(orca.named('close'), [('terminal', 'close', '--environment', 'hostb', '--terminal', 'tp')])
 
     def test_remote_probe_closes_its_terminal_on_timeout(self):
