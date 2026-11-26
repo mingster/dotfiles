@@ -52,6 +52,8 @@ done
 exit 1
 FAKE
 printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/ps"
+# Fake git: FAKE_GIT_SLOW=1 makes every branch delete take a second, so a round can run out of time (#1923).
+printf '#!/usr/bin/env bash\n[ -z "${FAKE_GIT_SLOW:-}" ] || [ "${1:-}" != branch ] || sleep 1\nexec %q "$@"\n' "$(command -v git)" > "$tmp/bin/git"
 chmod +x "$tmp/bin/"*
 export FAKE_DIR="$tmp" ROUND_REPO="$tmp/repo"
 export PATH="$tmp/bin:$PATH" HOME="$tmp/home" ORCA_CLI_COMMAND="$tmp/bin/orca"
@@ -60,6 +62,9 @@ export WRAP_UP_SCRATCH_ROOT="$tmp/no-scratch" WRAP_UP_LOOSE_ROOT="$tmp/no-loose"
 export WRAP_UP_STATE_DIR="$tmp/state" WRAP_UP_EXTRA_BIN= WRAP_UP_ORCA_APP_BIN="$tmp/no-app" ORCA_TERMINAL_HANDLE=t-own
 export WRAP_UP_DAILY_LOG="$tmp/round.log" WRAP_UP_WORKSPACES_ROOT="$tmp/workspaces" AGENT_STATE_DIR="$tmp/agent-state"
 export WRAP_UP_SCHEDULED_LOAD_CMD='echo 0.1' WRAP_UP_SCHEDULED_CORES_CMD='echo 4' WRAP_UP_DAILY_BIG_LOG_KB=1
+# #1923: a branch is deleted only when its tip is older than WRAP_UP_PRUNE_MIN_AGE (default 1 day). The older tests run with new
+# branches, so they switch the rule off; the age tests at the end turn it back on.
+export WRAP_UP_PRUNE_MIN_AGE=0
 echo '[]' > "$tmp/prs.json"
 echo '{"ok":true,"result":{"environments":[]}}' > "$tmp/envs.json"
 echo '{"ok":true,"result":{"terminals":[]}}' > "$tmp/terminals.json"
@@ -372,6 +377,60 @@ mkbr fleet-only push
 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
 check 'a fleet host deletes its local branch' local_gone fleet-only
 check 'a fleet host leaves the origin branch to the coordinator' origin_has fleet-only
+
+# #1923 part 2: component deploy branches (<component>/staging, <component>/production) are kept, local and origin, like the
+# plain ones. Other branches under the same prefix still go.
+{ printf 'coordinator %s\n' "$(uname -n | cut -d. -f1)"; prune_repos; } > "$board_conf"
+export BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-stub"
+mkbr web2/staging push; mkbr web2/production push; mkbr api/staging; mkbr web2/feature push
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'keeps <component>/staging, local and origin' both_have web2/staging
+check 'keeps <component>/production, local and origin' both_have web2/production
+check 'keeps a local only <component>/staging' local_has api/staging
+check 'still deletes another branch under the component prefix (local)' local_gone web2/feature
+check 'still deletes another branch under the component prefix (origin)' origin_gone web2/feature
+
+# #1923 part 3: only a branch whose tip commit is older than a day goes (default 86400 s), local and origin.
+unset WRAP_UP_PRUNE_MIN_AGE
+mkbr_old() { # <name> [push]: like mkbr, but the tip commit is 2 days old
+  pg branch "$1" main; pg checkout -q "$1"; GIT_COMMITTER_DATE=$(( $(date +%s) - 172800 ))" +0000" pg commit -qm "old work on $1" --allow-empty; pg checkout -q main
+  [ -z "${2:-}" ] || pg push -q origin "$1"
+}
+mkbr age-new push; mkbr_old age-old push; mkbr age-new-local; mkbr_old age-old-local
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'keeps a branch whose tip is newer than a day, local and origin' both_have age-new
+check 'keeps a local only branch whose tip is newer than a day' local_has age-new-local
+check 'the old local branch is gone' local_gone age-old
+check 'the old origin branch is gone' origin_gone age-old
+check 'the old local only branch is gone' local_gone age-old-local
+check 'says why the new one stays' detail_has 'Kept local age-new (tip newer than'
+check 'the age is configurable: 0 deletes the new one too' bash -c 'WRAP_UP_PRUNE_MIN_AGE=0 bash "$1" --daily >/dev/null 2>&1; ! git -C "$2" show-ref --verify --quiet refs/heads/age-new-local' _ "$root/script/wrap-up.sh" "$tmp/p"
+
+# #1923 part 1: a round that runs out of time still deletes some branches, logs them, and the next round carries on.
+export WRAP_UP_PRUNE_MIN_AGE=0
+for n in 1 2 3 4 5 6 7 8; do mkbr "slow-$n"; done
+slow_left() { git -C "$tmp/p" for-each-ref --format='%(refname:strip=2)' 'refs/heads/slow-*' | wc -l | tr -d ' '; }
+: > "$tmp/round-detail.log"
+rc=0; FAKE_GIT_SLOW=1 WRAP_UP_PRUNE_STEP=3 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || rc=$?
+left=$(slow_left)
+check 'a round out of time deletes some branches' test "$left" -lt 8
+check 'a round out of time leaves the rest' test "$left" -gt 0
+check 'a round out of time is not a failure' test "$rc" -eq 0
+check 'a round out of time says the rest waits' detail_has 'prune stopped at its time limit'
+check 'every deleted branch is in the restore log' test "$(grep -c "$(printf '\tlocal\tslow-')" "$plog")" -eq "$((8-left))"
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+check 'the next round deletes the rest' test "$(slow_left)" -eq 0
+check 'and the restore log holds all eight' test "$(grep -c "$(printf '\tlocal\tslow-')" "$plog")" -eq 8
+
+# #1923: a host without the hostname command still gets named (miniu has none). The coordinator match and the restore log use it.
+printf '#!/usr/bin/env bash\necho "hostname: command not found" >&2\nexit 127\n' > "$tmp/bin/hostname"; chmod +x "$tmp/bin/hostname"
+rm -f "$tmp/board-done-calls" "$plog"
+mkbr nohost-branch
+bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1 || true
+here=$(uname -n | cut -d. -f1)
+check 'without hostname the coordinator is still recognised' grep -Fq -- '--fleet --apply' "$tmp/board-done-calls"
+check 'without hostname the restore log names the host' grep -Fq "$(printf '\t%s\t%s\tlocal\tnohost-branch\t' "$here" "$tmp/p")" "$plog"
+rm -f "$tmp/bin/hostname"
 unset BOARD_DONE_COORDINATOR_CONF WRAP_UP_BOARD_DONE WRAP_UP_BOARD_CLEAN
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"

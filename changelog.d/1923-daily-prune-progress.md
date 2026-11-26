@@ -1,0 +1,1 @@
+- wrap-up daily prune: keeps `<component>/staging` and `<component>/production`, deletes a branch only when its tip is older than 1 day (`WRAP_UP_PRUNE_MIN_AGE`), deletes oldest first and stops at a time limit so each round makes durable progress, and names the host with `uname -n` when `hostname` is missing (#1923)

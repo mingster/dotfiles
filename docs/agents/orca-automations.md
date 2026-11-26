@@ -90,12 +90,15 @@ The owner's rule (#1853): keep only `main`, `production`, `staging` and active w
 
 Kept, with the reason printed on a `Kept` line:
 
-- Named: `main`, `production`, `staging`, plus the default branch, GitHub protected branches and the Pages branch (GitHub refuses those deletes).
+- Named: `main`, `production`, `staging`, any `<component>/staging` and `<component>/production` (per component deploy branches, local and origin), plus the default branch, GitHub protected branches and the Pages branch (GitHub refuses those deletes).
 - Active work: the head of an open PR (by name or head commit), a worktree with a live or unknown Orca worker or terminal, the main checkout, and a worktree with uncommitted changes (never deleted, always listed).
+- Too new: a branch (local or origin) whose tip commit is younger than 1 day (`WRAP_UP_PRUNE_MIN_AGE`, seconds, default 86400). Worktrees keep their own 3 hour rule.
 - Not yet safe, retried the next day: a locked worktree, a `_` script owned worktree, one a process holds open, or one changed in the last 3 hours.
 - Origin only: a branch checked out in an Orca worktree on this host or any paired host.
 
-Dropped for the prune: the merged proof, the last copy and unpushed commit guards, `archive/*`, `master`, `web2/*`, `lead-*`, Orca pins and open board cards.
+Each round makes durable progress. Branches go oldest first, each delete is logged first, and the local branch step stops at its time limit (`WRAP_UP_PRUNE_STEP` seconds, default what is left of the repo's budget less 60 s). The rest waits for the next round, and that is not a failure. A host with hundreds of old branches therefore clears them over a few rounds instead of being killed with nothing done. The host name in the restore log and the coordinator match fall back to `uname -n` when the `hostname` command is missing.
+
+Dropped for the prune: the merged proof, the last copy and unpushed commit guards, `archive/*`, `master`, `lead-*`, Orca pins and open board cards.
 
 Fail closed: a failed fetch, open PR list (also one that reaches its 1000 row limit), Orca worker or terminal inventory, branch protection lookup, or an unwritable restore log stops every delete in that repo for the day. An unreadable worktree list on any paired host stops origin deletes only, and so does a host the local list omits that is not one of this host's environments. The hosts a paired host omits are its own peers and are ignored, since this host reads each of its environments directly. Each stop is a failure in the round log.
 
