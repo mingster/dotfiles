@@ -158,6 +158,16 @@ class StandingVerifier(unittest.TestCase):
         events = [r['event'] for r in self.trial_rows()]
         self.assertEqual(events, ['start', 'verdict', 'wake'])
 
+    def test_a_stopped_standing_verifier_is_replaced(self):
+        state = {}
+        self.run_pass([pr(7)], state)
+        self.workers = [standing_row()]
+        self.run_pass([pr(7, verdict=True), pr(8)], state)
+        self.workers = [dict(standing_row(), workerState='stopped', dispatchStatus='failed', terminalState='released')]
+        self.run_pass([pr(8)], state)
+        self.assertEqual(len(self.starts), 2)
+        self.assertEqual(self.starts[1][self.starts[1].index('--title') + 1], '#8|qa-sdet|standing')
+
     def test_a_busy_standing_verifier_sends_the_next_pr_to_a_fresh_worker(self):
         state = {}
         self.run_pass([pr(7)], state)

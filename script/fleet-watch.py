@@ -3232,6 +3232,8 @@ def _record_stall_restart(state, old_dispatch, result, now, log_bits, pending):
     if new_id and new_id != old_dispatch:
         kind = (row or {}).get('kind') or 'restart'
         record_own_dispatch(state, new_id, kind, retry_of=old_dispatch, restart_at=now)
+        _own_row(state, new_id).update(
+            {name: row[name] for name in ('repo', 'pr', 'head') if row and name in row})
     _drop_pending_dispatch(pending, old_dispatch)
     log_bits.append('stall_restart=%s' % old_dispatch)
 
@@ -6432,21 +6434,40 @@ def startup_retry_taken(state, key):
     return True
 
 
-def failed_startup_verifier(state, workers, repo, number, head):
-    """Dispatch id of the verifier recorded for this head that failed at startup with no Verdict, else ''.
+def _verifier_row_dead(worker):
+    """True when the dispatch ended or its agent is gone without succeeding."""
+    kind = worker_settled_kind(worker)
+    if kind:
+        return kind != 'succeeded'
+    status = worker_inventory_status(worker)
+    if status in ('failed', 'stopped', 'cancelled', 'abandoned') or worker.get(GONE_REMOTE_KEY):
+        return True
+    return status != 'completed' and worker_liveness_verdict(worker) == 'exited'
 
-    Design limit: worker-list rows carry no lastError. This fires only when Orca exposes a startup stage
-    or error on the row. A failed row with neither is left alone (no release, no retry)."""
+
+def dead_verifier(state, workers, repo, number, head):
+    """(dispatch id, worker row or None) of the verifier recorded for this head that was stopped, failed or
+    is gone from the list, else ('', None). The caller checks that no Verdict is posted.
+
+    An empty list proves nothing (the Orca read may have failed), so nothing in it counts as gone. A dispatch
+    the stall pass restarted, still owes a restart or parked is its business. A done hold keeps the dispatch
+    unreleased (#1849), except after a startup failure, where no worker_done is in play."""
+    by_id = {w.get('dispatchId'): w for w in workers or []}
     for did, row in (state.get('own_dispatches') or {}).items():
-        if not isinstance(row, dict) or row.get('kind') != 'verifier' or row.get('startup_handled'):
+        if not isinstance(row, dict) or row.get('startup_handled') or row.get('restarted') or row.get('parked'):
+            continue
+        if _dispatch_is_pending(state.get('stall_pending_start') or {}, did):
             continue
         if (row.get('repo'), row.get('pr'), row.get('head')) != (repo, number, head):
             continue
         if _retry_recorded(state, did):
             continue
-        if any(w.get('dispatchId') == did and worker_startup_failed(w) for w in workers or []):
-            return did
-    return ''
+        worker = by_id.get(did)
+        if release_held(state, did) and not worker_startup_failed(worker):
+            continue
+        if by_id and (worker is None or _verifier_row_dead(worker)):
+            return did, worker
+    return '', None
 
 
 def _projection_agent_model(worker):
@@ -8017,6 +8038,13 @@ def standing_prompt(repo, pr_row, builder, root, dispatch_id, final):
     return text
 
 
+def _standing_own_head(state, dispatch_id, repo, number, head):
+    """Record the PR head a standing verifier is on, so its death is seen like a fresh one's (#1932)."""
+    row = _own_row(state, dispatch_id)
+    if row is not None:
+        row.update(repo=repo, pr=number, head=head)
+
+
 def standing_route(
     config, state, workers, repo, pr_row, builder, tag, open_prs, io, start_worker, release_worker,
     now, term_times, log_bits, headroom=None,
@@ -8058,6 +8086,7 @@ def standing_route(
                     standing_wake_fail(state, host, rec, 'probe', io, release_worker, now, log_bits)
                     return 'fallback'
                 rec['prs_assigned'].append(key)
+                _standing_own_head(state, rec['dispatch_id'], repo, number, head)
                 _text, last = io.read(terminal, host)
                 rec.update(
                     current_pr=number, current_head=head, repo=repo, assigned_at=now, wake_verified=True,
@@ -8085,6 +8114,7 @@ def standing_route(
         trial_event('start', 'standing', host, now, dispatch_id=did, repo=repo, pr=number, head=head,
                     prs_done=1, headroom_pct=headroom if headroom is not None else '')
         remember_started_dispatch(state, result, 'verifier')
+        _standing_own_head(state, did, repo, number, head)
         return 'started'
     return 'fallback'
 
@@ -8323,24 +8353,28 @@ def babysit_pass(
         record = babysit_record(state, repo, number)
         reported = record.get('head') == head and record.get('action') == 'report'
         if record.get('head') == head and record.get('action') and not reported:
-            failed_did = (failed_startup_verifier(state, workers, repo, number, head)
-                          if record.get('action') == 'verifier' and not dry_run else '')
+            failed_did, failed_row = '', None
+            if (record.get('action') == 'verifier' and not dry_run and not verdict_posted_for_head(pr_row)
+                    and not live_verifier_for_pr(pr_row, workers, state, repo)):
+                failed_did, failed_row = dead_verifier(state, workers, repo, number, head)
             if failed_did:
-                # The verifier vanished at startup: release it, then start one fresh verifier. A second
-                # startup failure parks the PR (#1221).
+                # The verifier died with no Verdict: release it, then start one fresh verifier. A second
+                # death parks the PR (#1221, #1932).
                 _own_row(state, failed_did)['startup_handled'] = True
-                failed_row = next((w for w in workers or [] if w.get('dispatchId') == failed_did), {})
-                failed_env = remote_environment(failed_row) if worker_is_remote(failed_row, config) else ''
-                if failed_env:
-                    release_worker(failed_did, failed_env)
-                else:
-                    release_worker(failed_did)
+                if failed_row is not None:
+                    failed_env = remote_environment(failed_row) if worker_is_remote(failed_row, config) else ''
+                    if failed_env:
+                        release_worker(failed_did, failed_env)
+                    else:
+                        release_worker(failed_did)
                 park_key = park_id('verifier', repo, number, head)
-                if startup_retry_taken(state, park_key):
+                # A dispatch that is itself a stall restart already was the one retry.
+                if not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
                     state['babysit'][repo].pop(str(number), None)
                     log_bits.append('verifier_startup_retry=%s' % number)
                 else:
-                    reason = 'verifier failed at startup twice'
+                    reason = ('verifier failed at startup twice' if worker_startup_failed(failed_row)
+                              else 'verifier ended twice with no Verdict')
                     lines.append(_babysit_line(repo, number, head, 'skip', 'start-failed'))
                     if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
                         notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, None))

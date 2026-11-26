@@ -94,7 +94,7 @@ class StartupRetry(unittest.TestCase):
             run_pass(state, root, start, workers=[failed_worker('ctx_v1'), failed_worker('ctx_v2')])
             self.assertEqual(len(starts), 2, 'only one startup retry per head')
 
-    def test_verifier_that_failed_for_another_reason_is_not_replaced(self):
+    def test_verifier_that_failed_for_another_reason_is_replaced_once(self):  # #1932
         starts = []
 
         def start(command):
@@ -108,7 +108,7 @@ class StartupRetry(unittest.TestCase):
             state = {}
             run_pass(state, root, start)
             run_pass(state, root, start, workers=[other])
-        self.assertEqual(len(starts), 1)
+        self.assertEqual(len(starts), 2)
 
 
 class DeadFollowup(unittest.TestCase):
