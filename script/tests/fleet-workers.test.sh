@@ -21,7 +21,9 @@ case "$1 $2" in
 esac
 ORCA
 chmod +x "$work/bin/orca"
+mkdir "$work/lib"
 cp "$root/script/fleet-workers.py" "$work/fleet-workers.py"
+cp "$root/script/lib/worker_count.py" "$work/lib/worker_count.py"
 
 # worker <host> <liveness> <outcome>: one worker-list row; outcome "-" leaves it out.
 rows() {
@@ -59,7 +61,10 @@ rows 'local live in_progress' 'local live in_progress' > "$work/local.json"
 assert_line 'live in progress dispatches' 2
 
 rows 'local exited -' 'local exited failed' 'local unverifiable -' 'local live succeeded' > "$work/local.json"
-assert_line 'finished, failed and unverifiable rows are not busy' 0
+assert_line 'finished and failed rows are not busy' 0
+
+rows 'local live in_progress' 'local unverifiable in_progress' 'local unverifiable in_progress' 'local exited in_progress' 'local unverifiable succeeded' > "$work/local.json"
+assert_line 'unverifiable in progress rows show as unconfirmed' '1+2?'
 
 rows 'local live in_progress' 'miniu live in_progress' > "$work/local.json"
 assert_line 'rows observed from other servers are not local' 1

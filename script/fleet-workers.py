@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Print busy dispatched workers per machine, e.g. "host-a: 3 | host-b: 2 | host-c: 0".
 
-A busy worker is a dispatch from `orca orchestration worker-list` that is live and still
-in progress. The coordinator, automation sessions and finished workers whose terminal is
+A busy worker is a dispatch from `orca orchestration worker-list` still in progress. One whose
+liveness is not live, such as unverifiable, shows as unconfirmed: "host-a: 3+2?" is 3 live plus 2
+unconfirmed (script/lib/worker_count.py, shared with the fleet-watch `work order:` line). The coordinator, automation sessions and finished workers whose terminal is
 kept open are not dispatches in progress, so they are never counted. Each paired Orca
 environment is asked for its own list. Machine names come from `hostname -s` and
 `orca environment list`, never from this file.
@@ -16,6 +17,9 @@ import socket
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib"))
+import worker_count  # noqa: E402
+
 
 def orca(*args):
     try:
@@ -26,16 +30,17 @@ def orca(*args):
 
 
 def workers(*env):
-    """Live, in progress dispatches on one Orca server ('?' when it cannot be asked)."""
+    """Live and unconfirmed in progress dispatches on one Orca server, e.g. "3+2?" ('?' when it cannot be asked)."""
     result = orca("orchestration", "worker-list", "--limit", "100", *env)
     if "workers" not in result:
         return "?"
     # Without --environment the list also carries rows observed from paired servers.
-    return sum(
-        1
+    live, unconfirmed = worker_count.tally(
+        worker_count.bucket(w.get("outcome") == "in_progress", w.get("liveness"))
         for w in result["workers"]
-        if w.get("host") == "local" and w.get("liveness") == "live" and w.get("outcome") == "in_progress"
+        if w.get("host") == "local"
     )
+    return worker_count.label(live, unconfirmed)
 
 
 USAGE = "Usage: fleet-workers.py [--cache FILE]"

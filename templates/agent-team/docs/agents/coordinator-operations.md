@@ -50,6 +50,7 @@ Run on every wake. elon wakes every 5 minutes (a recurring watch, `CronCreate` `
 - `gh pr list --label needs-redesign`: apply `team.md`, Redesign.
 - `gh pr list --label needs-elon`: decide each this wake. `Review: FAIL` beside a PASS Verdict holds the merge until you read the defect and record fix or override on the PR.
 - `worker-watch.sh` on your run and every run with a live worker; replace a stalled worker per pstack Orchestrate. A verifier at a usage limit or idle is a stalled gate: restart it on the next `usage-gate.py pick` provider this wake. fleet-watch covers stalled workers and backup freshness on the coordinator host.
+- **Unconfirmed workers:** for every in-progress dispatch whose `liveness` is not `live` on its own environment (`unverifiable`), read its screen (`orca terminal read --environment <id>`). An idle prompt is a question the coordinator never received: answer it with `script/orca-reply.sh` (it wakes idle workers), or replace the worker when it is dead. The status line and the `work order:` line show these as `3+2?` (live plus unconfirmed).
 - A user ask open over 4 hours with no Playground deploy carrying it is a bottleneck: name the blocker and its user in the ask's ledger row.
 - Queue empty: start architect-pm and sales-marketing planning within the hour. Send pending user asks as one numbered batch before the user leaves; one answer holds at most one unit.
 - A screen on a permission prompt is a hold: answer a read-only command at once, otherwise decide or escalate this wake.

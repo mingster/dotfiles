@@ -956,5 +956,24 @@ hc_after=$(grep -c 'head-checks' "$COORDINATOR_PUBLICATION_POST_LOG" 2>/dev/null
 out=$(bash "$here/coordinator-publication.sh" --help 2>&1); code=$?
 [ "$code" -eq 0 ] && [[ "$out" == *--author-model* && "$out" == *--force* && "$out" == *ignored* ]] && ok "--help lists every flag and marks the ignored ones" || bad "--help: $code $out"
 
+# The body check reads the diff of the published worktree, not of the caller's checkout (#1942).
+decoy="$MF_DIR/decoy"
+git init -q "$decoy"
+printf 'def shared_fn():\n    return 1\n' > "$decoy/m.py"
+git -C "$decoy" add m.py
+git -C "$decoy" -c user.email=t@t -c user.name=t commit -q -m base
+git -C "$decoy" update-ref refs/remotes/origin/main HEAD
+printf 'def shared_fn():\n    return 2\n' > "$decoy/m.py"
+git -C "$decoy" -c user.email=t@t -c user.name=t commit -q -am change
+good_body
+make_feature feat-caller-diff
+out=$(cd "$decoy" && pub feat-caller-diff); code=$?
+say "$code" "body check ignores the caller checkout's diff" "$out"
+good_body
+make_feature feat-relative-body
+clear_receipt
+out=$(cd "$MF_DIR" && PUB_BODY_REL=1 bash "$PUB" --repo "$REPO_SLUG" --branch feat-relative-body --body-file body.md --worktree "$MF_REPO" 2>&1); code=$?
+say "$code" "relative --body-file is resolved before the body check runs in the worktree" "$out"
+
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
