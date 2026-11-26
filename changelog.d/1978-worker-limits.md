@@ -1,0 +1,1 @@
+- fleet-watch logs worker wall time (report: `script/worker-durations.py`), flags workers past 60 and 90 minutes, and cancels and reruns a PR check job hung over 20 minutes once (#1978).

@@ -38,7 +38,7 @@ case "$*" in
   "terminal wait"*) printf '{"result":{"wait":{"satisfied":true,"status":"exited","exitCode":0}}}'; exit 0 ;;
   "terminal read"*) printf '{"ok":true,"result":{"terminal":{"handle":"term_git","status":"running","tail":["","❯  cd /p && bash worktree-setup.sh --git-only; echo GIT_ONLY_RC=$?","GIT_ONLY_RC=%s","","❯ "]}}}' "${GIT_ONLY_RC:-0}"; exit 0 ;;
   "terminal close"*) printf '{"result":{}}'; exit 0 ;;
-  "orchestration worker-start"*) printf '{"result":{"terminal":{"handle":"term_w"}}}'; exit 0 ;;
+  "orchestration worker-start"*) printf '{"result":{"dispatchId":"ctx_w","terminal":{"handle":"term_w"}}}'; exit 0 ;;
 esac
 exit 0
 EOS
@@ -88,5 +88,6 @@ run_start 'Refs #1' --on remote-host
 check "remote plain brief runs setup" "$(setup_flag)" run
 check "remote plain brief has no git-only" "$(git_only_calls)" 0
 
+check "start is logged for the duration report (#1978)" "$(jq -r '"\(.event) \(.dispatch) \(.title) \(.agent)"' "$HOME/.orca/logs/worker-durations.jsonl" 2>/dev/null | head -1)" "start ctx_w #1|fullstack-dev claude"
 check "no dispatch log written outside tmp" "$([ -e "$HOME/agent-state/team-dispatches.tsv" ] && echo leaked || echo clean)" clean
 exit "$fail"

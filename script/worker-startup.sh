@@ -648,11 +648,21 @@ bind_placed_claim() { # <worker-start json>
     ${WORKER_STARTUP_PLACED_CFG:+--config "$WORKER_STARTUP_PLACED_CFG"} >/dev/null 2>&1 || true
 }
 
+# The start line of the worker duration log (#1978). title and agent come from run_mode. Never fails a start.
+log_worker_start() { # <worker-start json>
+  local dispatch
+  dispatch=$(jq -r '.result.dispatchId // empty' <<<"$1" 2>/dev/null || true)
+  [ -n "$dispatch" ] || return 0
+  "$python3" "$here/worker-durations.py" start --dispatch "$dispatch" --title "${title:-}" --agent "${agent:-}" \
+    >/dev/null 2>&1 || true
+}
+
 run_captured() { # command... ; print its stdout, return its status. start_out is the caller's variable.
   local ec=0
   start_out=$("$@") || ec=$?
   printf '%s\n' "$start_out"
   bind_placed_claim "$start_out"
+  log_worker_start "$start_out"
   return "$ec"
 }
 

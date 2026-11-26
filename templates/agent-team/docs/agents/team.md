@@ -94,6 +94,18 @@ Enforcer "none" means only the agent's reading holds the rule.
 | **Labels:** the 20 label set in `docs/agents/triage-labels.md`: state (`needs-triage`, `ready-for-agent`, `needs-redesign`, `needs-elon`), priority (`P0` to `P3`), routing (`size:S`, `size:L`, `role:pm`, `role:qa`, `role:ops`, `role:secops`, `role:growth`, `role:support`) and hold (`blocked`, `owner`, `deferred`, `tracking`). A hold label never sits with `ready-for-agent`, and neither does `needs-triage`: adding one removes the other. `blocked` names what and who it waits on. `owner` is only for owner-reserved work. A bug is always `P0`; there are no `bug` or `enhancement` labels, and a stray `bug` label counts as `P0`. Queue order: a red main or red gate fix, then every `P0` or `bug` issue in any repo (dotfiles first among them), then the rest (dotfiles first), each group by P, size and age (owner 2026-11-20 and 2026-11-25). `size:L` replaces `design:architect`, `design:arena` and `review-strong`; `hotfix` and `incident` are `P0`. No role label means fullstack-dev. fleet-watch removes `ready-for-agent` when a worker starts, and a start that fails with no PR puts the issue back to `needs-triage`. A ready issue is never hand dispatched. architect-pm owns `needs-triage` and rewrites and labels an issue untouched there for 2 hours. | `script/team-audit.sh` (labels) |
 | **Process findings:** log them with `~/dotfiles/script/team-audit.sh --log "<finding>" "<evidence>"`. | `script/team-audit.sh` |
 
+## Worker time limits
+
+fleet-watch times each worker from start to `worker_done` or release (#1978). Past the soft limit it flags the worker to the coordinator. Past the hard limit the coordinator tells the worker to push and report what is left, releases it, and files the rest as a new issue. Exempt: the coordinator, support workers, release deploys and regression runs (a title containing `regression`).
+
+| Role and size | Soft | Hard |
+| --- | --- | --- |
+| every role, size S, M and L (not measured yet) | 60 min | 90 min |
+
+Refresh: run `python3 ~/dotfiles/script/worker-durations.py` on the coordinator host. For each role and size, set the soft limit to the 90th percentile rounded up to 5 minutes and the hard limit 30 minutes above it. Put them in this table and in the fleet-watch config under `worker_limits.types` (`"fullstack-dev/M": {"soft_minutes": 60, "hard_minutes": 90}`).
+
+A PR check job running over 20 minutes is cancelled and rerun once; a second hang is flagged to the coordinator.
+
 ## Board status
 
 | Event | Script | Card becomes |
