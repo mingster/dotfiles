@@ -78,7 +78,8 @@ class Pass(unittest.TestCase):
         self.config = {'local_host': 'hosta'}
 
     def sweep(self, workers, screens, now):
-        return watch.agy_signin_notices(self.config, workers, read=lambda term, host: screens[term], now=now)
+        return watch.agy_signin_notices(self.config, workers, read=lambda term, host: screens[term], now=now,
+                                        env_names=getattr(self, 'env_names', {}))
 
     def test_signed_out_worker_marks_host_and_notifies_once(self):
         workers = [worker('d1', 't1', host='hostb'), worker('d2', 't2', host='hostb')]
@@ -86,7 +87,7 @@ class Pass(unittest.TestCase):
         first = self.sweep(workers, screens, 1000)
         self.assertEqual(len(first), 1)
         self.assertIsInstance(first[0], watch.Urgent)
-        self.assertIn('sign in to agy on hostb', first[0])
+        self.assertIn('script/agy-signin-host.sh hostb (not over ssh)', first[0])
         self.assertTrue(agy.is_unavailable('hostb', 1000 + HOUR))
         self.assertEqual(self.sweep(workers, screens, 1000 + 5 * 60), [])
         self.assertEqual(len(self.sweep(workers, screens, 1000 + 6 * HOUR + 1)), 1)
@@ -105,6 +106,77 @@ class Pass(unittest.TestCase):
         workers = [worker('d1', 't1', host='hostb'), worker('d2', 't2', host='hostc')]
         notices = self.sweep(workers, {'t1': SIGN_IN, 't2': SIGN_IN}, 1000)
         self.assertEqual(len(notices), 2)
+
+    def test_a_remote_row_marks_the_host_name_not_the_environment_id(self):
+        # #1967: the mark key is the host name placement reads.
+        self.env_names = {'e5cb-env-id': 'hostb'}
+        self.config = {'local_host': 'hosta', 'host_caps': {'hosta': 2, 'hostb': 2}}
+        notices = self.sweep([worker('d1', 't1', host='e5cb-env-id')], {'t1': SIGN_IN}, 1000)
+        self.assertEqual(len(notices), 1)
+        self.assertIn('host=hostb', notices[0])
+        self.assertFalse(agy.usable('antigravity', 'hostb', config=self.config, now=1001))
+        self.assertTrue(agy.usable('antigravity', 'e5cb-env-id', config=self.config, now=1001))
+
+class Wrapped(unittest.TestCase):
+    def test_narrow_pane_wrapped_screen_matches(self):
+        self.assertTrue(agy.is_sign_in_screen((fixtures / 'signin-screen-wrapped.txt').read_text()))
+
+class ProbeAndClear(unittest.TestCase):
+    def test_probe_result_reads_agy_models(self):
+        self.assertEqual(agy.probe_result('Please sign in to view available models'), 'out')
+        self.assertEqual(agy.probe_result('gemini-4-pro-high    Gemini 4 Pro (High)'), 'in')
+        self.assertEqual(agy.probe_result(json.dumps({'error': 'timeout'})), '')
+
+    def test_clear_drops_only_that_host(self):
+        path = pathlib.Path(tempfile.mkdtemp()) / 'marks.json'
+        agy.mark('hostb', now=0, path=path, config={})
+        agy.mark('hostc', now=0, path=path, config={})
+        self.assertTrue(agy.clear('HostB', path=path, config={}))
+        self.assertFalse(agy.clear('hostb', path=path, config={}))
+        self.assertEqual(list(json.loads(path.read_text())), ['hostc'])
+
+FAKE_ORCA = r"""#!/usr/bin/env bash
+echo "$*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "worktree list") echo '{"result":{"worktrees":[{"path":"/w/main","isMainWorktree":true}]}}' ;;
+  "terminal create") case "$*" in *agy-signin-probe*) echo '{"result":{"terminal":{"handle":"term_probe"}}}' ;;
+                                  *) echo '{"result":{"terminal":{"handle":"term_signin"}}}' ;; esac ;;
+  "terminal read") echo "{\"result\":{\"terminal\":{\"screen\":\"$FAKE_SCREEN\"}}}" ;;
+  *) echo '{"result":{}}' ;;
+esac
+"""
+
+class HostScript(unittest.TestCase):
+    """#1967: agy-signin-host.sh signs in through an Orca terminal on the host, never ssh."""
+    def run_script(self, screen):
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        for name, body in (('orca', FAKE_ORCA), ('ssh', '#!/bin/sh\necho ssh "$@" >> "$FAKE_LOG"; exit 9\n')):
+            (tmp / name).write_text(body)
+            (tmp / name).chmod(0o755)
+        marks = tmp / 'marks.json'
+        agy.mark('hostb', now=None, path=marks, config={})
+        env = dict(os.environ, ORCA_CLI_COMMAND=str(tmp / 'orca'), FAKE_LOG=str(tmp / 'log'), FAKE_SCREEN=screen,
+                   PATH='%s:%s' % (tmp, os.environ['PATH']), AGY_UNAVAILABLE_STATE=str(marks))
+        done = subprocess.run(['bash', str(root / 'agy-signin-host.sh'), 'hostb'], env=env, capture_output=True,
+                              text=True, timeout=30)
+        return done, (tmp / 'log').read_text().splitlines(), json.loads(marks.read_text())
+
+    def test_signed_in_probe_clears_the_mark_and_no_ssh_runs(self):
+        done, calls, marks = self.run_script('gemini-4-pro-high    Gemini 4 Pro')
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn('term_signin', done.stdout)
+        self.assertFalse([c for c in calls if c.startswith('ssh')])
+        creates = [c for c in calls if c.startswith('terminal create')]
+        self.assertEqual(len(creates), 2)
+        self.assertTrue(all('--environment hostb' in c for c in creates))
+        self.assertIn('--title agy-signin ', creates[0])
+        self.assertTrue(any(c.startswith('terminal close') and 'term_probe' in c for c in calls))
+        self.assertEqual(marks, {})
+
+    def test_signed_out_probe_keeps_the_mark(self):
+        done, _calls, marks = self.run_script('Please sign in to view available models')
+        self.assertEqual(done.returncode, 1)
+        self.assertEqual(list(marks), ['hostb'])
 
 class Cli(unittest.TestCase):
     """The command line: help, mistyped commands, and the exit codes callers read."""

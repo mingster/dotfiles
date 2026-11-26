@@ -3711,12 +3711,61 @@ def resend_brief(rpc_call, row):
     return True
 
 
+def _start_unknown_relabel(w, act):
+    """Put the row's issue back to ready-for-agent. Returns the log suffix."""
+    number = _worker_issue_number(w)
+    repo = w.get('_repo') or ''
+    if not number or worker_pr_number(w):
+        return ''
+    if repo and (act or run_gh)(['gh', 'issue', 'edit', str(number), '--repo', repo, '--add-label',
+                                 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
+        return '; %s#%d back to ready-for-agent' % (repo, number)
+    return '; put issue #%d back to ready-for-agent by hand (%s)' % (
+        number, 'gh edit failed' if repo else 'repo unknown here')
+
+
+def _start_unknown_agent(w):
+    """The row's agent family; a row with none takes it from its launch record (#1967)."""
+    agent = worker_agent_id(w).split('/')[0]
+    if agent:
+        return agent
+    pair = _launch_record_pair(w.get('dispatchId'))
+    return pair[0] if pair else ''
+
+
+def start_unknown_agy_host(config, w, rpc_call, now):
+    """The host name when the row's screen is agy's sign-in screen and the host is now marked, else None (#1967).
+
+    The mark is keyed by host name, the key placement reads. A failed read or mark returns None, so the
+    row waits for a later pass and nothing is booked."""
+    env = w.get('_host') or ''
+    handle = w.get('_host_terminal') or worker_terminal_handle(w)
+    if not handle:
+        return None
+    try:
+        screen = json.dumps(rpc_call('terminal', 'read', '--terminal', handle, '--screen', *_env_args(env)))
+    except SEND_ERRORS:
+        return None
+    agy = _agy_signin()
+    if not agy.is_sign_in_screen(screen):
+        return None
+    host = host_cap_name(env, config, environment_name_by_id()) if env else ((config or {}).get('local_host') or 'local')
+    try:
+        agy.mark(host, now=now, config=config or {})
+    except OSError as error:
+        print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
+        return None
+    return host
+
+
 def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
     """A worker still start_unknown after 10 minutes gets its brief once more; at 20 minutes, with the resend
     done, it is released and its issue put back to ready-for-agent, with one Urgent (#1962). The book is
-    state['start_unknown']; a row whose host could not be read is left for a later pass. Returns the notices."""
+    state['start_unknown']; a row whose host could not be read is left for a later pass. An antigravity row on
+    agy's sign-in screen is released at once instead: its host is marked, its issue put back, and one
+    coordinator line per host names script/agy-signin-host.sh (#1967). Returns the notices."""
     book = state.setdefault('start_unknown', {})
-    seen, notices = set(), []
+    seen, notices, agy_hosts = set(), [], set()
     for w in rows or []:
         if not isinstance(w, dict) or not w.get('dispatchId'):
             continue
@@ -3733,6 +3782,20 @@ def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
         entry = book.setdefault(did, {'at': now})
         if entry.get('reaped'):
             continue
+        if _start_unknown_agent(w) in ('antigravity', 'agy'):
+            host = start_unknown_agy_host(config, w, rpc_call, now)
+            if host is not None:
+                closed = release(w)
+                if closed not in ('closed', 'kept:no_handle'):
+                    log_fleet_watch('start_unknown %s: agy sign-in screen, release %s, retry next pass' % (did, closed))
+                    continue
+                entry['reaped'] = True
+                log_fleet_watch('start_unknown %s: agy sign-in screen on %s: released, terminal %s%s' % (
+                    did, host, closed, _start_unknown_relabel(w, act)))
+                if host not in agy_hosts:
+                    agy_hosts.add(host)
+                    notices.append(_agy_signin_line(host))
+                continue
         if not entry.get('resent_at'):
             if now - entry['at'] >= START_UNKNOWN_RESEND_SECONDS:
                 sent = resend_brief(rpc_call, w)
@@ -3748,18 +3811,8 @@ def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
             log_fleet_watch('start_unknown %s: release %s, retry next pass' % (did, closed))
             continue
         entry['reaped'] = True
-        number = _worker_issue_number(w)
-        repo = w.get('_repo') or ''
-        back = ''
-        if number and not worker_pr_number(w):
-            if repo and (act or run_gh)(['gh', 'issue', 'edit', str(number), '--repo', repo, '--add-label',
-                                         'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
-                back = '; %s#%d back to ready-for-agent' % (repo, number)
-            else:
-                back = '; put issue #%d back to ready-for-agent by hand (%s)' % (
-                    number, 'gh edit failed' if repo else 'repo unknown here')
         line = 'start_unknown %s did not start in %d minutes after a resent brief: released, terminal %s%s' % (
-            did, (now - entry['at']) // 60, closed, back)
+            did, (now - entry['at']) // 60, closed, _start_unknown_relabel(w, act))
         log_fleet_watch(line)
         notices.append(Urgent(line))
     for did in list(book):
@@ -10221,8 +10274,7 @@ def _issue_scan_pass(
             log_bits.append('issue_start_agy_signin=%d' % row['number'])
             if notify:
                 notices.append(Urgent(
-                    'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
-                    'Send the owner one PushNotification: "sign in to agy on %s".' % (held_host, held_host)))
+                    _agy_signin_line(held_host)))
             if persist_state:
                 persist_state()
             continue
@@ -11565,7 +11617,13 @@ def _agy_signin():
     return _sibling('agy_signin', 'agy-signin.py')
 
 
-def agy_signin_notices(config, workers, read=None, now=None):
+def _agy_signin_line(host):
+    """The one coordinator line for a host signed out of agy (#1967)."""
+    return Urgent('agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
+                  'Sign in there with script/agy-signin-host.sh %s (not over ssh).' % (host, host))
+
+
+def agy_signin_notices(config, workers, read=None, now=None, env_names=None):
     """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
 
     One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
@@ -11583,29 +11641,31 @@ def agy_signin_notices(config, workers, read=None, now=None):
         if not terminal:
             continue
         remote = worker_is_remote(w, config)
-        host = remote_environment(w) if remote else (config.get('local_host') or 'local')
+        env = remote_environment(w) if remote else ''
+        if remote and env_names is None:
+            env_names = environment_name_by_id()
+        # The mark is keyed by host name, the key placement reads, never the environment id (#1967).
+        host = host_cap_name(env, config, env_names) if remote else (config.get('local_host') or 'local')
         if not host or host in seen:
             continue
         try:
             if read is not None:
-                screen = read(terminal, host if remote else '')
+                screen = read(terminal, env)
             else:
                 screen = json.dumps(rpc('terminal', 'read', '--terminal', terminal, '--screen',
-                                        *(['--environment', host] if remote else [])))
+                                        *(['--environment', env] if remote else [])))
         except SEND_ERRORS:
             continue
         if not agy.is_sign_in_screen(screen):
             continue
         seen.add(host)
         try:
-            due = agy.mark(host, now=now)
+            due = agy.mark(host, now=now, config=config)
         except OSError as error:
             print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
             continue
         if due:
-            notices.append(Urgent(
-                'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
-                'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host)))
+            notices.append(_agy_signin_line(host))
     return notices
 
 

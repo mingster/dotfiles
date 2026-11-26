@@ -238,6 +238,9 @@ map_file() {
     script/tests/fixtures/agy-signin-*.json)
       map_script_py_base "fleet-watch"
       ;;
+    script/agy-signin-host.sh|script/tests/fixtures/agy/*)
+      add_if_exists "script/tests/agy-signin.test.sh"
+      ;;
     script/tests/fixtures/fleet-watch/*)
       map_script_py_base "fleet-watch"
       ;;

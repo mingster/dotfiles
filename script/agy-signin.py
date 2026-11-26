@@ -6,6 +6,8 @@
   agy-signin.py mark <host>         mark the host for 6 hours; print "notify" when a notice is due, else "known"
   agy-signin.py usable --agent <a> --host <h> [--config <fleet config>]
                                     exit 0 when the agent may start on the host, 1 when not (#1966)
+  agy-signin.py probe-result        read `agy models` output on stdin; print in, out, or nothing (#1967)
+  agy-signin.py clear <host>        drop the host's mark (after a sign in that the probe confirmed)
 
 A plain `agy -p` probe over ssh says "authentication failed" on a signed in host (the keychain is not
 reachable from ssh), so the worker screen is the only check.
@@ -103,6 +105,30 @@ def is_unavailable(host, now=None, path=None, config=None):
     return isinstance(until, (int, float)) and not isinstance(until, bool) and now < until
 
 
+# `agy models`: agy's own signed out line, or a model row (id, two or more spaces, name; text is lowered).
+PROBE_SIGNED_OUT = 'please sign in to view available models'
+PROBE_SIGNED_IN = re.compile(r'[a-z][a-z0-9.]*-[a-z0-9.-]+ {2,}[a-z]')
+
+
+def probe_result(text):
+    """'out' only on agy's own signed out line, 'in' on a model list, '' for anything else (no proof)."""
+    low = '\n'.join(screen_lines(text or '')).lower()
+    return 'out' if PROBE_SIGNED_OUT in low else 'in' if PROBE_SIGNED_IN.search(low) else ''
+
+
+def clear(host, path=None, config=None):
+    """Drop the host's mark. True when there was one."""
+    path = path or state_path()
+    data = _load(path)
+    if data.pop(host_key(host, config), None) is None:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+    return True
+
+
 def mark(host, now=None, path=None, config=None):
     """Mark the host for 6 hours. True when the owner is due a notice: at most one per host per 6 hours."""
     now = time.time() if now is None else now
@@ -137,6 +163,14 @@ def main(argv):
         return 0 if is_unavailable(argv[2]) else 1
     if cmd == 'mark' and len(argv) == 3:
         print('notify' if mark(argv[2]) else 'known')
+        return 0
+    if cmd == 'probe-result' and len(argv) == 2:
+        result = probe_result(sys.stdin.read())
+        if result:
+            print(result)
+        return 0
+    if cmd == 'clear' and len(argv) == 3:
+        clear(argv[2])
         return 0
     if cmd == 'usable':
         opts = dict(zip(argv[2::2], argv[3::2]))
