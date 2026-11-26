@@ -2388,6 +2388,152 @@ def log_fleet_watch(message):
         pass
 
 
+METRICS_TAIL_BYTES = 8 * 1024 * 1024
+_RECEIPT_FIRST_RE = re.compile(r'^(Review|Verdict): (PASS|FAIL)\b')
+
+
+def _first_receipts(pr):
+    """{'Review': 'PASS'|'FAIL', 'Verdict': ...}: the first receipt of each kind on the PR, in comment order."""
+    first = {}
+    for comment in pr.get('comments') or []:
+        body = (comment.get('body') or '') if isinstance(comment, dict) else ''
+        match = _RECEIPT_FIRST_RE.match(body)
+        if match and match.group(1) not in first:
+            first[match.group(1)] = match.group(2)
+    return first
+
+
+def _rate(passed, total):
+    return '%d/%d' % (passed, total) if total else 'n/a'
+
+
+def hourly_metrics_line(log_lines, merged_prs, hour_start):
+    """One `metrics` line for the hour starting at `hour_start` (#1957).
+
+    Pass lines give mean live workers (`live=N`), failed dispatches (`failed=N`) and the dispatch ids that were
+    start_unknown or a second live worker on the same `#N|role` title (counted once each per hour). Merged PRs
+    in the hour give merged/h, the first Review and first Verdict PASS rates, and the median open to merge hours.
+    No dollar usage reading exists, so cost is always n/a."""
+    prefix = time.strftime('%Y-%m-%dT%H', time.gmtime(hour_start))
+    lives, failed, unknown, dupes = [], 0, set(), set()
+    for raw in log_lines:
+        if not raw.startswith(prefix) or ' pass ' not in ' ' + raw[21:]:
+            continue
+        for token in raw[21:].replace(';', ' ').split():
+            key, _sep, value = token.partition('=')
+            if key == 'live' and value.isdigit():
+                lives.append(int(value))
+            elif key == 'failed' and value.isdigit():
+                failed += int(value)
+            elif key == 'start_unknown':
+                unknown.update(v for v in value.split(',') if v)
+            elif key == 'dup_workers':
+                dupes.update(v for v in value.split(',') if v)
+    merged, hours, review, verdict = 0, [], [0, 0], [0, 0]
+    for pr in merged_prs or []:
+        merged_at = _iso_epoch(pr.get('mergedAt'))
+        if merged_at is None or not hour_start <= merged_at < hour_start + 3600:
+            continue
+        merged += 1
+        created = _iso_epoch(pr.get('createdAt'))
+        if created is not None:
+            hours.append((merged_at - created) / 3600.0)
+        first = _first_receipts(pr)
+        for kind, tally in (('Review', review), ('Verdict', verdict)):
+            if kind in first:
+                tally[1] += 1
+                tally[0] += first[kind] == 'PASS'
+    hours.sort()
+    if not hours:
+        median = 'n/a'
+    else:
+        mid = len(hours) // 2
+        median = '%.1f' % (hours[mid] if len(hours) % 2 else (hours[mid - 1] + hours[mid]) / 2)
+    mean_live = '%.1f' % (sum(lives) / float(len(lives))) if lives else 'n/a'
+    wasted = len(unknown) + len(dupes) + failed
+    return ('metrics hour=%s merged_per_h=%d review_first_pass=%s verdict_first_pass=%s '
+            'wasted_starts=%d (start_unknown=%d duplicate=%d failed_dispatch=%d) '
+            'median_open_to_merge_h=%s mean_live=%s cost: n/a') % (
+        prefix, merged, _rate(*review), _rate(*verdict), wasted, len(unknown), len(dupes), failed, median, mean_live)
+
+
+def read_log_tail(path=None, limit=METRICS_TAIL_BYTES):
+    path = path or fleet_watch_log_path()
+    try:
+        with open(path, 'rb') as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - limit))
+            return handle.read().decode('utf-8', 'replace').splitlines()
+    except OSError:
+        return []
+
+
+def fetch_merged_for_metrics(repo, since, run=None):
+    """PRs merged since `since` (epoch) with open and merge times and receipts, or [] when gh fails."""
+    command = [
+        'gh', 'pr', 'list', '--repo', repo, '--state', 'merged', '--limit', '100',
+        '--search', 'merged:>=%s' % time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(since)),
+        '--json', 'number,createdAt,mergedAt,comments',
+    ]
+    try:
+        out = (run or subprocess.run)(command, capture_output=True, text=True, timeout=30, check=True).stdout
+        rows = json.loads(out)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def maybe_log_hourly_metrics(config, state, now, fetch=None, log_lines=None):
+    """Once per clock hour: log the metrics line for the hour that just ended. Returns the line or None."""
+    hour = int(now // 3600) * 3600
+    last = state.get('metrics_hour_at')
+    if not isinstance(last, (int, float)):
+        state['metrics_hour_at'] = hour  # first pass: start counting from this hour
+        return None
+    if hour <= last:
+        return None
+    previous = hour - 3600
+    rows = []
+    for repo in babysit_repos(config):
+        rows.extend((fetch or fetch_merged_for_metrics)(repo, previous))
+    line = hourly_metrics_line(read_log_tail() if log_lines is None else log_lines, rows, previous)
+    log_fleet_watch(line)
+    state['metrics_hour_at'] = hour
+    return line
+
+
+def metrics_digest(log_lines, count=12):
+    """The last `count` hourly metrics lines, oldest first (wrap-up prints the last 12 hours)."""
+    lines = [line for line in log_lines if line[21:].startswith('metrics hour=')]
+    return lines[-count:] if count > 0 else []
+
+
+def pass_waste_parts(workers):
+    """`live=N`, plus the dispatch ids that are start_unknown or a second live worker on one `#N|role` title."""
+    parts = ['live=%d' % active_worker_count(workers)]
+    unknown, seen, dupes = [], set(), []
+    for w in workers or []:
+        if not isinstance(w, dict):
+            continue
+        dispatch = str(w.get('dispatchId') or w.get('id') or '')
+        if worker_inventory_status(w) == 'start_unknown' and dispatch:
+            unknown.append(dispatch)
+        if not worker_row_is_live(w):
+            continue
+        title = next((str(w.get(k) or '') for k in _VERIFIER_TITLE_KEYS if str(w.get(k) or '').startswith('#')), '')
+        match = re.match(r'^#\d+\|[a-z][a-z-]*', title)
+        if not match:
+            continue
+        if match.group(0) in seen and dispatch:
+            dupes.append(dispatch)
+        seen.add(match.group(0))
+    if unknown:
+        parts.append('start_unknown=%s' % ','.join(sorted(unknown)))
+    if dupes:
+        parts.append('dup_workers=%s' % ','.join(sorted(dupes)))
+    return parts
+
+
 class PassCounts:
     """One pass: six counters plus a refusal histogram. Zero stays on the line."""
 
@@ -2403,6 +2549,7 @@ class PassCounts:
         self._phase_name = None
         self._phase_started = None
         self.starts = []
+        self.worker_starts = 0
 
     def phase(self, name, now=None):
         """Close the running phase and open `name` (None closes only)."""
@@ -2475,6 +2622,13 @@ def _pass_note(field):
 
 def count_started():
     _pass_note('started')
+
+
+def count_worker_started():
+    """A start that adds a live worker: counted as started, and against work_order.max_workers this pass (#1957)."""
+    count_started()
+    if _PASS is not None:
+        _PASS.worker_starts += 1
 
 
 def count_failed():
@@ -4987,7 +5141,7 @@ def issue_scan_try_backlog_sweep(
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
-            count_started()
+            count_worker_started()
         else:
             log_bits.append('backlog_sweep_fail=%s' % role)
             count_failed()
@@ -5171,6 +5325,8 @@ def work_order_try_supply(
     order = work_order_settings(config, now)
     if order is None:
         return [], 0
+    if at_max_workers(config, workers):
+        return ['supply_max_workers'], 0
     free = order[1] - working_worker_count(workers, state) - extra_starts
     if free <= supply:
         state['work_order_short_passes'] = 0
@@ -5225,7 +5381,7 @@ def work_order_try_supply(
     state['work_order_short_passes'] = 0
     if persist_state:
         persist_state()
-    count_started()
+    count_worker_started()
     if claimed:
         bits.append('supply_claimed=%s' % ','.join(_blocker_label(pair, repos[0]) for pair in claimed))
     return bits + ['supply_start=%d:%d' % (free, supply)], 1
@@ -5419,6 +5575,33 @@ def work_order_settings(config, now=None):
     return tuple(out)
 
 
+MAX_WORKERS_REASON = 'max_workers'
+
+
+def work_order_max_workers(config):
+    """work_order.max_workers, the fleet wide ceiling on live workers, or None when unset (#1957, owner 2026-11-26)."""
+    block = config.get('work_order') if isinstance(config, dict) else None
+    raw = block.get('max_workers') if isinstance(block, dict) else None
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def fleet_live_count(workers):
+    """Live workers in the inventory plus the workers this pass started, which the inventory snapshot cannot show."""
+    return active_worker_count(workers) + (_PASS.worker_starts if _PASS is not None else 0)
+
+
+def at_max_workers(config, workers, slack=0):
+    """True when work_order.max_workers is set and the fleet holds that many live workers (plus `slack`)."""
+    cap = work_order_max_workers(config)
+    return cap is not None and fleet_live_count(workers) >= cap + slack
+
+
 def work_order_keeps_target(config, now):
     """True when work_order.keep_target_until_go_live is on and today (Asia/Taipei) is before go_live_date (#1655).
 
@@ -5507,6 +5690,9 @@ def issue_scan_try_triage(
         if not _issue_scan_has_slot(host, config, admission, extra_starts + used):
             log_bits.append('triage_skip_no_seat')
             break
+        if at_max_workers(config, workers):
+            log_bits.append('triage_max_workers')
+            break
         try:
             recent = now - float(last_starts.get(repo)) < interval
         except (TypeError, ValueError):
@@ -5547,7 +5733,7 @@ def issue_scan_try_triage(
             log_bits.append('triage_start=%d' % (len(backlog) if isinstance(backlog, dict) else backlog))
             if urgent and not keeping and notices is not None:
                 notices.append('work order: %d active, grill backlog' % active)
-            count_started()
+            count_worker_started()
         else:
             log_bits.append('triage_fail')
             count_failed()
@@ -8610,12 +8796,21 @@ def babysit_pass(
             if routed in ('assigned', 'started'):
                 babysit_mark(state, repo, number, head, action)
                 started += step if routed == 'started' else 0
-                count_started()
+                if routed == 'started':
+                    count_worker_started()
+                else:
+                    count_started()
                 lines.append(_babysit_line(repo, number, head, action, detail + ' standing=' + routed))
                 log_bits.append('standing_%s=%s' % (routed, number))
                 if persist_state:
                     persist_state()
                 continue
+        # A verifier for a Review PASS head may take one seat over work_order.max_workers, so merges are not blocked (#1957).
+        if kind == 'verifier' and at_max_workers(config, workers, slack=1 if review_passed_at_head(pr_row) else 0):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'max-workers'))
+            log_bits.append('max_workers=%s' % number)
+            count_refused(MAX_WORKERS_REASON)
+            continue
         command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder, tag)
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
@@ -8658,7 +8853,7 @@ def babysit_pass(
                 trial_event('start', 'fresh', now=now, dispatch_id=did, repo=repo, pr=number, head=head,
                             headroom_pct='' if headroom is None else headroom)
         started += step
-        count_started()
+        count_worker_started()
         gap = review_to_verifier_s(pr_row, head, now) if action == 'verifier' else None
         lines.append(_babysit_line(repo, number, head, action, detail if gap is None else '%s review_to_verifier_s=%d' % (detail, gap)))
         log_bits.append('%s=%s' % (action, number))
@@ -8715,7 +8910,8 @@ def defer_issue(state, now, repo, number, reason, deferred, notices, log_bits, p
         entry['at'] = now
     else:
         entry = repo_book[str(number)] = {'reason': reason, 'passes': 1, 'at': now}
-    if entry['passes'] >= ISSUE_DEFER_ESCALATE_PASSES and not entry.get('notified'):
+    # Waiting at max_workers is the ceiling working, not a stuck start, so it never escalates (#1957).
+    if entry['passes'] >= ISSUE_DEFER_ESCALATE_PASSES and not entry.get('notified') and reason != MAX_WORKERS_REASON:
         entry['notified'] = True
         notices.append(Urgent('%s #%d deferred %d passes in a row (%s): elon resolves it this wake' % (
             repo, number, entry['passes'], reason)))
@@ -8769,15 +8965,23 @@ def fill_gap_notice(config, now, workers, log_bits, deferred):
     order = work_order_settings(config)
     if order is None or not deferred:
         return None
+    cap = work_order_max_workers(config)
+    if cap is not None and MAX_WORKERS_REASON in deferred:
+        return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), at max_workers %d' % (
+            fleet_live_count(workers), order[1], len(deferred), _deferred_reasons(deferred), cap)
     started = sum(1 for bit in log_bits if bit.startswith(('issue_start=', 'rework_start=', 'supply_start=')))
     live = active_worker_count(workers) + started
     if live >= order[1]:
         return None
+    return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), elon tops up by hand' % (
+        live, order[1], len(deferred), _deferred_reasons(deferred))
+
+
+def _deferred_reasons(deferred):
     reasons = {}
     for reason in deferred:
         reasons[reason] = reasons.get(reason, 0) + 1
-    return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), elon tops up by hand' % (
-        live, order[1], len(deferred), ', '.join('%s x%d' % (r, n) for r, n in sorted(reasons.items())))
+    return ', '.join('%s x%d' % (r, n) for r, n in sorted(reasons.items()))
 
 
 def issue_scan_pass(config, state, now, workers, *args, **kwargs):
@@ -9011,6 +9215,10 @@ def _issue_scan_pass(
             if park_is_active(state, park_key, config):
                 log_bits.append('rework_parked=%d' % pr_num)
                 continue
+            if at_max_workers(config, workers):
+                log_bits.append('rework_max_workers=%d' % pr_num)
+                count_refused(MAX_WORKERS_REASON)
+                continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 count_refused('host_cap')
                 continue
@@ -9055,7 +9263,7 @@ def _issue_scan_pass(
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_num, head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
-                count_started()
+                count_worker_started()
                 if persist_state:
                     persist_state()
             else:
@@ -9227,7 +9435,7 @@ def _issue_scan_pass(
             notices.append(no_work)
         extra_starts += triage_used
         queue_count = None if list_failed else ready_queue_count
-        sweep_bits = issue_scan_try_backlog_sweep(
+        sweep_bits = ['backlog_sweep_max_workers'] if at_max_workers(config, workers) else issue_scan_try_backlog_sweep(
             config, state, now, repos, queue_count, host, admission, extra_starts,
             start_worker, persist_state,
         )
@@ -9237,6 +9445,11 @@ def _issue_scan_pass(
         return notices, log_bits
 
     candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
+    if at_max_workers(config, workers):
+        count_refused(MAX_WORKERS_REASON)
+        for repo, row in candidates:
+            defer_issue(state, now, repo, row['number'], MAX_WORKERS_REASON, deferred, notices, log_bits, persist_state)
+        return notices, log_bits
     if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
         count_refused('host_cap')
         for repo, row in candidates:
@@ -9258,6 +9471,10 @@ def _issue_scan_pass(
             for rest_repo, rest_row in candidates[first:]:
                 defer_issue(state, now, rest_repo, rest_row['number'], reason, deferred, notices, log_bits, persist_state)
 
+        if at_max_workers(config, workers):
+            count_refused(MAX_WORKERS_REASON)
+            defer_rest(MAX_WORKERS_REASON)
+            break
         if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
             count_refused('host_cap')
             defer_rest('host_cap')
@@ -9399,7 +9616,7 @@ def _issue_scan_pass(
             act(['gh', 'issue', 'edit', str(row['number']), '--repo', repo, '--remove-label', 'ready-for-agent'])
             notices.append('issue %s #%d' % (repo, row['number']))
             log_bits.append('issue_start=%d' % row['number'])
-            count_started()
+            count_worker_started()
             if persist_state:
                 persist_state()
         else:
@@ -10815,6 +11032,8 @@ def format_seat_report(report):
 
 
 def main():
+    # worker-startup.sh checks max_workers only on a hand start; this pass applies it itself (#1957).
+    os.environ['FLEET_WATCH'] = '1'
     begin_pass_clock()
     try:
         return _main()
@@ -10829,6 +11048,8 @@ def _main():
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     parser.add_argument('--admit-local', action='store_true', help='Check coordinator load, memory, and cap admission')
     parser.add_argument('--seats', action='store_true', help='Print live and retained seats per host and exit')
+    parser.add_argument('--metrics-digest', type=int, metavar='N', default=None,
+                        help='Print the last N hourly metrics lines from the log and exit (#1957)')
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
@@ -10836,6 +11057,11 @@ def _main():
     parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
     parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
+
+    if args.metrics_digest is not None:
+        for line in metrics_digest(read_log_tail(), args.metrics_digest):
+            print(line)
+        return 0
 
     if args.trial_summary:
         print(trial_summary(read_trial_rows()))
@@ -11208,6 +11434,8 @@ def _main():
         parts.append(pass_deadline_line())
     if not terminal_list_ok:
         parts.append('terminal_list_failed')
+    if inventory_ok:
+        parts.extend(pass_waste_parts(workers))  # read by the hourly metrics line (#1957)
     if backup_age is not None:
         parts.append('backup_age_s=%d' % int(backup_age))
         if backup_age > BACKUP_STALE_LOG:
@@ -11238,6 +11466,11 @@ def _main():
                 pass_prs[repo] = fetch_prs(repo)
         prune_closed_maps(state, pass_prs, {})
         prune_closed_issues(state, fetch_closed_issue_rows)
+        if not pass_deadline_reached():
+            try:
+                maybe_log_hourly_metrics(config, state, now)
+            except Exception as error:
+                print('fleet-watch: hourly metrics skipped: %s' % (repr(error),), file=sys.stderr)
         deliver_notices(config, state, notices, rpc, pass_start)
         if notices:
             print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))
