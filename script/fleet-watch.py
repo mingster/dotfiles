@@ -6230,6 +6230,7 @@ def babysit_settings(config):
 START_FINISH_BY = 140.0  # a start may begin only if it can end before this many seconds into the pass (#1820)
 START_COST_AGY = 105.0  # an antigravity start that keeps worker-startup's 60 s sign in screen wait
 START_COST_OTHER = 45.0  # any other start
+START_TAIL = 25.0  # work after the last start (audit, issue scan, deliver, save, process exit) took 10 to 22 s in the #1820 live check
 _PASS_BEGAN = None
 
 
@@ -6291,9 +6292,10 @@ def pass_deadline_line():
 
 
 def start_fits_pass(cost):
-    """True while elapsed + cost fits PASS_HARD_END, so the automation timeout never kills a start (#1820).
-    Verifier and fixer starts skip START_FINISH_BY (#1838) but not this. With no clock (tests, direct use) True."""
-    return _PASS_BEGAN is None or time.time() - _PASS_BEGAN + cost <= PASS_HARD_END
+    """True while elapsed + cost + START_TAIL fits PASS_HARD_END, so a start and the work after it end by the hard
+    end (#1820). Without the tail, two starts of about 100 s ended passes at 252 and 258 s. Verifier and fixer
+    starts skip START_FINISH_BY (#1838) but not this. With no clock (tests, direct use) True."""
+    return _PASS_BEGAN is None or time.time() - _PASS_BEGAN + cost + START_TAIL <= PASS_HARD_END
 
 
 def start_allowed(cost):

@@ -94,11 +94,36 @@ class PassDeadline(unittest.TestCase):
         # #1820: a verifier or fixer start is held when elapsed plus its cost passes PASS_HARD_END, so the 280 s
         # timeout never kills a start. The next pass starts it.
         cost = fw.agent_start_cost('cursor')  # PICK picks cursor
-        starts, bits = self.babysit_at(fw.PASS_HARD_END - cost + 1)
+        starts, bits = self.babysit_at(fw.PASS_HARD_END - fw.START_TAIL - cost + 1)
         self.assertEqual(starts, [], bits)
         self.assertIn('start_deadline=2', bits)
-        starts, bits = self.babysit_at(fw.PASS_HARD_END - fw.START_COST_AGY - 1)
+        starts, bits = self.babysit_at(fw.PASS_HARD_END - fw.START_TAIL - fw.START_COST_AGY - 1)
         self.assertEqual(len(starts), 1, bits)
+
+    def test_slow_starts_never_carry_the_pass_past_the_hard_end(self):
+        # #1820 live check: antigravity starts took 97 to 101 s and the work after the last one took up to 22 s, so
+        # passes ended at 252 and 258 s. Fake that: three rows, 100 s a start, 22 s of work after the loop.
+        clock = Clock(30.0)
+        starts = []
+
+        def slow_start(command):
+            starts.append(command)
+            clock.now += 100.0
+            return fw.BabysitStartResult(0, '', 'ctx_%d' % len(starts), 'term_x')
+
+        with tempfile.TemporaryDirectory() as root, \
+                patch.dict(os.environ, {'STANDING_VERIFIER_TRIAL_LOG': os.path.join(root, 't.tsv')}), \
+                patch.object(fw.time, 'time', clock), patch.object(fw, 'start_allowed', return_value=True):
+            fw.begin_pass_clock(now=T0)
+            fw.babysit_pass(
+                tier_config(root), {}, [], pr_fetch=lambda _r: [tier_pr(n, BIG_CODE) for n in (2, 3, 4)],
+                start_worker=slow_start, pick=lambda *_a, **_k: {'selected': {'provider': 'antigravity', 'model': 'm'}},
+                owner_check=lambda _pr, **_kw: None, release_worker=lambda *_a, **_k: None,
+                notify_worker=lambda *_a: None, now=10_000.0, term_times={}, standing_io=FakeIO(),
+            )
+            clock.now += 22.0  # audit, issue scan, deliver, save
+            self.assertLessEqual(clock.now - T0, fw.PASS_HARD_END)
+        self.assertEqual(len(starts), 1)
 
     def supply_at(self, elapsed):
         # The forced-supply shape of #1889: free seats above the ready supply, an antigravity pick (START_COST_AGY).
@@ -123,9 +148,9 @@ class PassDeadline(unittest.TestCase):
         starts, bits = self.supply_at(60.0)
         self.assertEqual(len(starts), 1, bits)
         self.assertFalse([b for b in bits if b.startswith('supply_budget')], bits)
-        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_COST_AGY - 1)
+        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_TAIL - fw.START_COST_AGY - 1)
         self.assertEqual(len(starts), 1, bits)
-        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_COST_AGY + 1)
+        starts, bits = self.supply_at(fw.PASS_HARD_END - fw.START_TAIL - fw.START_COST_AGY + 1)
         self.assertEqual(starts, [], bits)
         self.assertTrue([b for b in bits if b.startswith('supply_budget')], bits)
 
