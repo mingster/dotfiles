@@ -208,7 +208,56 @@ expect_rc "sync dry run succeeds" 0 g sync --dry-run
 printf 'stale\n' >"$R/stale.key"
 expect_rc "sync again updates the file" 0 g sync
 [[ "$(cat "$R/a.key")" == changed ]] && ok "sync overwrote the changed file" || bad "changed file not copied"
-[[ -e "$R/stale.key" ]] && ok "receive never deletes" || bad "receive deleted a file"
+[[ ! -e "$R/stale.key" ]] && ok "receive removes a file the source does not have" || bad "stale file kept"
+
+# mirror: a file removed on the source goes from the receiver, with the folder it leaves empty
+mkdir -p "$R/old/deep"; printf 'old\n' >"$R/old/deep/o.key"; printf 'x\n' >"$R/.DS_Store"
+mkfifo "$R/pipe"
+mkdir -p "$R/.stage.other"; printf 'x\n' >"$R/.stage.other/x"
+mv "$D/sub/b.key" "$TMP/b.keep"
+expect_rc "sync after a source removal succeeds" 0 g sync
+[[ ! -e "$R/sub/b.key" && ! -e "$R/sub" ]] && ok "the removed file and its empty folder are gone" || bad "removed file or folder kept"
+[[ ! -e "$R/old" ]] && ok "a receiver only tree is removed" || bad "receiver only tree kept"
+[[ ! -e "$R/.DS_Store" && ! -e "$R/pipe" ]] && ok "stray and special files are removed" || bad "stray or special file kept"
+[[ -f "$R/.stage.other/x" ]] && ok "another staging folder is not touched" || bad "staging folder touched"
+[[ -f "$R/a.key" && -f "$R/c.key" && -d "$R" ]] && ok "source files stay" || bad "source files lost"
+rm -rf "$R/.stage.other"
+# a folder replaced by a file, and back, lands in one sync
+printf 'now-a-file\n' >"$D/swap"
+mkdir -p "$R/swap"; printf 'x\n' >"$R/swap/in"
+expect_rc "sync turns a receiver folder into a file" 0 g sync
+[[ -f "$R/swap" && "$(cat "$R/swap")" == now-a-file ]] && ok "folder to file mirrored in one sync" || bad "folder to file not mirrored"
+rm -f "$D/swap"; mkdir "$D/swap"; printf 'inner\n' >"$D/swap/in"
+expect_rc "sync turns a receiver file into a folder" 0 g sync
+[[ "$(cat "$R/swap/in" 2>/dev/null)" == inner ]] && ok "file to folder mirrored in one sync" || bad "file to folder not mirrored"
+rm -rf "$D/swap"; mv "$TMP/b.keep" "$D/sub/b.key"
+expect_rc "sync restores the folder" 0 g sync
+
+# the dry run says receivers drop the rest
+expect_rc "sync dry run for the mirror note" 0 g sync --dry-run
+[[ "$LAST_OUT" == *"receivers drop anything not in this list"* ]] && ok "dry run says receivers drop the rest" || bad "dry run note: $LAST_OUT"
+
+# wipe guard and links: a fake rsync fills the staging folder (its last argument) as the case needs
+printf '%s\n' '#!/bin/sh' 'for s; do :; done' 'eval "$SG_FAKE"' >"$TMP/stagersync"
+chmod +x "$TMP/stagersync"
+# fr <shell run as rsync, with $s the staging folder>
+fr() { SG_FAKE="$1" SG_RSYNC="$TMP/stagersync" SECRETS_GATE_CONF="$TMP/recv.conf" timeout "$TMO" bash "$GATE" receive; }
+snap() { (cd "$R" && find -P . | LC_ALL=C sort); }
+before=$(snap)
+expect_rc "receive with an empty stage fails" 1 fr ':'
+[[ "$(snap)" == "$before" ]] && ok "an empty stage deletes nothing" || bad "empty stage changed the folder"
+expect_rc "receive with only ignored files staged fails" 1 fr 'printf x >"$s.DS_Store"; mkdir "$s.stage.x"; printf x >"$s.stage.x/f"'
+[[ "$(snap)" == "$before" ]] && ok "a stage of ignored files deletes nothing" || bad "ignored only stage changed the folder"
+expect_rc "receive fails when rsync fails" 1 fr 'printf x >"${s}new"; exit 23'
+[[ "$(snap)" == "$before" ]] && ok "a failed rsync deletes nothing" || bad "failed rsync changed the folder"
+mkdir -p "$TMP/target/dir"; printf 'safe\n' >"$TMP/target/file"; printf 'safe\n' >"$TMP/target/dir/in"
+plant="printf new >\"\${s}a.key\"; printf in >\"\${s}c.key\"; rm -f '$R/c.key'"
+plant="$plant; ln -s '$TMP/target/file' '$R/c.key'; ln -s '$TMP/target/file' '$R/flink'; ln -s '$TMP/target/dir' '$R/dlink'"
+expect_rc "receive removes links that appear in the folder" 0 fr "$plant"
+[[ ! -L "$R/flink" && ! -L "$R/dlink" ]] && ok "planted links are removed" || bad "planted link kept"
+[[ ! -L "$R/c.key" && "$(cat "$R/c.key")" == in ]] && ok "a link at a source name becomes the source file" || bad "link at a source name kept"
+[[ "$(cat "$TMP/target/file")" == safe && "$(cat "$TMP/target/dir/in")" == safe ]] && ok "link targets are untouched" || bad "link target changed"
+expect_rc "sync restores the folder after the guard cases" 0 g sync
 
 # sync's ssh ignores everything the owner account can edit, and logs in as root
 for want in "-F /dev/null" "IdentitiesOnly=yes" "IdentityFile=$TMP/id_ed25519" "UserKnownHostsFile=$TMP/known_hosts" \
@@ -233,7 +282,7 @@ out=$(HOME="$TMP/evilhome" SECRETS_GATE_CONF="$TMP/invalid.conf" timeout "$TMO" 
 [[ "$out" != *"attacker"* && "$out" != *"127.0.0.1"* ]] && ok "a user ssh config does not redirect the host" || bad "user ssh config used: $out"
 
 # receive takes no caller option, and the client's command line is ignored: a fake rsync records the argv
-printf '%s\n' '#!/bin/sh' "printf '%s\\n' \"\$@\" >\"$TMP/rsync.argv\"" 'exit 0' >"$TMP/fakersync"
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' \"\$@\" >\"$TMP/rsync.argv\"" 'for s; do :; done' 'printf x >"${s}argv.key"' >"$TMP/fakersync"
 chmod +x "$TMP/fakersync"
 rr() { SG_RSYNC="$TMP/fakersync" SECRETS_GATE_CONF="$TMP/recv.conf" SSH_ORIGINAL_COMMAND="rsync --server -rlKLkogD --delete --rsync-path=/bin/sh . $TMP/outside/" timeout "$TMO" bash "$GATE" receive "$@"; }
 expect_rc "receive with an argument is refused" 2 rr -K

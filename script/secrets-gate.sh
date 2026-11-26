@@ -3,9 +3,11 @@
 # (root, mode 755) next to its config. The folder is root 700 inside a root controlled path, so this is the only way in.
 # Fixed command list, anything else is refused (exit 2):
 #   fingerprint <file>      size and 8 hex fingerprint of one file in the folder, never its content
-#   sync [--dry-run]        source host: push the folder to root@<host> of every fleet host over ssh, prints file names only
+#   sync [--dry-run]        source host: mirror the folder to root@<host> of every fleet host over ssh, prints file names
+#                           only. A file or folder removed here is removed on every receiver.
 #   receive                 receiver host: the rsync server side. Runs ONLY as the forced command of the gate key in
 #                           root's authorized_keys (restrict,command=...). No sudoers entry, no argument, no caller option.
+#                           Its folder ends up holding only what was pushed. A failed or empty push deletes nothing.
 #   deploy-read <name>      print one file from the DEPLOY allow list, for a deploy step
 #   check-path <path>       exit 0 when the path and every parent is root controlled (setup uses it), prints why not
 #   run <helper> [args...]  run one fixed helper from helpers/ next to the config (root owned, no group or other write,
@@ -170,6 +172,7 @@ cmd_sync() {
     # The receiver ignores every client option, so a real rsync dry run cannot be asked of it. List the plan instead.
     echo "would push $count files to: $HOSTS"
     (cd "$DIR" && find -P . -type f ! -name .DS_Store | sed 's#^\./#  #')
+    echo "receivers drop anything not in this list"
     return 0
   fi
   [ -f "$key" ] && [ -f "$known" ] || fail "no ssh key or known_hosts next to the config (rerun secrets-gate-setup.sh)"
@@ -207,18 +210,42 @@ safe_mkdir() {
 # The rsync server side. Reached only through the forced command in root's authorized_keys. Its arguments and the
 # client's command line (SSH_ORIGINAL_COMMAND) are ignored: rsync starts with a fixed list (no -l, -K, -L, -o, -g,
 # -D, --delete, no caller path) into a fresh staging folder inside the root 700 folder. Only regular files are then
-# moved into place; links and anything else are dropped. Nothing is ever deleted from the folder.
+# moved into place; links and anything else are dropped. The folder mirrors the push: whatever is not a regular file
+# also in the staging folder is removed (links are removed, never followed), then empty directories. Other .stage.*
+# folders are left alone. When rsync fails or nothing landable is staged, nothing is deleted and the exit is not zero.
+
+# lands <relative path>: true when receive would move a staged file of this name into the folder.
+lands() {
+  case "/$1/" in */../*|*/./*|*//*|*/.stage.*) return 1 ;; esac
+  case $1 in .DS_Store|*/.DS_Store) return 1 ;; esac
+}
+
 cmd_receive() {
   [ "$#" -eq 0 ] || refuse "receive takes no argument"
-  local stage f rel d dest
+  local stage f rel d dest n=0
   stage=$(mktemp -d "$real_dir/.stage.XXXXXX") || fail "receive: cannot create a staging folder"
   # shellcheck disable=SC2064
   trap "rm -rf -- '$stage'" EXIT
   "$rsync_bin" --server -rt --log-format=%i . "$stage"/ || fail "receive: rsync failed"
   while IFS= read -r -d '' f; do
+    lands "${f#./}" && n=$((n + 1))
+  done < <(cd "$stage" && find -P . -type f -print0)
+  [ "$n" -gt 0 ] || fail "receive: no file was pushed, nothing changed"
+  # Remove before moving in: the stage still lists every source file, and a name that turned from a folder into a
+  # file (or back) is free by the time it moves.
+  while IFS= read -r -d '' f; do
     rel=${f#./}
-    case "/$rel/" in */../*|*/./*|*//*|*/.stage.*) continue ;; esac
-    case $rel in .DS_Store|*/.DS_Store) continue ;; esac
+    dest=$real_dir/$rel
+    lands "$rel" && [ -f "$dest" ] && [ ! -L "$dest" ] && [ -f "$stage/$rel" ] && continue
+    rm -f -- "$dest" || fail "receive: cannot remove $rel"
+  done < <(cd "$real_dir" && find -P . -mindepth 1 ! -type d ! -path './.stage.*' -print0)
+  # deepest first; rmdir refuses a directory that still holds something
+  while IFS= read -r -d '' f; do
+    rmdir -- "$real_dir/${f#./}" 2>/dev/null
+  done < <(cd "$real_dir" && find -P . -mindepth 1 -depth -type d ! -path './.stage.*' -print0)
+  while IFS= read -r -d '' f; do
+    rel=${f#./}
+    lands "$rel" || continue
     case $rel in */*) d=${rel%/*} ;; *) d=. ;; esac
     safe_mkdir "$d" || continue
     dest=$real_dir/$rel

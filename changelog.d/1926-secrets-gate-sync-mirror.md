@@ -1,0 +1,1 @@
+secrets-gate: `sync` now mirrors the source folder. A file or folder removed on the source is removed on every receiver on the next sync, including any file kept only on a receiver. A failed or empty push deletes nothing. Each host picks this up after the owner reruns secrets-gate-setup.sh there (Refs #1926).
