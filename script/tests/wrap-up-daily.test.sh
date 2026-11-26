@@ -115,6 +115,11 @@ for n in merged dirty live held unpushed openpr squash moved; do
   touch -t "$old" "$gd/HEAD" "$gd/index"
 done
 
+# An idle automation "Run now" leftover with no terminal left (#1946).
+g worktree add -q -b t/auto-job-run-1-1 "$tmp/auto-job-run-1-1" main
+auto_sha=$(git -C "$tmp/auto-job-run-1-1" rev-parse HEAD)
+touch -t "$old" "$(git -C "$tmp/auto-job-run-1-1" rev-parse --absolute-git-dir)/HEAD"
+
 # Logs: old and new in each place the job cleans, plus ones it must leave.
 mkdir -p "$tmp/workspaces/proj" "$tmp/agent-state"
 git -C "$tmp/agent-state" init -q
@@ -164,6 +169,9 @@ fake_df 268120883 279235789
 bash "$root/script/wrap-up.sh" --daily > "$tmp/output" 2>&1
 check 'a round reports ok with free space before and after' grep -Eq 'wrap-up-daily \[[0-9]+\] round ok: repos=1 .* freed 10\.6G \(disk free 255\.7G -> 266\.3G\)' "$tmp/round.log"
 check 'removes the merged worktree' gone "$tmp/wt-merged"
+check 'removes the idle automation run worktree' gone "$tmp/auto-job-run-1-1"
+check 'logs it as a cleaned automation run' detail_has "Cleaned automation run $tmp/auto-job-run-1-1"
+check 'writes its branch to the restore log' grep -Fq "$(printf 'local\tt/auto-job-run-1-1\t%s' "$auto_sha")" "$tmp/agent-state/branch-prune/$(date +%F).tsv"
 check 'removes the squash merged worktree (PR head not on any remote branch)' gone "$tmp/wt-squash"
 check 'keeps a worktree with uncommitted work' present "$tmp/wt-dirty"
 # #1853 replaced these two keeps: the prune removes work that is not active, and the restore log holds its sha.

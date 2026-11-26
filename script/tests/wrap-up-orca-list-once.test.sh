@@ -64,7 +64,22 @@ check 'later repo does not list terminals' test "$(grep -c '^terminal list' "$OR
 check 'later repo lists only its own worktrees' grep -q "^worktree list --repo path:$tmp/repo --json" "$ORCA_LOG"
 check 'later repo never lists every worktree' test "$(grep -c '^worktree list --json' "$ORCA_LOG")" -eq 0
 
-# A scoped listing that times out is not retried with the whole list.
+# Automation run leftovers (#1946) share one listing: none extra in the first repo, one in a later repo.
+for n in 1 2; do
+  git worktree add -q -b "t/auto-job-run-$n-1" "$tmp/auto-job-run-$n-1" main
+  touch -t 202601010000 "$(git -C "$tmp/auto-job-run-$n-1" rev-parse --absolute-git-dir)/HEAD"
+done
+rm -f "$snap"; : > "$ORCA_LOG"
+bash "$root/script/wrap-up.sh" > "$tmp/out4" 2>&1 || true
+check 'both automation runs are seen' test "$(grep -c '^Clean automation run' "$tmp/out4")" -eq 2
+check 'first repo with automation runs still lists terminals once' test "$(grep -c '^terminal list' "$ORCA_LOG")" -eq 1
+: > "$ORCA_LOG"
+WRAP_UP_SKIP_HOST_WIDE=1 bash "$root/script/wrap-up.sh" > "$tmp/out5" 2>&1 || true
+check 'later repo lists terminals once for all its automation runs' test "$(grep -c '^terminal list' "$ORCA_LOG")" -eq 1
+: > "$ORCA_LOG"
+WRAP_UP_SKIP_HOST_WIDE=1 WRAP_UP_WORKTREE_BUDGET=0 bash "$root/script/wrap-up.sh" > "$tmp/out6" 2>&1 || true
+check 'a spent worktree budget leaves automation runs for the next round' bash -c '! grep -q "^Clean automation run" "$1" && grep -q "worktree step budget spent" "$1"' _ "$tmp/out6"
+
 : > "$ORCA_LOG"
 FAKE_SCOPED_SLOW=1 WRAP_UP_CALL_TIMEOUT=1 WRAP_UP_SKIP_HOST_WIDE=1 bash "$root/script/wrap-up.sh" --apply > "$tmp/out3" 2>&1 || true
 check 'timed out scoped listing is tried once' test "$(grep -c '^worktree list --repo' "$ORCA_LOG")" -eq 1

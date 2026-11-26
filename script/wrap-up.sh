@@ -2104,11 +2104,23 @@ prune_worktree_why() { # sets why, or reason for a removal
 # An automation "Run now" leaves a mingster/auto-<job>-run-<n>-<time> worktree whose agent replies once and goes idle (#1946).
 # Such a worktree goes, whatever its board status, when it is clean, has no commit beyond origin/main and every terminal in
 # it has exited or been silent for 30 minutes. Anything else falls through to the other worktree rules.
+# One listing per run for all of them (#1314): the one this run already made, else one made at the first candidate.
+auto_listed=0
+auto_terminals() {
+  if [ "$auto_listed" -eq 0 ]; then
+    auto_listed=1
+    if [ -s "$tmp/local-terminals" ]; then cp "$tmp/local-terminals" "$tmp/auto-terminals"
+    else orca_call terminal list --json > "$tmp/auto-terminals" 2>/dev/null || : > "$tmp/auto-terminals"
+    fi
+  fi
+  jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/auto-terminals" >/dev/null 2>&1
+}
 automation_run_idle() { # <path> <branch> <head>; sets run_terminals to the handles still connected there
   local ahead status_out rows handle at connected tp now gd real_path
   run_terminals=()
   case "${1##*/}" in auto-*-run-*) ;; *) return 1 ;; esac
   case "${2##*/}" in auto-*-run-*) ;; *) return 1 ;; esac
+  ! worktree_budget_spent || return 1
   [ "$locked" -eq 0 ] && [ -z "$prune_block" ] && [ "$inventory_read" -eq 1 ] || return 1
   ! grep -Fxq '*' "$tmp/active" || return 1
   ! protected "$2" && ! worktree_orca_pin_unknown && ! worktree_pinned_in_orca "$1" || return 1
@@ -2116,9 +2128,7 @@ automation_run_idle() { # <path> <branch> <head>; sets run_terminals to the hand
   [ "$ahead" = 0 ] || return 1
   status_out=$(git -C "$1" status --porcelain --untracked-files=all) || return 1
   [ -z "$status_out" ] || return 1
-  # A fresh listing: output may have arrived since the run started.
-  orca_call terminal list --json > "$tmp/auto-terminals" 2>/dev/null \
-    && jq -e '.ok != false and (.result.terminals | type == "array") and (.result.truncated != true)' "$tmp/auto-terminals" >/dev/null 2>&1 || return 1
+  auto_terminals || return 1
   rows=$(jq -r '.result.terminals[] | [.handle // "-", (.lastOutputAt | if type == "number" then floor else "-" end),
     (if .connected == false or .writable == false then 0 else 1 end), .worktreePath // .cwd // "-"] | @tsv' "$tmp/auto-terminals") || return 1
   real_path=$(real "$1")
@@ -2126,6 +2136,7 @@ automation_run_idle() { # <path> <branch> <head>; sets run_terminals to the hand
   while IFS=$'\t' read -r handle at connected tp; do
     [ -n "$handle" ] || continue
     case "$(real "$tp")" in "$real_path"|"$real_path"/*) ;; *) continue ;; esac
+    ! grep -Fxq -- "$handle" "$tmp/closing" || continue # this run already closed it
     [ "$handle" != "${ORCA_TERMINAL_HANDLE:-}" ] || return 1
     [ "$connected" = 1 ] || continue
     [ "$at" != - ] && [ $((now - at / 1000)) -ge 1800 ] || return 1

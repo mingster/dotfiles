@@ -23,6 +23,7 @@ cat > "$tmp/bin/orca" <<'FAKE'
 case "$*" in
   'worktree list --json') echo '{"ok":true,"result":{"worktrees":[]}}' ;;
   'worktree rm --worktree path:'*) exit 0 ;;
+  'terminal close'*) echo "$*" >> "$HOME/closes.log" ;;
   'terminal list --json') printf '{"ok":true,"result":{"terminals":%s}}\n' "${FAKE_TERMINALS:-[]}" ;;
   'orchestration worker-show'*) printf '%s\n' "$FAKE_SHOW" ;;
   'environment list'*) echo '{"ok":true,"result":{"environments":[]}}' ;;
@@ -119,6 +120,7 @@ auto_case fresh 3600000
 export FAKE_TERMINALS='[]'
 WRAP_UP_RECENT_MIN=30 auto_kept 'new automation worktree with no terminal yet'
 unset FAKE_TERMINALS
+test "$(cat "$HOME/closes.log")" = 'terminal close --terminal term-auto' || { echo 'want exactly one stop, for the idle run'; exit 1; }
 echo 'ok idle clean automation run worktree removed with its branch; commit, dirty, recent and new kept'
 echo 'ok clean merged worktree removed'
 git worktree add -qb active "$tmp/active"
