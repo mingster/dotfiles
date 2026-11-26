@@ -132,13 +132,13 @@ if [ ! -d "$dir" ]; then
   step "note:  put the credential files in $dir with sudo, then rerun this script"
 elif [ "$(stat_of "$dir")" = "root 700" ]; then step "ok:    $dir is root owned, mode 700"
 else
-  act "hand the top of the folder to root and lock it" chown -h "root:$root_group" -- "$dir"
+  act "hand the top of the folder to root and lock it" chown -h -- "root:$root_group" "$dir"
   act "folder mode 700" chmod -- 700 "$dir"
   if [ "$dry" -eq 0 ]; then
     odd=$(sudo find -P "$dir" ! -type f ! -type d -print -quit) || true
     [ -z "$odd" ] || die "the folder holds a link or special file ($odd), left locked and untouched. Remove it with sudo, then rerun."
   fi
-  act "hand every file to root, no links followed" chown -R -P "root:$root_group" -- "$dir"
+  act "hand every file to root, no links followed" chown -R -P -- "root:$root_group" "$dir"
   act "remove group and other access" chmod -R -- go-rwx "$dir"
 fi
 
