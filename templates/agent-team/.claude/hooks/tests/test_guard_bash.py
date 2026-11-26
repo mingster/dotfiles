@@ -2040,6 +2040,185 @@ class BuiltNamesAndSecretsCase(ProjectConfigGuardTest):
                 self.assertDenied(command)
 
 
+class BlockedScriptRunGuard(ProjectConfigGuardTest):
+    """#1887: with blocked_scripts set, a command that runs a name the guard cannot read is refused. That is
+    eval, a `<shell> -c` body that builds a name, and a program or script name built from `$`, a backtick,
+    a glob or a `$'...'` escape. Comments and `$'...'` text no longer hide or crash the text checks."""
+    RUN = "this project lists blocked_scripts"
+
+    def assertRunDenied(self, commands):
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertDenied(command, self.RUN)
+
+    def test_eval_denied(self):
+        self.assertRunDenied(("S=deploy-; eval 'bash bin/$'S'\"raw.sh\"'",
+                              'S=deploy-; eval "bash bin/\\\\$"S"\\\\raw.sh"',
+                              "S=deploy-; eval bash bin/\\$\\S\\\\raw.sh",
+                              "S1=deploy-; eval 'bash bin/$S'1'\"raw.sh\"'",
+                              "eval echo hi", "command eval true", "builtin eval true", "X=1 eval true"))
+
+    def test_shell_c_body_denied(self):
+        self.assertRunDenied(("S=deploy-; bash -c 'bash bin/$'S'\"raw.sh\"'",
+                              "S1=deploy-; bash -c 'bash bin/$S'1'\"raw.sh\"'",
+                              'bash -c "$C"', "bash -c '$C x'", "sh -c 'eval true'", "zsh -lc '$C'"))
+        self.assertDenied("S=deploy-; sh -c 'bin/$S\"raw.sh\"'")
+
+    def test_ansi_c_quoted_names_and_comments_denied(self):
+        for command in ("bash bin/$'deploy-raw.sh'", "# $'\nS=deploy; bash bin/$S$'\\x2draw.sh'",
+                        "S=deploy- # $'\nbash bin/$S$\"\"\\raw.sh # '",
+                        "echo $'a\\'b # '; S=deploy; bash bin/$S$'\\x2draw.sh'"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+        self.assertRunDenied(("$'\\x62ash' x.sh", "echo $'a\\'b # '; $C", "echo hi # it's\n$C",
+                              'echo "$(echo " #")"; $C'))
+
+    def test_names_built_from_variables_or_globs_denied(self):
+        for command in ("C=bin/deploy-raw.sh; $C", "C=bin/deploy-raw.sh; bash $C", "bash bin/deploy-[!x]aw.sh",
+                        "bash bin/deploy-[^x]aw.sh", "bash bin/deploy-[[:alpha:]]aw.sh"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+        self.assertRunDenied(("A=deploy-; B=raw.sh; bash bin/$A$B", "$C", "bash $C", "bin/deploy-?x.sh",
+                              "bash bin/deploy-*", "bash bin/{deploy,x}-rw.sh", "nohup $C", "sudo $C",
+                              "nice -n 5 $C", "timeout 5 $C", "env X=1 $C", "exec $C", "xargs $C < list",
+                              "ls | xargs $C", "source $C", ". $C", "`echo b`ash x.sh",
+                              "$(echo bash) x.sh", "A=deploy-; B=raw.sh; bash -o pipefail bin/$A$B",
+                              "case x in x) $C;; esac", "for ((i=0;i<1;i++)); do $C; done", "(( 1 )); $C",
+                              "cat <<'E'\nx\nE\n$C", "rows[0]=1 $C", "if $C; then true; fi", "(true; $C)",
+                              ">out $C"))
+        for command in ("bin/deploy-?aw.sh x", "bash <<'E'\n$C\nE", "cat <<E | sh\n$C\nE"):
+            with self.subTest(command=command):
+                self.assertDenied(command)
+
+    def test_benign_commands_still_allowed(self):
+        for command in ("echo $'\\u41'", "echo $'\\x7'", "echo $'\\U1F600'", "echo $'\\q'", "echo $'\\101\\cA'",
+                        '[ -n "${NAME:+set}" ]', 'echo "${foo:-bar}"', 'echo "${#HOME}"',
+                        "[ -f $X ] && cat $X", "[[ $a == b* ]] && echo y", "test -n $X",
+                        "case $x in a) echo a;; b) echo b;; esac", "case $x in a|b) echo a;; esac",
+                        "(( $a > 1 )) && echo y", "echo $(( $n + 1 ))", "for ((i=0;i<$n;i++)); do echo $i; done",
+                        "python3 - <<'E'\nrows[0] = 1\nprint(*rows)\nE", "git commit -F - <<'E'\n* fix $X\nE",
+                        "cat > /tmp/x.md <<'E'\n* item\n[link](x)\nE", "bash -c 'echo hi'", 'sh -c "ls docs"',
+                        "bash script/a.sh $X", "echo hi # $'", "ls *.py", "grep -n x $F", "rows[0]=1",
+                        "X=$(git rev-parse HEAD); echo $X",
+                        "cat bin/deploy-raw.sh", "for f in scripts/*.sh; do shellcheck $f; done"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
+class BlockedScriptsOnlyRunGuard(ProjectConfigGuardTest):
+    """#1887 with only blocked_scripts set, so no exact_only rule refuses `find -exec` or `{` first."""
+    CONFIG = {"blocked_scripts": ["deploy-raw.sh"]}
+
+    def test_find_exec_and_group_denied(self):
+        for command in ("find . -exec $C {} +", "find . -name a -exec sh -c '$0' {} \\;", "{ $C; }",
+                        "find . -execdir bash bin/$A$B \\;"):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_review_bypasses_denied(self):
+        # Cold review: a stray `case` word, `((` inside `sh -c`, wrapper option values, a script on stdin, and
+        # a command in `env -S`.
+        for command in ("A=deploy-; B=raw.sh; : case esac; (in=1 bash bin/$A$B)",
+                        "export A=deploy- B=raw.sh; sh -c '((bash bin/$A$B))'",
+                        "sudo -u root $C", "exec -a x $C", "stdbuf -o L $C", "nice -n 5 -- $C",
+                        "timeout -k 5 10 $C", "env -u X $C", "env -S '$C x'",
+                        "A=deploy-; B=raw.sh; bash < bin/$A$B", "A=deploy-; B=raw.sh; sh <bin/$A$B"):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_second_review_bypasses_denied(self):
+        # Second review: text the old parse dropped that bash runs (quoted `$(`, a `$'` in a comment line,
+        # `<(`, nested quotes in `${`, `function` and `coproc` bodies, `time --`, glued `env -S`).
+        for command in (
+            "A=deploy-; B=raw.sh; : $(case x in esac) $'\\''; bash bin/$A$B; : $'\\''",
+            "A=deploy-; B=raw.sh; X='`' bash bin/$A$B",
+            "A=deploy-; B=raw.sh; X='$(' bash bin/$A$B",
+            'S=deploy-; X=\'`\' eval \'bash bin/$\'S\'"raw.sh"\'',
+            "A=deploy-; B=raw.sh\necho '$' # '' <<'EOF'\nbash bin/$A$B\nEOF",
+            'A=deploy-; B=raw.sh; < bin/$A$B bash',
+            'A=deploy-; B=raw.sh; <bin/$A$B sh',
+            'A=deploy-; B=raw.sh; bash <(echo bash bin/$A$B)',
+            "A=deploy-; B=raw.sh; echo $\\\n'a\\'b # '; bash bin/$A$B",
+            'A=deploy-; B=raw.sh; echo "${x:-"\'"}"; bash bin/$A$B # \'',
+            'A=deploy-; B=raw.sh; : esac case x in\n(bash bin/$A$B)',
+            'A=deploy-; B=raw.sh; function f { bash bin/$A$B; }; f',
+            'A=deploy-; B=raw.sh; coproc f { bash bin/$A$B; }',
+            'A=deploy-; B=raw.sh; time -- bash bin/$A$B',
+            'S=deploy-; builtin -- eval \'bash bin/$\'S\'"raw.sh"\'',
+            "A=deploy-; B=raw.sh; env -S'bash bin/$A$B' true",
+            "A=deploy-; B=raw.sh; env --split-string='bash bin/$A$B' true",
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_second_review_benign_allowed(self):
+        for command in (
+            'case "$a $b" in\n  *) echo hi ;;\nesac',
+            "grep '\\xdg' docs/a.md",
+            "grep '\\ubuntu' docs/a.md",
+            'cd /tmp && cd ~-/docs && ls',
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_reader_edges_denied(self):
+        # The reader: heredocs inside `$(`, comments after a backslash newline, case inside `$(`, backticks and
+        # non ASCII words.
+        for command in (
+            "A=deploy-; B=raw.sh; X=$(cat <<'EOF'\nit's )\nEOF\n); bash bin/$A$B",
+            'echo "it\'s"; $C',
+            'cat <<EOF\n$(bash bin/$A$B)\nEOF',
+            'A=deploy-; B=raw.sh; echo a\\\n#x; bash bin/$A$B',
+            "echo $'\\''; $C",
+            'case $x in (a) bash bin/$A$B;; esac',
+            'x=$(case a in a) echo;; esac); $C',
+            '{ bash bin/$A$B; }',
+            'for case in a; do $C; done',
+            'echo `echo hi`; `echo $C`',
+            'echo hi # comment \\\n$C',
+            'A=deploy-; B=raw.sh; cat <<EOF; bash bin/$A$B\nx\nEOF',
+        ):
+            with self.subTest(command=command):
+                self.assertDenied(command, BlockedScriptRunGuard.RUN)
+
+    def test_reader_edges_allowed(self):
+        for command in (
+            'git commit -m "$(cat <<\'EOF\'\nfix: it\'s (x) done `eval` $C\nEOF\n)"',
+            'echo ${HOME}/x; ls',
+            'echo "${arr[@]}"',
+            'echo 測試 café; ls',
+            'X=$(git rev-parse --show-toplevel); cd "$X"',
+            'gh pr view 1 --json body -q .body | grep -c x',
+        ):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_review_false_refusals_allowed(self):
+        for command in ('B=$(basename "$f")', "X=$(cat $F)", "out=$(python3 $SP/p.py)", "X=`cat $F`",
+                        "git commit -m \"$(cat <<'EOF'\nrefuse `eval` and `$C` here\nEOF\n)\"",
+                        "echo \"${X}\"; python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "echo $((1+1)); python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "echo $'a'; python3 - <<'PY'\nprint(rows[0])\nPY",
+                        "case $x in a) echo a;; esac; echo in $X", "command -v $X", "sudo -u root ls $X"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+    def test_case_and_find_allowed(self):
+        for command in ("case $x in a) echo a;; *) echo b;; esac", "find . -name '*.py' -exec grep -l x {} +",
+                        "find . -name '*.sh' -print"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
+class RunGuardNeedsBlockedScripts(GuardTest):
+    """#1887: with no blocked_scripts configured the run guard stays off."""
+
+    def test_allowed_without_blocked_scripts(self):
+        for command in ("eval echo hi", "$C", "bash -c '$C'", "bash bin/deploy-*"):
+            with self.subTest(command=command):
+                self.assertAllowed(command)
+
+
 class DenyMessagesNameRewrite(ProjectConfigGuardTest):
     """Each deny with a literal rewrite names it, and the rewrite is allowed (#1871)."""
     CONFIG = dict(ProjectConfigGuardTest.CONFIG, production_hosts=["prod.example"])
