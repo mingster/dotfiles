@@ -115,6 +115,38 @@ class OrphanSweep(Base):
         self.assertLess(body.index("run_phase('sweep'"), body.index("pass_phase('babysit')"))
 
 
+class SweepDryRunMain(Base):
+    def run_main(self, directory, *extra):
+        config = Path(directory) / 'config.json'
+        config.write_text(json.dumps(CONFIG))
+        fleet = Fleet(terminals={'': [term('term_o', '#5|fullstack-dev')]})
+        lines = []
+        with isolated_main_env(directory), \
+                patch('sys.argv', ['fleet-watch', '--config', str(config), '--sweep-dry-run', *extra]), \
+                patch.object(fw, 'rpc', side_effect=fleet), \
+                patch.object(fw, 'fetch_workers', return_value=[]), \
+                patch.object(fw, 'environment_name_by_id', return_value={}), \
+                patch.object(fw, 'acquire_pass_lock', return_value=None) as lock, \
+                patch('builtins.print', side_effect=lambda *a, **k: lines.append(' '.join(map(str, a)))):
+            code = fw.main()
+        return code, lines, lock, fleet
+
+    def test_sweep_dry_run_needs_no_state_and_takes_no_pass_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, lines, lock, fleet = self.run_main(directory)
+        self.assertEqual(code, 0)
+        self.assertEqual(lock.call_count, 0)
+        self.assertTrue(any('would close term_o' in line for line in lines), lines)
+        self.assertFalse([c for c in fleet.calls if c[:2] == ('terminal', 'close')])
+
+    def test_sweep_dry_run_lists_while_a_real_pass_holds_the_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, lines, lock, _ = self.run_main(directory, '--state', str(Path(directory) / 'state.json'))
+        self.assertEqual(code, 0)
+        self.assertEqual(lock.call_count, 0)
+        self.assertTrue(any('would close term_o' in line for line in lines), lines)
+
+
 class MainPassWithoutInventory(unittest.TestCase):
     def test_a_failed_inventory_runs_no_reap_or_sweep_and_keeps_the_reaper_book(self):
         book = {'ctx_u': {'at': NOW - 900, 'resent_at': NOW - 300}}

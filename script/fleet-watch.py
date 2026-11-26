@@ -11728,17 +11728,9 @@ def _main():
         print('fleet-watch: using coordinator config %s' % adopted, file=sys.stderr)
     remember_config_mtime(config, adopted or args.config)
 
-    if not args.state:
-        parser.error('--state is required when --admit is not specified')
-
-    if not args.babysit_dry_run:
-        pass_lock = acquire_pass_lock(args.state)
-        if pass_lock is None:
-            print('fleet-watch: another pass is running on %s; skipping this one' % args.state, file=sys.stderr)
-            return 0
-
-    state = json.loads(args.state.read_text()) if args.state.exists() else {}
     if args.sweep_dry_run:
+        # Read only: no state file needed, and no pass lock, so it never blocks or skips a real pass.
+        state = json.loads(args.state.read_text()) if args.state and args.state.exists() else {}
         apply_active_run(config)
         try:
             workers = fetch_workers(config)
@@ -11750,6 +11742,17 @@ def _main():
         protect_pass_terminals(config, workers)
         orphan_terminal_sweep(config, time.time(), rpc, hosts, workers, dry_run=print)
         return 0
+
+    if not args.state:
+        parser.error('--state is required when --admit is not specified')
+
+    if not args.babysit_dry_run:
+        pass_lock = acquire_pass_lock(args.state)
+        if pass_lock is None:
+            print('fleet-watch: another pass is running on %s; skipping this one' % args.state, file=sys.stderr)
+            return 0
+
+    state = json.loads(args.state.read_text()) if args.state.exists() else {}
     if args.babysit_only or args.babysit_dry_run:
         apply_active_run(config)
         workers = []
