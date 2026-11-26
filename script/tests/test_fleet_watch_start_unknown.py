@@ -225,6 +225,28 @@ class StartUnknownReaper(Base):
         fw.start_unknown_reaper(CONFIG, state, NOW, [local_row('ctx_s')], Fleet(), lambda r: 'closed')
         self.assertEqual(fw.reaper_owned(state), {'ctx_s'})
 
+    def test_stall_pass_neither_restarts_nor_reports_a_reaper_dispatch(self):
+        from test_fleet_watch_stall import T0, WINDOW, base_worker, mark_own, stall_test_config
+        own = base_worker(dispatchId='disp_own', agentTerminalHandle='term_own')
+        foreign = base_worker(dispatchId='disp_foreign', agentTerminalHandle='term_foreign',
+                              githubPullRequestNumber=None)
+        quiet = {'term_own': int((T0 - 4 * WINDOW) * 1000), 'term_foreign': int((T0 - 4 * WINDOW) * 1000)}
+
+        def run(reaper):
+            calls = []
+            state = mark_own({}, 'disp_own')
+            notices, _ = fw.worker_stall_pass(
+                stall_test_config(), state, T0, [copy.deepcopy(own), copy.deepcopy(foreign)], quiet,
+                lambda *a: calls.append(a) or {}, act=lambda _argv: 0, head_of=lambda _w: 'sha1',
+                holds_work=lambda _w: False, pr_list=lambda _repo: [], reaper=reaper)
+            return notices, [c for c in calls if c[:2] == ('orchestration', 'worker-stop')]
+
+        notices, stops = run(())
+        self.assertEqual(len(stops), 1)
+        self.assertTrue(any('disp_foreign is not one fleet-watch started' in n for n in notices))
+        notices, stops = run({'disp_own', 'disp_foreign'})
+        self.assertEqual((notices, stops), ([], []))
+
     def test_main_runs_reap_after_idle_seat_and_before_babysit(self):
         source = (Path(__file__).parent.parent / 'fleet-watch.py').read_text()
         body = source[source.index('\ndef _main('):]

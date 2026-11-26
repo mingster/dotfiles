@@ -4028,8 +4028,10 @@ def stall_holds_work(worker):
 
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
                      terminal_branches=None, inventory_ok=True, head_of=None, holds_work=None, pr_list=None,
-                     waiting=()):
+                     waiting=(), reaper=()):
     """Restart our own silent workers once; report every other stalled worker once and do not stop it.
+
+    `waiting` keeps a worker off the nudge ladder; `reaper` (the start_unknown reaper's dispatches) is left alone.
 
     A failed restart is parked with the recorded message. A usage-gate or host-cap refusal is retried.
     """
@@ -4347,7 +4349,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                 retry_startup_failed(w, did)
             continue
         # A held dispatch is never nudged, stopped or restarted; the hold notice reports it instead (#1849).
-        if release_held(state, did):
+        # Nor is one the start_unknown reaper owns: it resends and releases it (#1962).
+        if release_held(state, did) or did in reaper:
             continue
         term = worker_terminal_handle(w)
         host_id = worker_execution_host_id(w)
@@ -12041,7 +12044,7 @@ def _main():
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
         inventory_ok=inventory_ok, pr_list=fetch_once,
-        waiting=waiting_on_coordinator(state, workers) | reaper_owned(state)), ([], []))
+        waiting=waiting_on_coordinator(state, workers), reaper=reaper_owned(state)), ([], []))
     notices += stall_extra
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
