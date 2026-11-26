@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Release a worker by hand: worker-stop, worker-release on its host and here, then close its terminal on the
-# host that holds it, and confirm the terminal is gone (#1947).
+# host that holds it, and confirm the terminal is gone (#1947, #1958).
 # Usage: release-worker.sh [--live] <dispatch, task or terminal id fragment>
 # One match only; the coordinator's terminal and other live workers' terminals are never closed.
 set -euo pipefail

@@ -317,12 +317,41 @@ class Callers(Base):
                 fake = self.default_rpc(Rpc())
                 h.run()
                 fake.calls.clear()
-                with patch.object(fw, 'babysit_pass', wraps=fw.babysit_pass):
-                    fw.babysit_pass(h.config, h.state, [dict(stopped('ctx_v1'), **row_extra)],
-                                    pr_fetch=lambda _repo: [__import__('test_fleet_watch_park').verifier_pr()],
-                                    start_worker=h.start, pick=lambda _r: {'selected': {'provider': 'cursor', 'model': 'm', 'eligible': True}},
-                                    owner_check=lambda _pr: None)
+                fw.babysit_pass(h.config, h.state, [dict(stopped('ctx_v1'), **row_extra)],
+                                pr_fetch=lambda _repo: [__import__('test_fleet_watch_park').verifier_pr()],
+                                start_worker=h.start, pick=lambda _r: {'selected': {'provider': 'cursor', 'model': 'm', 'eligible': True}},
+                                owner_check=lambda _pr: None)
                 self.assertEqual(fake.lifecycle()[:len(steps)], steps, row_extra)
+
+
+class RestartExceptions(Base):
+    """The two named restarts keep their own rpc call, sent to the row's host (#1958)."""
+
+    def stall_rows(self):
+        import test_fleet_watch_stall as stall
+        return stall
+
+    def test_stall_restart_stops_on_the_row_host(self):
+        stall = self.stall_rows()
+        for host, where in (('', ()), (ENV, ('--environment', ENV))):
+            fake = Rpc()
+            w = stall.base_worker(_host=host, projection={'host': {'id': 'local'}, 'provider': {'id': 'claude', 'model': None},
+                                                          'outcome': 'in_progress', 'liveness': {'verdict': 'idle'}})
+            fw.worker_stall_pass(stall.stall_test_config(), stall.mark_own({}, 'disp_fixture'), stall.T0, [w],
+                                 {'term_fix': stall.OLD_MS}, fake)
+            stops = [c for c in fake.calls if c[:2] == ('orchestration', 'worker-stop')]
+            self.assertEqual(stops, [('orchestration', 'worker-stop', '--dispatch', 'disp_fixture') + where], host)
+
+    def test_startup_retry_releases_on_the_row_host(self):
+        stall = self.stall_rows()
+        for host, where in (('', ()), (ENV, ('--environment', ENV))):
+            fake = Rpc()
+            w = stall.base_worker(_host=host, dispatchStatus='failed', stage='agent_readiness',
+                                  lastError='terminal_exited')
+            fw.worker_stall_pass(stall.stall_test_config(), stall.mark_own({}, 'disp_fixture'), stall.T0, [w],
+                                 {'term_fix': stall.OLD_MS}, fake)
+            releases = [c for c in fake.calls if c[:2] == ('orchestration', 'worker-release')]
+            self.assertEqual(releases, [('orchestration', 'worker-release', '--dispatch', 'disp_fixture') + where], host)
 
 
 class MainWiring(Base):
