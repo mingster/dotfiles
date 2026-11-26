@@ -2,7 +2,8 @@
 """Clean Orca board cards that have been Done for 30 minutes.
 
 The hourly board-sweep job (and a wrap-up round) runs this after board-done. A card that just
-became Done stays until a later round. Cleanup runs on the host named by the
+became Done stays until a later round. An `archived` card (a stopped stalled
+worker) is treated the same as a Done (`completed`) card. Cleanup runs on the host named by the
 dispatch record (`--environment`): worktree, local branch, remote branch,
 terminals and session. A host that cannot be reached is skipped and tried again
 next round. It is not treated as gone. A round cut off by BOARD_CLEAN_BUDGET_S
@@ -796,7 +797,7 @@ def main(argv: list[str] | None = None) -> int:
         for label, trees, workers in gathered:
             grouped = None if workers is None else workers_by_path(workers)
             for tree in trees:
-                if (tree.get("workspaceStatus") or "") != "completed":
+                if (tree.get("workspaceStatus") or "") not in ("completed", "archived"):
                     continue
                 path = tree.get("path") or tree.get("workspacePath") or ""
                 if not isinstance(path, str) or not path:

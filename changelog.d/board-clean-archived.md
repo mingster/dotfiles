@@ -1,0 +1,1 @@
+- `board-clean` now cleans `archived` cards (from stopped stalled workers) after 30 minutes, under the same keep guards as `completed` cards.
