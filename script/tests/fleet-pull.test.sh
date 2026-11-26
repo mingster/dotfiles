@@ -621,12 +621,24 @@ else
   bad "detached HEAD with local main ahead should fail, stay detached, and keep main (ec=$ec13): $out13"
 fi
 
-# 30. SECRETS_GATE pointing at a missing gate skips secrets-sync without running sudo or any gate
+# 30. SECRETS_GATE at an executable gate reaches the fake sudo with that gate; a missing gate skips without sudo or gate
 sync_bin="$tmp/sync-bin"
 mkdir -p "$sync_bin"
-printf '#!/usr/bin/env bash\ntouch "%s"\n' "$tmp/sudo-called" >"$sync_bin/sudo"
+printf '#!/usr/bin/env bash\necho "$*" >"%s"\n' "$tmp/sudo-called" >"$sync_bin/sudo"
 printf '#!/usr/bin/env bash\ntouch "%s"\n' "$tmp/fake-gate-called" >"$tmp/fake-gate"
 chmod +x "$sync_bin/sudo" "$tmp/fake-gate"
+rm -f "$tmp/sudo-called" "$tmp/fake-gate-called"
+set +e
+sync_out=$(PATH="$sync_bin:$PATH" SECRETS_GATE="$tmp/fake-gate" bash "$root/script/secrets-sync.sh" 2>&1)
+sync_ec=$?
+set -e
+if [ "$sync_ec" -eq 0 ] && [ -e "$tmp/sudo-called" ] \
+  && grep -qF "$tmp/fake-gate sync" "$tmp/sudo-called"; then
+  ok "SECRETS_GATE at an executable gate calls the fake sudo with that gate"
+else
+  bad "SECRETS_GATE at an executable gate should call the fake sudo with it (ec=$sync_ec): $sync_out"
+fi
+rm -f "$tmp/sudo-called" "$tmp/fake-gate-called"
 set +e
 sync_out=$(PATH="$sync_bin:$PATH" SECRETS_GATE="$tmp/no-gate" bash "$root/script/secrets-sync.sh" 2>&1)
 sync_ec=$?
