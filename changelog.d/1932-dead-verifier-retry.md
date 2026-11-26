@@ -1,0 +1,1 @@
+- fleet-watch: a verifier that was stopped, failed or disappeared with no Verdict is replaced once, then the head is parked (#1932).

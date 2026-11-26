@@ -658,7 +658,7 @@ else
 fi
 
 # --- a verifier that failed at startup is released once, restarted once, then parked (#1221) ---
-# Design limit: worker-list rows carry no lastError, so only a startup stage or error on the row triggers this.
+# Any verifier that ended with no Verdict takes the same path (#1932); a running one is left alone.
 cat > "$tmp/bin/orca-release" <<'EOF'
 #!/bin/bash
 echo "$*" >> "$BABYSIT_ORCA_LOG"
@@ -680,7 +680,7 @@ failed_row() {
   python3 - "$1" "$2" "$3" <<'PY'
 import json, sys
 path, did, detail = sys.argv[1:]
-stage = {"detail": detail} if detail != "none" else {}
+stage = {"detail": detail}
 json.dump([{"dispatchId": did, "dispatchStatus": "failed", "terminalState": "released",
             "projection": {"stage": stage}}], open(path, "w", encoding="utf-8"))
 PY
@@ -689,14 +689,14 @@ startup_pass() {
   : > "$BABYSIT_ORCA_LOG"
   ORCA_CLI_COMMAND="$tmp/bin/orca-release" run_pass "$state" only "$1" "$2"
 }
-# a failed row with no stage and no error is neither released nor retried
+# a running verifier is neither released nor retried
 : > "$BABYSIT_STARTS"
-failed_row "$tmp/w-none.json" ctx_v1 none
+printf '[{"dispatchId":"ctx_v1","dispatchStatus":"dispatched","terminalState":"active"}]\n' > "$tmp/w-none.json"
 startup_pass "$tmp/w-none.json" "$tmp/startup0.out"
 if [ "$(starts)" = 0 ] && ! grep -q worker-release "$BABYSIT_ORCA_LOG" && grep -q 'action=skip already' "$tmp/startup0.out"; then
-  ok "failed row without a startup stage is left alone"
+  ok "running verifier is left alone"
 else
-  bad "failed row without a startup stage is left alone (starts=$(starts) out=$(cat "$tmp/startup0.out"))"
+  bad "running verifier is left alone (starts=$(starts) out=$(cat "$tmp/startup0.out"))"
 fi
 # failed at startup: one release, one new start, no skip already
 failed_row "$tmp/w-fail1.json" ctx_v1 agent_readiness
