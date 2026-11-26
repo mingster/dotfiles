@@ -1,0 +1,1 @@
+Duplicate guards: a second verifier for the same PR at the same head is refused (exit 2) unless `--allow-overlap REASON` is given; another head still warns and starts. A live worker with no `#N|role` title counts as a builder and holds the issue its spec `Refs` or its branch (`b<N>`, `w<N>`) names, in worker-startup and in the fleet-watch issue scan (#1960, #1947).

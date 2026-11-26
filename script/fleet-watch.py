@@ -996,14 +996,15 @@ def run_id_for_stall_restart(w, persisted=''):
     return ''
 
 
-def task_titles(run_id):
-    """Map task id to title for a Run; empty when the task list cannot be read (worker rows then carry no title)."""
+def task_rows(run_id):
+    """Map task id to its task-list --full row for a Run; empty when the task list cannot be read (worker rows then
+    carry no title or spec)."""
     try:
-        result = rpc('orchestration', 'task-list', '--run', run_id)
+        result = rpc('orchestration', 'task-list', '--run', run_id, '--full')
     except Exception:
         return {}
     tasks = result.get('tasks') if isinstance(result, dict) else None
-    return {t['id']: t['title'] for t in tasks or [] if isinstance(t, dict) and t.get('id') and t.get('title')}
+    return {t['id']: t for t in tasks or [] if isinstance(t, dict) and t.get('id')}
 
 
 def fetch_workers(config):
@@ -1017,11 +1018,14 @@ def fetch_workers(config):
         run_ids = [run['id'] for page in list_pages('orchestration', 'run-list') for run in page['runs']]
     workers = []
     for run_id in run_ids:
-        titles = task_titles(run_id)
+        tasks = task_rows(run_id)
         for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote', '--full'):
             for w in result.get('workers', []):
-                if isinstance(w, dict) and titles.get(worker_task_id(w)):
-                    w['_task_title'] = titles[worker_task_id(w)]
+                task = tasks.get(worker_task_id(w)) if isinstance(w, dict) else None
+                if task and task.get('title'):
+                    w['_task_title'] = task['title']
+                if task and isinstance(task.get('spec'), str):
+                    w['_task_spec'] = task['spec']
                 if isinstance(w, dict) and not worker_run_id(w):
                     w['_fleet_watch_list_run'] = run_id
                 workers.append(w)
@@ -5381,13 +5385,30 @@ def live_start_title(command, workers):
     )
 
 
+_SPEC_REFS_LINE_RE = re.compile(r'^(?:Issues|Refs):?\s.*$', re.M)
+_BRANCH_ISSUE_RE = re.compile(r'(?:^|/)[bw]([0-9]+)$')
+
+
+def _live_row_names_issue(w, number):
+    """True when the row's task title starts with '#<number>|', its task spec has #<number> on a Refs or Issues
+    line, or its branch (or worktree folder) is <user>/b<number> or w<number> (#1692, #1960)."""
+    if str(w.get('_task_title') or '').startswith('#%d|' % number):
+        return True
+    refs = ' '.join(_SPEC_REFS_LINE_RE.findall(str(w.get('_task_spec') or '')))
+    if re.search(r'#%d(?![0-9])' % number, refs):
+        return True
+    for name in (worker_branch_name(w), worker_checkout_path(w)):
+        match = _BRANCH_ISSUE_RE.search(str(name or '').rstrip('/'))
+        if match and int(match.group(1)) == number:
+            return True
+    return False
+
+
 def issue_has_live_dispatch(workers, number):
-    """True when a live worker's task title starts with '#<number>|', whatever the issue's labels say (#1692)."""
-    prefix = '#%d|' % number
-    return any(
-        isinstance(w, dict) and str(w.get('_task_title') or '').startswith(prefix) and worker_row_is_live(w)
-        for w in workers or []
-    )
+    """True when a live worker holds issue <number> by task title, task spec or branch, whatever the issue's labels
+    say (#1692). A hand start whose title never set still blocks a second builder (#1960)."""
+    return any(isinstance(w, dict) and worker_row_is_live(w) and _live_row_names_issue(w, number)
+               for w in workers or [])
 
 
 def build_issue_start_command(config, repo, issue_row, placement=None, route=None):
