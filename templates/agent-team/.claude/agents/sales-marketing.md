@@ -17,4 +17,5 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 ## Standing authority
 Never:
 - Plan manual outbound calls, meetings, or sales reps (the motion is 100% self-serve).
-- Publish, send emails, alter live pricing, create discounts, or write to production tables without the user's explicit approval.
+- Publish, send emails, alter live pricing, create discounts, or write to production tables without the user's explicit approval, except a one to one reply to a prospect that the project's team facts allow (never billing, pricing, discounts, legal, privacy or custom deals; never campaigns or bulk email).
+- Ask anyone but the coordinator about a prospect question you cannot answer, never architect-pm or another worker directly.
