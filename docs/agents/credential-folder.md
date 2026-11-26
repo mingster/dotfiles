@@ -27,7 +27,7 @@ The gate commands (anything else is refused with exit 2):
 | Command | What it does | Approval |
 |---|---|---|
 | `fingerprint <file>` | Size and 8 hex fingerprint of one regular file in the folder. Never the content. | Touch ID or password |
-| `sync` | Pushes the folder to `root@<host>` for each fleet host. Prints file names only. | Passwordless (the one entry) |
+| `sync` | Mirrors the folder to `root@<host>` for each fleet host, removals included. Prints file names only. | Passwordless (the one entry) |
 | `sync --dry-run` | Lists the files and hosts. Contacts no host (the receiver ignores client options, so a real rsync dry run cannot be asked of it). | Touch ID or password |
 | `receive` | The rsync server side. Only as the forced command. Takes no argument. Ignores the client's command line. | Forced command only |
 | `deploy-read <name>` | Prints one file named on the config's deploy list. | Touch ID or password |
@@ -39,7 +39,8 @@ The gate commands (anything else is refused with exit 2):
 ## Why the gate stays safe
 
 - Every use checks the folder first: the path and every parent is a real directory (no link) owned by root and not writable by group or others, the folder is root mode 700, and no symbolic link sits anywhere inside it. A parent the owner account can write would let a worker rename the folder and plant a link, so such a path is refused. This is why the folder does not stay under a home folder.
-- `receive` starts `rsync --server -rt` itself with a fixed list (no `-l`, `-K`, `-L`, `-o`, `-g`, `-D`, `--delete`) into a fresh staging folder inside the root 700 folder, then moves regular files only into place with `mv -f --`. Directories are made one component at a time and the parent is checked again just before each move. Links and special files are dropped. Nothing is ever deleted.
+- `receive` starts `rsync --server -rt` itself with a fixed list (no `-l`, `-K`, `-L`, `-o`, `-g`, `-D`, `--delete`) into a fresh staging folder inside the root 700 folder, then moves regular files only into place with `mv -f --`. Directories are made one component at a time and the parent is checked again just before each move. Links and special files are dropped.
+- The receiver folder mirrors the push (issue 1926, owner decision). Before moving files in, `receive` removes everything that is not a regular file also in the staging folder (a link is removed, its target untouched), then empty directories. Other `.stage.*` folders are left alone. When rsync fails or no file is staged, nothing is deleted and `receive` exits non zero.
 - The gate starts as `#!/bin/bash`, calls `/usr/bin/id`, and under root re-executes itself with an empty environment and `PATH=/usr/bin:/bin:/usr/sbin:/sbin` before anything else. `SECRETS_GATE_CONF`, `SG_RSYNC` and `SG_TRUST_UID` are ignored under root. The sudoers drop in sets `env_reset` and `secure_path` too. Globbing is off, and every `mv`, `mkdir`, `rm`, `cat` and `chmod` puts `--` before names.
 - The sync's ssh reads nothing the worker account can edit: `-F /dev/null`, one root owned key, one root owned `known_hosts`, `StrictHostKeyChecking=yes`, `ProxyCommand=none`, and host names checked against a plain pattern (no leading dash, no `user@`).
 
@@ -48,7 +49,10 @@ The gate commands (anything else is refused with exit 2):
 - A worker can run the passwordless `sync`. It prints file names, never contents, and sends only to the configured hosts with the pinned host keys.
 - A worker can run any installed helper as root with arguments, stdin and a working directory it chooses. Each helper must be safe on its own: check its arguments, print only safe output (a fingerprint, a yes or no, a result), and never print a credential or write where the caller points. Review a helper like a sudoers entry before installing it.
 - Setup adds and updates helpers but never removes one. A helper dropped from `--helpers <dir>` stays runnable until the owner removes it with `sudo rm /opt/secrets-gate/helpers/<name>`.
-- The sync no longer deletes. A rotated or retired credential stays on every receiver until the owner removes it there with `sudo rm`.
+- The sync mirrors. A file that exists only in a receiver's folder is removed on the next sync, so keep host only files somewhere else. A file removed or lost on the source is removed everywhere too.
+- The wipe guard sees only what the receiver's rsync reports. With the macOS built in rsync, a source file that is listed but cannot be opened (a disk error, or a file renamed during the push) does not make the receiver's rsync fail, so the receiver drops its copy of that one file. The next good sync puts it back.
+- A receiver runs its installed copy of the gate. It mirrors only after the owner reruns setup there with the new script.
+- An empty source folder removes nothing: the receiver refuses a push with no file. Remove the last file on a receiver by hand with `sudo rm`.
 - Every sync resends all files (the receiver stages into an empty folder). The folder is small.
 - Setup cannot undo a copy a worker already made before it ran. If a worker could read the folder before setup, rotate the credentials.
 - Deploy scripts that read the folder by path no longer work (root 700). Move them onto `deploy-read <name>` (add the name with `--deploy`) or `fingerprint`.

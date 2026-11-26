@@ -4,8 +4,8 @@
 # prints the names of changed files and never their contents.
 # The plain call uses the one passwordless sudoers entry (`sync`). Flags need Touch ID or the password.
 # Usage: secrets-sync.sh [--dry-run | -h | --help]
-# Flag: --dry-run (list the files and hosts, needs Touch ID). There is no --delete: the receiving side only adds and
-# overwrites files, so remove a retired file on each host by hand with sudo.
+# Flag: --dry-run (list the files and hosts, needs Touch ID). There is no --delete flag: sync always mirrors, so a
+# file removed from the source folder is removed on every receiver.
 # A host without the gate installed is skipped with a note, so fleet-pull keeps working until the owner sets it up.
 set -u
 print_usage() { sed -n '/^# Usage:/,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "${BASH_SOURCE[0]}"; }
