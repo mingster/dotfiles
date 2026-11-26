@@ -132,6 +132,12 @@ class FakeOrca:
     def named(self, name):
         return [c for c in self.calls if c[1] == name]
 
+def remote_start_unknown(dispatch='d1'):
+    """A remote worker-list row as Orca prints it (fixtures/agy-signin-stopped-remote.json), in start_unknown."""
+    return {'dispatchId': dispatch, 'taskId': 'task_1', 'agent': 'antigravity', 'workerState': 'start_unknown',
+            'dispatchStatus': 'dispatched', 'agentTerminalHandle': None, 'terminalState': None, 'resource': None,
+            'server': {'environmentId': 'env-b', 'name': 'hostb'}, '_task_title': '#42|fullstack-dev'}
+
 class StartUnknown(unittest.TestCase):
     """#1951: a start_unknown antigravity worker on the sign-in screen."""
     def setUp(self):
@@ -139,34 +145,28 @@ class StartUnknown(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(pathlib.Path(self.tmp) / 'agy-unavailable.json')})
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.config = {'local_host': 'hosta', 'issue_scan': {'repo_roots': {'o/r': '/w/app'}}}
-        self.row = worker('d1', None, host='hostb', state='start_unknown')
-        self.row.update(agentTerminalHandle=None, title='#42|fullstack-dev', resource={'worktreeId': 'id:r::/w/app/wt42'})
-        self.edits, self.state, self.reads = [], {}, []
+        self.config = {'local_host': 'hosta'}
+        self.row = remote_start_unknown()
+        self.state, self.reads = {}, []
 
-    def sweep(self, orca, screen=WRAPPED):
-        log = []
+    def sweep(self, orca, screen=WRAPPED, rows=None):
         def read(term, host):
             self.reads.append((term, host))
             return screen
-        notices = watch.agy_signin_notices(self.config, [self.row], read=read, now=1000, state=self.state,
-                                           rpc_call=orca, edit=lambda cmd: self.edits.append(cmd) or 0, log=log)
-        return notices, log
+        return watch.agy_signin_notices(self.config, rows or [self.row], read=read, now=1000, state=self.state, rpc_call=orca)
 
-    def test_host_marked_worker_stopped_issue_requeued_one_line(self):
+    def test_host_marked_worker_stopped_and_released_one_line(self):
         orca = FakeOrca()
-        with mock.patch.object(watch, 'github_repo_from_origin', return_value=None):
-            notices, log = self.sweep(orca)
+        notices = self.sweep(orca)
         self.assertEqual(len(notices), 1)
-        self.assertIn('sign in to agy on hostb', notices[0])
-        self.assertTrue(agy.is_unavailable('hostb', 1000))
-        self.assertEqual(self.reads, [('t9', 'hostb')], 'terminal found with worker-show on the host')
-        self.assertEqual(orca.named('worker-stop'), [('orchestration', 'worker-stop', '--dispatch', 'd1', '--environment', 'hostb')])
-        self.assertEqual(len(orca.named('worker-release')), 2)
-        self.assertEqual(len(self.edits), 1)
-        self.assertIn('ready-for-agent', self.edits[0])
-        self.assertIn('42', self.edits[0])
-        self.assertIn('agy_signin_restart=d1:hostb', log)
+        self.assertIn('sign in to agy on env-b', notices[0])
+        self.assertTrue(agy.is_unavailable('env-b', 1000))
+        self.assertEqual(orca.named('worker-show'), [('orchestration', 'worker-show', '--dispatch', 'd1', '--environment', 'env-b')])
+        self.assertEqual(self.reads, [('t9', 'env-b')], 'terminal found with worker-show on the host')
+        self.assertEqual(orca.named('worker-stop'), [('orchestration', 'worker-stop', '--dispatch', 'd1', '--environment', 'env-b')])
+        self.assertEqual([c[3:] for c in orca.named('worker-release')], [('d1', '--environment', 'env-b'), ('d1',)])
+        self.assertFalse(watch.worker_row_is_live(self.row), 'the issue scan sees no live worker and restarts the issue (#1811)')
+        self.assertFalse(watch.issue_has_live_dispatch([self.row], 42))
 
     def test_screen_is_read_once_per_dispatch(self):
         orca = FakeOrca()
@@ -175,10 +175,29 @@ class StartUnknown(unittest.TestCase):
         self.assertEqual(len(self.reads), 1)
         self.assertEqual(orca.named('worker-stop'), [])
 
+    def test_no_terminal_yet_tries_again_up_to_three_passes(self):
+        orca = FakeOrca(terminal='')
+        for _ in range(5):
+            self.sweep(orca)
+        self.assertEqual((len(orca.named('worker-show')), self.reads), (3, []))
+
+    def test_stopped_verifier_is_restarted_by_the_verifier_pass(self):
+        sys.path.insert(0, str(root / 'tests'))
+        import test_fleet_watch_1932 as dead
+        from test_fleet_watch_1932 import Harness, stopped
+        with mock.patch.object(dead.fw, 'run_gh', return_value=0), tempfile.TemporaryDirectory() as repo_root:
+            h = Harness(repo_root)
+            h.run()
+            dispatch = list(h.state['own_dispatches'])[0]
+            row = remote_start_unknown(dispatch)
+            self.sweep(FakeOrca(), rows=[row])
+            self.assertEqual(row.get('terminalState'), 'released')
+            h.run([stopped(dispatch)])
+        self.assertEqual(len(h.starts), 2, 'one fresh verifier')
+
     def test_restart_on_the_marked_host_uses_claude(self):
-        # The replacement goes through worker-startup, which swaps a marked host to claude (#1240).
-        startup = (root / 'worker-startup.sh').read_text()
-        self.assertIn('is agy-unavailable, using claude', startup)
+        # worker-startup.sh swaps a marked host to claude; worker-startup.test.sh pins it (#1240).
+        self.assertIn('is agy-unavailable, using claude', (root / 'worker-startup.sh').read_text())
 
 class Probe(unittest.TestCase):
     """#1951: hosts are probed with agy models at most every 30 minutes; placement skips a signed out host."""
@@ -204,15 +223,17 @@ class Probe(unittest.TestCase):
         self.assertIn('sign in to agy on hostb', notices[0])
         self.assertTrue(agy.is_unavailable('hostb', 1000))
         self.assertFalse(agy.is_unavailable('hostc', 1000))
+        self.assertEqual(self.probed, ['hostb'], 'one host per pass')
+        self.run_pass(1060)
         self.assertEqual(self.run_pass(1000 + 29 * 60), [])
         self.assertEqual(self.probed, ['hostb', 'hostc'])
-        self.run_pass(1000 + 31 * 60)
+        self.run_pass(1060 + 31 * 60)
         self.assertEqual(self.probed, ['hostb', 'hostc', 'hostc'], 'a marked host is not probed again')
-        self.assertEqual(self.state['agy_probe']['hostc']['at'], 1000 + 31 * 60)
+        self.assertEqual(self.state['agy_probe']['hostc']['at'], 1060 + 31 * 60)
 
     def test_no_answer_marks_nothing(self):
         self.answers = {'hostb': '', 'hostc': ''}
-        self.assertEqual(self.run_pass(1000), [])
+        self.assertEqual(self.run_pass(1000) + self.run_pass(1060), [])
         self.assertFalse(agy.is_unavailable('hostb', 1000))
         self.assertEqual(self.state['agy_probe']['hostb']['result'], 'unknown')
 
@@ -232,15 +253,22 @@ class Probe(unittest.TestCase):
 
     def test_remote_probe_reads_signed_out_and_closes_its_terminal(self):
         orca = FakeOrca()
-        self.assertEqual(watch.agy_probe_remote('hostb', orca), 'out')
+        self.assertEqual(watch.agy_probe('hostb', orca), 'out')
         create = orca.named('create')[0]
         self.assertEqual(create[create.index('--title') + 1], watch.AGY_PROBE_TITLE)
         self.assertNotRegex(watch.AGY_PROBE_TITLE, r'^#\d+\||\brun \d+$')
+        self.assertEqual(create[create.index('--command') + 1], 'agy models; exit', 'the shell must exit or the wait never ends')
         self.assertEqual(orca.named('close'), [('terminal', 'close', '--environment', 'hostb', '--terminal', 'tp')])
 
     def test_remote_probe_closes_its_terminal_on_timeout(self):
         orca = FakeOrca(fail=('wait',))
-        self.assertEqual(watch.agy_probe_remote('hostb', orca), '')
+        self.assertEqual(watch.agy_probe('hostb', orca), '')
+        self.assertEqual(len(orca.named('close')), 1)
+
+    def test_local_probe_runs_in_a_local_orca_terminal(self):
+        orca = FakeOrca()
+        self.assertEqual(watch.agy_probe('hosta', orca, local=True), 'out')
+        self.assertFalse([c for c in orca.calls if '--environment' in c])
         self.assertEqual(len(orca.named('close')), 1)
 
     def test_probe_text_only_trusts_the_signed_out_line(self):
