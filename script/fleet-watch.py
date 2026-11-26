@@ -4580,7 +4580,7 @@ def fetch_claimed_issues(repo, run=subprocess.run):
     """Open issues that carry the in-progress status label worker-startup's claim sets (#1811)."""
     command = [
         'gh', 'issue', 'list', '--repo', repo, '--label', ISSUE_CLAIM_LABEL, '--state', 'open',
-        '--limit', '100', '--json', 'number',
+        '--limit', '100', '--json', 'number,labels',
     ]
     try:
         output = run(command, capture_output=True, text=True, timeout=30, check=True)
@@ -5173,22 +5173,44 @@ def working_worker_count(workers, state):
     return sum(1 for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w) and w.get('dispatchId') not in idle)
 
 
-def stale_claimed_issues(state, now, workers, list_claimed, repos):
-    """(repo, number) of claimed issues with no live worker, past the start grace: the supply worker gets them (#1876)."""
+STALE_CLAIM_HOLD_LABELS = frozenset(('blocked', 'deferred', 'tracking', 'owner'))
+
+
+def stale_claimed_issues(state, now, workers, list_claimed, repos, pr_fetch=None):
+    """(repo, number) of claimed issues with no live worker, past the start grace: the supply worker gets them (#1876).
+
+    A claim with an open PR is not stale (its PR is in review or ship), and neither is one under a hold label (#1915).
+    Without a readable PR list (``pr_fetch`` returns None) the claim is left out, as the restart loop does."""
     issue_pending = state.get('issue_scan_pending') or {}
     started_at = state.get('issue_scan_started_at') or {}
     out = []
+    prs_by_repo = {}
     for repo in repos:
         for claimed in list_claimed(repo) or []:
             number = claimed.get('number')
             if not isinstance(number, int) or issue_has_live_dispatch(workers, number):
                 continue
+            if _claim_hold_labels(claimed):
+                continue
             # A start this recent may not show in the inventory or the label yet (#1216); no time counts as stale (#1811).
             at = (started_at.get(repo) or {}).get(str(number))
             if number in issue_pending.get(repo, []) or (at is not None and now - float(at) < ISSUE_RESTART_GRACE_SECONDS):
                 continue
+            if pr_fetch is not None:
+                if repo not in prs_by_repo:
+                    prs_by_repo[repo] = pr_fetch(repo)
+                prs = prs_by_repo[repo]
+                if prs is None or open_pr_for_issue(prs, number):
+                    continue
             out.append((repo, number))
     return out
+
+
+def _claim_hold_labels(claimed):
+    names = set()
+    for entry in claimed.get('labels') or []:
+        names.add(entry.get('name') if isinstance(entry, dict) else entry)
+    return names & STALE_CLAIM_HOLD_LABELS
 
 
 def forced_supply_due(state):
@@ -5201,7 +5223,7 @@ def forced_supply_due(state):
 
 def issue_scan_supply_first(
     config, state, now, workers, gate_check=None, admit_fn=None, start_worker=None, act=None, pick_fn=None,
-    persist_state=None, count_open=None, list_blocked=None, ref_state=None, list_claimed=None,
+    persist_state=None, count_open=None, list_blocked=None, ref_state=None, list_claimed=None, pr_fetch=None,
 ):
     """A due forced supply runs at the start of the pass, before babysit and the per issue work (#1904).
 
@@ -5225,7 +5247,7 @@ def issue_scan_supply_first(
         config, state, now, scan.get('repos') or [], supply, host, admission, 0, supply, workers,
         with_coordinator_handle(config, start_worker or default_issue_scan_start), pick_fn, persist_state, count_open,
         lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act),
-        lambda rs: stale_claimed_issues(state, now, workers, list_claimed or fetch_claimed_issues, rs),
+        lambda rs: stale_claimed_issues(state, now, workers, list_claimed or fetch_claimed_issues, rs, pr_fetch or fetch_prs),
     )
     state['work_order_supply_first_at'] = now
     return ['supply_first'] + bits
@@ -9033,6 +9055,11 @@ def _issue_scan_pass(
     if supply_line:
         notices.append(supply_line)
 
+    def pr_list_for(repo):
+        if repo not in listed:
+            listed[repo] = pr_fetch(repo)
+        return listed[repo]
+
     def try_supply(reserved):
         if list_failed:
             return 0
@@ -9045,7 +9072,7 @@ def _issue_scan_pass(
             config, state, now, repos, len(candidates), host, admission, extra_starts, reserved, workers,
             start_worker, pick_fn, persist_state, count_open,
             lambda rs: clear_stale_blocked(rs, list_blocked, ref_state, act),
-            lambda rs: stale_claimed_issues(state, now, workers, list_claimed, rs),
+            lambda rs: stale_claimed_issues(state, now, workers, list_claimed, rs, pr_list_for),
         )
         log_bits.extend(bits)
         return used
@@ -10975,7 +11002,7 @@ def _main():
         if not inventory_ok:
             return []
         try:
-            return issue_scan_supply_first(config, state, now, workers, persist_state=persist_scan_state)
+            return issue_scan_supply_first(config, state, now, workers, persist_state=persist_scan_state, pr_fetch=fetch_once)
         except Exception as error:
             print('fleet-watch: early supply skipped: %s' % (repr(error),), file=sys.stderr)
             return []
