@@ -65,7 +65,7 @@ flowchart TD
 | Verifier Verdict | Actions Checks pass | `qa-sdet` (another model family, runs parent against head as a user would) | `Verdict: PASS` or `PASS+NOTES` posted via `script/post-verdict.sh` |
 | Babysit | 5 minute babysit pass on each open PR in `check` mode | `fleet-watch.py` | Starts one verifier when head-checks passed, the head has a cold `Review: PASS` (or the repo has no online review runner) and no Verdict. The existing fix worker and a Shipping run still cover a failing head and a passing Verdict |
 | Shipping run | Checks pass and verifier Verdict matches head `git patch-id` | `script/ship.sh` | Squash merge (`gh pr merge --squash`) and PR read back as merged |
-| Worktree cleanup | Once a day at 04:00 on each Orca host (`--daily`) | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
+| Worktree cleanup | Twice a day at 10:00 and 22:00 on each Orca host (`--daily`) | Orca automation (`script/wrap-up.sh`) | Finished worktrees, terminals and merged branches read back as gone |
 | Staging and review | Daily at 19:00 Taiwan time | `release-manager`, then `qa-sdet` and full regression | Latest trunk deployed, swarm live lanes and regression green (or issue opened) |
 | Production | Playground regression while production holds only test data; the user's go once a real store is live | `release-manager` | Backup, deploy and smoke pass, or code rolls back |
 

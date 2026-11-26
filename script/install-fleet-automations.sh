@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Orca automations: fleet-watch (5 min), wrap-up-daily (worktree and disk cleanup, once a day at 04:00),
+# Install Orca automations: fleet-watch (5 min), wrap-up-daily (worktree and disk cleanup, twice a day at 10:00 and 22:00),
 # board-sweep (hourly), sync drift (daily), team-audit-weekly and weekly-update (Monday). wrap-up-daily is enabled on every Orca host;
 # the rest are enabled only on the coordinator in agent-state/coordinator.conf. The old 10 minute wrap-up-scheduled
 # round is no longer installed, and --install removes it from a host that still has it (owner decision 2026-11-23, #1533).
@@ -439,9 +439,9 @@ case "$action" in
     fleet_watch_enabled=0
     [ "$enabled" = 1 ] && fleet_watch_enabled=keep:1
     ensure_automation fleet-watch '*/5 * * * *' "$(fleet_watch_precheck)" "$FLEET_WATCH_PRECHECK_TIMEOUT" "$fleet_watch_enabled"
-    # Dropped 2026-11-23 (#1533): wrap-up runs once a day. Drop the old 10 minute entry when a host still has it.
+    # Dropped 2026-11-23 (#1533): wrap-up runs twice a day (10:00 and 22:00, owner 2026-11-26). Drop the old 10 minute entry when a host still has it.
     automation_by_name wrap-up-scheduled >/dev/null 2>&1 && remove_by_name wrap-up-scheduled
-    ensure_automation wrap-up-daily '0 4 * * *' "$(wrap_up_daily_precheck)" "$WRAP_UP_DAILY_PRECHECK_TIMEOUT" 1
+    ensure_automation wrap-up-daily '0 10,22 * * *' "$(wrap_up_daily_precheck)" "$WRAP_UP_DAILY_PRECHECK_TIMEOUT" 1
     ensure_automation board-sweep '20 * * * *' "$(board_sweep_precheck)" "$BOARD_SWEEP_PRECHECK_TIMEOUT" "$enabled"
     # The owner turns these three on by hand; the installer creates them disabled and keeps the owner's choice after that.
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" keep

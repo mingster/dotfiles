@@ -83,7 +83,7 @@ over=$(echo "$dry" | grep -oE -- '--precheck-timeout [0-9]+' | awk '$2 > 600' | 
 [ -z "$over" ] && check 'every precheck timeout fits the Orca 600s cap' true || check "every precheck timeout fits the Orca 600s cap ($over)" false
 echo "$dry" | grep -q '\[dry-run\]' && echo "$dry" | grep -q 'fleet-watch' && check 'dry-run prints fleet-watch create' true || check 'dry-run prints fleet-watch create' false
 echo "$dry" | grep -q 'wrap-up-scheduled' && check 'dry-run installs no 10 minute wrap-up-scheduled round' false || check 'dry-run installs no 10 minute wrap-up-scheduled round' true
-echo "$dry" | grep -q 'wrap-up-daily' && echo "$dry" | grep -q '0 4 \* \* \*' && check 'dry-run prints wrap-up-daily create at 04:00' true || check 'dry-run prints wrap-up-daily create at 04:00' false
+echo "$dry" | grep -q 'wrap-up-daily' && echo "$dry" | grep -q '0 10,22 \* \* \*' && check 'dry-run prints wrap-up-daily create at 10:00 and 22:00' true || check 'dry-run prints wrap-up-daily create at 10:00 and 22:00' false
 echo "$dry" | grep -q 'wrap-up.sh --daily' && check 'dry-run wrap-up-daily runs wrap-up.sh --daily' true || check 'dry-run wrap-up-daily runs wrap-up.sh --daily' false
 echo "$dry" | grep -q 'sync-team-skills-drift' && check 'dry-run prints sync drift create' true || check 'dry-run prints sync drift create' false
 echo "$dry" | grep -q 'team-audit-weekly' && check 'dry-run prints team audit create' true || check 'dry-run prints team audit create' false
@@ -132,7 +132,7 @@ d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 by_name = {a["name"]: a for a in d["automations"]}
 w = by_name["wrap-up-daily"]
 f = by_name["fleet-watch"]
-if w.get("rrule") != "0 4 * * *" or not w.get("enabled") or f.get("enabled"):
+if w.get("rrule") != "0 10,22 * * *" or not w.get("enabled") or f.get("enabled"):
     sys.exit(1)
 PY
 then
@@ -304,7 +304,7 @@ for a in d["automations"]:
 ')
 echo "$wrap_pc" | grep -q 'automation-precheck-wrapper.sh' && check 'wrap precheck uses trace wrapper' true || check 'wrap precheck uses trace wrapper' false
 echo "$wrap_pc" | grep -q 'wrap-up.sh' && check 'wrap precheck runs wrap-up.sh --daily' true || check 'wrap precheck runs wrap-up.sh --daily' false
-echo "$wrap_pc" | grep -q '0 4 \* \* \*' && check 'wrap-up schedule is daily at 04:00' true || check 'wrap-up schedule is daily at 04:00' false
+echo "$wrap_pc" | grep -q '0 10,22 \* \* \*' && check 'wrap-up schedule is twice a day at 10:00 and 22:00' true || check 'wrap-up schedule is twice a day at 10:00 and 22:00' false
 
 echo "$wrap_pc" | grep -q 'WRAP_UP_ISSUE_REPO=mingster/agent-state' && check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' true || check 'wrap precheck defaults WRAP_UP_ISSUE_REPO to the private agent-state repo' false
 
