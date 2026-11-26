@@ -2392,13 +2392,6 @@ METRICS_TAIL_BYTES = 8 * 1024 * 1024
 _RECEIPT_FIRST_RE = re.compile(r'^(Review|Verdict): (PASS|FAIL)\b')
 
 
-def _iso_epoch(text):
-    try:
-        return calendar.timegm(time.strptime(str(text)[:19], '%Y-%m-%dT%H:%M:%S'))
-    except (TypeError, ValueError):
-        return None
-
-
 def _first_receipts(pr):
     """{'Review': 'PASS'|'FAIL', 'Verdict': ...}: the first receipt of each kind on the PR, in comment order."""
     first = {}
