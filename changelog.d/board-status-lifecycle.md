@@ -1,0 +1,1 @@
+- Board cards follow the worker lifecycle: `worker-pane-close.sh --stop` stops, releases and completes a card with no open PR, and a new hourly `board-sweep` automation runs `board-done` then `board-clean`, which now resumes where its time budget cut it off (#1937). Run `script/install-fleet-automations.sh --install` on the coordinator to add the job.

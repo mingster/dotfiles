@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Close what a finished worker left open. The coordinator runs this after worker-release.
 # Usage: worker-pane-close.sh <dispatch_id> [...]   close those workers' panes and leftover terminals
-#        worker-pane-close.sh --release <dispatch_id> [...]   worker-release, mark released, then close
+#        worker-pane-close.sh --release [--environment <env>] <dispatch_id> [...]   worker-release, mark released, then close
+#        worker-pane-close.sh --stop [--environment <env>] <dispatch_id> [...]      worker-stop, then as --release
 #        worker-pane-close.sh                       sweep recorded panes and discover ended workers in the caller's Run
 # The sweep closes a settled dispatch only once its linked worktree is gone: a dispatch settles at its first
 # worker_done, and the worker may still be on a correction pass in that worktree. Explicit ids skip that check,
@@ -16,8 +17,9 @@
 # terminals are not errors. Release closes at most the agent terminal; after a confirmed release the remaining
 # handles are closed here (never the agent terminal or the caller's own $ORCA_TERMINAL_HANDLE). State: $ORCA_PANE_STATE_DIR (default ~/.cache/orca-worker-panes/<dispatch_id>),
 # one handle per line, retained until verified gone. Failed or lingering closes retry for up to 30 minutes.
-# --release also sets the worktree board status to completed unless its branch has an open PR (a merge sets it
-# through ship.sh). A detached HEAD counts as no PR. Best effort: a missing worktree or gh answer leaves the status alone.
+# --release and --stop also set the worktree board status to completed unless its branch has an open PR (a merge
+# sets it through ship.sh). A detached HEAD counts as no PR. Best effort: a missing worktree or gh answer leaves the
+# status alone. --environment names the host of a remote worker: its worktree and card are read and set there.
 set -u
 orca="${ORCA_CLI_COMMAND:-orca}"
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -93,8 +95,8 @@ if not path:
   if option.startswith("path:"): path=option[len("path:"):]
 sys.exit(0 if path and not os.path.exists(path) else 1)'
 }
-complete_if_no_pr() { # $1 worker-show json -> board status completed unless the worker's branch has an open PR (ship.sh completes it on merge)
-  local path branch count
+complete_if_no_pr() { # <worker-show json> [environment] -> card completed unless the worker's branch has an open PR (ship.sh completes it on merge)
+  local env=${2:-} path branch="" repo="" listed row count
   path=$(SHOW="$1" python3 -c '
 import os,json
 try: r=json.loads(os.environ["SHOW"])["result"]; w=r.get("worker") or {}
@@ -103,14 +105,35 @@ path=""
 for e in w.get("effects") or []:
   if e.get("kind")=="worktree": path=(e.get("id") or "").split("::",1)[-1]
 if not path: path=(w.get("worktreeId") or "").split("::",1)[-1]
-print(path if path and os.path.isfile(os.path.join(path,".git")) else "")') || return 0
+if not path and isinstance(r.get("workspace"),str): path=r["workspace"].split("::",1)[-1]
+print(path)') || return 0
   [ -n "$path" ] || return 0
-  # A detached HEAD (a verifier on a PR head) has no branch and no PR of its own: it is done with the release.
-  if branch=$(git -C "$path" symbolic-ref --short -q HEAD); then
-    count=$(cd "$path" && gh pr list --head "$branch" --state open --json number --jq length 2>/dev/null) || return 0
+  if [ -n "$env" ]; then
+    listed=$(close_rpc worktree list --environment "$env" --json 2>/dev/null) || return 0
+    # "<owner/repo> <branch>" of the linked (never the main) worktree; a detached HEAD has no branch.
+    row=$(printf '%s' "$listed" | python3 -c '
+import sys,json
+for t in json.load(sys.stdin)["result"]["worktrees"]:
+  if t.get("path")==sys.argv[1] and not t.get("isMainWorktree"):
+    p=t.get("projectId") or ""
+    if p.startswith("github:"): print(p[7:], (t.get("branch") or "").replace("refs/heads/","",1))
+    break' "$path" 2>/dev/null) || return 0
+    [ -n "$row" ] || return 0
+    read -r repo branch <<<"$row"
+  else
+    [ -f "$path/.git" ] || return 0
+    # A detached HEAD (a verifier on a PR head) has no branch and no PR of its own: it is done with the release.
+    branch=$(git -C "$path" symbolic-ref --short -q HEAD) || branch=""
+  fi
+  if [ -n "$branch" ]; then
+    if [ -n "$repo" ]; then
+      count=$(gh pr list --repo "$repo" --head "$branch" --state open --json number --jq length 2>/dev/null) || return 0
+    else
+      count=$(cd "$path" && gh pr list --head "$branch" --state open --json number --jq length 2>/dev/null) || return 0
+    fi
     [ "$count" = 0 ] || return 0
   fi
-  board_status_set "path:$path" completed
+  board_status_set "path:$path" completed "$env"
 }
 run_coordinators() { # -> every Run's coordinator handle (the caller, leads, other Runs); rc 1 if the Run list cannot be read
   local cursor="" args runs page next
@@ -394,14 +417,26 @@ except Exception: print("")' "$here")
   fi
   return 0
 }
-if [ "${1:-}" = --release ]; then
+if [ "${1:-}" = --release ] || [ "${1:-}" = --stop ]; then
+  mode=$1
   shift
-  [ "$#" -gt 0 ] || { echo "worker-pane-close: --release requires a dispatch id" >&2; exit 2; }
+  release_env=""
+  if [ "${1:-}" = --environment ]; then
+    release_env=${2:?--environment needs a value}
+    shift 2
+  fi
+  [ "$#" -gt 0 ] || { echo "worker-pane-close: $mode requires a dispatch id" >&2; exit 2; }
   for d in "$@"; do
+    if [ "$mode" = --stop ]; then
+      close_rpc orchestration worker-stop --dispatch "$d" ${release_env:+--environment "$release_env"} --json >/dev/null \
+        || { echo "worker-pane-close: worker-stop failed for $d; nothing released" >&2; exit 1; }
+    fi
+    # A remote dispatch is released on its host first (best effort), then here.
+    [ -z "$release_env" ] || close_rpc orchestration worker-release --dispatch "$d" --environment "$release_env" --json >/dev/null 2>&1 || :
     show=$(close_rpc orchestration worker-show --dispatch "$d" --json) || exit 1
     status=$(printf '%s' "$show" | dispatch_final) && final=1 || final=0
-    case "$final" in 1) ;;
-      *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use worker-stop explicitly before release" >&2; exit 1 ;;
+    case "$mode:$final" in *:1|--stop:*) ;;
+      *) echo "worker-pane-close: refusing --release $d (status=${status:-unknown}); settle it, or use --stop" >&2; exit 1 ;;
     esac
     release_out=$(close_rpc orchestration worker-release --dispatch "$d" --json) || release_rc=$?
     release_parsed=$(parse_release_strict "$release_out" "${release_rc:-0}" "$d") || {
@@ -415,11 +450,12 @@ if [ "${1:-}" = --release ]; then
     case "$rel_state" in
       released|already_released)
         mkdir -p "$state/released" && : > "$state/released/$d"
-        complete_if_no_pr "$show"
+        complete_if_no_pr "$show" "$release_env"
         [ "$rel_action" != "none" ] || echo "worker-pane-close: $d $rel_state; native retained external terminals, closing leftovers" >&2
         close_one "$d"
         ;;
       retained|release_pending)
+        complete_if_no_pr "$show" "$release_env"
         reason=$(printf '%s' "$release_out" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("result",{}).get("reason") or "")
 except Exception: print("")' 2>/dev/null)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install Orca automations: fleet-watch (5 min), wrap-up-daily (worktree and disk cleanup, once a day at 04:00),
-# sync drift (daily), team-audit-weekly and weekly-update (Monday). wrap-up-daily is enabled on every Orca host;
+# board-sweep (hourly), sync drift (daily), team-audit-weekly and weekly-update (Monday). wrap-up-daily is enabled on every Orca host;
 # the rest are enabled only on the coordinator in agent-state/coordinator.conf. The old 10 minute wrap-up-scheduled
 # round is no longer installed, and --install removes it from a host that still has it (owner decision 2026-11-23, #1533).
 # Private paths: env vars or ~/.config/fleet-watch/automations.env (no secrets in this repo).
@@ -111,10 +111,12 @@ WEEKLY_UPDATE_LOG=${WEEKLY_UPDATE_LOG:-$HOME/.local/state/agent-team/weekly-upda
 WEEKLY_UPDATE_PRECHECK_TIMEOUT=${WEEKLY_UPDATE_PRECHECK_TIMEOUT:-600}  # Orca caps a precheck at 600 s
 FLEET_TOOLCHAIN_LOG=${FLEET_TOOLCHAIN_LOG:-$HOME/.local/state/agent-team/fleet-toolchain.log}
 FLEET_TOOLCHAIN_PRECHECK_TIMEOUT=${FLEET_TOOLCHAIN_PRECHECK_TIMEOUT:-600}
+BOARD_SWEEP_LOG=${BOARD_SWEEP_LOG:-$HOME/.local/state/agent-team/board-sweep.log}
+BOARD_SWEEP_PRECHECK_TIMEOUT=${BOARD_SWEEP_PRECHECK_TIMEOUT:-600}  # above the two step limits in board-sweep.py
 STAGING_DAILY_LOG=${STAGING_DAILY_LOG:-$HOME/.local/state/agent-team/staging-daily.log}
 STAGING_DAILY_PRECHECK_TIMEOUT=${STAGING_DAILY_PRECHECK_TIMEOUT:-300}
 FLEET_STAGING_DAILY_TIMEZONE=${FLEET_STAGING_DAILY_TIMEZONE:-Asia/Taipei}
-FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-daily sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
+FLEET_AUTOMATION_NAMES='fleet-watch wrap-up-daily board-sweep sync-team-skills-drift team-audit-weekly weekly-update fleet-toolchain daily-program-1900'
 
 precheck_path() {
   automation_tool_path
@@ -186,6 +188,11 @@ wrap_up_daily_precheck() {
   automation_wrap wrap-up-daily "$WRAP_UP_DAILY_LOG" \
     env "${env_args[@]}" \
     bash "$DOTFILES_DIR/script/wrap-up.sh" --daily
+}
+
+board_sweep_precheck() {
+  # The schedule shell is bare: name the orca CLI, or an unresolved one would skip every host and still exit 0.
+  automation_wrap board-sweep "$BOARD_SWEEP_LOG" env "ORCA_CLI_COMMAND=$orca_cli" python3 "$DOTFILES_DIR/script/board-sweep.py"
 }
 
 sync_drift_precheck() {
@@ -435,6 +442,7 @@ case "$action" in
     # Dropped 2026-11-23 (#1533): wrap-up runs once a day. Drop the old 10 minute entry when a host still has it.
     automation_by_name wrap-up-scheduled >/dev/null 2>&1 && remove_by_name wrap-up-scheduled
     ensure_automation wrap-up-daily '0 4 * * *' "$(wrap_up_daily_precheck)" "$WRAP_UP_DAILY_PRECHECK_TIMEOUT" 1
+    ensure_automation board-sweep '20 * * * *' "$(board_sweep_precheck)" "$BOARD_SWEEP_PRECHECK_TIMEOUT" "$enabled"
     # The owner turns these three on by hand; the installer creates them disabled and keeps the owner's choice after that.
     ensure_automation sync-team-skills-drift '0 6 * * *' "$(sync_drift_precheck)" "$SYNC_DRIFT_PRECHECK_TIMEOUT" keep
     ensure_automation team-audit-weekly '0 7 * * 1' "$(team_audit_weekly_precheck)" "$TEAM_AUDIT_WEEKLY_PRECHECK_TIMEOUT" keep
