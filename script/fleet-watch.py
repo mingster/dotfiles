@@ -4030,7 +4030,8 @@ def worker_signal_pass(config, state, now, workers, term_times, terminal_branche
                 notices.append(Urgent(
                     '%s: signal ci. Run %s (%s) has been in_progress for %d min, more than %d min. '
                     'Check it: read the job step log. Steps still advancing means slow, wait up to 45 min. '
-                    'No step for 15 min or past 45 min means a hang.'
+                    'No step for 15 min or past 45 min means a hang. '
+                    'A PR check job over 20 min is cancelled and rerun by fleet-watch.'
                     % (label, slow[1].get('databaseId'), slow[1].get('workflowName') or 'checks', age, limit // 60)))
                 log_bits.append('signal_ci=%s' % did)
         elif runs is not None:
@@ -4050,6 +4051,143 @@ def worker_signal_pass(config, state, now, workers, term_times, terminal_branche
     for did in list(bucket):
         if did not in live:
             bucket.pop(did, None)
+    return notices, log_bits
+
+
+WORKER_SOFT_MINUTES = 60
+WORKER_HARD_MINUTES = 90
+EXEMPT_WORKER_ROLES = ('elon', 'coordinator', 'support-csm', 'release-manager')
+CI_JOB_LIMIT_SECONDS = 20 * 60
+
+
+def worker_durations():
+    return _sibling('worker_durations', 'worker-durations.py')
+
+
+def worker_size(repo, number, labels_of=None):
+    """S or L from the issue's size label, else M. '' when there is no issue or its labels cannot be read."""
+    if not repo or not number:
+        return ''
+    names = (labels_of or issue_label_names)(repo, number)
+    if not names:
+        return ''
+    return next((size for size in ('S', 'L') if 'size:' + size in names), 'M')
+
+
+def worker_limit_minutes(config, role, size):
+    """(soft, hard) for one job type: worker_limits.types['role/size'], else worker_limits, else 60 and 90."""
+    cfg = (config or {}).get('worker_limits') or {}
+    row = (cfg.get('types') or {}).get('%s/%s' % (role, size or 'M')) or {}
+    return tuple(
+        row.get(key) or cfg.get(key) or default
+        for key, default in (('soft_minutes', WORKER_SOFT_MINUTES), ('hard_minutes', WORKER_HARD_MINUTES)))
+
+
+def worker_duration_pass(config, state, now, workers, messages, repo_of=None, labels_of=None, log_path=None):
+    """Log each worker's start and end, and flag a live one past its soft or hard limit once each (#1978)."""
+    durations = worker_durations()
+    logged = durations.read(log_path)
+    done = {
+        _message_payload(m).get('dispatchId')
+        for m in messages or () if isinstance(m, dict) and m.get('type') == 'worker_done'
+    }
+    flagged = state.setdefault('worker_limits', {})
+    notices, log_bits, live = [], [], set()
+    for w in workers:
+        did = w.get('dispatchId')
+        if not isinstance(did, str) or not did:
+            continue
+        row = logged.get(did) or {}
+        running = worker_row_is_live(w) and did not in done
+        if 'ended' in row or (not running and 'started' not in row):
+            continue
+        title = str(w.get('_task_title') or w.get('title') or row.get('title') or '').strip()
+        role = _builder_role(dict(w, _task_title=title)) or 'unknown'
+        size = row.get('size')
+        if not size:
+            match = _NEW_TITLE_RE.match(title)
+            repo = repo_of(w) if repo_of else repo_for_worker(w, config)
+            size = worker_size(repo, int(match.group(1)) if match else None, labels_of)
+        facts = {'dispatch': did, 'role': role, 'size': size, 'title': title,
+                 'agent': row.get('agent') or worker_agent_id(w)}
+        if not running:
+            if did in done:
+                outcome = 'done'
+            else:
+                outcome = 'failed' if worker_inventory_status(w) == 'failed' else 'released'
+            durations.append(dict(facts, event='end', at=now, outcome=outcome), log_path)
+            continue
+        live.add(did)
+        if 'started' not in row or (size and not row.get('size')):
+            durations.append(dict(facts, event='start', at=row.get('started', now)), log_path)
+        if role in EXEMPT_WORKER_ROLES or 'regression' in title.lower():
+            continue
+        soft, hard = worker_limit_minutes(config, role, size)
+        age = (now - row.get('started', now)) / 60
+        level = 'hard' if age >= hard else 'soft' if age >= soft else ''
+        if not level or level in flagged.get(did, ()):
+            continue
+        flagged.setdefault(did, []).append(level)
+        label = 'worker %s (%s)' % (did, title or role)
+        if level == 'hard':
+            text = ('%s: past the hard limit, %d of %d min. Tell it to push and report what is left, then release it. '
+                    'File the rest as a new issue.' % (label, age, hard))
+        else:
+            text = '%s: past the soft limit, %d of %d min. Hard limit at %d min.' % (label, age, soft, hard)
+        notices.append(Urgent(text))
+        log_bits.append('limit_%s=%s' % (level, did))
+    for did in list(flagged):
+        if did not in live:
+            flagged.pop(did)
+    return notices, log_bits
+
+
+def ci_hang_pass(config, state, now, fetch=None, act=None):
+    """A PR check job running over 20 minutes: cancel its run, rerun it once, flag a second hang (#1978)."""
+    fetch = fetch or fetch_prs
+    act = act or run_gh
+    notices, log_bits = [], []
+    seen = state.setdefault('ci_hangs', {})
+    for repo in babysit_repos(config):
+        prs = fetch(repo)
+        if not isinstance(prs, list):
+            continue
+        runs = {}
+        for pr in prs:
+            if pr.get('state') != 'OPEN':
+                continue
+            for check in pr.get('statusCheckRollup') or []:
+                run_id = _workflow_run_id_from_check(check)
+                if run_id:
+                    runs.setdefault(run_id, (pr.get('number'), []))[1].append(check)
+        old = seen.get(repo) or {}
+        kept = {}
+        for run_id, (number, checks) in runs.items():
+            step = old.get(run_id)
+            hung = [
+                c for c in checks
+                if c.get('status') == 'IN_PROGRESS' and _iso_epoch(c.get('startedAt')) is not None
+                and now - _iso_epoch(c.get('startedAt')) > CI_JOB_LIMIT_SECONDS
+            ]
+            where = '%s #%s run %s' % (repo, number, run_id)
+            if step is None and hung:
+                if act(['gh', 'run', 'cancel', run_id, '--repo', repo]) == 0:
+                    step = 'cancelled'
+                    log_bits.append('ci_cancel=%s' % run_id)
+            elif step == 'cancelled' and all(c.get('status') == 'COMPLETED' for c in checks):
+                # gh refuses a rerun until the cancel has finished, so this waits for a later pass.
+                if act(['gh', 'run', 'rerun', run_id, '--repo', repo]) == 0:
+                    step = 'rerun'
+                    log_bits.append('ci_rerun=%s' % run_id)
+            elif step == 'rerun' and hung:
+                step = 'flagged'
+                notices.append(Urgent(
+                    '%s: check %s hung again, over %d min after one cancel and rerun. Read the job step log.'
+                    % (where, hung[0].get('name') or 'job', CI_JOB_LIMIT_SECONDS // 60)))
+                log_bits.append('ci_hung=%s' % run_id)
+            if step:
+                kept[run_id] = step
+        seen[repo] = kept
     return notices, log_bits
 
 
@@ -11443,6 +11581,26 @@ def _main():
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))
     notices += signal_extra
 
+    def durations():
+        if not inventory_ok:
+            return [], []
+        try:
+            return worker_duration_pass(config, state, now, workers, inv['messages'])
+        except Exception as error:
+            print('fleet-watch: worker limit check skipped: %s' % (repr(error),), file=sys.stderr)
+            return [], []
+
+    def ci_hang():
+        try:
+            return ci_hang_pass(config, state, now, fetch=fetch_once)
+        except Exception as error:
+            print('fleet-watch: hung check pass skipped: %s' % (repr(error),), file=sys.stderr)
+            return [], []
+
+    limit_extra, limit_log = run_phase('limits', durations, ([], []))
+    hang_extra, hang_log = run_phase('ci_hang', ci_hang, ([], []))
+    notices += limit_extra + hang_extra
+
     def nudge():
         if not (inventory_ok and terminal_list_ok):
             return []
@@ -11482,6 +11640,10 @@ def _main():
         parts.append('stall ' + ','.join(stall_log))
     if signal_log:
         parts.append('signal ' + ','.join(signal_log))
+    if limit_log:
+        parts.append('limits ' + ','.join(limit_log))
+    if hang_log:
+        parts.append('ci ' + ','.join(hang_log))
     if nudge_log:
         parts.append('nudge ' + ','.join(nudge_log))
     if idle_log:

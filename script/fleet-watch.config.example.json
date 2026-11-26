@@ -30,6 +30,7 @@
   },
   "board_stale_check": false,
   "orphan_reaper": {"enabled": true},
+  "worker_limits": {"soft_minutes": 60, "hard_minutes": 90, "types": {}},
   "leads": [],
   "pr_watch": {
     "repos": ["mingster/dotfiles", "mingster/project-a"],
