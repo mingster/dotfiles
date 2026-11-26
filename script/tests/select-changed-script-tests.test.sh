@@ -161,36 +161,41 @@ case10_script_plus_already_selected_test() {
   ok "case10 script plus already-selected test avoids full-suite fallback"
 }
 
+# The fleet-watch suite grows with every fix, so check what was picked, not how many.
+only_fleet_watch_selected() {
+  local out=$1 label=$2 extra
+  extra=$(grep '^Selected: ' <<<"$out" | grep -Ev \
+    '^Selected: script/tests/(fleet-watch[-.][^/]*|test_fleet_watch[_.][^/]*|no-project-names\.test\.sh|script-docs-coverage\.test\.sh)$' || true)
+  [ -z "$extra" ] || fail "$label want scoped suite got $extra"
+}
+
 case_fleet_watch_config_example() {
-  local out count
+  local out
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
     bash "$root/script/select-changed-script-tests.sh" --list-only script/fleet-watch.config.example.json 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "fleet-watch config example must not fall back to full suite"
   grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
     || fail "fleet-watch config must select test_fleet_watch_scan.py"
-  count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -lt 80 ] || fail "fleet-watch config want scoped suite got ${count:-0}"
+  only_fleet_watch_selected "$out" "fleet-watch config"
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
     bash "$root/script/select-changed-script-tests.sh" --list-only \
     script/tests/fixtures/fleet-watch/orca-1.4.258/stall-worker-start-ok.json 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "fleet-watch stall fixture must not fall back to full suite"
   grep -Fq 'Selected: script/tests/test_fleet_watch_own_workers.py' <<<"$out" \
     || fail "fleet-watch stall fixture must select test_fleet_watch_own_workers.py"
-  count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -lt 80 ] || fail "fleet-watch stall fixture want scoped suite got ${count:-0}"
+  only_fleet_watch_selected "$out" "fleet-watch stall fixture"
   ok "fleet-watch config example maps to fleet-watch tests"
 }
 
 case_fleet_watch_recorded_replies() {
-  local out count
+  local out
   out=$(SELECT_SCRIPT_TESTS_ROOT="$root" SELECT_SCRIPT_TESTS_SKIP="$root/script/script-test-skip.list" \
     bash "$root/script/select-changed-script-tests.sh" --list-only \
     script/tests/fixtures/fleet-watch/orca-1.4.258/run-list.json 2>&1)
   grep -Fq 'Fallback:' <<<"$out" && fail "recorded fleet-watch replies must not fall back to full suite"
   grep -Fq 'Selected: script/tests/test_fleet_watch_scan.py' <<<"$out" \
     || fail "recorded replies must select fleet-watch tests"
-  count=$(script_tests_count_from_output <<<"$out")
-  [ "${count:-0}" -lt 80 ] || fail "recorded replies want scoped suite got ${count:-0}"
+  only_fleet_watch_selected "$out" "recorded replies"
   ok "recorded fleet-watch replies map to fleet-watch tests"
 }
 
