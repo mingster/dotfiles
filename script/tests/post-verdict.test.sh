@@ -139,6 +139,22 @@ out=$(bash "$here/post-verdict.sh" --help 2>&1); code=$?
 [ "$code" -eq 0 ] && [[ "$out" == *--corrects* && "$out" == *--supersedes* ]] && [ "$(jq '.comments|length' "$MF_GH_DIR/pr-51.json")" = "$before" ] \
   && ok "--help prints the Usage block with the aliases and posts nothing" || bad "--help: $code $out"
 
+# Issue 1937: PR merged through --ship (the real ship.sh) completes the card.
+board_orca="$MF_DIR/board-orca"; board_log="$MF_DIR/board.log"; : > "$board_log"
+cat > "$board_orca" <<FAKE
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  'worktree list') echo '{"ok":true,"result":{"worktrees":[{"path":"/wt/pv55","branch":"refs/heads/pv55"}]}}' ;;
+  'worktree set') echo "\$*" >> "$board_log" ;;
+  *) exec "$MF_BIN/orca" "\$@" ;;
+esac
+FAKE
+chmod +x "$board_orca"
+h=$(new_pr 55); post_checks 55 "$h"
+out=$(ORCA_CLI_COMMAND="$board_orca" verdict 55 --result PASS --head "$h" --verifier ctx_verify --author ctx_author --agent claude --model opus --ship); code=$?
+[ "$code" -eq 0 ] && [[ "$out" == *"shipped PR 55"* ]] && grep -Fxq 'worktree set --worktree path:/wt/pv55 --workspace-status completed' "$board_log" \
+  && ok "--ship: the merge sets the card completed" || bad "--ship board ($code): $out / $(cat "$board_log")"
+
 # Issue 1679: --ship runs ship.sh after a PASS at the current head, no bypass flags. Fake ship.sh and a fake dotfiles checkout.
 ship_log="$MF_DIR/ship.log"; : > "$ship_log"
 fake_ship="$MF_DIR/fake-ship.sh"

@@ -7,8 +7,8 @@ failed or stopped. A worker that is still live keeps the card, except when a pul
 issue rule already applies. Dry run is the default.
 
 --fleet visits this Orca and every paired environment. A host that cannot be reached is skipped
-and left for the next round. The coordinator's wrap-up --scheduled round is what runs --fleet:
-fleet-watch is frozen and only alerts, and wrap-up is already the pass that reads the board.
+and left for the next round. The hourly board-sweep job (and a wrap-up round) runs --fleet;
+fleet-watch is frozen and only alerts.
 """
 from __future__ import annotations
 

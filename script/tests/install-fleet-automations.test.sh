@@ -181,6 +181,11 @@ ids2=$(python3 -c 'import json, os; d=json.load(open(os.environ["FAKE_ORCA_STORE
 
 export FAKE_HOSTNAME=coord-host
 coord=$(bash "$script" --install 2>&1)
+python3 - <<'PY' && check 'coordinator runs board-sweep hourly' true || check 'coordinator runs board-sweep hourly' false
+import json, os, sys
+row = next(a for a in json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"] if a["name"] == "board-sweep")
+sys.exit(0 if row["rrule"] == "20 * * * *" and row["enabled"] and "script/board-sweep.py" in row["precheck"]["command"] and "ORCA_CLI_COMMAND=" in row["precheck"]["command"] else 1)
+PY
 echo "$coord" | grep -q 'updated\|unchanged' && check 'coordinator install settles' true || check 'coordinator install settles' false
 coord_status=$(bash "$script" --status)
 # fleet-watch already exists (disabled), so the coordinator keeps that state: the owner flips it, not the installer (#1838).
@@ -220,7 +225,7 @@ case "$wrap_cmd" in *' || exit $?; exit 1') check 'precheck passes the wrapper e
 case "$wrap_prompt" in *"$wrap_cmd"*) check 'manual run prompt carries the precheck command' true ;; *) check 'manual run prompt carries the precheck command' false ;; esac
 case "$wrap_prompt" in *'"ok wrap-up-daily" or "FAILED wrap-up-daily"'*) check 'manual run prompt asks for the result line' true ;; *) check 'manual run prompt asks for the result line' false ;; esac
 echo "$coord_status" | grep -q 'weekly-update: disabled' && check 'coordinator creates weekly-update disabled (owner opt-in)' true || check 'coordinator creates weekly-update disabled (owner opt-in)' false
-[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 7 ] \
+[ "$(python3 -c 'import json, os; print(len(json.load(open(os.environ["FAKE_ORCA_STORE"]))["automations"]))')" -eq 8 ] \
   && check 'coordinator install has seven automations' true || check 'coordinator install has seven automations' false
 
 fw_id=$(python3 -c '
@@ -517,7 +522,7 @@ if [ -f "$FAKE_ORCA_STORE" ]; then
 import json, os, sys
 d = json.load(open(os.environ["FAKE_ORCA_STORE"]))
 autos = d.get("automations", [])
-if len(autos) != 7:
+if len(autos) != 8:
     sys.exit(1)
 want = os.environ["CANON_HOME_DOTFILES"]
 bad = os.environ["FAKE_WT"]

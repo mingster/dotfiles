@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Clean Orca board cards that have been Done for 30 minutes.
 
-The coordinator's scheduled wrap-up runs this after board-done. A card that just
+The hourly board-sweep job (and a wrap-up round) runs this after board-done. A card that just
 became Done stays until a later round. Cleanup runs on the host named by the
 dispatch record (`--environment`): worktree, local branch, remote branch,
 terminals and session. A host that cannot be reached is skipped and tried again
-next round. It is not treated as gone.
+next round. It is not treated as gone. A round cut off by BOARD_CLEAN_BUDGET_S
+resumes next time with the cards it has not looked at for longest.
 
 Guards that keep a card, with a board comment naming the reason: unsaved
 changes, commits that are not on main and not on any remote, a pushed branch
@@ -104,6 +105,29 @@ def board():
         module.run_json = run_json
         _MODULE = module
     return _MODULE
+
+
+def seen_path() -> str:
+    return os.path.join(os.path.dirname(board().stamp_path()), "board-clean-seen.json")
+
+
+def load_seen() -> dict:
+    try:
+        with open(seen_path(), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, int)} if isinstance(data, dict) else {}
+
+
+def save_seen(seen: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(seen_path()), exist_ok=True)
+        with open(seen_path() + ".tmp", "w", encoding="utf-8") as handle:
+            json.dump(seen, handle, sort_keys=True)
+        os.replace(seen_path() + ".tmp", seen_path())
+    except OSError as exc:
+        print("board-clean: could not record the cards looked at (%s)" % exc, file=sys.stderr)
 
 
 def clock_ms() -> int:
@@ -768,6 +792,7 @@ def main(argv: list[str] | None = None) -> int:
                 gathered.append((label, trees, None))
             else:
                 gathered.append((label, trees, workers))
+        cards = []
         for label, trees, workers in gathered:
             grouped = None if workers is None else workers_by_path(workers)
             for tree in trees:
@@ -776,12 +801,21 @@ def main(argv: list[str] | None = None) -> int:
                 path = tree.get("path") or tree.get("workspacePath") or ""
                 if not isinstance(path, str) or not path:
                     continue
-                check_budget()
-                outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
-                if outcome == "clean":
-                    cleaned += 1
-                else:
-                    kept += 1
+                cards.append((board().stamp_key(label, path), tree, label, grouped, trees))
+        # Longest unvisited first, so a round cut off by the budget is resumed, not restarted on the same cards.
+        seen = load_seen()
+        cards.sort(key=lambda card: seen.get(card[0], 0))
+        seen = {card[0]: seen[card[0]] for card in cards if card[0] in seen}
+        for turn, (key, tree, label, grouped, trees) in enumerate(cards):
+            check_budget()
+            if apply:
+                seen[key] = now + turn
+                save_seen(seen)
+            outcome = consider(tree, label, grouped, trees, stamps, table, apply, now, limit, unreachable)
+            if outcome == "clean":
+                cleaned += 1
+            else:
+                kept += 1
     except OutOfTime:
         print(BUDGET_LINE)
     mode = "applied" if apply else "dry-run"
