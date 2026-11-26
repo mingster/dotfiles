@@ -4652,7 +4652,9 @@ def worker_signal_pass(config, state, now, workers, term_times, terminal_branche
 WORKER_SOFT_MINUTES = 60
 WORKER_HARD_MINUTES = 90
 EXEMPT_WORKER_ROLES = ('elon', 'coordinator', 'support-csm', 'release-manager')
-CI_JOB_LIMIT_SECONDS = 20 * 60
+CI_JOB_LIMIT_SECONDS = 30 * 60  # with fewer than CI_JOB_MIN_SAMPLES recent successful runs of the check
+CI_JOB_MIN_SAMPLES = 10
+CI_JOB_RECENT_SAMPLES = 30
 
 
 def worker_durations():
@@ -4737,8 +4739,28 @@ def worker_duration_pass(config, state, now, workers, messages, repo_of=None, la
     return notices, log_bits
 
 
+def ci_job_limit_seconds(prs, check_name):
+    """1.5x the p90 duration of the check's recent successful runs when there are 10 or more, else 30 minutes.
+
+    A fixed 20 minutes cancelled healthy full script-tests runs of 19 to 21 minutes (#1978)."""
+    runs = []
+    for pr in prs or ():
+        for c in (pr.get('statusCheckRollup') or []) if isinstance(pr, dict) else ():
+            if not isinstance(c, dict) or c.get('name') != check_name or c.get('status') != 'COMPLETED' \
+                    or c.get('conclusion') != 'SUCCESS':
+                continue
+            start, end = _iso_epoch(c.get('startedAt')), _iso_epoch(c.get('completedAt'))
+            if start is not None and end is not None and end > start:
+                runs.append((end, end - start))
+    durations = sorted(d for _end, d in sorted(runs)[-CI_JOB_RECENT_SAMPLES:])
+    if len(durations) < CI_JOB_MIN_SAMPLES:
+        return CI_JOB_LIMIT_SECONDS
+    return 1.5 * durations[max(0, -(-9 * len(durations) // 10) - 1)]
+
+
 def ci_hang_pass(config, state, now, fetch=None, act=None):
-    """A PR check job running over 20 minutes: cancel its run, rerun it once, flag a second hang (#1978)."""
+    """A PR check job running past its limit (ci_job_limit_seconds): cancel its run, rerun it once, flag a second
+    hang (#1978)."""
     fetch = fetch or fetch_prs
     act = act or run_gh
     notices, log_bits = [], []
@@ -4747,7 +4769,12 @@ def ci_hang_pass(config, state, now, fetch=None, act=None):
         prs = fetch(repo)
         if not isinstance(prs, list):
             continue
-        runs = {}
+        runs, limits = {}, {}
+
+        def limit(name):
+            if name not in limits:
+                limits[name] = ci_job_limit_seconds(prs, name)
+            return limits[name]
         for pr in prs:
             if pr.get('state') != 'OPEN':
                 continue
@@ -4762,7 +4789,7 @@ def ci_hang_pass(config, state, now, fetch=None, act=None):
             hung = [
                 c for c in checks
                 if c.get('status') == 'IN_PROGRESS' and _iso_epoch(c.get('startedAt')) is not None
-                and now - _iso_epoch(c.get('startedAt')) > CI_JOB_LIMIT_SECONDS
+                and now - _iso_epoch(c.get('startedAt')) > limit(c.get('name'))
             ]
             where = '%s #%s run %s' % (repo, number, run_id)
             if step is None and hung:
@@ -4778,7 +4805,7 @@ def ci_hang_pass(config, state, now, fetch=None, act=None):
                 step = 'flagged'
                 notices.append(Urgent(
                     '%s: check %s hung again, over %d min after one cancel and rerun. Read the job step log.'
-                    % (where, hung[0].get('name') or 'job', CI_JOB_LIMIT_SECONDS // 60)))
+                    % (where, hung[0].get('name') or 'job', limit(hung[0].get('name')) // 60)))
                 log_bits.append('ci_hung=%s' % run_id)
             if step:
                 kept[run_id] = step

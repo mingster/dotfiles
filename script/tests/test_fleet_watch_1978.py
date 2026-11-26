@@ -124,21 +124,21 @@ class HungChecks(unittest.TestCase):
     def setUp(self):
         self.state, self.calls = {}, []
 
-    def tick(self, now, status, started, code=0):
+    def tick(self, now, status, started, code=0, history=()):
         check = {'name': 'script-tests', 'status': status,
                  'startedAt': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started)),
                  'detailsUrl': 'https://github.com/o/r/actions/runs/77/job/1'}
-        prs = [{'number': 9, 'state': 'OPEN', 'statusCheckRollup': [check]}]
+        prs = [{'number': 9, 'state': 'OPEN', 'statusCheckRollup': [check]}] + list(history)
         return fw.ci_hang_pass({'babysit': {'repos': ['o/r']}}, self.state, now, fetch=lambda repo: prs,
                                act=lambda cmd: self.calls.append(cmd[2]) or code)[0]
 
     def test_cancel_and_rerun_once_then_flag_the_second_hang(self):
-        self.assertEqual(self.tick(NOW, 'IN_PROGRESS', NOW - 19 * 60), [])
+        self.assertEqual(self.tick(NOW, 'IN_PROGRESS', NOW - 29 * 60), [])
         self.assertEqual(self.calls, [])
-        self.tick(NOW, 'IN_PROGRESS', NOW - 21 * 60)
+        self.tick(NOW, 'IN_PROGRESS', NOW - 31 * 60)
         self.assertEqual(self.calls, ['cancel'])
-        self.tick(NOW + 60, 'IN_PROGRESS', NOW - 21 * 60)  # cancel still pending
-        self.tick(NOW + 300, 'COMPLETED', NOW - 21 * 60)
+        self.tick(NOW + 60, 'IN_PROGRESS', NOW - 31 * 60)  # cancel still pending
+        self.tick(NOW + 300, 'COMPLETED', NOW - 31 * 60)
         self.assertEqual(self.calls, ['cancel', 'rerun'])
         flagged = self.tick(NOW + 3000, 'IN_PROGRESS', NOW + 400)
         self.assertEqual(len(flagged), 1)
@@ -146,9 +146,33 @@ class HungChecks(unittest.TestCase):
         self.assertEqual(self.tick(NOW + 3300, 'IN_PROGRESS', NOW + 400), [])
         self.assertEqual(self.calls, ['cancel', 'rerun'])
 
+    @staticmethod
+    def history(minutes, count):
+        stamp = lambda t: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))
+        return [{'number': 100 + i, 'state': 'MERGED', 'statusCheckRollup': [
+            {'name': 'script-tests', 'status': 'COMPLETED', 'conclusion': 'SUCCESS',
+             'startedAt': stamp(NOW - 86400 + i * 3600), 'completedAt': stamp(NOW - 86400 + i * 3600 + minutes * 60),
+             'detailsUrl': 'https://github.com/o/r/actions/runs/%d/job/1' % (500 + i)}]} for i in range(count)]
+
+    def test_p90_of_21_minutes_keeps_a_25_minute_run_and_cancels_past_31_and_a_half(self):
+        history = self.history(21, 10)
+        self.assertEqual(fw.ci_job_limit_seconds(history, 'script-tests'), 1.5 * 21 * 60)
+        self.tick(NOW, 'IN_PROGRESS', NOW - 25 * 60, history=history)
+        self.assertEqual(self.calls, [])
+        self.tick(NOW, 'IN_PROGRESS', NOW - 31 * 60 - 20, history=history)
+        self.assertEqual(self.calls, [])
+        self.tick(NOW, 'IN_PROGRESS', NOW - 31 * 60 - 40, history=history)
+        self.assertEqual(self.calls, ['cancel'])
+
+    def test_fewer_than_10_samples_uses_30_minutes(self):
+        self.assertEqual(fw.ci_job_limit_seconds(self.history(5, 9), 'script-tests'), 30 * 60)
+        self.assertEqual(fw.ci_job_limit_seconds(self.history(5, 10), 'other-check'), 30 * 60)
+        self.tick(NOW, 'IN_PROGRESS', NOW - 29 * 60, history=self.history(5, 9))
+        self.assertEqual(self.calls, [])
+
     def test_failed_cancel_is_tried_again(self):
-        self.tick(NOW, 'IN_PROGRESS', NOW - 21 * 60, code=1)
-        self.tick(NOW + 300, 'IN_PROGRESS', NOW - 21 * 60)
+        self.tick(NOW, 'IN_PROGRESS', NOW - 31 * 60, code=1)
+        self.tick(NOW + 300, 'IN_PROGRESS', NOW - 31 * 60)
         self.assertEqual(self.calls, ['cancel', 'cancel'])
 
 
