@@ -259,6 +259,24 @@ expect_rc "receive removes links that appear in the folder" 0 fr "$plant"
 [[ "$(cat "$TMP/target/file")" == safe && "$(cat "$TMP/target/dir/in")" == safe ]] && ok "link targets are untouched" || bad "link target changed"
 expect_rc "sync restores the folder after the guard cases" 0 g sync
 
+# an unreadable source file or folder stops sync before any host is contacted, so no receiver drops its copy
+chmod 000 "$D/c.key"
+: >"$TMP/ssh.log"
+before_r=$(snap)
+expect_rc "sync refuses an unreadable source file" 1 g sync
+[[ "$LAST_OUT" == *"secrets-gate: sync: cannot read c.key"* ]] && ok "the refusal names the unreadable file" || bad "unreadable refusal text: $LAST_OUT"
+[[ ! -s "$TMP/ssh.log" ]] && ok "no host is contacted when a source file is unreadable" || bad "ssh called for an unreadable source"
+[[ "$(snap)" == "$before_r" && "$(cat "$R/c.key")" == fake-value-3 ]] && ok "receivers keep every file when a source file is unreadable" || bad "receiver changed on unreadable source"
+chmod 600 "$D/c.key"
+expect_rc "sync succeeds again once the file is readable" 0 g sync
+chmod 000 "$D/sub"
+: >"$TMP/ssh.log"
+before_r=$(snap)
+expect_rc "sync refuses an unlistable source folder" 1 g sync
+[[ ! -s "$TMP/ssh.log" && "$(snap)" == "$before_r" ]] && ok "an unlistable folder contacts no host and deletes nothing" || bad "unlistable folder: ssh or receiver changed"
+chmod 700 "$D/sub"
+expect_rc "sync succeeds again once the folder is listable" 0 g sync
+
 # sync's ssh ignores everything the owner account can edit, and logs in as root
 for want in "-F /dev/null" "IdentitiesOnly=yes" "IdentityFile=$TMP/id_ed25519" "UserKnownHostsFile=$TMP/known_hosts" \
             "GlobalKnownHostsFile=/dev/null" "StrictHostKeyChecking=yes" "ProxyCommand=none" "ControlPath=none" "root@hostA"; do
