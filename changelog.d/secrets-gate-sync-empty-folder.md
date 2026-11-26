@@ -1,0 +1,1 @@
+- fix(secrets-gate): `sync` now refuses a source folder with no file to push with a clear message, before contacting any host (#1984).
