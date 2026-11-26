@@ -227,7 +227,7 @@ newest_head_verdict_json=$(
       {};
       ($body // "" | split("\n") | .[0] // "") as $line |
       if ($line | test("^Review: |^Verdict: ")) then
-        (try ($line | capture("head=(?<h>[0-9a-fA-F]{40})") | .h | ascii_downcase) catch empty) as $h |
+        (try ($line | capture("head=(?<h>[0-9a-fA-F]{40})") | .h | ascii_downcase) catch "" // "") as $h |
         if ($h | length) == 40 then
           if ($line | test("^Review: FAIL|^Verdict: FAIL")) then
             .[$h] = { kind: "FAIL", line: $line }

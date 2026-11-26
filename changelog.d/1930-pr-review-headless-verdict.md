@@ -1,0 +1,1 @@
+- pr-review.sh ignores a Verdict or Review comment with no head sha instead of dying with a jq error (#1930).
