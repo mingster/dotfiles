@@ -3778,6 +3778,65 @@ def host_workers(rpc_call, on):
     return None
 
 
+ORPHAN_IDLE_SECONDS = 15 * 60
+_WORKER_TITLE_RE = re.compile(r'^#\d+\|[\w-]+')
+_RUN_TITLE_RE = re.compile(r'^[\w.-]+ run \d+\b')
+_RUN_WORKTREE_RE = re.compile(r'^auto-[\w.-]+-run-\d+')
+
+
+def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
+    """Close a worker (`#N|role`), automation run (`<job> run N`) or `auto-<job>-run-<n>` worktree terminal that no
+    live row holds and that has been idle 15 minutes or more, on each fleet host (#1963). `hosts` are environment
+    names, '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, or whose
+    rows carry `_host_read: False`, is skipped. A terminal with no lastOutputAt counts as not idle. Closing goes
+    through close_worker_terminal, so close_guard keeps the coordinator's and live terminals. With `dry_run`, each
+    terminal it would close is passed to dry_run as one line and nothing is closed. Returns the handles closed."""
+    names = environment_name_by_id() if any(hosts or ()) else {}
+    unread, live_handles, live_paths = set(), set(), set()
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        host = row.get('_host') or ''
+        if row.get('_host_read') is False:
+            unread.add(names.get(host) or host)
+        if not worker_row_is_live(row):
+            continue
+        live_handles.add(row.get('_host_terminal') or worker_terminal_handle(row))
+        ws = row.get('_host_workspace') or worker_checkout_path(row)
+        live_paths.add(ws.split('::', 1)[1] if '::' in ws else ws)
+    live_handles.discard('')
+    live_paths.discard('')
+    closed = []
+    for env in hosts or ():
+        if env in unread:
+            continue
+        try:
+            terms = (rpc_call('terminal', 'list', *_env_args(env)) or {}).get('terminals')
+        except SEND_ERRORS:
+            continue
+        if not isinstance(terms, list):
+            continue
+        for t in terms:
+            if not isinstance(t, dict) or not t.get('handle'):
+                continue
+            handle, title = t['handle'], str(t.get('title') or '')
+            path = str(t.get('worktreePath') or '').rstrip('/')
+            if not (_WORKER_TITLE_RE.match(title) or _RUN_TITLE_RE.match(title)
+                    or _RUN_WORKTREE_RE.match(path.split('/')[-1])):
+                continue
+            if handle in live_handles or (path and path in live_paths) or close_guard(handle):
+                continue
+            last = t.get('lastOutputAt')
+            if not isinstance(last, (int, float)) or now - last / 1000.0 < ORPHAN_IDLE_SECONDS:
+                continue
+            if dry_run is not None:
+                dry_run('orphan sweep: would close %s (%s) on %s, idle %dm' % (
+                    handle, title, env or 'this host', (now - last / 1000.0) // 60))
+            elif close_worker_terminal(rpc_call, handle, env) == 'closed':
+                closed.append(handle)
+    return closed
+
+
 def sweep_hosts(config):
     """'' for this host plus every Orca environment name except the coordinator's own."""
     local = (config or {}).get('local_host')
@@ -3833,6 +3892,9 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
                 handle = worker_terminal_handle(mine)
                 if handle:
                     row['_host_terminal'] = handle
+                workspace = worker_worktree_selector(mine)
+                if workspace:
+                    row['_host_workspace'] = workspace
             row['_host_read'] = (names.get(host) or host) not in unread
         if did:
             index[did] = len(rows)
@@ -11581,6 +11643,8 @@ def _main():
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
+    parser.add_argument('--sweep-dry-run', action='store_true',
+                        help='List the idle orphan terminals the sweep would close and close nothing (#1963)')
     parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
     parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
     parser.add_argument('--release-worker', metavar='FRAGMENT', default=None,
@@ -11658,6 +11722,18 @@ def _main():
             return 0
 
     state = json.loads(args.state.read_text()) if args.state.exists() else {}
+    if args.sweep_dry_run:
+        apply_active_run(config)
+        try:
+            workers = fetch_workers(config)
+        except Exception as error:
+            print('fleet-watch: Orca workers unavailable: %s' % (repr(error),), file=sys.stderr)
+            return 1
+        hosts = sweep_hosts(config)
+        workers = fleet_rows(config, workers, hosts, rpc, state)
+        protect_pass_terminals(config, workers)
+        orphan_terminal_sweep(config, time.time(), rpc, hosts, workers, dry_run=print)
+        return 0
     if args.babysit_only or args.babysit_dry_run:
         apply_active_run(config)
         workers = []
@@ -11885,6 +11961,9 @@ def _main():
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
     notices += idle_extra
     notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc, _release_row), [])
+    swept = run_phase('sweep', lambda: orphan_terminal_sweep(config, now, rpc, sweep_hosts(config), workers), [])
+    if swept:
+        print('fleet-watch: closed %d orphan terminal(s): %s' % (len(swept), ' '.join(swept)))
     if inventory_ok:
         notices += supply_done_notices(inv['messages'], workers, state)
 

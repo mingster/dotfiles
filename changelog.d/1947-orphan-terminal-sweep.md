@@ -1,0 +1,1 @@
+fleet-watch: every pass closes worker and automation run terminals on every host that no live worker holds and that have been idle 15 minutes or more; `--sweep-dry-run` lists them without closing (#1963, #1947).
