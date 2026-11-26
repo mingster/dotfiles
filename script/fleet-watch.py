@@ -10658,13 +10658,58 @@ def _agy_signin():
     return _sibling('agy_signin', 'agy-signin.py')
 
 
-def agy_signin_notices(config, workers, read=None, now=None):
+def worker_start_unknown(worker):
+    """Orca typed the brief but saw no turn start within 30 s."""
+    w = worker or {}
+    proj = w.get('projection') or {}
+    stage = proj.get('stage')
+    return 'start_unknown' in (w.get('state'), w.get('workerState'), w.get('dispatchStatus'), proj.get('outcome'),
+                               stage.get('worker') if isinstance(stage, dict) else stage)
+
+
+def _shown_terminal(rpc_call, dispatch, host):
+    """Terminal handle from worker-show. Remote worker-list rows carry agentTerminalHandle null (#1951)."""
+    try:
+        shown = rpc_call('orchestration', 'worker-show', '--dispatch', dispatch, *(('--environment', host) if host else ()))
+    except SEND_ERRORS:
+        return ''
+    shown = shown.get('result', shown) if isinstance(shown, dict) else {}
+    shown = shown.get('worker', shown) if isinstance(shown.get('worker'), dict) else shown
+    term = shown.get('terminal')
+    if isinstance(term, dict):
+        term = term.get('handle')
+    return term if isinstance(term, str) else ''
+
+
+def _agy_signin_stop(config, state, w, dispatch, host, remote, rpc_call, edit, log):
+    """A start_unknown antigravity worker on the sign-in screen: stop and release it, and put its issue back.
+
+    The owning pass starts the replacement: the issue scan for an issue, the verifier pass for a verifier
+    (#1932). Both go through worker-startup, which gives a marked host claude instead of antigravity.
+    """
+    failure = stop_and_release_stalled(rpc_call, w, dispatch, remote_environment(w) if remote else '', stop_on_host=remote)
+    if failure:
+        log.append('agy_signin_stop_failed=%s:%s' % (dispatch, failure))
+        return
+    number, repo = _worker_issue_number(w), repo_for_worker(w, config)
+    if number and repo and not worker_pr_number(w):
+        if (edit or run_gh)(['gh', 'issue', 'edit', str(number), '--repo', repo,
+                             '--add-label', 'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) != 0:
+            log.append('agy_signin_issue_label_failed=%d' % number)
+    log.append('agy_signin_restart=%s:%s' % (dispatch, host))
+
+
+def agy_signin_notices(config, workers, read=None, now=None, state=None, rpc_call=None, edit=None, log=None):
     """Read the screen of each running antigravity worker. A sign-in screen marks its host agy-unavailable for 6 hours.
 
     One digest line per host per 6 hours. The line asks the coordinator for the one owner push (#1240).
-    A plain `agy -p` probe over ssh cannot tell, so the worker screen is the check.
+    A start_unknown worker is read once, its terminal found with worker-show when the row has none, and on
+    the sign-in screen it is stopped, released and handed back for a fresh start (#1951).
     """
     agy = _agy_signin()
+    rpc_call = rpc_call or rpc
+    log = [] if log is None else log
+    checked = (state if state is not None else {}).setdefault('agy_start_unknown_read', [])
     notices = []
     seen = set()
     for w in workers or []:
@@ -10672,12 +10717,16 @@ def agy_signin_notices(config, workers, read=None, now=None):
             continue
         if worker_settled_kind(w) is not None or worker_terminal_released(w):
             continue
-        terminal = worker_terminal_handle(w)
-        if not terminal:
-            continue
         remote = worker_is_remote(w, config)
         host = remote_environment(w) if remote else (config.get('local_host') or 'local')
-        if not host or host in seen:
+        dispatch = w.get('dispatchId') or ''
+        unknown = worker_start_unknown(w) and dispatch and dispatch not in checked
+        if unknown:
+            checked.append(dispatch)
+            del checked[:-200]
+        terminal = worker_terminal_handle(w) or (
+            _shown_terminal(rpc_call, dispatch, host if remote else '') if unknown else '')
+        if not terminal or not host or (host in seen and not unknown):
             continue
         try:
             if read is not None:
@@ -10695,10 +10744,101 @@ def agy_signin_notices(config, workers, read=None, now=None):
         except OSError as error:
             print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
             continue
+        if unknown:
+            _agy_signin_stop(config, state, w, dispatch, host, remote, rpc_call, edit, log)
         if due:
-            notices.append(Urgent(
-                'agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
-                'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host)))
+            notices.append(_agy_signin_line(host))
+    return notices
+
+
+def _agy_signin_line(host):
+    return Urgent('agy-signin: host=%s is not signed in to agy, skipping it for antigravity for 6 hours. '
+                  'Send the owner one PushNotification: "sign in to agy on %s".' % (host, host))
+
+
+AGY_PROBE_EVERY = 30 * 60
+AGY_PROBE_TITLE = 'agy-signin-probe'  # not '#N|role' or '<job> run N', so the orphan terminal sweep (#1947) leaves it
+AGY_PROBE_SIGNED_OUT = 'please sign in to view available models'
+AGY_PROBE_WAIT_MS = 12000  # under the 15 s orca CLI timeout in rpc()
+
+
+def _agy_probe_text(text):
+    """'out' only on agy's own signed out line. Anything else, an error included, is not proof."""
+    return 'out' if AGY_PROBE_SIGNED_OUT in (text or '').lower() else 'in' if (text or '').strip() else ''
+
+
+def agy_probe_local():
+    try:
+        proc = subprocess.run(['agy', 'models'], capture_output=True, text=True, timeout=AGY_PROBE_WAIT_MS / 1000)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return _agy_probe_text(proc.stdout + proc.stderr)
+
+
+def _probe_worktree(rpc_call, host):
+    """An existing worktree on the host, since the remote refuses a terminal without one (start-remote-worker.sh)."""
+    listed = rpc_call('worktree', 'list', '--environment', host)
+    rows = (listed.get('result', listed) if isinstance(listed, dict) else {}).get('worktrees') or []
+    rows = [r for r in rows if isinstance(r, dict) and not r.get('isArchived') and r.get('path')]
+    rows.sort(key=lambda r: not r.get('isMainWorktree'))
+    return 'path:' + rows[0]['path'] if rows else ''
+
+
+def agy_probe_remote(host, rpc_call=None):
+    """Run `agy models` in a host terminal, read it, and always close it, on a timeout too."""
+    rpc_call = rpc_call or rpc
+    try:
+        worktree = _probe_worktree(rpc_call, host)
+        if not worktree:
+            return ''
+        made = rpc_call('terminal', 'create', '--environment', host, '--worktree', worktree,
+                        '--title', AGY_PROBE_TITLE, '--command', 'agy models')
+    except SEND_ERRORS:
+        return ''
+    made = made.get('result', made) if isinstance(made, dict) else {}
+    terminal = (made.get('terminal') or {}).get('handle') if isinstance(made.get('terminal'), dict) else ''
+    if not terminal:
+        return ''
+    try:
+        rpc_call('terminal', 'wait', '--environment', host, '--terminal', terminal, '--for', 'exit',
+                 '--timeout-ms', str(AGY_PROBE_WAIT_MS))
+        return _agy_probe_text(json.dumps(rpc_call('terminal', 'read', '--environment', host, '--terminal', terminal,
+                                                   '--screen')))
+    except SEND_ERRORS:
+        return ''
+    finally:
+        try:
+            rpc_call('terminal', 'close', '--environment', host, '--terminal', terminal)
+        except SEND_ERRORS:
+            pass
+
+
+def agy_probe_notices(config, state, now, probe=None):
+    """Each host in host_caps is probed at most every 30 minutes. A signed out answer marks it (#1951).
+
+    Placement then skips it for antigravity: worker-startup swaps a marked host to claude and the standing
+    verifier route passes it by. No answer, an error or a timeout marks nothing.
+    """
+    agy = _agy_signin()
+    local = config.get('local_host') or ''
+    probe = probe or (lambda host: agy_probe_local() if host == local else agy_probe_remote(host))
+    cache = state.setdefault('agy_probe', {})
+    notices = []
+    for host in sorted(h for h in (config.get('host_caps') or {}) if isinstance(h, str) and h):
+        last = cache.get(host) if isinstance(cache.get(host), dict) else {}
+        if ('at' in last and now - float(last['at']) < AGY_PROBE_EVERY) or agy.is_unavailable(host, now=now):
+            continue
+        result = probe(host)
+        cache[host] = {'at': now, 'result': result or 'unknown'}
+        if result != 'out':
+            continue
+        try:
+            due = agy.mark(host, now=now)
+        except OSError as error:
+            print('fleet-watch: agy-unavailable record failed: %s' % (repr(error),), file=sys.stderr)
+            continue
+        if due:
+            notices.append(_agy_signin_line(host))
     return notices
 
 
@@ -11112,7 +11252,8 @@ def _main():
     notices += usage_gate_notices(state, now)
     if inventory_ok:
         try:
-            notices += agy_signin_notices(config, workers, now=now)
+            notices += agy_signin_notices(config, workers, now=now, state=state)
+            notices += agy_probe_notices(config, state, now)
         except Exception as error:
             print('fleet-watch: agy sign-in check skipped: %s' % (repr(error),), file=sys.stderr)
     stall_extra, stall_log = run_phase('stall', lambda: worker_stall_pass(

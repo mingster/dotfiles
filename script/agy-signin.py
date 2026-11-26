@@ -6,7 +6,7 @@
   agy-signin.py mark <host>         mark the host for 6 hours; print "notify" when a notice is due, else "known"
 
 A plain `agy -p` probe over ssh says "authentication failed" on a signed in host (the keychain is not
-reachable from ssh), so the worker screen is the only check.
+reachable from ssh), so fleet-watch probes with `agy models` in an Orca terminal on the host (#1951).
 """
 import json
 import os

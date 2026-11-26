@@ -1,0 +1,15 @@
+▄▀▀    ▀▀▄
+ ▄▀▀      ▀▀▄
+ Welcome to the Antigravity CLI. You are currently
+ not signed in.
+ ⣯
+ ⣷
+      ▄▀▀▄
+▀▀▀▀▀▀
+▀▀▀▀▀▀▀▀
+▄▀▀    ▀▀▄
+  ▄▀▀      ▀▀▄
+  Antigravity CLI 1.5.18
+  worker@example.com (Google AI Ultra)
+░▒▓ 󰀵  …/verify-12  worker/verify-12 $   v26.13.1   22:18 
+❯                                     hostb 

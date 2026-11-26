@@ -1,0 +1,1 @@
+fleet-watch: a `start_unknown` antigravity worker on the sign in screen marks its host, is stopped and released, has its issue put back and sends one line naming the host; each fleet host is also probed with `agy models` at most every 30 minutes, so placement skips a signed out host (#1951).
