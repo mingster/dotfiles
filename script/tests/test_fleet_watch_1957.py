@@ -165,5 +165,93 @@ class Babysit(unittest.TestCase):
         self.assertEqual(len(starts), 1, lines)
 
 
+HOUR = 1_795_687_200  # 2026-11-26T10:00:00Z
+FIXTURE_LOG = [
+    '2026-11-26T09:59:00Z pass ok 10.0s; live=20 started=0 refused=0 parked=0 failed=9 sent=0 send_failed=0 refused_reasons=',
+    '2026-11-26T10:00:05Z pass ok 10.0s; live=6; start_unknown=ctx_u1 started=1 refused=0 parked=0 failed=1 sent=0 send_failed=0 refused_reasons=',
+    '2026-11-26T10:05:05Z pass ok 10.0s; live=8; start_unknown=ctx_u1; dup_workers=ctx_d1; scan issue_start=3 started=1 refused=0 parked=0 failed=0 sent=0 send_failed=0 refused_reasons=',
+    '2026-11-26T10:10:05Z closed terminal term_x',
+    '2026-11-26T10:10:06Z pass ok 10.0s; live=7; dup_workers=ctx_d1,ctx_d2 started=0 refused=1 parked=0 failed=2 sent=0 send_failed=0 refused_reasons=max_workers:1',
+    '2026-11-26T11:00:01Z pass ok 10.0s; live=30 started=0 refused=0 parked=0 failed=5 sent=0 send_failed=0 refused_reasons=',
+]
+
+
+def merged(number, created, merged_at, receipts):
+    return {'number': number, 'createdAt': created, 'mergedAt': merged_at,
+            'comments': [{'body': '%s head=%s' % (r, 'a' * 40)} for r in receipts]}
+
+
+FIXTURE_PRS = [
+    merged(1, '2026-11-26T08:00:00Z', '2026-11-26T10:00:00Z', ['Review: PASS', 'Verdict: PASS']),
+    merged(2, '2026-11-26T09:00:00Z', '2026-11-26T10:30:00Z', ['Review: FAIL', 'Review: PASS', 'Verdict: PASS']),
+    merged(3, '2026-11-26T05:00:00Z', '2026-11-26T10:59:59Z', ['Review: PASS', 'Verdict: FAIL', 'Verdict: PASS']),
+    merged(4, '2026-11-26T05:00:00Z', '2026-11-26T11:00:00Z', ['Review: PASS']),  # next hour
+]
+
+
+class HourlyMetrics(unittest.TestCase):
+    def test_fixture_log_gives_the_expected_numbers(self):
+        line = fw.hourly_metrics_line(FIXTURE_LOG, FIXTURE_PRS, HOUR)
+        self.assertEqual(line, (
+            'metrics hour=2026-11-26T10 merged_per_h=3 review_first_pass=2/3 verdict_first_pass=2/3 '
+            'wasted_starts=6 (start_unknown=1 duplicate=2 failed_dispatch=3) '
+            'median_open_to_merge_h=2.0 mean_live=7.0 cost: n/a'))
+
+    def test_an_empty_hour_says_n_a(self):
+        self.assertEqual(fw.hourly_metrics_line([], [], HOUR), (
+            'metrics hour=2026-11-26T10 merged_per_h=0 review_first_pass=n/a verdict_first_pass=n/a '
+            'wasted_starts=0 (start_unknown=0 duplicate=0 failed_dispatch=0) '
+            'median_open_to_merge_h=n/a mean_live=n/a cost: n/a'))
+
+    def test_logs_once_per_hour_for_the_hour_that_ended(self):
+        cfg = {'babysit': {'repos': [APP]}}
+        state = {}
+        fetched = []
+        fetch = lambda repo, since: (fetched.append((repo, since)), FIXTURE_PRS)[1]  # noqa: E731
+        with patch.object(fw, 'log_fleet_watch') as logged:
+            self.assertIsNone(fw.maybe_log_hourly_metrics(cfg, state, HOUR + 30, fetch=fetch, log_lines=FIXTURE_LOG))
+            self.assertIsNone(fw.maybe_log_hourly_metrics(cfg, state, HOUR + 1800, fetch=fetch, log_lines=FIXTURE_LOG))
+            line = fw.maybe_log_hourly_metrics(cfg, state, HOUR + 3605, fetch=fetch, log_lines=FIXTURE_LOG)
+            self.assertIsNone(fw.maybe_log_hourly_metrics(cfg, state, HOUR + 3900, fetch=fetch, log_lines=FIXTURE_LOG))
+        self.assertTrue(line.startswith('metrics hour=2026-11-26T10 merged_per_h=3'), line)
+        logged.assert_called_once_with(line)
+        self.assertEqual(fetched, [(APP, HOUR)])
+
+    def test_digest_prints_the_last_twelve_metric_lines(self):
+        lines = ['2026-11-26T%02d:00:01Z metrics hour=2026-11-26T%02d merged_per_h=1' % (h, h) for h in range(14)]
+        lines.insert(3, '2026-11-26T03:00:02Z pass ok 1.0s; live=3')
+        digest = fw.metrics_digest(lines, 12)
+        self.assertEqual(len(digest), 12)
+        self.assertTrue(digest[0].endswith('hour=2026-11-26T02 merged_per_h=1'))
+        self.assertTrue(digest[-1].endswith('hour=2026-11-26T13 merged_per_h=1'))
+
+    def test_digest_flag_reads_the_log(self):
+        import os
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'fw.log'
+            log.write_text('\n'.join(FIXTURE_LOG + ['2026-11-26T11:00:02Z ' + fw.hourly_metrics_line(FIXTURE_LOG, FIXTURE_PRS, HOUR)]) + '\n')
+            out = subprocess.run(
+                [sys.executable, str(Path(fw.__file__)), '--metrics-digest', '12'], capture_output=True, text=True,
+                env=dict(os.environ, FLEET_WATCH_LOG_PATH=str(log)), timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.splitlines(), ['2026-11-26T11:00:02Z metrics hour=2026-11-26T10 merged_per_h=3 '
+                                                   'review_first_pass=2/3 verdict_first_pass=2/3 wasted_starts=6 '
+                                                   '(start_unknown=1 duplicate=2 failed_dispatch=3) '
+                                                   'median_open_to_merge_h=2.0 mean_live=7.0 cost: n/a'])
+
+    def test_pass_parts_name_unknown_and_duplicate_dispatches(self):
+        workers = [
+            {'dispatchId': 'ctx_a', 'state': 'running', 'name': '#5|qa-sdet'},
+            {'dispatchId': 'ctx_b', 'state': 'running', 'name': '#5|qa-sdet'},
+            {'dispatchId': 'ctx_c', 'state': 'running', 'name': '#5|fullstack-dev'},
+            {'dispatchId': 'ctx_u', 'status': 'start_unknown', 'name': '#6|fullstack-dev'},
+        ]
+        parts = fw.pass_waste_parts(workers)
+        self.assertEqual(parts[1:], ['start_unknown=ctx_u', 'dup_workers=ctx_b'])
+        self.assertTrue(parts[0].startswith('live='))
+
+
 if __name__ == '__main__':
     unittest.main()

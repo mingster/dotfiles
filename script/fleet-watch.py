@@ -2388,6 +2388,159 @@ def log_fleet_watch(message):
         pass
 
 
+METRICS_TAIL_BYTES = 8 * 1024 * 1024
+_RECEIPT_FIRST_RE = re.compile(r'^(Review|Verdict): (PASS|FAIL)\b')
+
+
+def _iso_epoch(text):
+    try:
+        return calendar.timegm(time.strptime(str(text)[:19], '%Y-%m-%dT%H:%M:%S'))
+    except (TypeError, ValueError):
+        return None
+
+
+def _first_receipts(pr):
+    """{'Review': 'PASS'|'FAIL', 'Verdict': ...}: the first receipt of each kind on the PR, in comment order."""
+    first = {}
+    for comment in pr.get('comments') or []:
+        body = (comment.get('body') or '') if isinstance(comment, dict) else ''
+        match = _RECEIPT_FIRST_RE.match(body)
+        if match and match.group(1) not in first:
+            first[match.group(1)] = match.group(2)
+    return first
+
+
+def _rate(passed, total):
+    return '%d/%d' % (passed, total) if total else 'n/a'
+
+
+def hourly_metrics_line(log_lines, merged_prs, hour_start):
+    """One `metrics` line for the hour starting at `hour_start` (#1957).
+
+    Pass lines give mean live workers (`live=N`), failed dispatches (`failed=N`) and the dispatch ids that were
+    start_unknown or a second live worker on the same `#N|role` title (counted once each per hour). Merged PRs
+    in the hour give merged/h, the first Review and first Verdict PASS rates, and the median open to merge hours.
+    No dollar usage reading exists, so cost is always n/a."""
+    prefix = time.strftime('%Y-%m-%dT%H', time.gmtime(hour_start))
+    lives, failed, unknown, dupes = [], 0, set(), set()
+    for raw in log_lines:
+        if not raw.startswith(prefix) or ' pass ' not in ' ' + raw[21:]:
+            continue
+        for token in raw[21:].replace(';', ' ').split():
+            key, _sep, value = token.partition('=')
+            if key == 'live' and value.isdigit():
+                lives.append(int(value))
+            elif key == 'failed' and value.isdigit():
+                failed += int(value)
+            elif key == 'start_unknown':
+                unknown.update(v for v in value.split(',') if v)
+            elif key == 'dup_workers':
+                dupes.update(v for v in value.split(',') if v)
+    merged, hours, review, verdict = 0, [], [0, 0], [0, 0]
+    for pr in merged_prs or []:
+        merged_at = _iso_epoch(pr.get('mergedAt'))
+        if merged_at is None or not hour_start <= merged_at < hour_start + 3600:
+            continue
+        merged += 1
+        created = _iso_epoch(pr.get('createdAt'))
+        if created is not None:
+            hours.append((merged_at - created) / 3600.0)
+        first = _first_receipts(pr)
+        for kind, tally in (('Review', review), ('Verdict', verdict)):
+            if kind in first:
+                tally[1] += 1
+                tally[0] += first[kind] == 'PASS'
+    hours.sort()
+    if not hours:
+        median = 'n/a'
+    else:
+        mid = len(hours) // 2
+        median = '%.1f' % (hours[mid] if len(hours) % 2 else (hours[mid - 1] + hours[mid]) / 2)
+    mean_live = '%.1f' % (sum(lives) / float(len(lives))) if lives else 'n/a'
+    wasted = len(unknown) + len(dupes) + failed
+    return ('metrics hour=%s merged_per_h=%d review_first_pass=%s verdict_first_pass=%s '
+            'wasted_starts=%d (start_unknown=%d duplicate=%d failed_dispatch=%d) '
+            'median_open_to_merge_h=%s mean_live=%s cost: n/a') % (
+        prefix, merged, _rate(*review), _rate(*verdict), wasted, len(unknown), len(dupes), failed, median, mean_live)
+
+
+def read_log_tail(path=None, limit=METRICS_TAIL_BYTES):
+    path = path or fleet_watch_log_path()
+    try:
+        with open(path, 'rb') as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - limit))
+            return handle.read().decode('utf-8', 'replace').splitlines()
+    except OSError:
+        return []
+
+
+def fetch_merged_for_metrics(repo, since, run=None):
+    """PRs merged since `since` (epoch) with open and merge times and receipts, or [] when gh fails."""
+    command = [
+        'gh', 'pr', 'list', '--repo', repo, '--state', 'merged', '--limit', '100',
+        '--search', 'merged:>=%s' % time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(since)),
+        '--json', 'number,createdAt,mergedAt,comments',
+    ]
+    try:
+        out = (run or subprocess.run)(command, capture_output=True, text=True, timeout=30, check=True).stdout
+        rows = json.loads(out)
+    except (subprocess.SubprocessError, OSError, ValueError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def maybe_log_hourly_metrics(config, state, now, fetch=None, log_lines=None):
+    """Once per clock hour: log the metrics line for the hour that just ended. Returns the line or None."""
+    hour = int(now // 3600) * 3600
+    last = state.get('metrics_hour_at')
+    if not isinstance(last, (int, float)):
+        state['metrics_hour_at'] = hour  # first pass: start counting from this hour
+        return None
+    if hour <= last:
+        return None
+    previous = hour - 3600
+    rows = []
+    for repo in babysit_repos(config):
+        rows.extend((fetch or fetch_merged_for_metrics)(repo, previous))
+    line = hourly_metrics_line(read_log_tail() if log_lines is None else log_lines, rows, previous)
+    log_fleet_watch(line)
+    state['metrics_hour_at'] = hour
+    return line
+
+
+def metrics_digest(log_lines, count=12):
+    """The last `count` hourly metrics lines, oldest first (wrap-up prints the last 12 hours)."""
+    lines = [line for line in log_lines if line[21:].startswith('metrics hour=')]
+    return lines[-count:] if count > 0 else []
+
+
+def pass_waste_parts(workers):
+    """`live=N`, plus the dispatch ids that are start_unknown or a second live worker on one `#N|role` title."""
+    parts = ['live=%d' % active_worker_count(workers)]
+    unknown, seen, dupes = [], set(), []
+    for w in workers or []:
+        if not isinstance(w, dict):
+            continue
+        dispatch = str(w.get('dispatchId') or w.get('id') or '')
+        if worker_inventory_status(w) == 'start_unknown' and dispatch:
+            unknown.append(dispatch)
+        if not worker_row_is_live(w):
+            continue
+        title = next((str(w.get(k) or '') for k in _VERIFIER_TITLE_KEYS if str(w.get(k) or '').startswith('#')), '')
+        match = re.match(r'^#\d+\|[a-z][a-z-]*', title)
+        if not match:
+            continue
+        if match.group(0) in seen and dispatch:
+            dupes.append(dispatch)
+        seen.add(match.group(0))
+    if unknown:
+        parts.append('start_unknown=%s' % ','.join(sorted(unknown)))
+    if dupes:
+        parts.append('dup_workers=%s' % ','.join(sorted(dupes)))
+    return parts
+
+
 class PassCounts:
     """One pass: six counters plus a refusal histogram. Zero stays on the line."""
 
@@ -10902,6 +11055,8 @@ def _main():
     parser.add_argument('--admit', type=str, default=None, help='Check host admission under cap')
     parser.add_argument('--admit-local', action='store_true', help='Check coordinator load, memory, and cap admission')
     parser.add_argument('--seats', action='store_true', help='Print live and retained seats per host and exit')
+    parser.add_argument('--metrics-digest', type=int, metavar='N', default=None,
+                        help='Print the last N hourly metrics lines from the log and exit (#1957)')
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
@@ -10909,6 +11064,11 @@ def _main():
     parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
     parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
+
+    if args.metrics_digest is not None:
+        for line in metrics_digest(read_log_tail(), args.metrics_digest):
+            print(line)
+        return 0
 
     if args.trial_summary:
         print(trial_summary(read_trial_rows()))
@@ -11281,6 +11441,8 @@ def _main():
         parts.append(pass_deadline_line())
     if not terminal_list_ok:
         parts.append('terminal_list_failed')
+    if inventory_ok:
+        parts.extend(pass_waste_parts(workers))  # read by the hourly metrics line (#1957)
     if backup_age is not None:
         parts.append('backup_age_s=%d' % int(backup_age))
         if backup_age > BACKUP_STALE_LOG:
@@ -11311,6 +11473,11 @@ def _main():
                 pass_prs[repo] = fetch_prs(repo)
         prune_closed_maps(state, pass_prs, {})
         prune_closed_issues(state, fetch_closed_issue_rows)
+        if not pass_deadline_reached():
+            try:
+                maybe_log_hourly_metrics(config, state, now)
+            except Exception as error:
+                print('fleet-watch: hourly metrics skipped: %s' % (repr(error),), file=sys.stderr)
         deliver_notices(config, state, notices, rpc, pass_start)
         if notices:
             print('fleet-watch: ' + '; '.join(str(notice) for notice in notices))

@@ -2975,6 +2975,11 @@ REMOTE
     tc=$("$here/fleet-toolchain-check.sh" 2>&1) || true
     [ -z "$tc" ] || echo "$tc"
   fi
+  # The last 12 hourly fleet-watch metrics lines (#1957).
+  if [ -f "$here/fleet-watch.py" ] && command -v python3 >/dev/null 2>&1; then
+    metrics=$(run_limited 30 python3 "$here/fleet-watch.py" --metrics-digest 12 2>/dev/null) || metrics=
+    if [ -n "$metrics" ]; then printf '\nFleet metrics (last 12 hours):\n%s\n' "$metrics"; fi
+  fi
   # Fresh Orca reply shapes for this version (#990). A scratch run, never the coordinator.
   if [ -f "$here/fleet-watch-record.py" ]; then
     if ! command -v python3 >/dev/null 2>&1; then
