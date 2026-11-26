@@ -1,0 +1,1 @@
+- wrap-up removes idle, clean `auto-*-run-*` automation worktrees with their terminals and branches (#1946).

@@ -88,6 +88,38 @@ git worktree add -qb finished "$tmp/finished worktree"
 bash "$here/wrap-up.sh" --apply > "$tmp/output"
 test ! -d "$tmp/finished worktree"
 if git show-ref --verify --quiet refs/heads/finished; then exit 1; fi
+# An automation "Run now" leaves an auto-*-run-* worktree with an idle agent terminal (#1946).
+auto_case() { # <name> <ms since last output>: sets wt, br and FAKE_TERMINALS
+  br="tester/auto-$1-run-1-100"; wt="$tmp/auto-$1-run-1-100"
+  git worktree add -qb "$br" "$wt" main
+  FAKE_TERMINALS=$(jq -nc --arg p "$(cd "$wt" && pwd -P)" --argjson at "$(( ($(date +%s) * 1000) - $2 ))" \
+    '[{handle:"term-auto",worktreePath:$p,connected:true,writable:true,agentIdentity:"claude",lastOutputAt:$at,preview:"done"}]')
+  export FAKE_TERMINALS
+}
+auto_kept() { # <label>
+  bash "$here/wrap-up.sh" --apply > "$tmp/output"
+  test -d "$wt" || { echo "removed: $1"; exit 1; }
+  git show-ref --verify --quiet "refs/heads/$br"
+  git worktree remove --force "$wt"; git branch -qD "$br"
+}
+auto_case idle 3600000
+bash "$here/wrap-up.sh" --apply > "$tmp/output"
+test ! -d "$wt" || { cat "$tmp/output"; echo 'idle automation worktree kept'; exit 1; }
+if git show-ref --verify --quiet "refs/heads/$br"; then echo 'automation branch kept'; exit 1; fi
+test "$(grep -c "^Cleaned automation run " "$tmp/output")" -eq 1
+auto_case commit 3600000
+git -C "$wt" commit -q --allow-empty -m work
+auto_kept 'automation worktree with a commit'
+auto_case dirty 3600000
+echo dirty > "$wt/untracked"
+auto_kept 'dirty automation worktree'
+auto_case recent 60000
+auto_kept 'automation worktree with recent output'
+auto_case fresh 3600000
+export FAKE_TERMINALS='[]'
+WRAP_UP_RECENT_MIN=30 auto_kept 'new automation worktree with no terminal yet'
+unset FAKE_TERMINALS
+echo 'ok idle clean automation run worktree removed with its branch; commit, dirty, recent and new kept'
 echo 'ok clean merged worktree removed'
 git worktree add -qb active "$tmp/active"
 export FAKE_TERMINALS="[{\"worktreePath\":\"$tmp/active\"}]"

@@ -78,6 +78,7 @@ What a round does, in order:
 
 1. Logs the free space of the home volume before.
 2. For each Orca git repo, runs `wrap-up.sh --apply`, as the prune in each `prune-repo` listed repo (issue #1853, see "Daily prune" below): every worktree, local branch and (on the coordinator host only) origin branch goes unless it is `main`, `production`, `staging` or active work.
+   Each repo run also cleans an automation "Run now" leftover (#1946), whatever its board status: an `auto-*-run-*` worktree on its `auto-*-run-*` branch that is clean, has no commit beyond `origin/main`, and whose terminals have exited or been silent for 30 minutes (with no terminal at all, the checkout must be 30 minutes old). Its terminals are stopped, the worktree and branch removed, and one `Cleaned automation run` line logged.
 3. Deletes `.next` and `node_modules/.cache` (top level and one level down) in every worktree it kept, unless a process uses it.
 4. Deletes logs: files older than 7 days (`WRAP_UP_DAILY_LOG_DAYS`) among `~/Library/Logs` (`*.log`, `*.log.*`, `*.ips`), rotated `~/.orca/logs/*.log.N`, and untracked `*.log` under agent-state; and any `*.log` over 100 MB (`WRAP_UP_DAILY_BIG_LOG_KB`) under `~/orca/workspaces` that nothing wrote in the last 3 hours. A live Orca log, a tracked file and a symlink are never touched.
 5. Runs `brew cleanup -s` and `bun pm cache rm` when the tool is installed (each at most 120 s).
