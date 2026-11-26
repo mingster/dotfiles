@@ -2761,7 +2761,7 @@ def _normalize_terminal_time_ms(value):
 
 
 GONE_REMOTE_KEY = '_remote_gone'
-ASK_REPLY_SECONDS = 15 * 60
+ASK_REPLY_SECONDS = 5 * 60
 ASK_TYPES = ('question', 'escalation')
 INBOX_LIMIT = 5000  # one inbox read; a reply this long may have cut older messages, such as an ask
 
@@ -2842,10 +2842,11 @@ def read_answered_asks(path=None):
 
 def unanswered_ask_notices(state, now, messages, workers, answered=()):
     """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
-    within 15 minutes (#1781).
+    within 5 minutes (#1781, #1947).
 
-    Messages carry no timestamp, so the age runs from the pass that first saw the ask. An ask has an answer when the
-    inbox marks it `handled` or its id is in `answered` (orca-reply.sh got answer_conflict) (#1838), when a later
+    Messages carry no timestamp, so the age runs from the pass that first saw the ask. Inbox `handled` only means
+    read, so it is no answer (#1947). An ask has an answer when its id is in `answered` (orca-reply.sh got
+    answer_conflict) (#1838), when a later
     non-ask message went to the worker's dispatch or terminal (one not already in the inbox when the ask was first
     seen), or when any non-ask message has the ask id as its thread id (what `orca orchestration reply --id` sends)."""
     live = {w['dispatchId']: w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
@@ -2868,7 +2869,7 @@ def unanswered_ask_notices(state, now, messages, workers, answered=()):
         if is_new:
             row.update(type=m['type'], subject=m.get('subject') or '', asked=m.get('created_at') or utc_stamp(now))
         was_answered = bool(row.get('answered'))
-        if m.get('handled') or mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
+        if mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
             row['answered'] = True
         asked = row.get('asked') or utc_stamp(row['at'])
         if is_new:
