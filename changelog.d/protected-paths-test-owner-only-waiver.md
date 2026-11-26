@@ -1,0 +1,1 @@
+Tests: the owner-only path checks in protected-paths.test.sh now run under the pre go-live waiver, so a plain Owner-approved trailer is proven to pass and an intent trailer is refused on hooks and settings paths (#1991).
