@@ -22,6 +22,7 @@ case "$*" in
       hang) exec sleep 30 ;;
       *) exit 1 ;;
     esac ;;
+  'environment list'*) exec sleep 30 ;; # board-clean's first call: a host that never answers
   'repo list --json')
     case "${FAKE_REPOS:-ok}" in
       ok) cat "$FAKE_REPO_LIST" ;;
@@ -93,6 +94,7 @@ round() {
     ${BOARD_DONE_CALLS:+BOARD_DONE_CALLS="$BOARD_DONE_CALLS"} \
     ${WRAP_UP_BOARD_CLEAN:+WRAP_UP_BOARD_CLEAN="$WRAP_UP_BOARD_CLEAN"} \
     ${BOARD_CLEAN_CALLS:+BOARD_CLEAN_CALLS="$BOARD_CLEAN_CALLS"} \
+    ${BOARD_TIMEOUT:+WRAP_UP_SCHEDULED_BOARD_TIMEOUT="$BOARD_TIMEOUT"} \
     bash "$script" --scheduled "$@"
 }
 # Bounded wait on a file the other side creates (no sleeps: it ends the moment the file exists, or after ~20 s of polling).
@@ -515,6 +517,23 @@ BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_
 check 'a failed repo still runs board-done' has '--fleet --apply' "$BOARD_DONE_CALLS"
 check 'a failed repo still runs board-clean' has '--fleet --apply' "$BOARD_CLEAN_CALLS"
 check 'a failed repo still logs a failed round' has 'round failed:' "$log"
+
+# A board-clean that runs out of time stops itself: wrap-up passes it a budget under the step limit (#1922).
+reset
+rm -f "$log" "$detail"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+BOARD_TIMEOUT=10 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" round
+check 'an out of time board-clean logs the budget line' has 'board-clean: time budget spent; the cards left are cleaned next round' "$detail"
+check 'an out of time board-clean exits 0, not 124' lacks 'board-clean exit' "$log"
+check 'an out of time board-clean is not named as timed out' lacks 'board-clean timed out' "$log"
+# A board step that is still killed leaves what it already printed in the detail log.
+reset
+rm -f "$log" "$detail"
+printf 'coordinator %s\n' "$(hostname -s)" > "$board_conf"
+printf 'import time\nprint("progress before the kill")\ntime.sleep(30)\n' > "$tmp/board-slow.py"
+BOARD_TIMEOUT=10 BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$board_stub" WRAP_UP_BOARD_CLEAN="$tmp/board-slow.py" round
+check 'the cut short step was killed' has 'board-clean exit 124' "$log"
+check 'a cut short board step keeps its output in the detail log' has 'progress before the kill' "$detail"
 
 printf '%s tests passed; %s failed\n' "$passed" "$failed"
 test "$failed" -eq 0

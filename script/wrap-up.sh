@@ -352,8 +352,9 @@ scheduled_round() {
         round_log "skip: $step (round budget spent)"
         continue
       fi
+      # board-clean stops itself 5 s before the kill (BOARD_CLEAN_BUDGET_S); unbuffered output survives a kill (#1922).
       if [[ "$step_bin" == *.py ]]; then
-        run_limited "$step_limit" python3 "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
+        BOARD_CLEAN_BUDGET_S=$((step_limit - 5)) PYTHONUNBUFFERED=1 run_limited "$step_limit" python3 "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
       else
         run_limited "$step_limit" bash "$step_bin" --fleet "$board_mode" >> "$detail_file" 2>&1
       fi
