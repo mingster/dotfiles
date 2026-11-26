@@ -13,6 +13,9 @@ mkdir -p "$MF_TOPLEVEL"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MF_BIN/cleanup"; chmod +x "$MF_BIN/cleanup"
 mf_orca_add_run run_a; mf_orca_add_worker run_a ctx_verify completed /w/v; mf_orca_add_worker run_a ctx_author completed /w/a
 cd "$MF_REPO" || exit 1
+# ship.sh checks the PR text for private names and fails without a pattern file.
+printf 'xyzzynomatch\nzzprivproj\n' >"$MF_DIR/names.pattern"
+export NO_PROJECT_NAMES_FILE="$MF_DIR/names.pattern"
 
 pass=0 fail=0
 ok() { echo "ok   $1"; pass=$((pass+1)); }
