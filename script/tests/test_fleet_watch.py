@@ -168,3 +168,50 @@ class BabysitReposFallbackTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class IssueHasLiveDispatchTests(unittest.TestCase):
+    """#1960: the same-issue guard matches a live worker by task title, task spec Refs or branch, not only the title."""
+
+    @staticmethod
+    def live(**extra):
+        # A real worker-list --full row (workspace is '<id>::<path>'); the pane title never reaches this row.
+        row = {'dispatchId': 'ctx_hand', 'taskId': 'task_hand', 'state': 'ready', 'outcome': 'in_progress',
+               'liveness': 'live', 'agent': 'claude', 'terminal': 'term_h', 'terminalState': 'active',
+               'workspace': 'ws_9::/workspaces/example/hand-start', 'host': 'local',
+               'projection': {}, 'dispatchStatus': 'running'}
+        row.update(extra)
+        return row
+
+    def test_task_title_still_matches(self):
+        self.assertTrue(fw.issue_has_live_dispatch([self.live(_task_title='#42|fullstack-dev')], 42))
+
+    def test_untitled_worker_whose_branch_names_the_issue_blocks(self):
+        for workspace in ('ws_9::/workspaces/example/b42', 'ws_9::/workspaces/example/w42'):
+            with self.subTest(workspace):
+                self.assertTrue(fw.issue_has_live_dispatch([self.live(workspace=workspace)], 42))
+        self.assertTrue(fw.issue_has_live_dispatch([self.live(branch='someone/b42')], 42))
+        self.assertFalse(fw.issue_has_live_dispatch([self.live(workspace='ws_9::/workspaces/example/b421')], 42))
+
+    def test_untitled_worker_whose_task_spec_refs_the_issue_blocks(self):
+        row = self.live(_task_spec='Refs owner/repo#42\n\n## Task\nbuild it')
+        self.assertTrue(fw.issue_has_live_dispatch([row], 42))
+        self.assertFalse(fw.issue_has_live_dispatch([row], 4))
+
+    def test_ended_worker_does_not_block(self):
+        row = self.live(workspace='ws_9::/workspaces/example/b42', dispatchStatus='completed')
+        self.assertFalse(fw.issue_has_live_dispatch([row], 42))
+
+    def test_fetch_workers_carries_the_task_spec(self):
+        def fake_rpc(*args):
+            if args[1] == 'task-list':
+                self.assertIn('--full', args)
+                return {'tasks': [{'id': 'task_hand', 'title': 'hand start', 'spec': 'Refs #42\n'}]}
+            raise AssertionError(args)
+
+        def fake_pages(*args):
+            yield {'workers': [self.live()]}
+        with patch.object(fw, 'rpc', fake_rpc), patch.object(fw, 'list_pages', fake_pages):
+            rows = fw.fetch_workers({'runs': [{'id': 'run_1'}]})
+        self.assertEqual(rows[0]['_task_spec'], 'Refs #42\n')
+        self.assertTrue(fw.issue_has_live_dispatch(rows, 42))

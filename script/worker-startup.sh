@@ -944,6 +944,18 @@ for w in workers:
     ttitle = t.get('title') or t.get('task_title') or t.get('display_name') or ''
     tm = re.match(r'^#[0-9]+\|([A-Za-z0-9_-]+)', ttitle)
     if not tm:
+        # A hand start with no "#N|role" title counts as a builder and holds the issues its spec Refs
+        # and its branch (worktree folder b<N> or w<N>) name.
+        if kind != 'builder' or not num:
+            continue
+        _, _, theirs = parse('', t.get('spec') or '')
+        for name in (str(w.get('workspace') or '').split('::')[-1], str(w.get('branch') or '')):
+            bm = re.search(r'(?:^|/)[bw]([0-9]+)$', name.rstrip('/'))
+            if bm:
+                theirs = theirs | {('', bm.group(1))}
+        if covers(theirs, repo, num):
+            print('%s\tbuilder\t%s' % ((repo or '') + '#' + num, w.get('dispatchId') or w.get('taskId') or '?'))
+            break
         continue
     trole = tm.group(1)
     if klass(trole) != kind:
@@ -1250,8 +1262,8 @@ run_label_gate() {
 
 # A qa-sdet start for a PR that already has a live verifier dispatch warns on stderr and goes on (#1222).
 # Best effort: a failed orca call or a missing jq never blocks a start.
-warn_live_verifier() { # <spec_file> <title> <name> <run>
-  local spec_file=$1 title=$2 name=$3 run=$4 role btype prs pr workers tasks
+warn_live_verifier() { # <spec_file> <title> <name> <run> <allow_reason>
+  local spec_file=$1 title=$2 name=$3 run=$4 allow=${5:-} role btype prs pr workers tasks head line id ltitle lhead
   role=$(role_from_title "$title")
   btype=$(sed -n 's/^Type:[[:space:]]*//p' "$spec_file" | head -1)
   [ "$role" = qa-sdet ] || [ "$btype" = verify ] || return 0
@@ -1265,19 +1277,32 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
   [ -n "$prs" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
   workers=$("$orca" orchestration worker-list --run "$run" --include-remote --json 2>/dev/null) || return 0
-  tasks=$("$orca" orchestration task-list --run "$run" --json 2>/dev/null) || tasks='{}'
+  tasks=$("$orca" orchestration task-list --run "$run" --full --json 2>/dev/null) || tasks='{}'
+  head=$(sed -nE 's/.*[Hh]ead[:= ]+([0-9a-f]{7,40}).*/\1/p' "$spec_file" | head -1)
   for pr in $prs; do
-    printf '%s\n%s\n' "$workers" "$tasks" | jq -rs --arg pr "$pr" '
+    while IFS=$'\t' read -r id ltitle lhead; do
+      [ -n "$id" ] || continue
+      # #1960: the same PR at the same head is a duplicate; another head (or none named) still warns and starts.
+      if [ -n "$head" ] && [ -n "$lhead" ] && { [[ $head == "$lhead"* ]] || [[ $lhead == "$head"* ]]; }; then
+        if [ -n "$allow" ]; then
+          echo "worker-startup: --allow-overlap: live verifier $id ($ltitle) already holds PR #$pr at head ${lhead:0:7}, starting anyway ($allow)" >&2
+          continue
+        fi
+        echo "worker-startup: refused: live verifier $id ($ltitle) already holds PR #$pr at head ${lhead:0:7}; pass --allow-overlap REASON to start a second one" >&2
+        exit 2
+      fi
+      echo "worker-startup: warning: live verifier $id ($ltitle) is already running for PR #$pr" >&2
+    done < <(printf '%s\n%s\n' "$workers" "$tasks" | jq -rs --arg pr "$pr" '
       (.[0].result.workers // .[0].workers // []) as $w
-      | ((.[1].result.tasks // .[1].tasks // []) | map({(.id): .title}) | add // {}) as $t
+      | ((.[1].result.tasks // .[1].tasks // []) | map({(.id): {title: .title, spec: (.spec // "")}}) | add // {}) as $t
       | $w[]
       | select(((.dispatchStatus // .workerState // .state // "") | ascii_downcase | test("^(completed|succeeded|failed|stopped|cancelled|abandoned|released)$")) | not)
       | select(((.liveness // .projection.liveness.verdict // "live") | tostring) as $l | ($l | test("^(exited|sleep|settled)$")) | not)
       | select((.terminalState // "active") | test("^(released|release_unknown)$") | not)
-      | {id: .dispatchId, title: ($t[.taskId] // .title // "")}
+      | {id: .dispatchId, title: ($t[.taskId].title // .title // ""), head: (($t[.taskId].spec // "") | capture("[Hh]ead[:= ]+(?<h>[0-9a-f]{7,40})").h // "")}
       | select(.title | test("^(#[0-9]+\\|)?qa-sdet"))
       | select((.title | sub("^#[0-9]+\\|qa-sdet"; "") | test("(^|[^0-9A-Za-z/.-])(#|PRs? #?)?" + $pr + "([^0-9A-Za-z.-]|$)")) or (.title | test("^#" + $pr + "\\|qa-sdet(\\|[^0-9]*)?$")) or (.title | test("verify-?" + $pr + "([^0-9]|$)")))
-      | "worker-startup: warning: live verifier \(.id) (\(.title)) is already running for PR #" + $pr' >&2 2>/dev/null || true
+      | [.id, .title, .head] | @tsv' 2>/dev/null)
   done
 }
 
@@ -1372,7 +1397,7 @@ run_mode() {
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"
   claim_repo_sel=$repo # the caller's own selector, before a remote placement rewrites it (#1778)
-  warn_live_verifier "$spec" "$title" "$name" "$run"
+  warn_live_verifier "$spec" "$title" "$name" "$run" "$allow_overlap"
   spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   lint_dir=${wt:-}
   if [ -z "$lint_dir" ] && [ "$agent" != cursor ]; then

@@ -163,6 +163,28 @@ def task_kind(spec_path: Path | None) -> str:
     return 'browser' if BROWSER_ROLE_LINE.search(text) else 'code'
 
 
+HEAVY_LINE = re.compile(r'^Heavy:\s*yes\b', re.IGNORECASE | re.MULTILINE)
+HEAVY_WORDS = re.compile(r'playwright|regression|xcodebuild|build-and-test\.sh|bun run build|head-checks-tsc|\btsc\b|\b(?:createdb|dropdb|psql|pg_dump|pg_restore)\b', re.IGNORECASE)
+
+
+def heavy_start(spec_path: Path | None) -> bool:
+    """True when the brief says `Heavy: yes`, its role is release-manager, or it names a heavy step (#1965)."""
+    if spec_path is None or not spec_path.is_file():
+        return False
+    try:
+        text = spec_path.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return False
+    role = ROLE_STAMP.search(text)
+    return bool(HEAVY_LINE.search(text) or (role and role.group(1) == 'release-manager') or HEAVY_WORDS.search(text))
+
+
+def light_only_hosts(config: dict) -> set[str]:
+    """Lowercase light_only_hosts of the fleet config; empty when the key is absent (#1965)."""
+    hosts = config.get('light_only_hosts')
+    return {str(h).lower() for h in hosts} if isinstance(hosts, list) else set()
+
+
 def needs_browser_host(spec_path: Path | None) -> bool:
     """True when the brief's `Worker role:` stamp is a role whose gate runs browser tests."""
     if spec_path is None or not spec_path.is_file():
@@ -544,6 +566,13 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
             continue
         share = workers / cap
         candidates.append((False, share, load5 / cores if cores > 0 else 0.0, index, host, load, ceiling, workers, cap))
+    light = light_only_hosts(config) if heavy_start(spec_path) else set()
+    held_light = sorted(c[4] for c in candidates if c[4].lower() in light)
+    candidates = [c for c in candidates if c[4].lower() not in light]
+    if held_light and not candidates:
+        reason = 'heavy start held (light-only hosts: %s)' % ', '.join(held_light)
+        print('worker-placement: ' + reason, file=sys.stderr)
+        return {'ok': False, 'reason': reason}
     if candidates:
         has_remote = any(c[4] != local_host for c in candidates)
         ranked = [(c[4] == local_host and has_remote,) + c[1:] for c in candidates]

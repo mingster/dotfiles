@@ -996,14 +996,15 @@ def run_id_for_stall_restart(w, persisted=''):
     return ''
 
 
-def task_titles(run_id):
-    """Map task id to title for a Run; empty when the task list cannot be read (worker rows then carry no title)."""
+def task_rows(run_id):
+    """Map task id to its task-list --full row for a Run; empty when the task list cannot be read (worker rows then
+    carry no title or spec)."""
     try:
-        result = rpc('orchestration', 'task-list', '--run', run_id)
+        result = rpc('orchestration', 'task-list', '--run', run_id, '--full')
     except Exception:
         return {}
     tasks = result.get('tasks') if isinstance(result, dict) else None
-    return {t['id']: t['title'] for t in tasks or [] if isinstance(t, dict) and t.get('id') and t.get('title')}
+    return {t['id']: t for t in tasks or [] if isinstance(t, dict) and t.get('id')}
 
 
 def fetch_workers(config):
@@ -1017,11 +1018,14 @@ def fetch_workers(config):
         run_ids = [run['id'] for page in list_pages('orchestration', 'run-list') for run in page['runs']]
     workers = []
     for run_id in run_ids:
-        titles = task_titles(run_id)
+        tasks = task_rows(run_id)
         for result in list_pages('orchestration', 'worker-list', '--run', run_id, '--include-remote', '--full'):
             for w in result.get('workers', []):
-                if isinstance(w, dict) and titles.get(worker_task_id(w)):
-                    w['_task_title'] = titles[worker_task_id(w)]
+                task = tasks.get(worker_task_id(w)) if isinstance(w, dict) else None
+                if task and task.get('title'):
+                    w['_task_title'] = task['title']
+                if task and isinstance(task.get('spec'), str):
+                    w['_task_spec'] = task['spec']
                 if isinstance(w, dict) and not worker_run_id(w):
                     w['_fleet_watch_list_run'] = run_id
                 workers.append(w)
@@ -2761,7 +2765,7 @@ def _normalize_terminal_time_ms(value):
 
 
 GONE_REMOTE_KEY = '_remote_gone'
-ASK_REPLY_SECONDS = 15 * 60
+ASK_REPLY_SECONDS = 5 * 60
 ASK_TYPES = ('question', 'escalation')
 INBOX_LIMIT = 5000  # one inbox read; a reply this long may have cut older messages, such as an ask
 
@@ -2842,10 +2846,11 @@ def read_answered_asks(path=None):
 
 def unanswered_ask_notices(state, now, messages, workers, answered=()):
     """Urgent notice, once per message, for a question or escalation from a live worker that nothing answered
-    within 15 minutes (#1781).
+    within 5 minutes (#1781, #1947).
 
-    Messages carry no timestamp, so the age runs from the pass that first saw the ask. An ask has an answer when the
-    inbox marks it `handled` or its id is in `answered` (orca-reply.sh got answer_conflict) (#1838), when a later
+    Messages carry no timestamp, so the age runs from the pass that first saw the ask. Inbox `handled` only means
+    read, so it is no answer (#1947). An ask has an answer when its id is in `answered` (orca-reply.sh got
+    answer_conflict) (#1838), when a later
     non-ask message went to the worker's dispatch or terminal (one not already in the inbox when the ask was first
     seen), or when any non-ask message has the ask id as its thread id (what `orca orchestration reply --id` sends)."""
     live = {w['dispatchId']: w for w in workers or [] if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w)}
@@ -2868,7 +2873,7 @@ def unanswered_ask_notices(state, now, messages, workers, answered=()):
         if is_new:
             row.update(type=m['type'], subject=m.get('subject') or '', asked=m.get('created_at') or utc_stamp(now))
         was_answered = bool(row.get('answered'))
-        if m.get('handled') or mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
+        if mid in answered or replies - set(row['before']) or _threaded_reply(messages, mid):
             row['answered'] = True
         asked = row.get('asked') or utc_stamp(row['at'])
         if is_new:
@@ -2942,6 +2947,9 @@ def waiting_on_coordinator(state, workers):
             if not row.get('answered') and row['dispatch'] in live}
 
 
+_FINISHED_WORKER_STATES = ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+
+
 def worker_row_is_live(w):
     """True when this worker-list row is an in-progress supervised worker (both JSON shapes)."""
     w = w or {}
@@ -2958,9 +2966,17 @@ def worker_row_is_live(w):
                 and w.get('dispatchStatus') not in ('completed', 'failed', 'cancelled', 'abandoned')
                 and (proj.get('outcome') or 'in_progress') == 'in_progress'
                 and ver != 'exited')
-    return (w.get('state') not in ('succeeded', 'completed', 'failed', 'cancelled', 'released', 'abandoned', 'stopped')
+    return (w.get('state') not in _FINISHED_WORKER_STATES
             and w.get('stage') != 'released' and w.get('terminalState') != 'released'
             and w.get('liveness') != 'exited')
+
+
+def holds_pass_terminal(w):
+    """True when a fleet_rows row's terminal and worktree stay open this pass. A remote row whose own host says
+    it finished (`_state`) does not hold them, though the coordinator's stub can still say ready."""
+    if (w or {}).get('_host') and w.get('_state') in _FINISHED_WORKER_STATES:
+        return False
+    return worker_row_is_live(w)
 
 
 def _server_as_of_epoch_seconds(w):
@@ -3537,6 +3553,7 @@ def set_board_status(rpc_call, worker, status, environment=''):
 # handle -> dispatch for every live worker the pass saw (#1947).
 _PROTECTED_HANDLES = set()
 _LIVE_TERMINALS = {}
+_UNREAD_WORKER_HOSTS = set()  # hosts whose worker list fleet_rows could not read this pass
 # worker-stop answers this for a dispatch that is already gone, so there is nothing left to stop (#1958).
 _STOP_SETTLED_CODES = frozenset(('dispatch_not_found',))
 
@@ -3651,7 +3668,7 @@ def protect_pass_terminals(config, workers):
                 if isinstance(row.get(key), str) and row[key].strip():
                     _PROTECTED_HANDLES.add(row[key].strip())
     for w in workers or []:
-        if isinstance(w, dict) and w.get('dispatchId') and worker_row_is_live(w):
+        if isinstance(w, dict) and w.get('dispatchId') and holds_pass_terminal(w):
             handle = w.get('_host_terminal') or worker_terminal_handle(w)
             if handle:
                 _LIVE_TERMINALS[handle] = w['dispatchId']
@@ -3661,6 +3678,91 @@ def _worker_state(w):
     """Worker state in either worker-list shape: workerState (--full), state, or projection.stage.worker."""
     stage = (w.get('projection') or {}).get('stage') if isinstance(w.get('projection'), dict) else None
     return w.get('workerState') or w.get('state') or (stage.get('worker') if isinstance(stage, dict) else None)
+
+
+START_UNKNOWN_RESEND_SECONDS = 10 * 60
+START_UNKNOWN_REAP_SECONDS = 20 * 60  # from first seen; the reap waits for a real resend too
+
+
+def resend_brief(rpc_call, row):
+    """Send the dispatch's brief into its terminal again, on the row's host. True when it was sent (#1962)."""
+    did = (row or {}).get('dispatchId') or ''
+    task = row.get('taskId')
+    host = row.get('_host') or ''
+    handle = resolve_worker_terminal(rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
+    if not task or not handle or close_guard(handle, did):
+        return False
+    try:
+        shown = rpc_call('orchestration', 'dispatch-show', '--task', task, '--preamble', *_env_args(host))
+        brief = shown.get('preamble') if isinstance(shown, dict) else None
+        if not isinstance(brief, str) or not brief.strip():
+            return False
+        rpc_call('terminal', 'send', *_env_args(host), '--terminal', handle, '--text', brief, '--enter')
+    except SEND_ERRORS:
+        return False
+    return True
+
+
+def start_unknown_reaper(config, state, now, rows, rpc_call, release, act=None):
+    """A worker still start_unknown after 10 minutes gets its brief once more; at 20 minutes, with the resend
+    done, it is released and its issue put back to ready-for-agent, with one Urgent (#1962). The book is
+    state['start_unknown']; a row whose host could not be read is left for a later pass. Returns the notices."""
+    book = state.setdefault('start_unknown', {})
+    seen, notices = set(), []
+    for w in rows or []:
+        if not isinstance(w, dict) or not w.get('dispatchId'):
+            continue
+        if w.get('_host_read') is False:
+            if w['dispatchId'] in book:
+                seen.add(w['dispatchId'])
+            continue
+        if (w.get('_state') or _worker_state(w)) != 'start_unknown':
+            continue
+        did = w['dispatchId']
+        if release_held(state, did):
+            continue
+        seen.add(did)
+        entry = book.setdefault(did, {'at': now})
+        if entry.get('reaped'):
+            continue
+        if not entry.get('resent_at'):
+            if now - entry['at'] >= START_UNKNOWN_RESEND_SECONDS:
+                sent = resend_brief(rpc_call, w)
+                if sent:
+                    entry['resent_at'] = now
+                log_fleet_watch('start_unknown %s: brief resent%s' % (did, '' if sent else ' failed, retry next pass'))
+            continue
+        if (now - entry['at'] < START_UNKNOWN_REAP_SECONDS
+                or now - entry['resent_at'] < START_UNKNOWN_REAP_SECONDS - START_UNKNOWN_RESEND_SECONDS):
+            continue
+        closed = release(w)
+        if closed not in ('closed', 'kept:no_handle'):
+            log_fleet_watch('start_unknown %s: release %s, retry next pass' % (did, closed))
+            continue
+        entry['reaped'] = True
+        number = _worker_issue_number(w)
+        repo = w.get('_repo') or ''
+        back = ''
+        if number and not worker_pr_number(w):
+            if repo and (act or run_gh)(['gh', 'issue', 'edit', str(number), '--repo', repo, '--add-label',
+                                         'ready-for-agent', '--remove-label', ISSUE_CLAIM_LABEL]) == 0:
+                back = '; %s#%d back to ready-for-agent' % (repo, number)
+            else:
+                back = '; put issue #%d back to ready-for-agent by hand (%s)' % (
+                    number, 'gh edit failed' if repo else 'repo unknown here')
+        line = 'start_unknown %s did not start in %d minutes after a resent brief: released, terminal %s%s' % (
+            did, (now - entry['at']) // 60, closed, back)
+        log_fleet_watch(line)
+        notices.append(Urgent(line))
+    for did in list(book):
+        if did not in seen:
+            book.pop(did)
+    return notices
+
+
+def reaper_owned(state):
+    """Dispatches the start_unknown reaper is handling, which the stall ladder leaves alone."""
+    return set(state.get('start_unknown') or {})
 
 
 ACTIVE_WORKER_PAGES = 10
@@ -3693,6 +3795,66 @@ def host_workers(rpc_call, on):
     return None
 
 
+ORPHAN_IDLE_SECONDS = 15 * 60
+_WORKER_TITLE_RE = re.compile(r'^#\d+\|[\w-]+')
+_RUN_TITLE_RE = re.compile(r'^[\w.-]+ run \d+\b')
+_RUN_WORKTREE_RE = re.compile(r'^auto-[\w.-]+-run-\d+')
+
+
+def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
+    """Close a worker (`#N|role`), automation run (`<job> run N`) or `auto-<job>-run-<n>` worktree terminal that no
+    live row holds and that has been idle 15 minutes or more, on each fleet host (#1963). `hosts` are environment
+    names, '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, whose
+    rows carry `_host_read: False`, or whose worker list fleet_rows could not read, is skipped. A terminal with no lastOutputAt counts as not idle. Closing goes
+    through close_worker_terminal, so close_guard keeps the coordinator's and live terminals. With `dry_run`, each
+    terminal it would close is passed to dry_run as one line and nothing is closed. Returns the handles closed."""
+    names = environment_name_by_id() if any(hosts or ()) else {}
+    unread, live_handles, live_paths = set(_UNREAD_WORKER_HOSTS), set(), set()
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        host = row.get('_host') or ''
+        if row.get('_host_read') is False:
+            unread.add(names.get(host) or host)
+        if not holds_pass_terminal(row):
+            continue
+        live_handles.add(row.get('_host_terminal') or worker_terminal_handle(row))
+        ws = row.get('_host_workspace') or worker_checkout_path(row)
+        live_paths.add(ws.split('::', 1)[1] if '::' in ws else ws)
+    live_handles.discard('')
+    live_paths.discard('')
+    closed = []
+    for env in hosts or ():
+        if env in unread:
+            continue
+        try:
+            terms = (rpc_call('terminal', 'list', *_env_args(env)) or {}).get('terminals')
+        except SEND_ERRORS:
+            continue
+        if not isinstance(terms, list):
+            continue
+        for t in terms:
+            if not isinstance(t, dict) or not t.get('handle'):
+                continue
+            handle, title = t['handle'], str(t.get('title') or '')
+            path = str(t.get('worktreePath') or '').rstrip('/')
+            if not (_WORKER_TITLE_RE.match(title) or _RUN_TITLE_RE.match(title)
+                    or _RUN_WORKTREE_RE.match(path.split('/')[-1])):
+                continue
+            if handle in live_handles or (path and path in live_paths) or close_guard(handle):
+                continue
+            last = t.get('lastOutputAt')  # ms; 0 or a bool is no known output time
+            if (isinstance(last, bool) or not isinstance(last, (int, float)) or last <= 0
+                    or now - last / 1000.0 < ORPHAN_IDLE_SECONDS):
+                continue
+            if dry_run is not None:
+                dry_run('orphan sweep: would close %s (%s) on %s, idle %dm' % (
+                    handle, title, env or 'this host', (now - last / 1000.0) // 60))
+            elif close_worker_terminal(rpc_call, handle, env) == 'closed':
+                closed.append(handle)
+    return closed
+
+
 def sweep_hosts(config):
     """'' for this host plus every Orca environment name except the coordinator's own."""
     local = (config or {}).get('local_host')
@@ -3714,9 +3876,11 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
     """The pass's worker rows, one per dispatchId (#1958). The coordinator row is the base; for a remote
     dispatch the host's own row adds `_state` and the terminal handle (`_host_terminal`). The host fields stay
     in underscore keys, so the passes that read `terminal` or `projection` see the row as before.
-    A host that cannot be read sets `_host_read: False` on its rows. Host rows the coordinator lacks are dropped."""
+    A host that cannot be read sets `_host_read: False` on its rows and is kept in _UNREAD_WORKER_HOSTS, even with
+    no coordinator row on it. Host rows the coordinator lacks are dropped."""
     names = environment_name_by_id() if any(hosts or ()) else {}
     on_host, unread = {}, set()
+    _UNREAD_WORKER_HOSTS.clear()
     for env in hosts or ():
         if not env:
             continue
@@ -3726,6 +3890,7 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
             listed = None
         if listed is None:
             unread.add(env)
+            _UNREAD_WORKER_HOSTS.add(env)
             continue
         for w in listed:
             if w.get('dispatchId'):
@@ -3748,6 +3913,9 @@ def fleet_rows(config, coordinator_rows, hosts, rpc_call, state=None):
                 handle = worker_terminal_handle(mine)
                 if handle:
                     row['_host_terminal'] = handle
+                workspace = worker_worktree_selector(mine)
+                if workspace:
+                    row['_host_workspace'] = workspace
             row['_host_read'] = (names.get(host) or host) not in unread
         if did:
             index[did] = len(rows)
@@ -3865,8 +4033,10 @@ def stall_holds_work(worker):
 
 def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=None, terminal_list_ok=True,
                      terminal_branches=None, inventory_ok=True, head_of=None, holds_work=None, pr_list=None,
-                     waiting=()):
+                     waiting=(), reaper=()):
     """Restart our own silent workers once; report every other stalled worker once and do not stop it.
+
+    `waiting` keeps a worker off the nudge ladder; `reaper` (the start_unknown reaper's dispatches) is left alone.
 
     A failed restart is parked with the recorded message. A usage-gate or host-cap refusal is retried.
     """
@@ -4184,7 +4354,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
                 retry_startup_failed(w, did)
             continue
         # A held dispatch is never nudged, stopped or restarted; the hold notice reports it instead (#1849).
-        if release_held(state, did):
+        # Nor is one the start_unknown reaper owns: it resends and releases it (#1962).
+        if release_held(state, did) or did in reaper:
             continue
         term = worker_terminal_handle(w)
         host_id = worker_execution_host_id(w)
@@ -5380,13 +5551,30 @@ def live_start_title(command, workers):
     )
 
 
+_SPEC_REFS_LINE_RE = re.compile(r'^(?:Issues|Refs):?\s.*$', re.M)
+_BRANCH_ISSUE_RE = re.compile(r'(?:^|/)[bw]([0-9]+)$')
+
+
+def _live_row_names_issue(w, number):
+    """True when the row's task title starts with '#<number>|', its task spec has #<number> on a Refs or Issues
+    line, or its branch (or worktree folder) is <user>/b<number> or w<number> (#1692, #1960)."""
+    if str(w.get('_task_title') or '').startswith('#%d|' % number):
+        return True
+    refs = ' '.join(_SPEC_REFS_LINE_RE.findall(str(w.get('_task_spec') or '')))
+    if re.search(r'#%d(?![0-9])' % number, refs):
+        return True
+    for name in (worker_branch_name(w), worker_checkout_path(w), w.get('_host_workspace')):
+        match = _BRANCH_ISSUE_RE.search(str(name or '').rstrip('/'))
+        if match and int(match.group(1)) == number:
+            return True
+    return False
+
+
 def issue_has_live_dispatch(workers, number):
-    """True when a live worker's task title starts with '#<number>|', whatever the issue's labels say (#1692)."""
-    prefix = '#%d|' % number
-    return any(
-        isinstance(w, dict) and str(w.get('_task_title') or '').startswith(prefix) and worker_row_is_live(w)
-        for w in workers or []
-    )
+    """True when a live worker holds issue <number> by task title, task spec or branch, whatever the issue's labels
+    say (#1692). A hand start whose title never set still blocks a second builder (#1960)."""
+    return any(isinstance(w, dict) and worker_row_is_live(w) and _live_row_names_issue(w, number)
+               for w in workers or [])
 
 
 def build_issue_start_command(config, repo, issue_row, placement=None, route=None):
@@ -11479,6 +11667,8 @@ def _main():
     parser.add_argument('--json', action='store_true', help='Emit JSON output')
     parser.add_argument('--babysit-only', action='store_true', help='Run only the babysit dispatch pass')
     parser.add_argument('--babysit-dry-run', action='store_true', help='List babysit dispatches and start nothing')
+    parser.add_argument('--sweep-dry-run', action='store_true',
+                        help='List the idle orphan terminals the sweep would close and close nothing (#1963)')
     parser.add_argument('--workers-json', type=Path, default=None, help='Worker rows used to read a builder dispatch record')
     parser.add_argument('--next-issue', action='store_true', help='Print the ready issue to start next, in issue scan order, and exit')
     parser.add_argument('--release-worker', metavar='FRAGMENT', default=None,
@@ -11545,6 +11735,21 @@ def _main():
     if adopted is not None:
         print('fleet-watch: using coordinator config %s' % adopted, file=sys.stderr)
     remember_config_mtime(config, adopted or args.config)
+
+    if args.sweep_dry_run:
+        # Read only: no state file needed, and no pass lock, so it never blocks or skips a real pass.
+        state = json.loads(args.state.read_text()) if args.state and args.state.exists() else {}
+        apply_active_run(config)
+        try:
+            workers = fetch_workers(config)
+        except Exception as error:
+            print('fleet-watch: Orca workers unavailable: %s' % (repr(error),), file=sys.stderr)
+            return 1
+        hosts = sweep_hosts(config)
+        workers = fleet_rows(config, workers, hosts, rpc, state)
+        protect_pass_terminals(config, workers)
+        orphan_terminal_sweep(config, time.time(), rpc, hosts, workers, dry_run=print)
+        return 0
 
     if not args.state:
         parser.error('--state is required when --admit is not specified')
@@ -11783,6 +11988,11 @@ def _main():
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
     notices += idle_extra
     if inventory_ok:
+        # Without the pass rows every worker looks gone: no reap, no sweep, and the reaper book is kept.
+        notices += run_phase('reap', lambda: start_unknown_reaper(config, state, now, workers, rpc, _release_row), [])
+        swept = run_phase('sweep', lambda: orphan_terminal_sweep(config, now, rpc, sweep_hosts(config), workers), [])
+        if swept:
+            print('fleet-watch: closed %d orphan terminal(s): %s' % (len(swept), ' '.join(swept)))
         notices += supply_done_notices(inv['messages'], workers, state)
 
     def supply_first():
@@ -11838,7 +12048,8 @@ def _main():
     stall_extra, stall_log = run_phase('stall', lambda: worker_stall_pass(
         config, state, now, workers, term_times, rpc,
         terminal_list_ok=terminal_list_ok, terminal_branches=term_branches,
-        inventory_ok=inventory_ok, pr_list=fetch_once, waiting=waiting_on_coordinator(state, workers)), ([], []))
+        inventory_ok=inventory_ok, pr_list=fetch_once,
+        waiting=waiting_on_coordinator(state, workers), reaper=reaper_owned(state)), ([], []))
     notices += stall_extra
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,

@@ -1,4 +1,5 @@
 {
+  "light_only_hosts": [],
   "runs": [],
   "go_live_date": "2099-01-01",
   "work_order": {

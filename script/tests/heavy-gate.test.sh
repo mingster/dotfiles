@@ -1406,6 +1406,44 @@ mod.log_heavy_gate_wait(marker)
             self.assertIn(f'wait_s={marker:.3f}', body, body)
 
 
+class LightOnlyHostTests(unittest.TestCase):
+    """#1965: heavy-gate gate on a light_only_hosts host refuses a heavy command with exit 3."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.fleet = pathlib.Path(temp.name)/'fleet.json'
+
+    def run_gate(self, command, hosts, host='Light-Host.local'):
+        self.fleet.write_text(json.dumps({} if hosts is None else {'light_only_hosts': hosts}))
+        args = module.argparse.Namespace(weight=1, command=['--'] + command, measure=False)
+        err = io.StringIO()
+        env = {'FLEET_WATCH_CONFIG': str(self.fleet), 'HEAVY_GATE_HOST': host}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stderr(err), \
+             mock.patch.object(module, 'measure_gate', return_value=0) as ran:
+            args.measure = True  # a command that passes the light-only check goes on to run; stub that run
+            code = module.gate(args)
+        return code, err.getvalue(), ran.called
+
+    def test_refuses_build_and_playwright_on_a_light_only_host(self):
+        for command in (['bun', 'run', 'build'], ['bunx', 'playwright', 'test'], ['bunx', 'tsc', '--noEmit'],
+                        ['psql', '-c', 'select 1']):
+            code, err, ran = self.run_gate(command, ['light-host'])
+            self.assertEqual(code, 3, command)
+            self.assertFalse(ran, command)
+            self.assertIn('heavy-gate: refused: light-host is a light-only host', err)
+            self.assertIn('push and let a heavy host run it', err)
+
+    def test_allows_one_test_file_on_a_light_only_host(self):
+        code, err, ran = self.run_gate(['bun', 'test', 'src/one.test.ts'], ['light-host'])
+        self.assertEqual((code, ran), (0, True))
+        self.assertNotIn('refused', err)
+
+    def test_other_hosts_and_no_key_behave_as_today(self):
+        self.assertEqual(self.run_gate(['bun', 'run', 'build'], ['light-host'], host='big-host')[::2], (0, True))
+        self.assertEqual(self.run_gate(['bun', 'run', 'build'], None)[::2], (0, True))
+
+
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):
         return [dict(copies=n, wall_seconds=w, peak_memory_percent=m)
@@ -1429,6 +1467,7 @@ class CalibrationMathTests(unittest.TestCase):
 
 
 suite = unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(GateTests),
+                           unittest.defaultTestLoader.loadTestsFromTestCase(LightOnlyHostTests),
                            unittest.defaultTestLoader.loadTestsFromTestCase(CalibrationMathTests)])
 if os.environ.get('HEAVY_GATE_TEST_FILTER'):
     names = os.environ['HEAVY_GATE_TEST_FILTER'].split(',')

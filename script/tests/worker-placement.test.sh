@@ -517,4 +517,43 @@ echo "$dead" >"$hold_home/orca/workspaces/app/_db-host_remote__home_u_lead_train
 out=$(held_pick "$tmp/held-only.json") || fail "a lock whose run exited must not hold the host: $out"
 [ "$(jq -r '.host' <<<"$out")" = host-remote ] || fail "a dead lock frees the host: $out"
 
+# #1965: a heavy start never lands on a light_only_hosts host; a light one still does. No key means no rule.
+cat >"$tmp/load-light.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-light cores=8 load=0.5 1.0 1.0\n'
+printf 'host-big cores=8 load=20.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-light.sh"
+lo_cfg() { # <extra json key or empty> <file>
+  cat >"$2" <<EOS
+{
+  $1
+  "host_caps": {"host-light": 5, "host-big": 4},
+  "host_load_ceilings": {"host-light": 12, "host-big": 12},
+  "worker_placement": {"order": ["host-light", "host-big"], "repos": {}}
+}
+EOS
+}
+lo_cfg '"light_only_hosts": ["Host-Light"],' "$tmp/lo.json"
+lo_cfg '' "$tmp/lo-none.json"
+printf 'Worker role: fullstack-dev\n\nRun bunx playwright test before you push.\n' >"$tmp/heavy-brief.md"
+printf 'Worker role: fullstack-dev\nHeavy: yes\n\nFix a typo.\n' >"$tmp/heavy-flag-brief.md"
+printf 'Worker role: release-manager\n\nDeploy staging.\n' >"$tmp/release-brief.md"
+printf 'Worker role: fullstack-dev\n\nFix a typo in the README.\n' >"$tmp/light-brief.md"
+lo_pick() { # <config> <brief>
+  FLEET_LOAD_SCRIPT="$tmp/load-light.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" pick --spec "$2" --json
+}
+printf 'Worker role: fullstack-dev\n\nVerify: bunx tsc --noEmit\n' >"$tmp/tsc-brief.md"
+printf 'Worker role: fullstack-dev\n\nVerify: psql -c "select 1"\n' >"$tmp/db-brief.md"
+for brief in heavy-brief heavy-flag-brief release-brief tsc-brief db-brief; do
+  ec=0; out=$(lo_pick "$tmp/lo.json" "$tmp/$brief.md" 2>"$tmp/lo.err") || ec=$?
+  [ "$ec" = 1 ] || fail "$brief with room only on a light-only host must be held (ec=$ec): $out"
+  grep -Fq 'worker-placement: heavy start held (light-only hosts: host-light)' "$tmp/lo.err" \
+    || fail "$brief hold must print the held line: $(cat "$tmp/lo.err")"
+done
+out=$(lo_pick "$tmp/lo.json" "$tmp/light-brief.md" 2>/dev/null) || fail "a light brief must place on the light-only host: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-light ] || fail "a light brief places on the light-only host: $out"
+out=$(lo_pick "$tmp/lo-none.json" "$tmp/heavy-brief.md" 2>/dev/null) || fail "no light_only_hosts key must change nothing: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-light ] || fail "no light_only_hosts key keeps normal placement: $out"
+
 echo "worker-placement.test.sh passed"

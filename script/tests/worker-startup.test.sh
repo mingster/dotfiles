@@ -2321,7 +2321,7 @@ case " \$* " in
     echo '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_live1","taskId":"task_v1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_live2","taskId":"task_b1","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_rem1","taskId":"task_r1","dispatchStatus":"dispatched","workerState":"ready","terminalState":null},{"dispatchId":"ctx_done1","taskId":"task_d1","dispatchStatus":"completed","workerState":"succeeded","terminalState":null}]}}'
     exit 0 ;;
   *" orchestration task-list "*)
-    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77"},{"id":"task_b1","title":"#78|fullstack-dev"},{"id":"task_r1","title":"#1262|qa-sdet|verify 1263"},{"id":"task_d1","title":"#1300|qa-sdet|verify 1301"}]}}'
+    echo '{"ok":true,"result":{"tasks":[{"id":"task_v1","title":"#9|qa-sdet|verify PR 77","spec":"Role: qa-sdet. Verify this open PR at head abc1234def the way a user would."},{"id":"task_b1","title":"#78|fullstack-dev"},{"id":"task_r1","title":"#1262|qa-sdet|verify 1263"},{"id":"task_d1","title":"#1300|qa-sdet|verify 1301"}]}}'
     exit 0 ;;
 esac
 exec "$orca_stub" "\$@"
@@ -2335,7 +2335,7 @@ live_verifier_run() { # <title> [extra args...]
     FLEET_PULL_CONFIG="$tmp/fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
     USAGE_GATE_PICK="$tmp/pick-stub.py" USAGE_GATE_PRESETS="$root/.orca/presets.json" \
     PICK_STUB_MODE=sonnet PICK_STUB_LOG="$tmp/pick-stub.log" WORKER_STARTUP_STATE="$route_state" \
-    bash --noprofile --norc "$script" --run run_route --spec "$spec_file" --title "$1" --agent claude --model claude-sonnet-5-5-medium \
+    bash --noprofile --norc "$script" --run run_route --spec "${LIVE_SPEC:-$spec_file}" --title "$1" --agent claude --model claude-sonnet-5-5-medium \
     --from term_coord --repo "path:$clean" "${@:2}" >"$tmp/live.out" 2>"$tmp/live.err"
   live_ec=$?
   set -e
@@ -2351,6 +2351,17 @@ live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77
 grep -Fq 'worker-startup: warning: live verifier ctx_live1 (#9|qa-sdet|verify PR 77) is already running for PR #77' "$tmp/live.err" && ok || bad "duplicate verifier should warn naming the live dispatch ($(cat "$tmp/live.err"))"
 grep -q 'ctx_live2' "$tmp/live.err" && bad "a live builder must not be named" || ok
 grep -q 'worker-start' "$tmp/orca-live.log" && ok || bad "the duplicate verifier should still reach worker-start"
+# 1960: a second verifier for the same PR and head is refused (exit 2); another head starts; --allow-overlap overrides.
+printf 'Refs acme/app#77\n\nVerify this open PR at head abc1234def5678 the way a user would.\n\n%s\n' "$(cat "$spec_file")" >"$tmp/verify-same-head.md"
+printf 'Refs acme/app#77\n\nVerify this open PR at head 0f0f0f0f the way a user would.\n\n%s\n' "$(cat "$spec_file")" >"$tmp/verify-new-head.md"
+LIVE_SPEC="$tmp/verify-same-head.md" live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77
+[ "$live_ec" = 2 ] && ok || bad "1960: a second verifier for the same PR and head exits 2 (ec=$live_ec) $(cat "$tmp/live.err")"
+grep -Fq 'refused: live verifier ctx_live1 (#9|qa-sdet|verify PR 77) already holds PR #77 at head abc1234' "$tmp/live.err" && ok || bad "1960: the refusal names the live verifier and head ($(cat "$tmp/live.err"))"
+grep -q 'worker-start' "$tmp/orca-live.log" && bad "1960: a refused verifier must not reach worker-start" || ok
+LIVE_SPEC="$tmp/verify-new-head.md" live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77
+[ "$live_ec" = 0 ] && grep -q 'worker-start' "$tmp/orca-live.log" && ok || bad "1960: a verifier for a new head starts (ec=$live_ec) $(cat "$tmp/live.err")"
+LIVE_SPEC="$tmp/verify-same-head.md" live_verifier_run "#99|qa-sdet|verify PR 77" --name verify-77 --allow-overlap "owner asked"
+[ "$live_ec" = 0 ] && grep -Fq 'allow-overlap: live verifier ctx_live1' "$tmp/live.err" && ok || bad "1960: --allow-overlap starts a second verifier and says so (ec=$live_ec) $(cat "$tmp/live.err")"
 live_verifier_run "#99|qa-sdet|standing" --name verify-78
 grep -q 'warning: live verifier' "$tmp/live.err" && bad "a verifier for another PR must not warn ($(cat "$tmp/live.err"))" || ok
 live_verifier_run "#79|fullstack-dev" --name verify-77
@@ -2602,9 +2613,17 @@ case " \$* " in
     [ -z "\${DUP_LIST_FAIL:-}" ] || { echo '{"ok":false,"error":{"message":"runtime unavailable"}}'; exit 1; }
     [ -z "\${DUP_LIST_GARBAGE:-}" ] || { echo 'warning: slow runtime'; echo '{"ok":true}'; exit 0; }
     [ -z "\${DUP_LIST_NOTOK:-}" ] || { echo '{"ok":false,"error":{"message":"no such run"}}'; exit 0; }
+    if [ -n "\${DUP_HAND:-}" ]; then
+      printf '%s\n' '{"ok":true,"result":{"tasks":[{"id":"task_h1","status":"dispatched","title":"hand start","spec":"Refs acme/app#1810\n"},{"id":"task_h2","status":"dispatched","title":""}]}}'
+      exit 0
+    fi
     printf '%s\n' '{"ok":true,"result":{"tasks":[{"id":"task_a","status":"dispatched","task_title":"#1745|fullstack-dev|bundle","spec":"Refs acme/app#1745\nIssues: #1745 #1746\n"},{"id":"task_old","status":"ready","task_title":"#1800|fullstack-dev"}]}}'
     exit 0 ;;
   *" orchestration worker-list "*)
+    if [ -n "\${DUP_HAND:-}" ]; then
+      printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_hand1","taskId":"task_h1","state":"ready","liveness":"live","terminalState":"active","workspace":"ws_1::/workspaces/app/hand"},{"dispatchId":"ctx_hand2","taskId":"task_h2","state":"ready","liveness":"live","terminalState":"active","workspace":"ws_2::/workspaces/app/b1820"}]}}'
+      exit 0
+    fi
     printf '%s\n' '{"ok":true,"result":{"workers":[{"dispatchId":"ctx_dup1","taskId":"task_a","state":"ready","liveness":"live","terminalState":"active"},{"dispatchId":"ctx_gone","taskId":"task_old","state":"failed","liveness":"exited","terminalState":"released"}]}}'
     exit 0 ;;
 esac
@@ -2647,6 +2666,15 @@ orca_stub="$tmp/orca-dup" PICK_STUB_MODE=sonnet route_run "#1746|fullstack-dev" 
 dup_run "#1746|fullstack-dev" --allow-overlap "owner asked"
 [ "$route_ec" = 0 ] && grep -Fq 'allow-overlap: acme/app#1746 already has live fullstack-dev worker ctx_dup1' "$tmp/route.err" \
   && ok || bad "1839: --allow-overlap starts a duplicate and says so (ec=$route_ec) $(cat "$tmp/route.err")"
+# 1960: a live worker with no "#N|role" title still holds issue N by its task spec Refs or its branch (worktree b<N>/w<N>).
+DUP_HAND=1 dup_run "#1810|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -Fq 'refused: acme/app#1810 already has live builder worker ctx_hand1' "$tmp/route.err" && ok || bad "1960: an untitled worker whose spec refs the issue blocks a builder (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_HAND=1 dup_run "#1820|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -Fq 'refused: acme/app#1820 already has live builder worker ctx_hand2' "$tmp/route.err" && ok || bad "1960: an untitled worker on branch b1820 blocks a builder (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_HAND=1 dup_run "#1821|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1960: an unrelated issue still starts beside untitled workers (ec=$route_ec) $(cat "$tmp/route.err")"
+DUP_HAND=1 dup_run "#1820|qa-sdet"
+[ "$route_ec" = 0 ] && ok || bad "1960: an untitled worker counts as a builder, so qa-sdet starts (ec=$route_ec) $(cat "$tmp/route.err")"
 # (d) an unreadable task list fails closed: FLEET_WATCH=1 exits 2 even with --allow-overlap; a hand start needs --allow-overlap.
 DUP_LIST_FAIL=1 FLEET_WATCH=1 dup_run "#1748|fullstack-dev"
 [ "$route_ec" = 2 ] && grep -q 'refused: cannot read the live task list' "$tmp/route.err" && ok || bad "1839d: fleet-watch start exits 2 on an unreadable list (ec=$route_ec) $(cat "$tmp/route.err")"

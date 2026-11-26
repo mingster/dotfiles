@@ -79,27 +79,29 @@ def live_worker(dispatch):
 
 
 class UnansweredAsk(unittest.TestCase):
-    def test_waits_fifteen_minutes_then_urgent_once_quoting_id_and_subject(self):
+    def test_waits_five_minutes_then_urgent_once_quoting_id_and_subject(self):
         state, workers = {}, [live_worker('d1')]
         messages = [ask('msg_q1', 'd1', 'escalation', 'Blocked: fixture needs a decision')]
         self.assertEqual(fw.unanswered_ask_notices(state, NOW, messages, workers), [])
-        self.assertEqual(fw.unanswered_ask_notices(state, NOW + 899, messages, workers), [])
-        notices = fw.unanswered_ask_notices(state, NOW + 900, messages, workers)
+        self.assertEqual(fw.unanswered_ask_notices(state, NOW + 299, messages, workers), [])
+        notices = fw.unanswered_ask_notices(state, NOW + 300, messages, workers)
         self.assertEqual(len(notices), 1)
         self.assertIsInstance(notices[0], fw.Urgent)
         self.assertIn('msg_q1', notices[0])
         self.assertIn('Blocked: fixture needs a decision', notices[0])
         self.assertEqual(fw.unanswered_ask_notices(state, NOW + 5000, messages, workers), [])
 
-    def test_a_handled_ask_has_an_answer(self):
-        # #1838 reverses #1781: the inbox marks an ask handled once it has an answer (msg_9363796cba3d was
-        # handled and `reply` returned answer_conflict, yet the digest called it unanswered).
+    def test_a_handled_ask_alone_is_not_an_answer(self):
+        # #1947 reverses #1838: inbox `handled` only means the coordinator read the ask. msg_3081496fe0f5 was
+        # handled with no reply and its worker waited about 50 minutes. An answer is a reply, a thread reply or
+        # an answer_conflict record.
         state, workers = {}, [live_worker('d1')]
         messages = [ask('msg_q1', 'd1', handled=True)]
         fw.unanswered_ask_notices(state, NOW, messages, workers)
-        self.assertEqual(fw.unanswered_ask_notices(state, NOW + 900, messages, workers), [])
-        self.assertTrue(state['open_asks']['msg_q1']['answered'])
-        self.assertEqual(fw.waiting_on_coordinator(state, workers), set())
+        notices = fw.unanswered_ask_notices(state, NOW + 300, messages, workers)
+        self.assertEqual(len(notices), 1)
+        self.assertIsInstance(notices[0], fw.Urgent)
+        self.assertEqual(fw.waiting_on_coordinator(state, workers), {'d1'})
 
     def test_an_ask_recorded_by_answer_conflict_has_an_answer(self):
         state, workers = {}, [live_worker('d1')]

@@ -362,6 +362,9 @@ def ask(mid, dispatch, **extra):
     return dict({'id': mid, 'type': 'question', 'subject': 'Which port?', 'from': 'term_w',
                  'payload': {'dispatchId': dispatch}}, **extra)
 
+# An answer is a reply threaded to the ask; inbox `handled` alone only means read (#1947).
+THREAD_REPLY = {'id': 'msg_r1', 'type': 'status', 'subject': 'Re: Which port?', 'threadId': 'msg_1'}
+
 def live(dispatch, title):
     return {'dispatchId': dispatch, 'dispatchStatus': 'running', 'terminalState': 'active', 'terminal': 'term_w',
             'title': title, 'name': 'build-' + dispatch, 'projection': {}}
@@ -380,12 +383,12 @@ class AskStamps(unittest.TestCase):
         late = watch.unanswered_ask_notices(state, t0 + 16 * 60, [ask('msg_1', 'ctx_a')], workers)
         self.assertEqual(len(late), 1)
         self.assertIn('(asked 2025-11-25T09:00:00Z)', str(late[0]))
-        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 20 * 60, [ask("msg_1", "ctx_a", handled=True)], workers), [])
+        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 20 * 60, [ask('msg_1', 'ctx_a'), THREAD_REPLY], workers), [])
         done = watch.take_ask_reply_lines(state)
         line = 'reply to question msg_1 from ctx_a: asked 2025-11-25T09:00:00Z, answer seen 2025-11-25T09:20:00Z, waited 20 minutes'
         self.assertEqual([str(n) for n in done], [line])
         self.assertIn(line, LOG.read_text())
-        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 30 * 60, [ask('msg_1', 'ctx_a', handled=True)], workers), [])
+        self.assertEqual(watch.unanswered_ask_notices(state, t0 + 30 * 60, [ask('msg_1', 'ctx_a'), THREAD_REPLY], workers), [])
         self.assertEqual(LOG.read_text().count('reply to question msg_1'), 1)
 
     def test_orca_created_at_wins_over_first_seen(self):
@@ -398,7 +401,7 @@ class AskStamps(unittest.TestCase):
         state = {}
         workers = [live('ctx_a', '#12|fullstack-dev')]
         watch.unanswered_ask_notices(state, 0, [ask('msg_1', 'ctx_a')], workers)
-        watch.unanswered_ask_notices(state, 60, [ask("msg_1", "ctx_a", handled=True)], workers)
+        watch.unanswered_ask_notices(state, 60, [ask('msg_1', 'ctx_a'), THREAD_REPLY], workers)
         notices = watch.take_ask_reply_lines(state)
         self.assertEqual(watch.take_ask_reply_lines(state), [])
         calls = []
@@ -418,7 +421,7 @@ class OpenWork(unittest.TestCase):
         self.assertIn('- question msg_1 from ctx_a, asked 1970-01-01T00:00:00Z: Which port?', text)
         self.assertIn('- o/r#12 ctx_a build-ctx_a', text)
         self.assertNotIn('ctx_b', text)
-        watch.unanswered_ask_notices(state, 60, [ask('msg_1', 'ctx_a', handled=True)], workers)
+        watch.unanswered_ask_notices(state, 60, [ask('msg_1', 'ctx_a'), THREAD_REPLY], workers)
         watch.write_open_work(state, workers, {}, 60, path, repo_of=lambda w: 'o/r')
         self.assertNotIn('msg_1', path.read_text())
         self.assertIn('o/r#12', path.read_text())

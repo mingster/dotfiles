@@ -844,7 +844,35 @@ def measure_gate(args):
             log_heavy_gate_measure(time.monotonic() - begin, load, free)
 
 
+LIGHT_ONLY_EXIT = 3
+HEAVY_COMMAND = re.compile(
+    r'playwright|regression|xcodebuild|build-and-test\.sh|\bbun run build\b|\bnext build\b|head-checks-tsc'
+    r'|(?:^|[\s/])tsc(?:\.js)?(?:\s|$)|(?:^|[\s/])(?:createdb|dropdb|psql|pg_dump|pg_restore)(?:\s|$)')
+
+
+def light_only_refusal(command):
+    """One refusal line when this host is in the fleet config's light_only_hosts and the command is heavy
+    (Playwright, regression, xcodebuild, build-and-test.sh, a build, a full tsc or a database step), else '' (#1965)."""
+    path = os.environ.get('FLEET_WATCH_CONFIG') or os.path.expanduser('~/.config/fleet-watch/config.json')
+    try:
+        hosts = json.loads(Path(path).read_text()).get('light_only_hosts')
+    except (OSError, ValueError, AttributeError):
+        return ''
+    host = heavy_gate_host().split('.')[0].lower()
+    if not isinstance(hosts, list) or host not in {str(h).lower() for h in hosts}:
+        return ''
+    text = ' '.join(command)
+    if not HEAVY_COMMAND.search(text):
+        return ''
+    return (f'heavy-gate: refused: {host} is a light-only host and takes no heavy step ({text}); '
+            'push and let a heavy host run it')
+
+
 def gate(args):
+    refusal = light_only_refusal((args.command or [])[1:])
+    if refusal:
+        print(refusal, file=sys.stderr, flush=True)
+        return LIGHT_ONLY_EXIT
     if getattr(args, 'measure', False):
         return measure_gate(args)
     timeout = command_timeout()
