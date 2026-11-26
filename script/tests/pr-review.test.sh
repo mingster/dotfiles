@@ -222,6 +222,16 @@ issue_comments_set "Verdict: PASS head=$sha model=x"
 run
 [ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "Verdict PASS at current head settles without agent or new comment"
 
+# #1930: a Verdict or Review first line with no head=<40 hex> is ignored, it must not break the reduce
+issue_comments_set "Verdict: FAIL (note)" "Review: PASS head=$sha model=sonnet patch=dummy"
+rm -f "$tmp/posted" "$tmp/claude-args"
+run
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "a headless Verdict comment is ignored and a later PASS at the head still settles"
+issue_comments_set "Review: FAIL (note)"
+rm -f "$tmp/posted" "$tmp/claude-args"
+run
+[ -e "$tmp/claude-args" ] || fail "a headless Review comment alone does not settle the head"
+
 # #1841: a Review another run posted on this head while this run reviewed: this result is dropped
 issue_comments_set "Review: FAIL head=$sha model=gemini-4-argon-high"
 cp "$tmp/issue-comments.json" "$tmp/race-comments.json"
