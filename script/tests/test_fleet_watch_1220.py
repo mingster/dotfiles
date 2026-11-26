@@ -89,7 +89,8 @@ class ReconcileRemoteCompletions(unittest.TestCase):
         row['dispatchStatus'] = 'running'
         rec = Recorder()
         fw.reconcile_remote_completions({}, {}, [row], [], rec)
-        order = [c[1] for c in rec.calls]
+        # worker-show first finds the terminal to close after the release (#1947).
+        order = [c[1] for c in rec.calls if c[1] != 'worker-show']
         self.assertEqual(order[0], 'worker-stop')
         self.assertIn('worker-release', order)
 
@@ -202,10 +203,14 @@ class ReleaseWorkerEnvironment(unittest.TestCase):
         rpc.assert_any_call('orchestration', 'worker-release', '--dispatch', 'ctx_a', '--environment', 'env-1')
         rpc.assert_any_call('orchestration', 'worker-release', '--dispatch', 'ctx_a')
 
-    def test_default_release_local_unchanged(self):
+    def test_default_release_local_stops_releases_and_closes(self):
+        # Release means stop plus close (#1947).
         with patch.object(fw, 'rpc') as rpc:
+            rpc.return_value = {'worker': {'terminal': 'term_w'}}
             fw._default_release_worker('ctx_a')
-        rpc.assert_called_once_with('orchestration', 'worker-release', '--dispatch', 'ctx_a')
+        rpc.assert_any_call('orchestration', 'worker-stop', '--dispatch', 'ctx_a')
+        rpc.assert_any_call('orchestration', 'worker-release', '--dispatch', 'ctx_a')
+        rpc.assert_called_with('terminal', 'close', '--terminal', 'term_w')
 
 
 class RemoteSeatFreed(unittest.TestCase):
