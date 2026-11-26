@@ -37,6 +37,9 @@ import tempfile
 import time
 import urllib.parse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'lib'))
+import worker_count  # noqa: E402  one count rule shared with fleet-workers.py (#1942)
+
 def _load_receipt_state():
     path = Path(__file__).resolve().parent / 'receipt-state.py'
     spec = importlib.util.spec_from_file_location('receipt_state', path)
@@ -5075,7 +5078,8 @@ def work_order_supply_line(config, now, workers, supply, host=None, admission=No
         return None
     live = active_worker_count(workers)
     asking = len({w.get('dispatchId') for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w)} & set(waiting))
-    line = 'work order: %d live (%d working, %d waiting on coordinator), supply %d' % (live, live - asking, asking, supply)
+    shown = worker_count.label(*worker_count_split(workers))
+    line = 'work order: %s live (%d working, %d waiting on coordinator), supply %d' % (shown, live - asking, asking, supply)
     if host and isinstance(admission, dict):
         load = admission.get('load_per_core')
         if load is None and _is_local_coordinator_host(host, config):
@@ -5390,6 +5394,14 @@ def work_order_status_notice(config, state, now, workers, started):
         return None
     state['work_order_status_at'] = now
     return 'work order: %d of %d live, started %d' % (live, target, started)
+
+
+def worker_count_split(workers):
+    """(live, unconfirmed) in progress dispatches, by the rule script/fleet-workers.py shares (#1942)."""
+    return worker_count.tally(
+        worker_count.bucket(worker_row_is_live(w), worker_liveness_verdict(w))
+        for w in workers or [] if isinstance(w, dict)
+    )
 
 
 def active_worker_count(workers):
