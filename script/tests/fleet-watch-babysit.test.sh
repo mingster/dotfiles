@@ -827,7 +827,13 @@ notices, lines, bits = run()
 assert "unknown_builder_cleared=41" in bits, bits
 assert not any("unknown-builder" in l for l in lines), lines
 assert not state["babysit_unknown_builder"]["owner/app"].get("41"), state
-pr["body"] = pr["body"].replace("Builder: agent=claude model=claude-sonnet-5-5", "")
+# A Builder line whose model has no known family does not lift the park (no alert loop).
+pr["body"] = pr["body"].replace("Builder: agent=claude model=claude-sonnet-5-5", "Builder: agent=mystery model=zzz-1")
+state["babysit_unknown_builder"]["owner/app"]["41"] = {"head": head_a, "refusals": fw.UNKNOWN_BUILDER_REFUSALS}
+notices, lines, bits = run()
+assert "unknown_builder_cleared=41" not in bits, bits
+assert any("unknown-builder-parked" in l for l in lines), lines
+pr["body"] = pr["body"].replace("Builder: agent=mystery model=zzz-1", "")
 pr["headRefOid"] = head_b
 pr["comments"] = [{"body": "Review: PASS head=%s\n" % head_b}]
 notices, lines, bits = run()

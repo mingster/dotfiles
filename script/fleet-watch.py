@@ -8357,7 +8357,7 @@ def babysit_pass(
         if not re.fullmatch(r'[0-9a-f]{40}', head):
             lines.append(_babysit_line(repo, number, head, 'skip', 'bad-head'))
             continue
-        if unknown_builder_parked(state, repo, number, head) and builder_pair(pr_row, workers):
+        if unknown_builder_parked(state, repo, number, head) and _avoid_family(builder_pair(pr_row, workers)):
             # The Builder line (or a matching dispatch) turned up on the same head: lift the park (#1940).
             unknown_builder_clear(state, repo, number)
             log_bits.append('unknown_builder_cleared=%s' % number)
