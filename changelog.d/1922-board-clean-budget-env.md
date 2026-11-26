@@ -1,0 +1,1 @@
+wrap-up passes board-clean a time budget 5 s under its step limit, so an out of time round logs the budget line and exits 0 instead of 124, and the board steps run unbuffered so a cut short run keeps its output in the detail log (#1922).
