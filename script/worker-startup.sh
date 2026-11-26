@@ -7,6 +7,7 @@
 #   worker-startup.sh --close-after-fails --repo owner/name --pr N --comment-file FILE
 #   worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV]
 #         [--route-override REASON] [--allow-delivered REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON]
+#         [--force-over-cap REASON]
 #         (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])
 # --title must be "#<issue>|<role>" (for example "#123|qa-sdet"; a verifier uses its PR number), else exit 2.
 # After start the title is also set on the worker terminal and pane.
@@ -23,6 +24,9 @@
 # with FLEET_WATCH=1 an unreadable list always refuses. A builder start whose issue's last closed PR has two FAILs exits 2 until
 # ready-for-agent is added again. --close-after-fails closes such a PR and relabels its issues needs-triage.
 # A start whose dispatch exists although a later step failed prints the dispatch id and exits 0.
+# With work_order.max_workers set in the fleet config, a hand start while that many workers are live exits 2 unless
+# --force-over-cap REASON is given; the override is logged to force-over-cap.log. fleet-watch (FLEET_WATCH=1) applies
+# the ceiling itself, so its starts skip this check (#1957).
 # --route-override REASON logs the reason and allows that start. --agent grok --on ENV needs ENV listed under
 # grok_hosts in the fleet config (the hosts that have the Grok CLI).
 # WORKER_STARTUP_AGY_SIGNIN=exit (fleet watch issue starts only, #1832): an antigravity start that lands on the sign-in screen after
@@ -487,7 +491,7 @@ with_refs_line() { # <spec_file> <title>
 }
 
 usage_run() {
-  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON]" >&2
+  echo "usage: worker-startup.sh --run ID --spec FILE --title TEXT --agent NAME --model ID [--from HANDLE] [--on ENV [--force-host REASON]] [--route-override REASON] [--allow-overlap REASON] [--skip-dotfiles-first REASON] [--force-over-cap REASON]" >&2
   echo "          (--worktree-path PATH | --name NAME --repo SELECTOR [--base-branch REF])" >&2
   echo "       worker-startup.sh --run ID --task ID --retry-of DISPATCH_ID --worktree SELECTOR --agent NAME --from HANDLE [--model ID]" >&2
   exit 2
@@ -589,6 +593,48 @@ with open(path, "a") as handle:
     }) + "\n")
 PY
   echo "worker-startup: route override for $1: $3" >&2
+}
+
+log_force_over_cap() { # <title> <live> <cap> <reason>
+  mkdir -p "$state_dir"
+  "$python3" - "$state_dir/force-over-cap.log" "$1" "$2" "$3" "$4" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+path, title, live, cap, reason = sys.argv[1:]
+with open(path, "a") as handle:
+    handle.write(json.dumps({
+        "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "title": title,
+        "live": int(live),
+        "max_workers": int(cap),
+        "reason": reason,
+    }) + "\n")
+PY
+  echo "worker-startup: force-over-cap for $1 ($2 live, max_workers $3): $4" >&2
+}
+
+# work_order.max_workers is the fleet ceiling (#1957). No key: no orca call, no check. An unreadable worker
+# list lets the start go on with a warning, since the ceiling guards cost, not correctness.
+refuse_over_max_workers() { # <title> <force reason>
+  local cfg cap live
+  [ "${FLEET_WATCH:-}" != 1 ] || return 0
+  cfg=$(resolve_placement_config)
+  [ -f "$cfg" ] || return 0
+  cap=$(jq -r '.work_order.max_workers // empty | select(type == "number" and . >= 1) | floor' "$cfg" 2>/dev/null) || cap=
+  [ -n "$cap" ] || return 0
+  live=$("$orca" orchestration worker-list --include-remote --terminal-state active --json --limit 100 2>/dev/null \
+    | jq -er 'select(.ok == true) | [.result.workers[]? | select(.liveness == "live")] | length' 2>/dev/null) || live=
+  if [ -z "$live" ]; then
+    echo "worker-startup: cannot read the live worker list; max_workers $cap not checked" >&2
+    return 0
+  fi
+  [ "$live" -ge "$cap" ] || return 0
+  if [ -n "$2" ]; then
+    log_force_over_cap "$1" "$live" "$cap" "$2"
+    return 0
+  fi
+  echo "worker-startup: refused: $live workers live, at max_workers $cap; pass --force-over-cap REASON to start anyway" >&2
+  exit 2
 }
 
 # A placed start that now has a dispatch: tie its recent-start claim to it. Placement then stops counting the
@@ -1228,10 +1274,10 @@ warn_live_verifier() { # <spec_file> <title> <name> <run>
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
-  local explicit_on=0 force_host='' on_raw='' allow_delivered='' allow_overlap='' skip_dotfiles=''
+  local explicit_on=0 force_host='' on_raw='' allow_delivered='' allow_overlap='' skip_dotfiles='' force_over_cap=''
   while [ $# -gt 0 ]; do
     case "$1" in
-      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered|--allow-overlap|--skip-dotfiles-first)
+      --run|--spec|--title|--agent|--model|--from|--on|--worktree-path|--worktree|--name|--repo|--base-branch|--task|--retry-of|--route-override|--force-host|--allow-delivered|--allow-overlap|--skip-dotfiles-first|--force-over-cap)
         [ $# -ge 2 ] || usage_run
         case "$1" in
           --run) run=$2 ;;
@@ -1253,6 +1299,7 @@ run_mode() {
           --allow-overlap) allow_overlap=$2; [ -n "$allow_overlap" ] || die "allow-overlap needs a reason" ;;
           --allow-delivered) allow_delivered=$2; [ -n "$allow_delivered" ] || die "allow-delivered needs a reason" ;;
           --skip-dotfiles-first) skip_dotfiles=$2; [ -n "$skip_dotfiles" ] || die "skip-dotfiles-first needs a reason" ;;
+          --force-over-cap) force_over_cap=$2; [ -n "$force_over_cap" ] || die "force-over-cap needs a reason" ;;
         esac
         shift 2 ;;
       *) usage_run ;;
@@ -1310,6 +1357,7 @@ run_mode() {
   refuse_delivered_issue "$spec" "$title" "$allow_delivered"
   refuse_overlapping_issue "$spec" "$title" "$allow_overlap"
   refuse_live_duplicate "$spec" "$title" "$run" "$allow_overlap"
+  refuse_over_max_workers "$title" "$force_over_cap"
   refuse_after_two_fails "$spec" "$title"
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"

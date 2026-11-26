@@ -2676,6 +2676,25 @@ DUP_CLOSED='[{"number":1762,"closedAt":"2026-11-25T03:00:00Z","mergedAt":null,"b
 DUP_CLOSED=$closed_prs DUP_COMMENTS=$two_fails dup_run "#1748|qa-sdet"
 [ "$route_ec" = 0 ] && ok || bad "1839c: a verifier is not refused for two FAILs (ec=$route_ec) $(cat "$tmp/route.err")"
 
+# 1957: work_order.max_workers refuses a hand start at the ceiling; --force-over-cap REASON starts it and is logged.
+# The orca-dup stub lists one live worker.
+jq '.work_order = {"max_workers": 1}' "$FLEET_WATCH_CONFIG" >"$tmp/fleet-max1.json" 2>/dev/null || echo '{"work_order":{"max_workers":1}}' >"$tmp/fleet-max1.json"
+jq '.work_order = {"max_workers": 2}' "$tmp/fleet-max1.json" >"$tmp/fleet-max2.json"
+rm -f "$route_state/force-over-cap.log"
+FLEET_WATCH_CONFIG="$tmp/fleet-max1.json" dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 2 ] && grep -Fq 'refused: 1 workers live, at max_workers 1' "$tmp/route.err" && ok || bad "1957: a hand start at max_workers exits 2 (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "1957: a refused start must not reach worker-start" || ok
+FLEET_WATCH_CONFIG="$tmp/fleet-max1.json" dup_run "#1748|fullstack-dev" --force-over-cap "merge queue"
+[ "$route_ec" = 0 ] && grep -q 'worker-start' "$tmp/orca-route.log" && ok || bad "1957: --force-over-cap starts over the ceiling (ec=$route_ec) $(cat "$tmp/route.err")"
+jq -e 'select(.reason == "merge queue" and .live == 1 and .max_workers == 1 and .title == "#1748|fullstack-dev")' "$route_state/force-over-cap.log" >/dev/null 2>&1 \
+  && ok || bad "1957: --force-over-cap is logged ($(cat "$route_state/force-over-cap.log" 2>/dev/null))"
+FLEET_WATCH_CONFIG="$tmp/fleet-max2.json" dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1957: under max_workers starts (ec=$route_ec) $(cat "$tmp/route.err")"
+FLEET_WATCH=1 FLEET_WATCH_CONFIG="$tmp/fleet-max1.json" dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ok || bad "1957: a fleet-watch start skips the hand ceiling (ec=$route_ec) $(cat "$tmp/route.err")"
+dup_run "#1748|fullstack-dev"
+[ "$route_ec" = 0 ] && ! grep -q 'max_workers' "$tmp/route.err" && ok || bad "1957: no max_workers key starts as today (ec=$route_ec) $(cat "$tmp/route.err")"
+
 # 1839: a start whose dispatch exists although a later step failed prints the dispatch and exits 0 (#10098).
 sed 's#^  \*" orchestration task-list "\*|\*" orchestration worker-list "\*)#  *" orchestration worker-list "*) printf "%s\\n" "{\\"ok\\":true,\\"result\\":{\\"workers\\":[{\\"dispatchId\\":\\"ctx_late\\",\\"state\\":\\"ready\\",\\"liveness\\":\\"live\\",\\"terminalState\\":\\"active\\",\\"workspace\\":\\"repo::$WT_PROOF\\"}]}}"; exit 0 ;;\n  *" orchestration task-list "*)#' \
   "$orca_fail_stub" >"$tmp/orca-late"

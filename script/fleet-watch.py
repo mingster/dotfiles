@@ -2403,6 +2403,7 @@ class PassCounts:
         self._phase_name = None
         self._phase_started = None
         self.starts = []
+        self.worker_starts = 0
 
     def phase(self, name, now=None):
         """Close the running phase and open `name` (None closes only)."""
@@ -2475,6 +2476,13 @@ def _pass_note(field):
 
 def count_started():
     _pass_note('started')
+
+
+def count_worker_started():
+    """A start that adds a live worker: counted as started, and against work_order.max_workers this pass (#1957)."""
+    count_started()
+    if _PASS is not None:
+        _PASS.worker_starts += 1
 
 
 def count_failed():
@@ -4987,7 +4995,7 @@ def issue_scan_try_backlog_sweep(
         if start_worker(command) == 0:
             started += 1
             log_bits.append('backlog_sweep_start=%s' % role)
-            count_started()
+            count_worker_started()
         else:
             log_bits.append('backlog_sweep_fail=%s' % role)
             count_failed()
@@ -5171,6 +5179,8 @@ def work_order_try_supply(
     order = work_order_settings(config, now)
     if order is None:
         return [], 0
+    if at_max_workers(config, workers):
+        return ['supply_max_workers'], 0
     free = order[1] - working_worker_count(workers, state) - extra_starts
     if free <= supply:
         state['work_order_short_passes'] = 0
@@ -5225,7 +5235,7 @@ def work_order_try_supply(
     state['work_order_short_passes'] = 0
     if persist_state:
         persist_state()
-    count_started()
+    count_worker_started()
     if claimed:
         bits.append('supply_claimed=%s' % ','.join(_blocker_label(pair, repos[0]) for pair in claimed))
     return bits + ['supply_start=%d:%d' % (free, supply)], 1
@@ -5419,6 +5429,33 @@ def work_order_settings(config, now=None):
     return tuple(out)
 
 
+MAX_WORKERS_REASON = 'max_workers'
+
+
+def work_order_max_workers(config):
+    """work_order.max_workers, the fleet wide ceiling on live workers, or None when unset (#1957, owner 2026-11-26)."""
+    block = config.get('work_order') if isinstance(config, dict) else None
+    raw = block.get('max_workers') if isinstance(block, dict) else None
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def fleet_live_count(workers):
+    """Live workers in the inventory plus the workers this pass started, which the inventory snapshot cannot show."""
+    return active_worker_count(workers) + (_PASS.worker_starts if _PASS is not None else 0)
+
+
+def at_max_workers(config, workers, slack=0):
+    """True when work_order.max_workers is set and the fleet holds that many live workers (plus `slack`)."""
+    cap = work_order_max_workers(config)
+    return cap is not None and fleet_live_count(workers) >= cap + slack
+
+
 def work_order_keeps_target(config, now):
     """True when work_order.keep_target_until_go_live is on and today (Asia/Taipei) is before go_live_date (#1655).
 
@@ -5507,6 +5544,9 @@ def issue_scan_try_triage(
         if not _issue_scan_has_slot(host, config, admission, extra_starts + used):
             log_bits.append('triage_skip_no_seat')
             break
+        if at_max_workers(config, workers):
+            log_bits.append('triage_max_workers')
+            break
         try:
             recent = now - float(last_starts.get(repo)) < interval
         except (TypeError, ValueError):
@@ -5547,7 +5587,7 @@ def issue_scan_try_triage(
             log_bits.append('triage_start=%d' % (len(backlog) if isinstance(backlog, dict) else backlog))
             if urgent and not keeping and notices is not None:
                 notices.append('work order: %d active, grill backlog' % active)
-            count_started()
+            count_worker_started()
         else:
             log_bits.append('triage_fail')
             count_failed()
@@ -8610,12 +8650,21 @@ def babysit_pass(
             if routed in ('assigned', 'started'):
                 babysit_mark(state, repo, number, head, action)
                 started += step if routed == 'started' else 0
-                count_started()
+                if routed == 'started':
+                    count_worker_started()
+                else:
+                    count_started()
                 lines.append(_babysit_line(repo, number, head, action, detail + ' standing=' + routed))
                 log_bits.append('standing_%s=%s' % (routed, number))
                 if persist_state:
                     persist_state()
                 continue
+        # A verifier for a Review PASS head may take one seat over work_order.max_workers, so merges are not blocked (#1957).
+        if kind == 'verifier' and at_max_workers(config, workers, slack=1 if review_passed_at_head(pr_row) else 0):
+            lines.append(_babysit_line(repo, number, head, 'skip', 'max-workers'))
+            log_bits.append('max_workers=%s' % number)
+            count_refused(MAX_WORKERS_REASON)
+            continue
         command = build_babysit_command(config, repo, pr_row, kind, agent, model, builder, tag)
         if command is None:
             lines.append(_babysit_line(repo, number, head, 'skip', 'no-root'))
@@ -8658,7 +8707,7 @@ def babysit_pass(
                 trial_event('start', 'fresh', now=now, dispatch_id=did, repo=repo, pr=number, head=head,
                             headroom_pct='' if headroom is None else headroom)
         started += step
-        count_started()
+        count_worker_started()
         gap = review_to_verifier_s(pr_row, head, now) if action == 'verifier' else None
         lines.append(_babysit_line(repo, number, head, action, detail if gap is None else '%s review_to_verifier_s=%d' % (detail, gap)))
         log_bits.append('%s=%s' % (action, number))
@@ -8715,7 +8764,8 @@ def defer_issue(state, now, repo, number, reason, deferred, notices, log_bits, p
         entry['at'] = now
     else:
         entry = repo_book[str(number)] = {'reason': reason, 'passes': 1, 'at': now}
-    if entry['passes'] >= ISSUE_DEFER_ESCALATE_PASSES and not entry.get('notified'):
+    # Waiting at max_workers is the ceiling working, not a stuck start, so it never escalates (#1957).
+    if entry['passes'] >= ISSUE_DEFER_ESCALATE_PASSES and not entry.get('notified') and reason != MAX_WORKERS_REASON:
         entry['notified'] = True
         notices.append(Urgent('%s #%d deferred %d passes in a row (%s): elon resolves it this wake' % (
             repo, number, entry['passes'], reason)))
@@ -8769,15 +8819,23 @@ def fill_gap_notice(config, now, workers, log_bits, deferred):
     order = work_order_settings(config)
     if order is None or not deferred:
         return None
+    cap = work_order_max_workers(config)
+    if cap is not None and MAX_WORKERS_REASON in deferred:
+        return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), at max_workers %d' % (
+            fleet_live_count(workers), order[1], len(deferred), _deferred_reasons(deferred), cap)
     started = sum(1 for bit in log_bits if bit.startswith(('issue_start=', 'rework_start=', 'supply_start=')))
     live = active_worker_count(workers) + started
     if live >= order[1]:
         return None
+    return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), elon tops up by hand' % (
+        live, order[1], len(deferred), _deferred_reasons(deferred))
+
+
+def _deferred_reasons(deferred):
     reasons = {}
     for reason in deferred:
         reasons[reason] = reasons.get(reason, 0) + 1
-    return 'fill gap: %d of %d live, %d ready issue(s) not started (%s), elon tops up by hand' % (
-        live, order[1], len(deferred), ', '.join('%s x%d' % (r, n) for r, n in sorted(reasons.items())))
+    return ', '.join('%s x%d' % (r, n) for r, n in sorted(reasons.items()))
 
 
 def issue_scan_pass(config, state, now, workers, *args, **kwargs):
@@ -9011,6 +9069,10 @@ def _issue_scan_pass(
             if park_is_active(state, park_key, config):
                 log_bits.append('rework_parked=%d' % pr_num)
                 continue
+            if at_max_workers(config, workers):
+                log_bits.append('rework_max_workers=%d' % pr_num)
+                count_refused(MAX_WORKERS_REASON)
+                continue
             if not _issue_scan_has_slot(host, config, admission, extra_starts):
                 count_refused('host_cap')
                 continue
@@ -9055,7 +9117,7 @@ def _issue_scan_pass(
                 extra_starts += 1
                 notices.append('rework %s #%d %s' % (repo, pr_num, head[:8]))
                 log_bits.append('rework_start=%s' % head[:8])
-                count_started()
+                count_worker_started()
                 if persist_state:
                     persist_state()
             else:
@@ -9227,7 +9289,7 @@ def _issue_scan_pass(
             notices.append(no_work)
         extra_starts += triage_used
         queue_count = None if list_failed else ready_queue_count
-        sweep_bits = issue_scan_try_backlog_sweep(
+        sweep_bits = ['backlog_sweep_max_workers'] if at_max_workers(config, workers) else issue_scan_try_backlog_sweep(
             config, state, now, repos, queue_count, host, admission, extra_starts,
             start_worker, persist_state,
         )
@@ -9237,6 +9299,11 @@ def _issue_scan_pass(
         return notices, log_bits
 
     candidates.sort(key=lambda pair: issue_scan_queue_key(*pair))
+    if at_max_workers(config, workers):
+        count_refused(MAX_WORKERS_REASON)
+        for repo, row in candidates:
+            defer_issue(state, now, repo, row['number'], MAX_WORKERS_REASON, deferred, notices, log_bits, persist_state)
+        return notices, log_bits
     if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
         count_refused('host_cap')
         for repo, row in candidates:
@@ -9258,6 +9325,10 @@ def _issue_scan_pass(
             for rest_repo, rest_row in candidates[first:]:
                 defer_issue(state, now, rest_repo, rest_row['number'], reason, deferred, notices, log_bits, persist_state)
 
+        if at_max_workers(config, workers):
+            count_refused(MAX_WORKERS_REASON)
+            defer_rest(MAX_WORKERS_REASON)
+            break
         if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
             count_refused('host_cap')
             defer_rest('host_cap')
@@ -9399,7 +9470,7 @@ def _issue_scan_pass(
             act(['gh', 'issue', 'edit', str(row['number']), '--repo', repo, '--remove-label', 'ready-for-agent'])
             notices.append('issue %s #%d' % (repo, row['number']))
             log_bits.append('issue_start=%d' % row['number'])
-            count_started()
+            count_worker_started()
             if persist_state:
                 persist_state()
         else:
@@ -10815,6 +10886,8 @@ def format_seat_report(report):
 
 
 def main():
+    # worker-startup.sh checks max_workers only on a hand start; this pass applies it itself (#1957).
+    os.environ['FLEET_WATCH'] = '1'
     begin_pass_clock()
     try:
         return _main()
