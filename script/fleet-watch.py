@@ -2236,6 +2236,64 @@ def stale_worktree_notices(config, state=None, now=None, run=None):
     return notices
 
 
+REAP_ORPHAN_SCRIPT = Path(__file__).with_name('reap-orphan-tests.sh')
+REAP_ORPHAN_REMOTE = 'bash "$HOME/dotfiles/script/reap-orphan-tests.sh" || echo "reap-orphan-tests failed"'
+
+
+def reap_orphan_remote_lines(rpc_call, host):
+    """Run reap-orphan-tests.sh on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
+    worktrees = (rpc_call('worktree', 'list', '--environment', host) or {}).get('worktrees') or []
+    rows = [r for r in worktrees if isinstance(r, dict) and r.get('path') and not r.get('isArchived')]
+    rows.sort(key=lambda r: not r.get('isMainWorktree'))
+    if not rows:
+        return []
+    created = rpc_call('terminal', 'create', '--environment', host, '--worktree', 'path:%s' % rows[0]['path'],
+                       '--command', REAP_ORPHAN_REMOTE)
+    handle = ((created or {}).get('terminal') or {}).get('handle')
+    if not handle:
+        return []
+    try:
+        rpc_call('terminal', 'wait', '--environment', host, '--terminal', handle, '--for', 'exit', '--timeout-ms', '60000')
+        read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
+    finally:
+        try:
+            rpc_call('terminal', 'close', '--environment', host, '--terminal', handle)
+        except SEND_ERRORS:
+            pass
+    return [str(line) for line in ((read or {}).get('terminal') or {}).get('tail') or []]
+
+
+def orphan_reaper_notices(config, rpc_call=None, run=None):
+    """Run reap-orphan-tests.sh on this host and on every other host_caps host; one notice per kill line (#1954).
+
+    Runs only when the private config has an "orphan_reaper" block that is not {"enabled": false}, so a test config or a
+    host that opted out kills nothing. A host that cannot be reached is skipped: the next pass runs it again."""
+    block = config.get('orphan_reaper')
+    if not isinstance(block, dict) or block.get('enabled') is False:
+        return []
+    rpc_call = rpc_call or rpc
+    run = run or subprocess.run
+    local_host = (config.get('local_host') or '').strip() or 'local'
+    hosts = [(local_host, None)] + [(h, h) for h in (config.get('host_caps') or {}) if h != local_host]
+    notices = []
+    for name, remote in hosts:
+        try:
+            if remote is None:
+                result = run(['bash', str(REAP_ORPHAN_SCRIPT)], capture_output=True, text=True, timeout=60)
+                lines = (result.stdout or '').splitlines()
+            else:
+                lines = reap_orphan_remote_lines(rpc_call, remote)
+        except (OSError, subprocess.SubprocessError, OrcaReadError, TerminalNotFound):
+            continue
+        for line in lines:
+            line = line.strip()
+            if line.startswith('reaped '):
+                notices.append('%s: orphan test runner %s' % (name, line))
+            elif line == 'reap-orphan-tests failed':
+                notices.append('%s: reap-orphan-tests failed to run' % name)
+    return notices
+
+
 def wrap_up_notices(config, state, now, stamp_age=None, act=None, issue_exists=None):
     """Open one issue per host when the last wrap-up round line is older than the stale limit."""
     block = config.get('wrap_up') or {}
@@ -11047,6 +11105,7 @@ def _main():
     notices += template_sync_reconcile(config, state, now)
     notices += changelog_fragment_notices(config, state)
     notices += stale_worktree_notices(config, state, now)
+    notices += orphan_reaper_notices(config)
 
     def persist_scan_state():
         save_state(args.state, state)

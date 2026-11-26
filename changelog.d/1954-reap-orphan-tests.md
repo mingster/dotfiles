@@ -1,0 +1,1 @@
+Orphan test and build runners (a `bun test` or `playwright test` left behind with ppid 1, older than 30 minutes, under the Orca workspaces folder) are stopped by `script/reap-orphan-tests.sh`. Fleet-watch runs it on every host each pass when the config has an `orphan_reaper` block, and `wrap-up.sh` runs it too (#1954).
