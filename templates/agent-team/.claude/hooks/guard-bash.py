@@ -4670,10 +4670,15 @@ def _git_steps_text(text, cwd, depth, sub, steps):
     if depth > 3:
         raise _Unreadable
     reader = _RunReader(text, depth).read()
+    # A substitution or heredoc script runs at some point of the top level: after a folder change there,
+    # its folder is not known.
+    moves = any(os.path.basename(program_and_args(_skip_run_lead(words(seg)))[0] or "") in ("cd", "pushd", "popd")
+                for seg in segments(reader.parts[-1]))
+    inner_cwd = None if moves else cwd
     for part in reader.parts[:-1]:
-        _git_steps_part(part, cwd, depth, True, steps)
+        _git_steps_part(part, inner_cwd, depth, True, steps)
     for script in reader.scripts:
-        _git_steps_text(script, cwd, depth + 1, True, steps)
+        _git_steps_text(script, inner_cwd, depth + 1, True, steps)
     return _git_steps_part(reader.parts[-1], cwd, depth, sub, steps)
 
 
@@ -4709,8 +4714,16 @@ def _git_steps_part(part, cwd, depth, sub, steps):
                 if arg in {"-exec", "-execdir", "-ok", "-okdir"}:
                     end = next((k for k in range(j + 1, len(args)) if args[k] in {";", "+"}), len(args))
                     inner, inner_args = program_and_args(args[j + 1:end])
-                    if inner and os.path.basename(inner) == "git":
+                    inner = os.path.basename(inner or "")
+                    if inner == "git":
                         _git_step(inner_args, cwd, sub, steps, True)
+                    elif nested_script(inner, inner_args):
+                        found = []
+                        _git_steps_text(nested_script(inner, inner_args)[0], cwd, depth + 1, sub, found)
+                        for s in found:  # each file find hands it is unknown: an add stages anything
+                            if s.verb == "add":
+                                s.args = ["-A"]
+                        steps += found
     return cwd
 
 
@@ -4801,15 +4814,21 @@ def check_command(command):
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
-    for text in texts:
-        cur_cwd = GATE_CWD
-        for seg in segments(text):
-            check_segment(seg, cwd=cur_cwd)
-            prog, args = program_and_args(words(seg))
-            if prog in ("cd", "pushd") and args:
-                dest = next((a for a in args if not a.startswith("-")), None)
-                if dest:
-                    cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+    try:
+        for text in texts:
+            cur_cwd = GATE_CWD
+            for seg in segments(text):
+                check_segment(seg, cwd=cur_cwd)
+                prog, args = program_and_args(words(seg))
+                if prog in ("cd", "pushd") and args:
+                    dest = next((a for a in args if not a.startswith("-")), None)
+                    if dest:
+                        cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+    except SystemExit:
+        raise
+    except Exception:
+        check_git_steps(command)  # main allows on an exception; the commit gate still runs first (#2023)
+        raise
     check_git_steps(command)
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:

@@ -2417,6 +2417,28 @@ class ChainedRefusals(ChainedRepo):
     def test_r3_unknown_commit_folder(self):
         self.assertRefused(f'git add {self.U} && cd "$X" && git commit {self.M}')
 
+    def test_r3_substitution_after_cd(self):
+        self.assertRefused(f'cd "$X" && y=$(git add {self.U}; git commit {self.M})')
+
+    def test_find_exec_shell_add_is_add_all(self):
+        self.assertGated(f"find . -name '*.md' -exec sh -c 'git add \"$0\"' {{}} \\; && git commit {self.M}")
+
+    def test_r4_exception_in_segment_pass(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_segment_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        command = f"git add {self.P} && git commit {self.M}"
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo})
+        buf = io.StringIO()
+        with mock.patch.object(mod, "check_segment", side_effect=RuntimeError("injected")), \
+             mock.patch.dict(os.environ, {"HOME": self.home}), \
+             mock.patch("sys.stdin", io.StringIO(payload)), mock.patch("sys.stdout", buf):
+            with self.assertRaises(SystemExit):
+                mod.main()
+        out = json.loads(buf.getvalue())["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("Owner-approved:", out["permissionDecisionReason"])
+
     def test_r4_unreadable(self):
         self.assertDenied(f'git add {self.P} && git commit -m "unclosed', "could not be read")
 
