@@ -10,7 +10,7 @@ The spec answers the intent: what exactly will be built in this codebase and why
 ## Before writing
 
 1. Read `docs/SDLC.md` if it exists; it overrides these defaults.
-2. Read the intent. Its Status must include `Accepted`; if not, ask the owner to accept or edit it first (in an agent team, the coordinator accepts it unless it sets money rules or prices; `team.md`, Owner pauses).
+2. Read the intent. Its Status must include `Accepted`; if not, ask the owner to accept or edit it first (in an agent team, the owner approves once when the intent is Accepted, and the spec inherits that approval; agents make spec decisions with the recommended answer and list them under `Decisions` in the PR; `team.md`, Owner approval at intent).
 3. Read `CONTEXT.md`, the ADRs that touch the area, the area's living design notes (`docs/<AREA>/_INDEX.md`) and the code paths involved. Find facts yourself.
 4. Use the `grill-with-docs` skill for unresolved decisions and domain records: read `~/.agents/skills/grill-with-docs/SKILL.md` and follow it.
 
@@ -59,7 +59,7 @@ Migrations, backfills, flags, environments, anything the deploy needs.
 
 ## After writing
 
-Show the draft, apply corrections, and when the owner accepts it (in an agent team, the coordinator, unless it sets money rules or prices) set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`); each ticket copies the Test plan cases and the User-facing copy rows it owns. If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
+Show the draft, apply corrections, and when the owner accepts it (in an agent team, the spec inherits the intent's one owner approval with `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, and its spec decisions are listed under `Decisions` in the PR; `team.md`, Owner approval at intent) set `Status: Proposed ... · Accepted <date>` in both files' history as appropriate, then commit (`docs: spec <slug>`). Next: break it into issues (`to-tickets`); each ticket copies the Test plan cases and the User-facing copy rows it owns. If the plan changes during Build, record the change in the PR or a new ADR; do not edit the frozen pair.
 
 ## Writing rules
 

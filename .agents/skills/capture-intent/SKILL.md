@@ -56,7 +56,7 @@ Success measure, Never list and Rollback trigger are required. An intent without
 
 ## Status
 
-The header keeps the history on one line: `Status: Proposed 2026-09-28 · Accepted 2026-09-30 · Shipped 2026-10-12 (#1234)`. Outside a team the owner is the only approver; in an agent team the coordinator accepts intents, and the owner only those that set money rules or prices (`team.md`, Owner pauses). Rejected intents stay in place as the record. After the spec is accepted, the intent is frozen.
+The header keeps the history on one line: `Status: Proposed 2026-09-28 · Accepted 2026-09-30 · Shipped 2026-10-12 (#1234)`. Outside a team the owner is the only approver; in an agent team the owner approves once, when the intent is Accepted (`team.md`, Owner approval at intent). Rejected intents stay in place as the record. After the spec is accepted, the intent is frozen.
 
 Accepting the intent is the one owner approval for the program. The spec, its ADRs and the gated file edits the spec lists under Owner steps inherit it, and their commits carry `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, where the PR is the merged one that added this intent (`team.md`, Owner approval at intent).
 
