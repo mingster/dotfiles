@@ -47,7 +47,7 @@ class GoneRemoteDispatch(unittest.TestCase):
         self.assertEqual(len(notices), 1)
         self.assertIsInstance(notices[0], fw.Urgent)
         self.assertIn('ctx_gone', notices[0])
-        self.assertIn('worker-stop', notices[0])
+        self.assertIn('release-worker.sh --live ctx_gone', notices[0])
 
     def test_reported_once_per_dispatch(self):
         state = {}

@@ -432,6 +432,14 @@ class ReleaseByFragment(Base):
         self.assertEqual(fake.lifecycle(), REMOTE_STEPS)
         self.assertEqual(fake.terminals[ENV], [])
 
+    def test_dead_dispatch_with_terminal_gone_from_host_releases_clean(self):
+        dead = {'dispatchId': 'ctx_dead1234', 'state': 'ready', 'terminal': REMOTE_TERM, 'host': 'local'}
+        fake = Rpc(host_rows={ENV: [dead]}, terminals={ENV: [], '': []})
+        code, message = fw.release_worker_by_fragment('dead1234', {}, fake, ['', ENV], allow_live=True)
+        self.assertEqual(code, 0, message)
+        self.assertIn('terminal already gone', message)
+        self.assertEqual(fake.lifecycle(), [('stop', ENV), ('stop', ''), ('release', ENV), ('release', '')])
+
     def test_live_target_needs_live_and_coordinator_is_refused(self):
         live = {'dispatchId': 'ctx_live1234', 'state': 'ready', 'terminal': LOCAL_TERM}
         fake = Rpc(host_rows={'': [live]}, terminals={'': [LOCAL_TERM]})
