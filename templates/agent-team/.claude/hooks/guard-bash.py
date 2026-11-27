@@ -2498,27 +2498,108 @@ def matches_main(git, rel, rest):
     return False
 
 
-def check_role_file_gate(base, args):
+def _names(text):
+    return [p for p in (text or "").split("\0") if p]
+
+
+def _uniq(items):
+    return [x for i, x in enumerate(items) if x is not None and x not in items[:i]]
+
+
+def _changed_files(git, base):
+    """(top level, modified, deleted, staged and untracked files of the whole repo) as `git` sees it from `base`."""
+    top = (gate_run([*git, "rev-parse", "--show-toplevel"], base) or "").strip()
+    if not top:
+        return None, set()
+    at = [*git, "-C", top]
+    out = set()
+    for cmd in (["diff", "--name-only", "-z"], ["diff", "--cached", "--name-only", "-z"],
+                ["ls-files", "--others", "--exclude-standard", "-z"]):
+        out |= set(_names(gate_run([*at, *cmd], base)))
+    return top, out
+
+
+ADD_TRUSTED_OPTIONS = {"-v", "--verbose", "-f", "--force", "-N", "--intent-to-add", "--ignore-errors"}
+
+
+def _literal(word):
+    return not re.search(r"[$`{*?\[]", word)
+
+
+def pending_add_paths(step):
+    """Repo relative paths a `git add` step stages, which the index does not hold yet (#2023). A named path is
+    trusted only when it is, exactly, a changed file or a folder holding one. Any other path, a word that is not
+    literal, an option outside ADD_TRUSTED_OPTIONS (-A, -p, --pathspec-from-file ...) or an unknown folder counts
+    as `git add -A`: every changed file. Paths resolve from the hook folder and from the tracked folder."""
+    unknown = step.cwd is None or not all(_literal(v) for v in step.repo[1::2])
+    git = ["git"] if unknown else ["git", *step.repo]
+    specs, blind, paths_only = [], unknown, False
+    for a in step.args:
+        if paths_only or not a.startswith("-"):
+            specs.append(a)
+        elif a == "--":
+            paths_only = True
+        elif a not in ADD_TRUSTED_OPTIONS and not a.startswith("--chmod="):
+            blind = True
+    out = set()
+    for base in ([GATE_CWD] if unknown else _uniq([GATE_CWD, step.cwd])):
+        top, changed = _changed_files(git, base)
+        if not top:
+            continue
+        if blind:
+            out |= changed
+            continue
+        folder = base
+        for flag, value in zip(step.repo[::2], step.repo[1::2]):
+            if flag == "-C":
+                folder = os.path.join(folder, value)
+        for spec in specs:
+            if not _literal(spec):
+                out |= changed
+                continue
+            joined = os.path.normpath(os.path.join(folder, os.path.expanduser(spec)))
+            # Resolve the parent only: a symlink at the path itself is the staged path, not its target.
+            full = os.path.join(os.path.realpath(os.path.dirname(joined)), os.path.basename(joined))
+            rel = os.path.relpath(full, os.path.realpath(top)).replace("\\", "/")
+            hits = changed if rel == "." else {p for p in changed if p == rel or p.startswith(rel + "/")}
+            if not hits:
+                hits = changed | ({rel} if rel != ".." and not rel.startswith("../") else set())
+            out |= hits
+    return out
+
+
+def check_commit_step(step, pending):
+    """The owner gate for one commit step: the index at the hook folder and at the tracked folder (plus the
+    worktree for `commit -a`), plus `pending`, the paths earlier adds in this command stage. Pending paths
+    are never exempt through matches_main: their staged blob is not in the index yet."""
     root = find_project_root(GATE_CWD or os.getcwd())
     adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
+    rest, repo = step.args, step.repo
+    git = ["git", *repo]
+    staged = set(pending)
+    for base in _uniq([GATE_CWD, step.cwd]):
+        staged |= set(_names(gate_run([*git, "diff", "--cached", "--name-only", "-z"], base)))
+        if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
+            staged |= set(_names(gate_run([*git, "diff", "--name-only", "-z"], base)))
+
+    def exempt(f):
+        return adopted and is_template_managed_rel(f) and f not in pending and matches_main(git, f, rest)
+
+    if adopted:
+        managed = sorted(f for f in staged if is_template_managed_rel(f) and not exempt(f))
+        if managed:
+            deny_template_managed(managed[0])
+    staged = {f for f in staged if not exempt(f)}
+    files = {f for f in staged if is_protected(f)} | ship_protected(staged)
+    if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
+        deny_role_files(files, "This commit")
+
+
+def check_role_file_gate(base, args):
     git = ["git"]
     if base == "git":
-        verb, rest, repo = git_verb(args)
+        verb, _, repo = git_verb(args)
         git += repo
-        if verb == "commit":
-            staged = set((gate_run([*git, "diff", "--cached", "--name-only"], None) or "").split())
-            if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
-                staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
-            if adopted:
-                managed = sorted(f for f in staged if is_template_managed_rel(f)
-                                 and not matches_main(git, f, rest))
-                if managed:
-                    deny_template_managed(managed[0])
-            staged = {f for f in staged if not (adopted and is_template_managed_rel(f) and matches_main(git, f, rest))}
-            files = {f for f in staged if is_protected(f)} | ship_protected(staged)
-            if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
-                deny_role_files(files, "This commit")
-            return
         if verb != "push":
             return
     elif not (base == "gh" and args[:2] == ["pr", "create"]):
@@ -2990,6 +3071,30 @@ def check_indirection(base, args):
                             "run that file.")
 
 
+SHELL_C_FLAG = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
+
+
+def nested_script(base, args):
+    """(script text, cd carries on) for an `eval` or `<shell> -c` step, else None. `$0` to `$9` in a `-c`
+    script take the words after it. A `cd` in eval carries on after it; one in a shell stays inside."""
+    if base == "eval":
+        return " ".join(args), True
+    if base not in SHELLS and base not in {"source", "."}:
+        return None
+    idx = next((i for i, a in enumerate(args) if SHELL_C_FLAG.match(a)), None)
+    if idx is None or idx + 1 >= len(args):
+        return None
+    script, positional = args[idx + 1], args[idx + 2:]
+    if positional:
+        script = re.sub(
+            r"\$(?:\{([0-9])\}|([0-9]))",
+            lambda m: positional[int(m.group(1) or m.group(2))]
+            if int(m.group(1) or m.group(2)) < len(positional) else m.group(0),
+            script,
+        )
+    return script, False
+
+
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
@@ -3082,35 +3187,20 @@ def check_segment(segment, depth=0, cwd=None):
     if base in BLOCKED_SCRIPTS:
         deny(f"{base} runs only inside the deploy pipeline (the deploy wrapper through /deploy). "
              "Reading, grepping, editing or committing the file is fine; running it is not.")
-    if base == "eval":
-        for text in [" ".join(args), *substitutions(" ".join(args))]:
+    nested = nested_script(base, args)
+    if nested:
+        for text in [nested[0], *substitutions(nested[0])]:
             check_hidden_script_paths(text, transfer_cwd)
+            cur_cwd = transfer_cwd
             for seg in segments(text):
-                check_segment(seg, depth + 1, cwd=transfer_cwd)
+                check_segment(seg, depth + 1, cwd=cur_cwd)
+                p2, a2 = program_and_args(words(seg))
+                if base != "eval" and p2 in ("cd", "pushd") and a2:
+                    dest = next((x for x in a2 if not x.startswith("-")), None)
+                    if dest:
+                        cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
     if base in SHELLS or base in {"source", "."}:
-        idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
-        if idx is not None:
-            if idx + 1 < len(args):
-                script = args[idx + 1]
-                positional = args[idx + 2:]
-                if positional:
-                    script = re.sub(
-                        r"\$(?:\{([0-9])\}|([0-9]))",
-                        lambda m: positional[int(m.group(1) or m.group(2))]
-                        if int(m.group(1) or m.group(2)) < len(positional) else m.group(0),
-                        script,
-                    )
-                for text in [script, *substitutions(script)]:
-                    check_hidden_script_paths(text, transfer_cwd)
-                    cur_cwd = transfer_cwd
-                    for seg in segments(text):
-                        check_segment(seg, depth + 1, cwd=cur_cwd)
-                        p2, a2 = program_and_args(words(seg))
-                        if p2 in ("cd", "pushd") and a2:
-                            dest = next((x for x in a2 if not x.startswith("-")), None)
-                            if dest:
-                                cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
-        else:
+        if not any(SHELL_C_FLAG.match(a) for a in args):
             script = next((a for a in args if not a.startswith("-")), None)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
                 deny(f"{os.path.basename(script)} runs only inside the deploy pipeline (the deploy wrapper).")
@@ -4474,13 +4564,8 @@ def _wrapper_tails(tokens, depth):
             _check_run_words(tokens[c:], depth)
 
 
-def _check_run_words(tokens, depth):
-    for j, word in enumerate(tokens):  # `bash < bin/$S` and `< bin/$S bash` run the file they read
-        m = INPUT_REDIRECT.match(word)
-        if m:
-            target = word[m.end():] or (tokens[j + 1] if j + 1 < len(tokens) else "")
-            if BUILT_WORD.search(target) and any(os.path.basename(w) in SHELLS | {"source", "."} for w in tokens):
-                deny(RUN_GUARD_DENY)
+def _skip_run_lead(tokens):
+    """The words from the program on: leading keywords, assignments and redirects dropped."""
     i = 0
     while i < len(tokens):
         if tokens[i] in {"function", "coproc"}:  # `function f {`, `coproc f {`: the name is no program
@@ -4491,7 +4576,17 @@ def _check_run_words(tokens, depth):
             i += 2 if REDIRECT_WORD.fullmatch(tokens[i]) else 1
         else:
             break
-    tokens = tokens[i:]
+    return tokens[i:]
+
+
+def _check_run_words(tokens, depth):
+    for j, word in enumerate(tokens):  # `bash < bin/$S` and `< bin/$S bash` run the file they read
+        m = INPUT_REDIRECT.match(word)
+        if m:
+            target = word[m.end():] or (tokens[j + 1] if j + 1 < len(tokens) else "")
+            if BUILT_WORD.search(target) and any(os.path.basename(w) in SHELLS | {"source", "."} for w in tokens):
+                deny(RUN_GUARD_DENY)
+    tokens = _skip_run_lead(tokens)
     if len(tokens) > 1 and os.path.basename(tokens[0]) == "command" and tokens[1] in {"-v", "-V"}:
         return  # a lookup, it runs nothing
     if tokens and tokens[0].startswith("("):  # `((cmd))` under `sh -c` is two subshells
@@ -4548,6 +4643,133 @@ def check_blocked_script_runs(command, depth=0):
         check_blocked_script_runs(script, depth + 1)
 
 
+class Step:
+    """One git add or commit, or a word the commit gate cannot follow, in run order (#2023). `verb` is "add",
+    "commit", "dynamic" (a program word that is only a variable or substitution) or "built" (`git $verb`).
+    `cwd` is the tracked folder, None when unknown. `sub` marks a step inside `$(...)`, a backtick, `<(...)`
+    or a heredoc a shell reads: it has no order, so it pairs with every step."""
+    __slots__ = ("verb", "args", "repo", "cwd", "sub")
+
+    def __init__(self, verb, args=(), repo=(), cwd=None, sub=False):
+        self.verb, self.args, self.repo, self.cwd, self.sub = verb, list(args), list(repo), cwd, sub
+
+
+DYNAMIC_PROGRAM = re.compile(r"(?:\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-]|\{[^}]*\}?)|`)+")
+GIT_STEP_FIX = " Run `git add` and `git commit` as separate, written-out commands."
+
+
+def git_steps(command, cwd):
+    """Every git add and commit in `command`, nested `<shell> -c` and eval scripts and substitution bodies
+    included, in run order. No global state: the commit gate reads the whole list once."""
+    steps = []
+    _git_steps_text(command, cwd, 0, False, steps)
+    return steps
+
+
+def _git_steps_text(text, cwd, depth, sub, steps):
+    if depth > 3:
+        raise _Unreadable
+    reader = _RunReader(text, depth).read()
+    for part in reader.parts[:-1]:
+        _git_steps_part(part, cwd, depth, True, steps)
+    for script in reader.scripts:
+        _git_steps_text(script, cwd, depth + 1, True, steps)
+    return _git_steps_part(reader.parts[-1], cwd, depth, sub, steps)
+
+
+def _git_steps_part(part, cwd, depth, sub, steps):
+    """Walk one flat part; return the tracked folder after it (None when unknown)."""
+    for seg in segments(part):
+        tokens = _skip_run_lead(words(seg))
+        prog, args = program_and_args(tokens)
+        if not prog:
+            continue
+        base = os.path.basename(prog)
+        if DYNAMIC_PROGRAM.fullmatch(prog):
+            steps.append(Step("dynamic", sub=sub))
+            continue
+        if base in ("cd", "pushd"):
+            dest = next((a for a in args if a not in ("-L", "-P", "-e", "-@")), "~")
+            if dest == "-" or not _literal(dest):
+                cwd = None
+            elif cwd is not None or os.path.isabs(os.path.expanduser(dest)):
+                cwd = os.path.normpath(os.path.join(cwd or "/", os.path.expanduser(dest)))
+        elif base == "popd":
+            cwd = None
+        nested = nested_script(base, args)
+        if nested:
+            end = _git_steps_text(nested[0], cwd, depth + 1, sub, steps)
+            if nested[1]:
+                cwd = end
+        wrappers = tokens[:len(tokens) - len(args) - 1]
+        if base == "git":
+            _git_step(args, cwd, sub, steps, any(os.path.basename(w) == "xargs" for w in wrappers))
+        elif base == "find":
+            for j, arg in enumerate(args):
+                if arg in {"-exec", "-execdir", "-ok", "-okdir"}:
+                    end = next((k for k in range(j + 1, len(args)) if args[k] in {";", "+"}), len(args))
+                    inner, inner_args = program_and_args(args[j + 1:end])
+                    if inner and os.path.basename(inner) == "git":
+                        _git_step(inner_args, cwd, sub, steps, True)
+    return cwd
+
+
+def _git_step(args, cwd, sub, steps, blind):
+    verb, rest, repo = git_verb(args)
+    if verb is None:
+        return
+    if not _literal(verb):
+        steps.append(Step("built", sub=sub))
+        return
+    verb = "add" if verb == "stage" else verb
+    if verb not in ("add", "commit"):
+        return
+    if not all(_literal(v) for v in repo[1::2]):
+        cwd = None
+    steps.append(Step(verb, ["-A"] if blind and verb == "add" else rest, repo, cwd, sub))
+
+
+def gate_git_steps(steps):
+    adds = [(i, s) for i, s in enumerate(steps) if s.verb == "add"]
+    commits = [(i, s) for i, s in enumerate(steps) if s.verb == "commit"]
+    if not adds and not commits:
+        return
+    if any(s.verb == "dynamic" for s in steps):
+        deny("Refused: this command runs `git add` or `git commit` next to a program named by a variable or a "
+             "substitution (`$X`, `$(...)`, `bash -c \"$CMD\"`, `eval \"$X\"`), which the commit gate cannot "
+             "read." + GIT_STEP_FIX)
+    if any(s.verb == "built" for s in steps):
+        deny("Refused: this command runs `git add` or `git commit` next to a git subcommand built from a "
+             "variable or a substitution (`git $verb`)." + GIT_STEP_FIX)
+    if adds and any(s.cwd is None for _, s in commits):
+        deny("Refused: this command runs `git add` and a `git commit` whose folder is not known (`cd \"$X\"`, "
+             "`cd -`, `popd`, `git -C \"$d\"`)." + GIT_STEP_FIX)
+    pending = {}
+    for i, commit in commits:
+        paths = set()
+        for j, add in adds:
+            if j < i or add.sub or commit.sub:
+                if j not in pending:
+                    pending[j] = pending_add_paths(add)
+                paths |= pending[j]
+        check_commit_step(commit, paths)
+
+
+def check_git_steps(command):
+    """The commit gate, once over the whole command (#2023). What it cannot read is denied when the raw
+    command names git and commit."""
+    if "git" not in command:
+        return
+    try:
+        gate_git_steps(git_steps(command, GATE_CWD))
+    except SystemExit:
+        raise
+    except Exception:
+        if re.search(r"\bgit\b", RAW_COMMAND) and re.search(r"\bcommit\b", RAW_COMMAND):
+            deny("Refused: the `git add` and `git commit` steps in this command could not be read, so the "
+                 "commit gate cannot check them." + GIT_STEP_FIX)
+
+
 def _part_named(part, tokens):
     """True when a token holds the path component, or is a glob or brace pattern that could match it."""
     return any(part in token or (re.search(r"[*?\[{]", token)
@@ -4588,6 +4810,7 @@ def check_command(command):
                 dest = next((a for a in args if not a.startswith("-")), None)
                 if dest:
                     cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+    check_git_steps(command)
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)

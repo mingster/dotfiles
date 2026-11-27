@@ -2253,5 +2253,262 @@ class DenyMessagesNameRewrite(ProjectConfigGuardTest):
                 self.assertAllowed(command)
 
 
+class ChainedRepo(GuardTest):
+    """A throwaway git repo in the temp home, with the hook run from inside it (#2023).
+    P is a protected file and U an unprotected one, both committed and then modified, unstaged."""
+    P = "docs/agents/team-facts.md"
+    U = "src/app.txt"
+    M = "-m tweak"
+    TRAILER = '-m tweak -m "Owner-approved: mingster 2026-11-28"'
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.home, "repo")
+        os.makedirs(self.repo)
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "user.name", "t")
+        for rel in (self.P, self.U):
+            self.write(rel, "old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "init")
+        for rel in (self.P, self.U):
+            self.write(rel, "new\n")
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+
+    def write(self, rel, text="x\n"):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    def bash(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home), cwd=self.repo, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def assertGated(self, command):
+        return self.assertDenied(command, "Owner-approved:")
+
+    def assertRefused(self, command):
+        return self.assertDenied(command, "separate, written-out commands")
+
+
+class ChainedAddCommitGate(ChainedRepo):
+    """#2023: the commit gate counts every add in the whole command, nested shells and eval included."""
+
+    def test_add_protected_then_commit(self):
+        self.assertGated(f"git add {self.P} && git commit {self.M}")
+
+    def test_add_all_then_commit(self):
+        self.assertGated(f"git add -A && git commit {self.M}")
+
+    def test_add_dot_then_commit(self):
+        self.assertGated(f"git add . && git commit {self.M}")
+
+    def test_add_folder_then_commit(self):
+        self.assertGated(f"git add docs && git commit {self.M}")
+
+    def test_add_with_dash_c_then_commit(self):
+        self.assertGated(f"git -C docs add -A && git commit {self.M}")
+
+    def test_cd_add_all_then_commit(self):
+        self.assertGated(f"cd docs && git add -A && git commit {self.M}")
+
+    def test_git_stage_is_git_add(self):
+        self.assertGated(f"git stage {self.P} && git commit {self.M}")
+
+    def test_add_in_shell_c_then_commit(self):
+        for shell in ("bash", "sh"):
+            with self.subTest(shell=shell):
+                self.assertGated(f"{shell} -c 'git add {self.P}' && git commit {self.M}")
+
+    def test_add_in_eval_then_commit(self):
+        self.assertGated(f"eval 'git add {self.P}' && git commit {self.M}")
+
+    def test_add_then_commit_in_shell_c(self):
+        for shell in ("bash", "sh"):
+            with self.subTest(shell=shell):
+                self.assertGated(f"git add {self.P} && {shell} -c 'git commit {self.M}'")
+
+    def test_add_then_commit_in_eval(self):
+        self.assertGated(f"git add {self.P} && eval 'git commit {self.M}'")
+
+    def test_add_and_commit_in_two_shells(self):
+        self.assertGated(f"bash -c 'git add {self.P}' && sh -c 'git commit {self.M}'")
+
+    def test_add_and_commit_in_one_shell(self):
+        for wrap in ("bash -c", "zsh -c", "eval"):
+            with self.subTest(wrap=wrap):
+                self.assertGated(f"{wrap} 'git add {self.P} && git commit {self.M}'")
+
+    def test_add_two_shells_deep(self):
+        self.assertGated(f"bash -c \"bash -c 'git add {self.P}'\" && git commit {self.M}")
+
+    def test_add_in_substitution(self):
+        self.assertGated(f"x=$(git add {self.P}) && git commit {self.M}")
+
+    def test_brace_path(self):
+        self.assertGated(f"git add docs/{{agents,agents}}/team-facts.md && git commit {self.M}")
+
+    def test_glob_path(self):
+        self.assertGated(f"git add docs/agents/*.md && git commit {self.M}")
+
+    def test_variable_path(self):
+        self.assertGated(f'f={self.P}; git add "$f" && git commit {self.M}')
+
+    def test_shell_positional_path(self):
+        self.assertGated(f"bash -c 'git add \"$@\"' _ {self.P} && git commit {self.M}")
+
+    def test_xargs_add(self):
+        self.assertGated(f"echo {self.P} | xargs git add && git commit {self.M}")
+
+    def test_find_exec_add(self):
+        self.assertGated(f"find docs -name '*.md' -exec git add {{}} + && git commit {self.M}")
+
+    def test_patch_add(self):
+        self.assertGated(f"git add -p && git commit {self.M}")
+
+    def test_pathspec_magic_slash(self):
+        self.assertGated(f"git add :/{self.P} && git commit {self.M}")
+
+    def test_pathspec_magic_top(self):
+        self.assertGated(f"git add ':(top){self.P}' && git commit {self.M}")
+
+    def test_subshell_cd_does_not_hide_staged_file(self):
+        self.git("add", self.P)
+        self.assertGated(f"(cd /tmp); git commit {self.M}")
+
+    def test_skipped_cd_does_not_hide_staged_file(self):
+        self.git("add", self.P)
+        self.assertGated(f"false && cd /tmp; git commit {self.M}")
+
+    def test_subshell_cd_does_not_hide_add_path(self):
+        self.assertGated(f"(cd docs/agents); git add {self.P} && git commit {self.M}")
+
+    def test_protected_symlink(self):
+        os.remove(os.path.join(self.repo, self.P))
+        os.symlink("../../src/app.txt", os.path.join(self.repo, self.P))
+        self.assertGated(f"git add {self.P} && git commit {self.M}")
+
+
+class ChainedRefusals(ChainedRepo):
+    """#2023: what the pass cannot follow is refused, and a trailer does not lift it."""
+
+    def test_r1_shell_c_variable(self):
+        self.assertRefused(f'git add {self.U} && bash -c "$CMD"')
+
+    def test_r1_eval_variable(self):
+        self.assertRefused(f'eval "$STAGE" && git commit {self.M}')
+
+    def test_r1_unquoted_brace_variable_program(self):
+        self.assertRefused(f"git add {self.U} && ${{X}} commit {self.M}")
+
+    def test_r1_trailer_does_not_lift(self):
+        self.assertRefused(f'eval "$STAGE" && git commit {self.TRAILER}')
+
+    def test_r2_built_git_verb(self):
+        self.assertRefused(f"git add {self.U} && git $verb {self.M}")
+
+    def test_r3_unknown_commit_folder(self):
+        self.assertRefused(f'git add {self.U} && cd "$X" && git commit {self.M}')
+
+    def test_r4_unreadable(self):
+        self.assertDenied(f'git add {self.P} && git commit -m "unclosed', "could not be read")
+
+    def test_r4_injected_exception(self):
+        spec = importlib.util.spec_from_file_location("guard_bash_git_steps_inject", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        command = f"git add {self.U} && git commit {self.M}"
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo})
+        buf = io.StringIO()
+        with mock.patch.object(mod, "git_steps", side_effect=RuntimeError("injected")), \
+             mock.patch.dict(os.environ, {"HOME": self.home}), \
+             mock.patch("sys.stdin", io.StringIO(payload)), mock.patch("sys.stdout", buf):
+            with self.assertRaises(SystemExit):
+                mod.main()
+        out = json.loads(buf.getvalue())["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        self.assertIn("could not be read", out["permissionDecisionReason"])
+
+
+class ChainedAllowed(ChainedRepo):
+    """#2023: what the new pass keeps allowing."""
+
+    def test_trailer_lifts_the_gate(self):
+        self.assertAllowed(f"git add {self.P} && git commit {self.TRAILER}")
+
+    def test_trailer_lifts_the_gate_for_a_nested_add(self):
+        self.assertAllowed(f"bash -c 'git add {self.P}' && git commit {self.TRAILER}")
+
+    def test_add_unprotected(self):
+        self.assertAllowed(f"git add {self.U} && git commit {self.M}")
+
+    def test_add_unprotected_in_shell_c(self):
+        self.assertAllowed(f"bash -c 'git add {self.U}' && git commit {self.M}")
+
+    def test_add_after_commit(self):
+        self.git("add", self.U)
+        self.assertAllowed(f"git commit {self.M} && git add {self.P}")
+
+    def test_nested_add_after_commit(self):
+        self.git("add", self.U)
+        self.assertAllowed(f"git commit {self.M}; bash -c 'git add {self.P}'")
+
+    def test_cd_inside_shell_c_stays_inside(self):
+        self.assertAllowed(f"bash -c 'cd docs' && git add {self.U} && git commit {self.M}")
+
+    def test_add_text_in_echo(self):
+        self.git("add", self.U)
+        self.assertAllowed(f"echo 'git add {self.P}' && git commit {self.M}")
+
+    def test_heredoc_message(self):
+        self.assertAllowed(f"git add {self.U} && git commit -m \"$(cat <<'EOF'\ntweak\n\nmore text\nEOF\n)\"")
+
+    def test_home_path_program(self):
+        self.assertAllowed(f'git add {self.U} && "$HOME/bin/tool" && git commit {self.M}')
+
+
+class ChainedBlockedScripts(ChainedRepo):
+    """#2023: with blocked_scripts set, a mention in the commit text is not a commit gate denial."""
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.repo, ".claude", "hooks"), exist_ok=True)
+        with open(os.path.join(self.repo, ".claude", "hooks", "guard-config.json"), "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh"]}, f)
+
+    def test_mention_in_message_is_not_gated(self):
+        self.git("add", self.U)
+        reason = self.bash(f'git commit -m "mention deploy-raw.sh" && git add {self.P}')
+        self.assertFalse(reason and ("Owner-approved:" in reason or "separate, written-out" in reason), reason)
+
+
+class AdoptedChainedAddGate(ChainedRepo):
+    """#2023: in an adopted project a template managed file that origin/main already has is exempt from the
+    commit gate. A path an add in the same command stages is never exempt."""
+    ROLE = ".claude/agents/elon.md"
+
+    def setUp(self):
+        super().setUp()
+        self.write(".claude/settings.project.json", "{}\n")
+        self.write(self.ROLE, "old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "adopt")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write(self.ROLE, "edited\n")
+
+    def test_add_of_template_managed_file(self):
+        self.assertDenied(f"git add {self.ROLE} && git commit {self.M}", "template managed")
+
+    def test_add_all_then_commit_in_shell_c(self):
+        self.assertDenied(f"git add -A && bash -c 'git commit {self.M}'", "template managed")
+
+
 if __name__ == "__main__":
     unittest.main()
