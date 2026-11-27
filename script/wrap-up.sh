@@ -161,7 +161,7 @@ daily_child() { # <kill limit> <wrap-up> <mode> <repo> <detail> <tee 0|1> [NAME=
 }
 daily_say() { printf '%s\n' "$*" >> "$daily_detail"; if [ "${scheduled_dry:-0}" = 1 ]; then printf '%s\n' "$*"; fi; return 0; }
 # Old logs only: macOS app logs and crash reports, rotated Orca logs, untracked agent-state logs (all older than
-# WRAP_UP_DAILY_LOG_DAYS, default 7), and any *.log over WRAP_UP_DAILY_BIG_LOG_KB (default 100 MB) under the Orca workspaces
+# WRAP_UP_DAILY_LOG_DAYS, default 7; branch-prune restore logs after 14 days, since they are the only record of a pruned sha), and any *.log over WRAP_UP_DAILY_BIG_LOG_KB (default 100 MB) under the Orca workspaces
 # that nothing wrote in the last WRAP_UP_DAILY_RECENT_MIN minutes. Never a symlink, never a live (unrotated) Orca log.
 daily_log_candidates() {
   local days=${WRAP_UP_DAILY_LOG_DAYS:-7} big=${WRAP_UP_DAILY_BIG_LOG_KB:-102400} recent=${WRAP_UP_DAILY_RECENT_MIN:-180}
@@ -171,7 +171,8 @@ daily_log_candidates() {
   if [ -d "$state" ]; then
     while IFS= read -r f; do
       git -C "$state" ls-files --error-unmatch -- "$f" >/dev/null 2>&1 || printf '%s\n' "$f"
-    done < <(find "$state" -name .git -prune -o -type f -name '*.log' -mtime +"$days" -print 2>/dev/null)
+    done < <(find "$state" -name .git -prune -o -path "$state/branch-prune" -prune -o -type f -name '*.log' -mtime +"$days" -print 2>/dev/null
+      [ ! -d "$state/branch-prune" ] || find "$state/branch-prune" -type f -name '*.log' -mtime +14 -print 2>/dev/null)
   fi
   [ ! -d "$ws" ] || find "$ws" \( -name node_modules -o -name .git \) -prune -o -type f -name '*.log' -size +"${big}"k -mmin +"$recent" -print 2>/dev/null
 }

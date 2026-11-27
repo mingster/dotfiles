@@ -132,6 +132,13 @@ head -c 4096 /dev/zero > "$tmp/workspaces/proj/big-old.log"; head -c 4096 /dev/z
 echo l > "$tmp/workspaces/proj/small-old.log"
 touch -t "$old" "$tmp/home/Library/Logs/old.log" "$tmp/home/.orca/logs/rotated.log.1" "$tmp/home/.orca/logs/live.log" \
   "$tmp/agent-state/untracked.log" "$tmp/agent-state/tracked.log" "$tmp/workspaces/proj/big-old.log" "$tmp/workspaces/proj/small-old.log"
+# Restore logs (branch-prune) are kept 14 days; other agent-state logs keep the 7 day rule.
+days_ago() { perl -MPOSIX -e 'print strftime("%Y%m%d%H%M", localtime(time - $ARGV[0] * 86400))' "$1"; }
+mkdir -p "$tmp/agent-state/branch-prune" "$tmp/agent-state/other"
+echo l > "$tmp/agent-state/branch-prune/ten-days.log"; echo l > "$tmp/agent-state/branch-prune/twenty-days.log"
+echo l > "$tmp/agent-state/other/ten-days.log"
+touch -t "$(days_ago 10)" "$tmp/agent-state/branch-prune/ten-days.log" "$tmp/agent-state/other/ten-days.log"
+touch -t "$(days_ago 20)" "$tmp/agent-state/branch-prune/twenty-days.log"
 
 passed=0; failed=0
 check() { if "${@:2}"; then echo "ok $1"; passed=$((passed+1)); else echo "FAIL $1"; failed=$((failed+1)); fi; }
@@ -202,6 +209,9 @@ check 'keeps a tracked agent-state log' present "$tmp/agent-state/tracked.log"
 check 'removes an old big log under the workspaces' gone "$tmp/workspaces/proj/big-old.log"
 check 'keeps a big log written in the last 3 hours' present "$tmp/workspaces/proj/big-fresh.log"
 check 'keeps an old log under the size limit' present "$tmp/workspaces/proj/small-old.log"
+check 'keeps a 10 day old branch-prune restore log' present "$tmp/agent-state/branch-prune/ten-days.log"
+check 'removes a branch-prune restore log past 14 days' gone "$tmp/agent-state/branch-prune/twenty-days.log"
+check 'removes a 10 day old agent-state log outside branch-prune' gone "$tmp/agent-state/other/ten-days.log"
 check 'runs brew cleanup -s' tool_called 'brew cleanup -s'
 check 'runs bun pm cache rm' tool_called 'bun pm cache rm'
 
