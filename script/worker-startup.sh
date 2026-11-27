@@ -33,6 +33,8 @@
 # the 60 s wait marks the host, stops the dispatch, releases it on the remote host and here, puts the issue labels back, removes the
 # worktree it created and exits 10. The last stderr line is "agy-signin: host=<h> notify" or "... known". A failed mark does not
 # exit 10: it falls back to claude in process. Without the variable the in process fallback is unchanged.
+# A verifier start (role qa-sdet or a Type: verify brief) on antigravity never swaps to claude: on a host signed out of agy it
+# exits 4 before the start, or undoes the start after the sign-in screen and exits 4 (#1966, agy_host_rule).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -281,13 +283,16 @@ else:
 ' <<<"$1"
 }
 
-apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
-  local spec_file=$1 repo_sel=${2:-} record=${3:-} json line env_name placed_repo pick_args=() cfg
+# With an agent, a host that agent cannot start on is skipped. When that leaves no antigravity host it sets
+# WORKER_STARTUP_PLACED_NO_AGY=1 and returns 0, so the caller applies agy_host_rule and picks again (#1966).
+apply_worker_placement() { # <spec_file> [repo_selector] [--record] [agent] -> WORKER_STARTUP_PLACED_ENV, WORKER_STARTUP_PLACED_REPO
+  local spec_file=$1 repo_sel=${2:-} record=${3:-} agent_sel=${4:-} json line env_name placed_repo pick_args=() cfg
   WORKER_STARTUP_PLACED_ENV=
   WORKER_STARTUP_PLACED_REPO=
   WORKER_STARTUP_PLACED_HOST=
   WORKER_STARTUP_PLACED_CFG=
   WORKER_STARTUP_PLACED_CLAIM=
+  WORKER_STARTUP_PLACED_NO_AGY=
   cfg=$(resolve_placement_config)
   if [ ! -f "$cfg" ]; then
     echo 'worker-placement: skipped (no fleet config)' >&2
@@ -305,6 +310,7 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   [ -z "$repo_sel" ] || pick_args+=(--repo "$repo_sel")
   # A real start records itself so the next pick counts it before its load shows.
   [ "$record" != --record ] || pick_args+=(--record)
+  [ -z "$agent_sel" ] || pick_args+=(--agent "$agent_sel")
   set +e
   json=$("$python3" "$here/worker-placement.py" "${pick_args[@]}")
   local ec=$?
@@ -317,6 +323,10 @@ apply_worker_placement() { # <spec_file> [repo_selector] [--record] -> WORKER_ST
   line=$(placement_line_from_json "$json")
   if [ "$(printf '%s' "$json" | jq -r '.ok')" != true ]; then
     echo "$line" >&2
+    if [ "$(printf '%s' "$json" | jq -r '.reason // empty')" = 'no eligible host is signed in to agy' ]; then
+      WORKER_STARTUP_PLACED_NO_AGY=1
+      return 0
+    fi
     exit 4
   fi
   printf '%s\n' "$line"
@@ -771,6 +781,47 @@ agy_host_label() { # <environment> -> the host the worker runs on
   local h=${1:-}
   [ -n "$h" ] || h=$(this_host_name)
   printf '%s\n' "${h:-local}"
+}
+
+agy_usable() { # <host>: exit 0 when antigravity may start there (agy-signin.py usable, #1966)
+  "$python3" "$here/agy-signin.py" usable --agent antigravity --host "$1"
+}
+
+is_verifier_start() { # <spec_file> <title>: role qa-sdet or a Type: verify brief
+  [ "$(role_from_title "${2:-}")" = qa-sdet ] && return 0
+  [ -f "${1:-}" ] && [ "$(sed -n 's/^Type:[[:space:]]*//p' "$1" | head -1)" = verify ]
+}
+
+# The one antigravity swap rule (#1966). It reads and sets the caller's agent and model, and AGY_RULE_MARK.
+#   before <host> <spec> <title>: nothing started yet. A verifier exits 4, so the next pass picks again and skips the
+#     marked host. Any other start swaps to claude/sonnet.
+#   after <host> <spec> <title>: the start hit the sign-in screen. The host is marked first. Returns 10 for an issue start
+#     with WORKER_STARTUP_AGY_SIGNIN=exit whose mark worked (#1832, unchanged), 4 for any other verifier (the caller undoes
+#     the start and exits 4, even when the mark failed), else swaps to claude/sonnet in process and returns 0.
+agy_host_rule() { # before|after <host> <spec_file> <title>
+  local phase=$1 host=$2 spec_file=${3:-} title=${4:-}
+  AGY_RULE_MARK=
+  if [ "$phase" = before ]; then
+    if is_verifier_start "$spec_file" "$title"; then
+      echo "agy-signin: refused: $host is not signed in to agy, and a verifier never swaps to claude" >&2
+      exit 4
+    fi
+    echo "agy-signin: host=$host is agy-unavailable, using claude"
+    agent=claude model=sonnet
+    return 0
+  fi
+  AGY_RULE_MARK=$("$python3" "$here/agy-signin.py" mark "$host" 2>/dev/null) || AGY_RULE_MARK=
+  if [ "${WORKER_STARTUP_AGY_SIGNIN:-}" = exit ] && [ -n "$AGY_RULE_MARK" ]; then
+    return "$AGY_SIGNIN_EXIT"
+  fi
+  if is_verifier_start "$spec_file" "$title"; then
+    [ -n "$AGY_RULE_MARK" ] || echo "worker-startup: could not mark $host agy-unavailable" >&2
+    return 4
+  fi
+  [ -n "$AGY_RULE_MARK" ] || echo "worker-startup: could not mark $host agy-unavailable, falling back to claude in process" >&2
+  echo "agy-signin: host=$host fell back to claude"
+  agent=claude model=sonnet
+  return 0
 }
 
 # The brief copy a worker gets: finish block and Builder line for this agent and model, refs line, role preamble.
@@ -1356,6 +1407,9 @@ run_mode() {
     [ -n "$worktree_sel" ] || usage_run
     [ -n "$from" ] || die "need --from or ORCA_TERMINAL_HANDLE"
     host_check >&2
+    if [ "$agent" = antigravity ] && ! agy_usable "$(agy_host_label '')"; then
+      agy_host_rule before "$(agy_host_label '')" '' "$title"
+    fi
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" ${model:+--model "$model"} >&2 \
       || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
     local wt_retry=""
@@ -1374,8 +1428,8 @@ run_mode() {
     surface_antigravity_screen "$agent" "$start_out" || agy_ec=$?
     [ "$agy_ec" -ne 0 ] || return 0
     [ "$agy_ec" -eq "$AGY_SIGNIN_EXIT" ] || exit "$agy_ec"
-    echo "agy-signin: host=$(agy_host_label '') fell back to claude"
-    agent=claude model=sonnet
+    # A --retry-of start has no brief or title, so it is never a verifier here and always swaps.
+    WORKER_STARTUP_AGY_SIGNIN= agy_host_rule after "$(agy_host_label '')" '' '' || true
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" --model "$model" >&2 \
       || { echo "worker-startup: refused by the usage gate" >&2; exit 3; }
     run_captured pr_review_gates_orchestration_worker_start "$agent" "$model" "$wt_retry" -- \
@@ -1458,14 +1512,19 @@ run_mode() {
   fi
 
   if [ "$explicit_on" != 1 ] && [ -z "$environment" ] && [ -z "$wt" ] && [ -z "$merge_worker" ]; then
-    apply_worker_placement "$spec" "$repo" --record
+    apply_worker_placement "$spec" "$repo" --record "$agent"
+    if [ -n "${WORKER_STARTUP_PLACED_NO_AGY:-}" ]; then
+      # No eligible host is signed in to agy: a verifier exits 4, any other start swaps and picks again (#1966).
+      agy_host_rule before all "$orig_spec" "$title"
+      spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
+      apply_worker_placement "$spec" "$repo" --record "$agent"
+    fi
     [ -n "${WORKER_STARTUP_PLACED_ENV:-}" ] && environment=$WORKER_STARTUP_PLACED_ENV
   fi
 
-  # A host marked agy-unavailable (signed out) gets claude instead of antigravity (#1240).
-  if [ "$agent" = antigravity ] && "$python3" "$here/agy-signin.py" unavailable "$(agy_host_label "$environment")"; then
-    echo "agy-signin: host=$(agy_host_label "$environment") is agy-unavailable, using claude"
-    agent=claude model=sonnet
+  # A host marked agy-unavailable (signed out): --on, a --force-host reason or a local start (#1240, #1966).
+  if [ "$agent" = antigravity ] && ! agy_usable "$(agy_host_label "$environment")"; then
+    agy_host_rule before "$(agy_host_label "$environment")" "$orig_spec" "$title"
     spec=$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")
   fi
 
@@ -1613,17 +1672,14 @@ run_mode() {
     [ -z "$last" ] || echo "$last" >&2 # last, so fleet watch reads it as the reason (_start_reason)
     exit "$ec"
   }
-  # A signed out antigravity issue start (WORKER_STARTUP_AGY_SIGNIN=exit) undoes itself in this one call and exits 10, so fleet watch
-  # changes nothing (#1832). Order: mark the host, stop, release on the remote host, release here, then start_failed (labels back,
-  # worktree removed, placement unrecorded). Each call has its own ||. A failed mark returns 1: no exit 10, the caller falls back.
-  agy_signin_hold() { # <worker-start json>
-    local host dispatch mark
+  # A signed out antigravity start that may not swap undoes itself in this one call and exits, so fleet watch changes nothing:
+  # an issue start with WORKER_STARTUP_AGY_SIGNIN=exit exits 10 (#1832), a verifier exits 4 (#1966). agy_host_rule marked the host
+  # first. Order: stop, release on the remote host, release here, then start_failed (labels back, worktree removed, placement
+  # unrecorded). Each call has its own ||.
+  agy_signin_hold() { # <worker-start json> <exit code> <mark: notify|known|empty>
+    local host dispatch
     host=$(agy_host_label "$environment")
     dispatch=$(jq -r '.result.dispatchId // empty' <<<"$1" 2>/dev/null || true)
-    if ! mark=$("$python3" "$here/agy-signin.py" mark "$host" 2>/dev/null) || [ -z "$mark" ]; then
-      echo "worker-startup: could not mark $host agy-unavailable, falling back to claude in process" >&2
-      return 1
-    fi
     agy_stop_dispatch "$dispatch" "$environment"
     if [ -n "$environment" ]; then
       "$orca" orchestration worker-release --dispatch "$dispatch" --environment "$environment" >/dev/null 2>&1 \
@@ -1631,7 +1687,7 @@ run_mode() {
     fi
     "$orca" orchestration worker-release --dispatch "$dispatch" >/dev/null 2>&1 \
       || echo "worker-startup: could not release $dispatch after the agy sign-in screen" >&2
-    start_failed "$AGY_SIGNIN_EXIT" "agy-signin: host=$host $mark"
+    start_failed "$2" "agy-signin: host=$host ${3:-unmarked}"
   }
   case "$wt" in /*) ;; *) die "worktree path must be absolute" ;; esac
   if [ "${setup_mode:-}" = skip ]; then
@@ -1697,15 +1753,12 @@ run_mode() {
   }
   claim_issue "$spec" "$title" "${claim_repo_sel:-$repo}" "$wt"
   start_agent_worker
-  local agy_ec=0 agy_nostop=
-  [ "${WORKER_STARTUP_AGY_SIGNIN:-}" != exit ] || agy_nostop=nostop
-  surface_antigravity_screen "$agent" "$start_out" "$environment" "$agy_nostop" || agy_ec=$?
+  local agy_ec=0 rule_ec=0
+  surface_antigravity_screen "$agent" "$start_out" "$environment" nostop || agy_ec=$?
   if [ "$agy_ec" -eq "$AGY_SIGNIN_EXIT" ]; then
-    if [ -n "$agy_nostop" ]; then
-      agy_signin_hold "$start_out" || agy_stop_dispatch "$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)" "$environment"
-    fi
-    echo "agy-signin: host=$(agy_host_label "$environment") fell back to claude"
-    agent=claude model=sonnet
+    agy_host_rule after "$(agy_host_label "$environment")" "$orig_spec" "$title" || rule_ec=$?
+    [ "$rule_ec" -eq 0 ] || agy_signin_hold "$start_out" "$rule_ec" "$AGY_RULE_MARK"
+    agy_stop_dispatch "$(jq -r '.result.dispatchId // empty' <<<"$start_out" 2>/dev/null || true)" "$environment"
     "$python3" "${USAGE_GATE_CLI:-$here/usage-gate.py}" check --provider "$agent" --model "$model" >&2 \
       || { echo "worker-startup: refused by the usage gate" >&2; start_failed 3; }
     brief=$(cat "$(build_brief_spec "$orig_spec" "$run" "$title" "$agent" "$model")")

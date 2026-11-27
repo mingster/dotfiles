@@ -76,7 +76,7 @@ class IssueScanHoldsExit10(unittest.TestCase):
         found = urgent(notices)
         self.assertEqual(1, len(found))
         self.assertIn('host=host-a', found[0])
-        self.assertIn('sign in to agy on host-a', found[0])
+        self.assertIn('script/agy-signin-host.sh host-a (not over ssh)', found[0])
         notices, _bits, _s, _a = run_issue_scan(lambda _c: held(HELD_KNOWN))
         self.assertEqual([], urgent(notices))
 

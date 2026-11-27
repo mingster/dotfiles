@@ -1,0 +1,1 @@
+Fleet: an antigravity worker stuck on the agy sign in screen is released at once, its host marked by name, with one line naming the new `script/agy-signin-host.sh` that signs a host in from an Orca terminal, not over ssh (#1967).

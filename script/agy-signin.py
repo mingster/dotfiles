@@ -4,6 +4,10 @@
   agy-signin.py match               read a worker screen on stdin; exit 0 when it is the sign-in screen
   agy-signin.py unavailable <host>  exit 0 when the host is marked agy-unavailable
   agy-signin.py mark <host>         mark the host for 6 hours; print "notify" when a notice is due, else "known"
+  agy-signin.py usable --agent <a> --host <h> [--config <fleet config>]
+                                    exit 0 when the agent may start on the host, 1 when not (#1966)
+  agy-signin.py probe-result        read `agy models` output on stdin; print in, out, or nothing (#1967)
+  agy-signin.py clear <host>        drop the host's mark (after a sign in that the probe confirmed)
 
 A plain `agy -p` probe over ssh says "authentication failed" on a signed in host (the keychain is not
 reachable from ssh), so the worker screen is the only check.
@@ -11,6 +15,7 @@ reachable from ssh), so the worker screen is the only check.
 import json
 import os
 import re
+import socket
 import sys
 import time
 from pathlib import Path
@@ -66,19 +71,70 @@ def _load(path):
     return data if isinstance(data, dict) else {}
 
 
-def is_unavailable(host, now=None, path=None):
+def _fleet_config(config):
+    """The fleet config, found the way worker-placement.py finds it, when the caller passes none."""
+    if config is not None:
+        return config
+    env = os.environ.get('FLEET_WATCH_CONFIG') or os.environ.get('FLEET_PLACEMENT_CONFIG')
+    return _load(Path(os.path.expanduser(env)) if env else Path.home() / '.config' / 'fleet-watch' / 'config.json')
+
+
+def host_key(host, config=None):
+    """The record key for a host: lowercase, with '', 'local', the config local_host and this machine's name
+    all mapped to the config local_host (or 'local' when the config names none)."""
+    local = (_fleet_config(config).get('local_host') or '')
+    local = local.strip().lower() if isinstance(local, str) else ''
+    key = (host or '').strip().lower()
+    this = socket.gethostname().split('.')[0].lower()
+    if key in ('', 'local', local, this):
+        return local or 'local'
+    return key
+
+
+def usable(agent, host, config=None, now=None, path=None):
+    """False only for antigravity on a host marked agy-unavailable; every other agent is usable (#1966)."""
+    if (agent or '').strip().lower() not in ('antigravity', 'agy'):
+        return True
+    return not is_unavailable(host, now=now, path=path, config=config)
+
+
+def is_unavailable(host, now=None, path=None, config=None):
     now = time.time() if now is None else now
-    row = _load(path or state_path()).get(host.lower())
+    row = _load(path or state_path()).get(host_key(host, config))
     until = row.get('until') if isinstance(row, dict) else None
     return isinstance(until, (int, float)) and not isinstance(until, bool) and now < until
 
 
-def mark(host, now=None, path=None):
+# `agy models`: agy's own signed out line, or a model row (id, two or more spaces, name; text is lowered).
+PROBE_SIGNED_OUT = 'please sign in to view available models'
+PROBE_SIGNED_IN = re.compile(r'[a-z][a-z0-9.]*-[a-z0-9.-]+ {2,}[a-z]')
+
+
+def probe_result(text):
+    """'out' only on agy's own signed out line, 'in' on a model list, '' for anything else (no proof)."""
+    low = '\n'.join(screen_lines(text or '')).lower()
+    return 'out' if PROBE_SIGNED_OUT in low else 'in' if PROBE_SIGNED_IN.search(low) else ''
+
+
+def clear(host, path=None, config=None):
+    """Drop the host's mark. True when there was one."""
+    path = path or state_path()
+    data = _load(path)
+    if data.pop(host_key(host, config), None) is None:
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + '.tmp')
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+    return True
+
+
+def mark(host, now=None, path=None, config=None):
     """Mark the host for 6 hours. True when the owner is due a notice: at most one per host per 6 hours."""
     now = time.time() if now is None else now
     path = path or state_path()
     data = _load(path)
-    key = host.lower()
+    key = host_key(host, config)
     row = data.get(key) if isinstance(data.get(key), dict) else {}
     notified = row.get('notified_at')
     due = not (isinstance(notified, (int, float)) and not isinstance(notified, bool)
@@ -108,6 +164,21 @@ def main(argv):
     if cmd == 'mark' and len(argv) == 3:
         print('notify' if mark(argv[2]) else 'known')
         return 0
+    if cmd == 'probe-result' and len(argv) == 2:
+        result = probe_result(sys.stdin.read())
+        if result:
+            print(result)
+        return 0
+    if cmd == 'clear' and len(argv) == 3:
+        clear(argv[2])
+        return 0
+    if cmd == 'usable':
+        opts = dict(zip(argv[2::2], argv[3::2]))
+        if len(argv) % 2 or set(opts) - {'--agent', '--host', '--config'} or not {'--agent', '--host'} <= set(opts):
+            print(__doc__, file=sys.stderr)
+            return 2
+        config = _load(Path(opts['--config'])) if '--config' in opts else None
+        return 0 if usable(opts['--agent'], opts['--host'], config) else 1
     print(__doc__, file=sys.stderr)
     return 2
 

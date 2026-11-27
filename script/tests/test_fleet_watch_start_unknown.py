@@ -11,6 +11,7 @@ spec = importlib.util.spec_from_file_location('fleet_watch_start_unknown', Path(
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
+SIGNIN_SCREEN = (Path(__file__).parent / 'fixtures' / 'agy' / 'signin-screen-wrapped.txt').read_text()
 FIXTURE = json.loads((Path(__file__).parent / 'fixtures' / 'agy-signin-stopped-remote.json').read_text())
 COORD = 'term_4d505f31-1274-4bd4-96a9-4c3943f89629'
 NOW = 2_000_000
@@ -26,6 +27,8 @@ class Fleet:
         self.briefs = briefs or {}
         self.calls = []
         self.fail = set()
+        self.fail_once = set()
+        self.screens = {}
 
     def __call__(self, *args):
         self.calls.append(args)
@@ -46,6 +49,11 @@ class Fleet:
             return {'worker': {}}
         if verb == ('orchestration', 'dispatch-show'):
             return {'preamble': self.briefs.get(args[args.index('--task') + 1], '')}
+        if verb == ('terminal', 'read'):
+            if verb in self.fail_once:
+                self.fail_once.discard(verb)
+                raise fw.OrcaReadError('read failed')
+            return {'terminal': {'screen': self.screens.get(args[args.index('--terminal') + 1], '')}}
         if verb == ('terminal', 'close'):
             handle = args[args.index('--terminal') + 1]
             self.terminals[env] = [t for t in self.terminals.get(env, []) if t['handle'] != handle]
@@ -144,6 +152,89 @@ class StartUnknownReaper(Base):
         self.assertEqual(len(notices), 1)
         self.assertIn('o/r#77 back to ready-for-agent', notices[0])
         self.assertTrue(state['start_unknown'][did]['reaped'])
+
+    def agy_state(self):
+        import tempfile, os
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        marks = Path(tmp.name) / 'agy.json'
+        launches = Path(tmp.name) / 'launches'
+        launches.mkdir()
+        self.enterContext(patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(marks),
+                                                  'WORKER_STARTUP_STATE': tmp.name}))
+        return marks, launches
+
+    def test_fixture_remote_row_on_the_sign_in_screen_marks_the_host_name_and_releases_at_once(self):
+        # The host row carries no agent field: the launch record says antigravity (#1967).
+        marks, launches = self.agy_state()
+        stub = FIXTURE['worker_list_full_row_started']
+        env_id = stub['server']['environmentId']
+        hosted = {k: v for k, v in FIXTURE['worker_list_host_row_start_unknown'].items() if k != 'agent'}
+        hosted.pop('projection', None)
+        did = stub['dispatchId']
+        (launches / ('%s.json' % did)).write_text(json.dumps({'agent': 'antigravity', 'model': 'gemini'}))
+        fleet = Fleet(workers={'host-b': [hosted]})
+        fleet.screens[hosted['terminal']] = SIGNIN_SCREEN
+        state = {'own_dispatches': {did: {'kind': 'issue', 'repo': 'o/r'}}}
+        gh = []
+        with patch.object(fw, 'environment_name_by_id', return_value={env_id: 'host-b'}), \
+                patch.object(fw, 'rpc', fleet):
+            rows = fw.fleet_rows(CONFIG, [dict(copy.deepcopy(stub), _task_title='#77|fullstack-dev')],
+                                 ['', 'host-b'], fleet, state)
+            notices = fw.start_unknown_reaper(CONFIG, state, NOW, rows, fleet, fw._release_row,
+                                              act=lambda argv: gh.append(argv) or 0)
+        self.assertEqual(list(json.loads(marks.read_text())), ['host-b'])
+        self.assertEqual(len(notices), 1)
+        self.assertIn('script/agy-signin-host.sh host-b (not over ssh)', notices[0])
+        self.assertEqual(fleet.sends(), [])
+        self.assertTrue(any(c[:2] == ('orchestration', 'worker-release') for c in fleet.calls))
+        self.assertEqual(gh, [['gh', 'issue', 'edit', '77', '--repo', 'o/r', '--add-label', 'ready-for-agent',
+                               '--remove-label', fw.ISSUE_CLAIM_LABEL]])
+        self.assertTrue(state['start_unknown'][did]['reaped'])
+
+    def test_a_claude_row_is_never_read(self):
+        self.agy_state()
+        fleet = Fleet(briefs={'task_ctx_c': 'B'})
+        fleet.screens['term_c'] = SIGNIN_SCREEN
+        reap, released = self.reaper(CONFIG, {}, [local_row('ctx_c', terminal='term_c', agent='claude')], fleet)
+        reap(NOW)
+        self.assertEqual([c for c in fleet.calls if c[:2] == ('terminal', 'read')], [])
+        self.assertEqual(released, [])
+
+    def test_two_rows_on_one_host_give_one_line(self):
+        marks, _ = self.agy_state()
+        fleet = Fleet()
+        fleet.screens.update({'term_a': SIGNIN_SCREEN, 'term_b': SIGNIN_SCREEN})
+        rows = [local_row('ctx_a', terminal='term_a', agent='antigravity'),
+                local_row('ctx_b', terminal='term_b', agent='antigravity/gemini')]
+        reap, released = self.reaper(dict(CONFIG, local_host='hosta'), {}, rows, fleet)
+        notices = reap(NOW)
+        self.assertEqual(released, ['ctx_a', 'ctx_b'])
+        self.assertEqual(len(notices), 1)
+        self.assertIn('host=hosta', notices[0])
+        self.assertEqual(list(json.loads(marks.read_text())), ['hosta'])
+
+    def test_a_failed_read_mark_or_release_books_nothing_and_the_next_pass_works(self):
+        marks, _ = self.agy_state()
+        fleet = Fleet()
+        fleet.screens['term_a'] = SIGNIN_SCREEN
+        results = iter(['failed', 'closed'])
+        state = {}
+        reap, released = self.reaper(CONFIG, state, [local_row('ctx_a', terminal='term_a', agent='antigravity')],
+                                     fleet, release_result=lambda: next(results))
+        fleet.fail_once.add(('terminal', 'read'))
+        self.assertEqual(reap(NOW), [])
+        self.assertEqual(released, [])
+        with patch.object(fw._agy_signin(), 'mark', side_effect=OSError('disk full')):
+            self.assertEqual(reap(NOW + 1), [])
+        self.assertEqual(released, [])
+        self.assertFalse(marks.exists())
+        self.assertEqual(reap(NOW + 2), [])  # marked, release failed: not booked
+        self.assertEqual(released, ['ctx_a'])
+        self.assertFalse(state['start_unknown']['ctx_a'].get('reaped'))
+        self.assertEqual(len(reap(NOW + 3)), 1)
+        self.assertEqual(released, ['ctx_a', 'ctx_a'])
+        self.assertTrue(state['start_unknown']['ctx_a']['reaped'])
 
     def test_an_unread_host_row_is_skipped(self):
         rows = [local_row('ctx_x', terminal='term_x', _host='env-b', _host_read=False)]

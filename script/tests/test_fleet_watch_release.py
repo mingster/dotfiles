@@ -301,7 +301,7 @@ class Callers(Base):
             rec = {'dispatch_id': row['dispatchId'], 'terminal': 't', 'prs_assigned': ['a', 'b', 'c', 'd', 'e', 'f']}
             state = {'standing_verifiers': {'h': rec}}
             config = {'standing_verifier': {'enabled': True, 'hosts': ['h'], 'max_prs': 1}}
-            with patch.object(fw, '_agy_signin', return_value=type('S', (), {'is_unavailable': lambda _s, _h: False})()), \
+            with patch.object(fw, '_agy_signin', return_value=type('S', (), {'usable': lambda _s, _a, _h, _c: True})()), \
                     patch.object(fw, 'standing_settings', return_value={'enabled': True, 'hosts': ['h'], 'max_prs': 1,
                                                                         'agent': 'claude', 'model': 'm'}), \
                     patch.object(fw, 'build_babysit_command', return_value=None):

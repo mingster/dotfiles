@@ -308,6 +308,14 @@ def load_fleet_watch():
     return module
 
 
+def load_agy_signin():
+    path = Path(__file__).resolve().parent / 'agy-signin.py'
+    spec = importlib.util.spec_from_file_location('agy_signin_for_placement', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], set[str]] | None:
     """Occupied workers per host, counted the way fleet-watch admit counts them, and every dispatch id the inventory knows.
 
@@ -468,10 +476,12 @@ def pick_host(
     spec_path: Path | None,
     repo_selector: str | None = None,
     record: bool = False,
+    agent: str | None = None,
 ) -> dict:
-    """Pick a host. With record, hold a lock and remember the start for the recent window."""
+    """Pick a host. With record, hold a lock and remember the start for the recent window.
+    With agent, a host that agent cannot start on (antigravity on a host signed out of agy) is skipped (#1966)."""
     if not record:
-        return _pick_host(config, spec_path, repo_selector, [])
+        return _pick_host(config, spec_path, repo_selector, [], agent)
     path = recent_file_path(config)
     window = recent_start_seconds(config)
     try:
@@ -479,11 +489,11 @@ def pick_host(
         lock = open(str(path) + '.lock', 'a', encoding='utf-8')
     except OSError as exc:
         print('worker-placement: recent starts unavailable (%s)' % exc, file=sys.stderr)
-        return _pick_host(config, spec_path, repo_selector, [])
+        return _pick_host(config, spec_path, repo_selector, [], agent)
     with lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         rows = read_recent(path, window, time.time())
-        result = _pick_host(config, spec_path, repo_selector, rows)
+        result = _pick_host(config, spec_path, repo_selector, rows, agent)
         if result.get('ok'):
             result['claim'] = uuid.uuid4().hex
             rows.append({'host': result['host'], 'at': time.time(), 'id': result['claim']})
@@ -496,7 +506,9 @@ def pick_host(
     return result
 
 
-def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, recent: list[dict]) -> dict:
+def _pick_host(
+    config: dict, spec_path: Path | None, repo_selector: str | None, recent: list[dict], agent: str | None = None,
+) -> dict:
     kind = task_kind(spec_path)
     roles = host_roles(config)
     order = placement_order(config)
@@ -510,6 +522,17 @@ def _pick_host(config: dict, spec_path: Path | None, repo_selector: str | None, 
             return {'ok': False, 'reason': 'no eligible fleet host is listed under browser_hosts'}
     if not hosts:
         return {'ok': False, 'reason': 'no eligible fleet hosts for this task'}
+    if (agent or '').lower() in ('antigravity', 'agy'):  # only antigravity has a per host sign-in (agy-signin.py usable)
+        usable = load_agy_signin().usable
+        signed_in = []
+        for host in hosts:
+            if usable(agent, host, config):
+                signed_in.append(host)
+            else:
+                print('worker-placement: skip %s (not signed in to agy)' % host, file=sys.stderr)
+        if not signed_in:
+            return {'ok': False, 'reason': 'no eligible host is signed in to agy'}
+        hosts = signed_in
     try:
         loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
     except LoadSensorError as exc:
@@ -700,7 +723,7 @@ def cmd_pick(args: argparse.Namespace) -> int:
     except FleetConfigError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    result = pick_host(cfg, spec, args.repo, record=args.record)
+    result = pick_host(cfg, spec, args.repo, record=args.record, agent=args.agent)
     if args.json:
         print(json.dumps(result, separators=(',', ':')))
     else:
@@ -792,6 +815,7 @@ def main() -> int:
     pick.add_argument('--config', default=None, help='Fleet-watch JSON config')
     pick.add_argument('--json', action='store_true', help='Emit JSON instead of one line')
     pick.add_argument('--record', action='store_true', help='Remember this start so the next pick counts it')
+    pick.add_argument('--agent', default=None, help='Skip hosts this agent cannot start on (antigravity signed out)')
     pick.set_defaults(func=cmd_pick)
     unrecord = sub.add_parser('unrecord', help='Forget the newest recorded start on a host (a start that failed early)')
     unrecord.add_argument('--host', required=True)

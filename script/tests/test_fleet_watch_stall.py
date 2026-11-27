@@ -150,6 +150,23 @@ class WorkerStallHelpers(unittest.TestCase):
                          })
         self.assertIsNone(fw.worker_stall_restart_start_args(w2, 'd1', 'run_z', cfg))
 
+    def test_retry_start_args_none_for_antigravity_on_a_host_signed_out_of_agy(self):
+        # 1966: a stall restart never starts antigravity on a marked host; claude there still restarts.
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = Path(tmp) / 'agy-unavailable.json'
+            with patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': str(state_file),
+                                         'FLEET_WATCH_CONFIG': str(Path(tmp) / 'none.json')}):
+                fw._agy_signin().mark('hostb', path=state_file, config={})
+                cfg = {'runs': STALL_RUNS}
+                w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'}, agent='antigravity', _host='hostb')
+                self.assertIsNone(fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg))
+                self.assertEqual(fw.stall_restart_start_blocked_log('d1', cfg, w, 'run_ignored'),
+                                 'stall_restart_agy_unusable=d1')
+                w['agent'] = 'claude'
+                self.assertIsNotNone(fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg))
+                w.update(agent='antigravity', _host='hostc')
+                self.assertIsNotNone(fw.worker_stall_restart_start_args(w, 'd1', 'run_ignored', cfg))
+
     def test_retry_start_args_none_without_configured_sender_terminal(self):
         w = base_worker(taskId='t1', resource={'worktreeId': 'id::path'})
         cfg_no_row = {'runs': [{'id': 'other', 'terminal': 't1', 'waiter_pattern': 'w'}]}

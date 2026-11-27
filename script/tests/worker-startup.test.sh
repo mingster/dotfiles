@@ -1867,6 +1867,9 @@ grep -q '^agy-signin: host=.* fell back to claude$' "$tmp/agy.out" && ok || bad 
 grep -q 'orchestration worker-stop --dispatch ctx_agy' "$tmp/orca-agy.log" && ok || bad "sign-in worker is stopped ($(cat "$tmp/orca-agy.log"))"
 [ "$(grep -c 'orchestration worker-start' "$tmp/orca-agy.log")" = 2 ] && ok || bad "sign-in start is repeated once ($(cat "$tmp/orca-agy.log"))"
 grep -q -- '--agent antigravity --model' "$tmp/orca-agy.log" && grep -q -- '--agent claude --model sonnet' "$tmp/orca-agy.log" && ok || bad "restart is on claude sonnet after an antigravity start"
+# 1966: the sign-in screen marks the host first, so the next pick skips it.
+FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agy-unavailable.json" "$PYTHON" "$here/../agy-signin.py" unavailable "$(hostname -s)" && ok || bad "1966: the sign-in screen marks the host"
+rm -f "$tmp/agy-unavailable.json"
 agy_run "$tmp/agy-ok.txt" "$tmp/agy-ok.err"
 [ "$agy_ec" = 0 ] && ok || bad "normal antigravity screen should exit 0 ($agy_ec) $(cat "$tmp/agy-ok.err")"
 grep -q 'agy-signin' "$tmp/agy.out" && bad "normal antigravity screen must not fall back" || ok
@@ -1876,7 +1879,7 @@ grep -q 'worker-stop' "$tmp/orca-agy.log" && bad "normal antigravity screen must
 agy_unavailable_run() {
   : >"$tmp/orca-agy.log"
   host_label=$(hostname -s | tr '[:upper:]' '[:lower:]')
-  AGY_UNAVAILABLE_STATE="$tmp/agy-unavailable.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
+  FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agy-unavailable.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
   agy_run "$tmp/agy-ok.txt" "$tmp/agy-unavailable.err"
 }
 agy_unavailable_run
@@ -1947,7 +1950,7 @@ export GH_LABELS=$'ready-for-agent\nP2'
 agyx_local "#7950|fullstack-dev"
 [ "$agyx_ec" = 10 ] && ok || bad "1832: a signed out issue start exits 10 ($agyx_ec) $(cat "$tmp/agyx.err")"
 [ "$(tail -n 1 "$tmp/agyx.err")" = "agy-signin: host=$host_label notify" ] && ok || bad "1832: last stderr line is the notify line ($(tail -n 2 "$tmp/agyx.err"))"
-AGY_UNAVAILABLE_STATE="$tmp/agyx-state.json" "$PYTHON" "$here/../agy-signin.py" unavailable "$host_label" && ok || bad "1832: the host is marked"
+FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agyx-state.json" "$PYTHON" "$here/../agy-signin.py" unavailable "$host_label" && ok || bad "1832: the host is marked"
 grep -q 'orchestration worker-stop --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832: the dispatch is stopped"
 grep -q 'orchestration worker-release --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832: the dispatch is released"
 grep 'worker-stop\|worker-release' "$tmp/orca-agyx.log" | grep -q -- '--environment' && bad "1832: a local start passes no --environment" || ok
@@ -1960,7 +1963,7 @@ agyx_local "#7950|fullstack-dev"
 grep -q -- '--agent claude --model sonnet' "$tmp/orca-agyx.log" && ! grep -q -- '--agent antigravity' "$tmp/orca-agyx.log" && ok || bad "1832: the next start is claude only"
 # A host notified less than 6 hours ago but whose mark ran out prints known.
 rm -f "$tmp/agyx-state2.json"
-AGY_UNAVAILABLE_STATE="$tmp/agyx-state2.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
+FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agyx-state2.json" "$PYTHON" "$here/../agy-signin.py" mark "$host_label" >/dev/null
 "$PYTHON" -c "
 import json,sys
 p=sys.argv[1]; d=json.load(open(p));
@@ -2029,7 +2032,7 @@ cat >"$helper_dir/agy-signin.py" <<'EOS'
 import sys
 if sys.argv[1:2] == ['mark']:
     raise SystemExit(1)
-raise SystemExit(0 if sys.argv[1:2] == ['match'] else 1)
+raise SystemExit(0 if sys.argv[1:2] in (['match'], ['usable']) else 1)
 EOS
 agyx_remote
 [ "$agyx_ec" = 0 ] && ok || bad "1832: a failed mark does not exit 10 ($agyx_ec) $(cat "$tmp/agyx.err")"
@@ -2038,6 +2041,52 @@ grep -q 'worker-stop --dispatch ctx_agy' "$tmp/orca-agyx.log" && ok || bad "1832
 grep -q -- '--agent claude' "$tmp/agyx-remote.args" && ok || bad "1832: a failed mark falls back to claude ($(cat "$tmp/agyx-remote.args"))"
 cp "$tmp/agy-signin.real.py" "$helper_dir/agy-signin.py"
 unset GH_LABELS
+
+# 1966: one swap rule. A verifier on antigravity never swaps to claude; a builder does.
+agyv_spec="$tmp/agyv-spec.txt"
+agyv_run() { # <title> <screen file> (env AGYV_PREMARK=1 marks agy-box first)
+  : >"$tmp/orca-agyx.log"; rm -f "$tmp/agyv-state.json" "$tmp/agyx-remote.args"
+  [ -z "${AGYV_PREMARK:-}" ] || FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agyv-state.json" \
+    "$PYTHON" "$here/../agy-signin.py" mark agy-box >/dev/null
+  set +e
+  env -u BASH_ENV PATH="$agyx_gh:$run_path" ORCA_CLI_COMMAND="$tmp/orca-agyx" ORCA_STUB_LOG="$tmp/orca-agyx.log" \
+    FLEET_PULL_CONFIG="$tmp/fleet-agyx.json" FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" PYTHON="$PYTHON" USAGE_GATE_CLI="$USAGE_GATE_CLI" \
+    AGY_WT="$wt_proof" AGY_SCREEN="$2" WORKER_STARTUP_AGY_WAIT=0 AGY_UNAVAILABLE_STATE="$tmp/agyv-state.json" GH_LABELS= \
+    bash --noprofile --norc "$helper_dir/worker-startup.sh" --run run_agy --spec "$agyv_spec" --title "$1" --agent antigravity \
+    --model gemini-4-argon-medium --from term_coord --on agy-box --worktree-path /abs/wt >"$tmp/agyv.out" 2>"$tmp/agyv.err"
+  agyv_ec=$?
+  set -e
+}
+printf 'Refs acme/app#7953\nType: verify\n\n# qa-sdet - verify PR 7953\n\nPost the Verdict with script/post-verdict.sh.\n\n%s\n' "$(cat "$spec_file")" >"$agyv_spec"
+AGYV_PREMARK=1 agyv_run "#7953|qa-sdet" "$tmp/agy-ok.txt"
+[ "$agyv_ec" = 4 ] && ok || bad "1966: a verifier on a marked host exits 4 ($agyv_ec) $(cat "$tmp/agyv.err")"
+[ ! -s "$tmp/agyx-remote.args" ] && ! grep -q 'worker-start' "$tmp/orca-agyx.log" && ok || bad "1966: a verifier on a marked host starts nothing"
+grep -q 'using claude' "$tmp/agyv.out" && bad "1966: a verifier never prints the using claude line" || ok
+printf 'Refs acme/app#7954\n\n# fullstack-dev - issue 7954\n\n%s\n' "$(cat "$spec_file")" >"$agyv_spec"
+AGYV_PREMARK=1 agyv_run "#7954|fullstack-dev" "$tmp/agy-ok.txt"
+[ "$agyv_ec" = 0 ] && ok || bad "1966: a builder on a marked host exits 0 ($agyv_ec) $(cat "$tmp/agyv.err")"
+grep -q 'agy-signin: host=agy-box is agy-unavailable, using claude' "$tmp/agyv.out" && ok || bad "1966: builder using claude line ($(cat "$tmp/agyv.out"))"
+grep -q -- '--agent claude --model sonnet' "$tmp/agyx-remote.args" && ! grep -q -- '--agent antigravity' "$tmp/agyx-remote.args" && ok || bad "1966: builder starts claude/sonnet only ($(cat "$tmp/agyx-remote.args"))"
+# A verifier start whose start screen is the sign-in screen: marked, stopped and released, exit 4, no claude start.
+printf 'Refs acme/app#7955\n\n# qa-sdet - verify PR 7955\n\n%s\n' "$(cat "$spec_file")" >"$agyv_spec"
+agyv_run "#7955|qa-sdet" "$tmp/agy-login.txt"
+[ "$agyv_ec" = 4 ] && ok || bad "1966: a signed out verifier start exits 4 ($agyv_ec) $(cat "$tmp/agyv.err")"
+FLEET_WATCH_CONFIG="$tmp/no-agy-fleet.json" AGY_UNAVAILABLE_STATE="$tmp/agyv-state.json" "$PYTHON" "$here/../agy-signin.py" unavailable agy-box && ok || bad "1966: the verifier sign-in screen marks the host"
+grep -q 'worker-stop --dispatch ctx_agy --environment agy-box' "$tmp/orca-agyx.log" && ok || bad "1966: the verifier dispatch is stopped"
+grep -q 'worker-release --dispatch ctx_agy --environment agy-box' "$tmp/orca-agyx.log" && grep -q 'worker-release --dispatch ctx_agy$' "$tmp/orca-agyx.log" && ok || bad "1966: the verifier dispatch is released on the host and here"
+[ "$(grep -c -- '--agent' "$tmp/agyx-remote.args")" = 1 ] && ! grep -q -- '--agent claude' "$tmp/agyx-remote.args" && ok || bad "1966: no claude start follows ($(cat "$tmp/agyx-remote.args"))"
+cat >"$helper_dir/agy-signin.py" <<'EOS'
+#!/usr/bin/env python3
+import sys
+if sys.argv[1:2] == ['mark']:
+    raise SystemExit(1)
+raise SystemExit(0 if sys.argv[1:2] in (['match'], ['usable']) else 1)
+EOS
+agyv_run "#7955|qa-sdet" "$tmp/agy-login.txt"
+[ "$agyv_ec" = 4 ] && ok || bad "1966: a verifier whose mark failed still exits 4 ($agyv_ec) $(cat "$tmp/agyv.err")"
+grep -q 'could not mark agy-box' "$tmp/agyv.err" && ok || bad "1966: the failed mark is logged"
+! grep -q -- '--agent claude' "$tmp/agyx-remote.args" && ok || bad "1966: a failed mark still starts no claude"
+cp "$tmp/agy-signin.real.py" "$helper_dir/agy-signin.py"
 
 # 1221: a worker that vanishes at startup is started once more; a healthy or non-startup failure is not retried.
 cat >"$tmp/orca-retry" <<'EOS'

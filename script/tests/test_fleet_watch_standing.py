@@ -272,6 +272,18 @@ class StandingVerifier(unittest.TestCase):
         self.assertFalse(fw.live_verifier_for_pr({'number': 8}, workers, state, 'other/repo'))
         self.assertFalse(fw.live_verifier_for_pr({'number': 7}, workers))
 
+    def test_a_host_signed_out_of_agy_is_skipped_and_a_fresh_verifier_starts(self):
+        # 1966: standing_route asks usable(agent, host) and skips a marked host.
+        state_file = os.path.join(self.tmp.name, 'agy-unavailable.json')
+        with patch.dict(os.environ, {'AGY_UNAVAILABLE_STATE': state_file,
+                                     'FLEET_WATCH_CONFIG': os.path.join(self.tmp.name, 'none.json')}):
+            fw._agy_signin().mark(HOST, path=Path(state_file), config={})
+            state = {}
+            self.run_pass([pr(7)], state)
+        self.assertEqual(len(self.starts), 1)
+        self.assertNotIn('--on', self.starts[0])
+        self.assertEqual(state.get('standing_verifiers') or {}, {})
+
     def test_a_non_antigravity_pick_never_uses_the_standing_verifier(self):
         state = {}
         self.now += 60

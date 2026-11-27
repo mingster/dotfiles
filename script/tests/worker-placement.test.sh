@@ -556,4 +556,37 @@ out=$(lo_pick "$tmp/lo.json" "$tmp/light-brief.md" 2>/dev/null) || fail "a light
 out=$(lo_pick "$tmp/lo-none.json" "$tmp/heavy-brief.md" 2>/dev/null) || fail "no light_only_hosts key must change nothing: $out"
 [ "$(jq -r '.host' <<<"$out")" = host-light ] || fail "no light_only_hosts key keeps normal placement: $out"
 
+
+# #1966: pick --agent antigravity skips a host signed out of agy, even when it would win on load.
+cat >"$tmp/load-agy.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'hostb cores=8 load=0.5 1.0 1.0\n'
+printf 'hostc cores=8 load=4.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-agy.sh"
+cat >"$tmp/agy.json" <<'EOS'
+{
+  "host_caps": {"hostb": 4, "hostc": 4},
+  "host_load_ceilings": {"hostb": 12, "hostc": 12},
+  "worker_placement": {"order": ["hostb", "hostc"], "repos": {}}
+}
+EOS
+agy_state="$tmp/agy-unavailable.json"
+rm -f "$agy_state"
+AGY_UNAVAILABLE_STATE="$agy_state" FLEET_WATCH_CONFIG="$tmp/agy.json" python3 "$(dirname "$py")/agy-signin.py" mark hostb >/dev/null
+agy_pick() { # <agent>
+  AGY_UNAVAILABLE_STATE="$agy_state" FLEET_LOAD_SCRIPT="$tmp/load-agy.sh" FLEET_WATCH_CONFIG="$tmp/agy.json" \
+    python3 "$py" pick --spec "$tmp/light-brief.md" --json --agent "$1"
+}
+out=$(agy_pick antigravity 2>"$tmp/agy.err") || fail "antigravity must place on the signed in host: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostc ] || fail "antigravity skips the marked host: $out"
+grep -Fq 'worker-placement: skip hostb (not signed in to agy)' "$tmp/agy.err" || fail "skip line missing: $(cat "$tmp/agy.err")"
+out=$(agy_pick claude 2>/dev/null) || fail "claude must place: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostb ] || fail "claude keeps the marked host that wins on load: $out"
+AGY_UNAVAILABLE_STATE="$agy_state" FLEET_WATCH_CONFIG="$tmp/agy.json" python3 "$(dirname "$py")/agy-signin.py" mark hostc >/dev/null
+ec=0; out=$(agy_pick antigravity 2>/dev/null) || ec=$?
+[ "$ec" = 1 ] || fail "both hosts marked must refuse (ec=$ec): $out"
+[ "$(jq -r '.ok' <<<"$out")" = false ] && [ "$(jq -r '.reason' <<<"$out")" = 'no eligible host is signed in to agy' ] \
+  || fail "both marked gives the agy reason: $out"
+
 echo "worker-placement.test.sh passed"
