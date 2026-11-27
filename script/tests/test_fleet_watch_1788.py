@@ -3,7 +3,10 @@
 The blocker is read from the issue body (a `Blocked by` line, or items under a `## Blocked by` heading),
 looked up on every pass, and the issue is skipped for that pass when its state cannot be read.
 """
+import functools
+import subprocess
 import unittest
+from unittest.mock import patch
 
 from test_fleet_watch_scan import REPO, OTHER_REPO, NOW, fw, issue
 
@@ -191,6 +194,54 @@ class NoFalseBlocks(unittest.TestCase):
                     {(REPO, 10077): 'CLOSED'})
         h.run()
         self.assertEqual(len(h.starts), 1)
+
+
+class DefaultLookupReadsPullRequests(unittest.TestCase):
+    """#2027: a Blocked by ref may be a PR. The default lookup reads it through the REST issues route, as clear_stale_blocked does."""
+
+    CONFIG = dict(CONFIG, work_order={'min_active': 0, 'target_workers': 4})
+
+    def run_default(self, rows, gh):
+        # gh maps a number to OPEN or CLOSED (REST serves a PR too). The fake `gh issue view` refuses a PR, as the real CLI does.
+        def fake_gh(args, **_kw):
+            if args[:2] == ['gh', 'api']:
+                number = int(args[2].rsplit('/', 1)[1])
+                state = gh.get(number)
+                return subprocess.CompletedProcess(args, 0 if state else 1, (state or '') + '\n', '')
+            return subprocess.CompletedProcess(args, 1, '', 'not an issue')
+
+        starts = []
+        with patch.object(fw, 'fetch_ref_state', functools.partial(fw.fetch_ref_state, run=fake_gh)), \
+                patch.object(fw, 'fetch_issue_state', functools.partial(fw.fetch_issue_state, run=fake_gh)):
+            _, log = fw.issue_scan_pass(
+                self.CONFIG, {'issue_scan_backlog_sweep_at': NOW}, NOW, [],
+                list_issues=lambda repo: rows if repo == REPO else [], pr_fetch=lambda _repo: [],
+                gate_check=lambda _cfg: True,
+                admit_fn=lambda _host, _cfg, _workers: {'admitted': True, 'occupied': 0},
+                start_worker=lambda command: starts.append(command) or 0,
+                start_detached=lambda command, extra_env=None: starts.append(command) or 0,
+                inventory_ok=True, persist_state=lambda: None,
+                pick_fn=lambda role, **_kw: {'selected': {'provider': 'claude', 'model': 'opus'}},
+            )
+        return starts, ','.join(log)
+
+    def test_merged_pr_under_blocked_by_does_not_block_or_park(self):
+        _, log = self.run_default([issue(10079, ['ready-for-agent'], blocked_body('Blocked by #10077'))],
+                                  {10077: 'CLOSED'})
+        self.assertIn('issue_start=10079', log)
+        self.assertNotIn('issue_blocker_unknown', log)
+        self.assertNotIn('issue_blocked=10079', log)
+
+    def test_open_pr_under_blocked_by_still_blocks(self):
+        _, log = self.run_default([issue(10079, ['ready-for-agent'], blocked_body('Blocked by #10077'))],
+                                  {10077: 'OPEN'})
+        self.assertNotIn('issue_start=10079', log)
+        self.assertIn('issue_blocked=10079:by=#10077', log)
+
+    def test_unreadable_reference_is_unknown_and_not_started(self):
+        _, log = self.run_default([issue(10079, ['ready-for-agent'], blocked_body('Blocked by #10077'))], {})
+        self.assertNotIn('issue_start=10079', log)
+        self.assertIn('issue_blocker_unknown=10079:by=#10077', log)
 
 
 if __name__ == '__main__':
