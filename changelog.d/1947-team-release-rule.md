@@ -1,0 +1,1 @@
+changelog: team guide now says a worker release is stop plus terminal close (script/release-worker.sh), that fleet-watch reaps start_unknown workers at 10 and 20 minutes and closes idle orphan terminals, and that the PR check hang limit is 1.5 times the p90 (#1947, #1978).
