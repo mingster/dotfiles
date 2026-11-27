@@ -118,7 +118,7 @@ JSON
 HD_BODY=$'Fix the guard.\nbin/deploy-raw.sh runs only in the pipeline.\nbash bin/deploy-raw.sh was refused (it\'s odd).\nEOF'
 for sink in \
   "git commit -F - <<'EOF'" \
-  "git add -A && git commit -F - <<'EOF'" \
+  "git add README.md && git commit -F - <<'EOF'" \
   "cat > notes.md <<'EOF'" \
   "cat > ~/notes/issue-comment.md <<'EOF'" \
   'cat > "$NOTE_FILE" <<'"'EOF'" \

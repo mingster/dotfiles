@@ -1,0 +1,1 @@
+guard-bash: a `git add <path> && git commit` chained in one command is now checked against the paths the add stages, so an owner gated or template managed path needs the `Owner-approved:` trailer as it does for a separate commit (#2023).

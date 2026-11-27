@@ -2253,5 +2253,63 @@ class DenyMessagesNameRewrite(ProjectConfigGuardTest):
                 self.assertAllowed(command)
 
 
+class ChainedAddCommitGate(GuardTest):
+    """#2023: `git add <path> && git commit` in one command. The add has not staged anything when the hook
+    runs, so the role file gate must count the paths the earlier add segments will stage."""
+    PROTECTED = "docs/agents/team-facts.md"
+    TRAILER = "Owner-approved: mingster 2026-11-28"
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.home, "repo")
+        os.makedirs(self.repo)
+        for args in (["init", "-q"], ["config", "user.email", "t@example.com"], ["config", "user.name", "t"],
+                     ["commit", "-q", "--allow-empty", "-m", "init"]):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+
+    def write(self, rel):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x\n")
+
+    def gate(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home), cwd=self.repo, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def test_chained_add_of_protected_path_denied_without_trailer(self):
+        self.write(self.PROTECTED)
+        reason = self.gate(f"git add {self.PROTECTED} && git commit -m \"tweak team facts\"")
+        self.assertIsNotNone(reason)
+        self.assertIn("Owner-approved:", reason)
+
+    def test_chained_add_of_protected_path_allowed_with_trailer(self):
+        self.write(self.PROTECTED)
+        self.assertIsNone(self.gate(f"git add {self.PROTECTED} && git commit -m \"tweak\\n\\n{self.TRAILER}\""))
+
+    def test_chained_add_all_flag_denied_without_trailer(self):
+        self.write(self.PROTECTED)
+        reason = self.gate('git add -A && git commit -m "tweak"')
+        self.assertIsNotNone(reason)
+        self.assertIn("Owner-approved:", reason)
+
+    def test_chained_add_directory_denied_without_trailer(self):
+        self.write(self.PROTECTED)
+        reason = self.gate('git add docs/agents && git commit -m "tweak"')
+        self.assertIsNotNone(reason)
+        self.assertIn("Owner-approved:", reason)
+
+    def test_chained_add_of_unprotected_path_allowed(self):
+        self.write("web/app.ts")
+        self.assertIsNone(self.gate('git add web/app.ts && git commit -m "app"'))
+
+    def test_commit_before_add_in_chain_allowed(self):
+        self.write(self.PROTECTED)
+        self.assertIsNone(self.gate(f'git commit -m "app" && git add {self.PROTECTED}'))
+
+
 if __name__ == "__main__":
     unittest.main()

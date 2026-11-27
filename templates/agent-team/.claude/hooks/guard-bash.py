@@ -204,6 +204,9 @@ GATE_CWD = None
 RAW_COMMAND = ""
 CODE_COMMAND = ""  # RAW_COMMAND without the quoted text sink heredocs: what an interpreter on stdin could run
 HOOK_INPUT: dict = {}
+# (git args, cwd) of each `git` segment before the one being checked in this command (#2023). A chained
+# `git add <path> && git commit` stages nothing until the add runs, so the commit gate needs these.
+EARLIER_GIT: list[tuple[list[str], str | None]] = []
 
 
 def deny(reason):
@@ -2498,6 +2501,43 @@ def matches_main(git, rel, rest):
     return False
 
 
+def pending_add_paths(add_args, cwd):
+    """Repo relative paths that a `git add` in this command will stage, which the index does not hold yet.
+    Explicit paths are taken as written. A directory, `.`, a glob, or -A, -u or --all takes the modified and
+    untracked files under it (over-counting is fail closed)."""
+    verb, rest, repo = git_verb(add_args)
+    if verb != "add":
+        return set()
+    folder = cwd or GATE_CWD or os.getcwd()
+    for flag, value in zip(repo[::2], repo[1::2]):
+        if flag == "-C":
+            folder = os.path.join(folder, value)
+    top = (gate_run(["git", "rev-parse", "--show-toplevel"], folder) or "").strip()
+    if not top:
+        return set()
+    changed = set((gate_run(["git", "diff", "--name-only"], folder) or "").split())
+    changed |= set((gate_run(["git", "ls-files", "--others", "--exclude-standard", "--full-name"], folder) or "").split())
+    update_all = any(a in ("--all", "--update") or (a.startswith("-") and not a.startswith("--") and set("Au") & set(a[1:]))
+                     for a in rest)
+    specs = [a for a in rest if not a.startswith("-")]
+    if not specs:
+        return changed if update_all else set()
+    out = set()
+    for spec in specs:
+        full = os.path.realpath(os.path.join(folder, os.path.expanduser(spec)))
+        rel = os.path.relpath(full, os.path.realpath(top)).replace("\\", "/")
+        if rel == ".." or rel.startswith("../"):
+            continue
+        if rel == "." or os.path.isdir(full):
+            prefix = "" if rel == "." else rel + "/"
+            out |= {p for p in changed if p.startswith(prefix)}
+        elif re.search(r"[*?\[]", rel):
+            out |= {p for p in changed if fnmatch.fnmatchcase(p, rel)}
+        else:
+            out.add(rel)
+    return out
+
+
 def check_role_file_gate(base, args):
     root = find_project_root(GATE_CWD or os.getcwd())
     adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
@@ -2509,6 +2549,8 @@ def check_role_file_gate(base, args):
             staged = set((gate_run([*git, "diff", "--cached", "--name-only"], None) or "").split())
             if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
                 staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
+            for add_args, add_cwd in EARLIER_GIT:
+                staged |= pending_add_paths(add_args, add_cwd)
             if adopted:
                 managed = sorted(f for f in staged if is_template_managed_rel(f)
                                  and not matches_main(git, f, rest))
@@ -4579,11 +4621,14 @@ def check_command(command):
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
+    EARLIER_GIT.clear()
     for text in texts:
         cur_cwd = GATE_CWD
         for seg in segments(text):
             check_segment(seg, cwd=cur_cwd)
             prog, args = program_and_args(words(seg))
+            if prog and os.path.basename(prog) == "git":
+                EARLIER_GIT.append((args, cur_cwd))
             if prog in ("cd", "pushd") and args:
                 dest = next((a for a in args if not a.startswith("-")), None)
                 if dest:
