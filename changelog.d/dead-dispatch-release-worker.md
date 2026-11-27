@@ -1,0 +1,1 @@
+fleet-watch: the dead dispatch notice now names `script/release-worker.sh --live <id>` instead of `worker-stop`, and `release-worker.sh --live` exits 0 when a dead dispatch's terminal is already gone from its host (#1999).
