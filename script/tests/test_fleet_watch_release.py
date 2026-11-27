@@ -441,6 +441,16 @@ class ReleaseByFragment(Base):
         self.assertIn('coordinator', message)
         self.assertEqual(fake.lifecycle(), [])
 
+    def test_dead_dispatch_whose_terminal_is_already_gone_releases_with_exit_zero(self):
+        dead = {'dispatchId': 'ctx_dead1234', 'state': 'ready', 'terminal': REMOTE_TERM}
+        # worker-show still names the gone terminal, as a dispatch record can after its terminal is closed.
+        shown = {('ctx_dead1234', ENV): {'terminal': REMOTE_TERM}, ('ctx_dead1234', ''): {'terminal': REMOTE_TERM}}
+        fake = Rpc(shown=shown, host_rows={ENV: [dead]}, terminals={ENV: [], '': []})
+        code, message = fw.release_worker_by_fragment('dead1234', {}, fake, ['', ENV], allow_live=True)
+        self.assertEqual(code, 0, message)
+        self.assertEqual(fake.lifecycle(), [('stop', ENV), ('stop', ''), ('release', ENV), ('release', '')])
+        self.assertFalse([c for c in fake.calls if c[:2] == ('terminal', 'close')])
+
     def test_script_passes_the_fragment_through(self):
         text = (SOURCE.parent / 'release-worker.sh').read_text()
         self.assertIn('--release-worker "$1"', text)
