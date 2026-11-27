@@ -1387,7 +1387,7 @@ try:
     rs = load('receipt-state')
     clean = [c for c in comments if not (c.get('includesCreatedEdit') or c.get('isMinimized'))]
     skip = (pr['state'] == 'OPEN' and load('pr-tier').classify(pr['files'])[0] == 0
-            and not rs.review_failed_at_head(pr) and rs.newest_receipt_kind(clean, 'Review', head) == 'PASS')
+            and not rs.review_failed_at_head(dict(pr, comments=clean)) and rs.newest_receipt_kind(clean, 'Review', head) == 'PASS')
 except Exception:
     skip = False
 sys.exit(0 if skip else 1)

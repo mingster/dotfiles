@@ -1679,6 +1679,16 @@ for tier0_case in "OPEN script/a.sh $tier0_head" "OPEN docs/guide.md 22222222222
   FLEET_WATCH= PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium
   [ "$route_ec" = 0 ] && ok || bad "2025: verifier should start for $tier0_case (ec=$route_ec) $(cat "$tmp/route.err")"
 done
+# An edited or hidden Verdict must not mask an earlier FAIL at the same head: ship.sh ignores it, so a verifier may start.
+for tier0_mask in includesCreatedEdit isMinimized; do
+  jq -n --arg h "$tier0_head" --arg k "$tier0_mask" \
+    '{state:"OPEN", headRefOid:$h, files:[{path:"docs/guide.md", additions:52, deletions:0}],
+      comments:[{createdAt:"2026-01-01T00:00:01Z", body:("Review: PASS head=" + $h + " model=none")},
+                {createdAt:"2026-01-01T00:00:02Z", body:("Verdict: FAIL head=" + $h)},
+                {createdAt:"2026-01-01T00:00:03Z", body:("Verdict: PASS head=" + $h), ($k):true}]}' >"$TIER0_PR_JSON"
+  FLEET_WATCH= PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium
+  [ "$route_ec" = 0 ] && ok || bad "2025: a $tier0_mask Verdict PASS must not mask an earlier Verdict FAIL (ec=$route_ec) $(cat "$tmp/route.err")"
+done
 printf '%s\n' "$tier0_gh_saved" >"$ghbin/gh"; printf '%s\n' "$tier0_spec_saved" >"$spec_file"
 # fleet-watch issue scan default title "builder - #<n>" is a builder too.
 printf 'Refs acme/app#7880\n\n# builder - #7880\n\n%s\n' "$spec_saved" >"$spec_file"
