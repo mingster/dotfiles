@@ -567,7 +567,7 @@ installs under `$HOME/.asdf`. `script/tests/asdf-pin-coverage.test.sh` fails whe
 
 `check-fleet-status.py --count` prints one number, the workers really active on every host whose worker list it can read (a failed load probe does not matter). It exits 1 and names the hosts on stderr when a list cannot be read. `elon-tick.sh` (W3) and fleet-watch (the `work order:` line, the hourly `live=` metric) print this number, with `(Orca lists N)` in W3 when Orca rows differ, and fall back to Orca rows only when the count cannot be read. Caps and start decisions still read Orca rows. `FLEET_WATCH_REAL_COUNT_COMMAND` and `ELON_TICK_REAL_COUNT` replace the command in tests.
 
-`script/settle-orphan-task.sh --run <run_id> --task <task_id> [--dry-run]` settles a `dispatched` task whose dispatch record is gone. It runs `dispatch-show --task` on this machine and every paired server first and refuses when any shows a dispatch or cannot be read. Then it runs `task-update --status failed`; if Orca still refuses because a start on a paired server is active, it fences that worker with `worker-abandon` and retries once. It never edits Orca's database.
+`script/settle-orphan-task.sh` (runs `settle-orphan-task.py`) `--run <run_id> --task <task_id> [--dry-run]` settles a `dispatched` task whose dispatch record is gone. It runs `dispatch-show --task` on this machine and every paired server first and refuses when any shows a dispatch or cannot be read. Then it runs `task-update --status failed`; if Orca still refuses because a start on a paired server is active, it fences that worker with `worker-abandon` and retries once. It never edits Orca's database.
 ## Builder gates (#1675, #1676, #1678)
 
 | Script | What it does |
