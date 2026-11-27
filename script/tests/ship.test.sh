@@ -197,7 +197,7 @@ mf_pr_add 8 feat-protected "Body" AGENTS.md
 h8=$(jq -r .headRefOid "$MF_GH_DIR/pr-8.json")
 mf_self_review 8 "$h8"
 set_checks 8 "$green_checks"
-gh pr comment 8 --repo example/repo --body "Review: PASS head=$h8" >/dev/null
+gh pr comment 8 --repo example/repo --body "Review: PASS head=$h8 model=opus" >/dev/null
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 8
 if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
@@ -597,8 +597,8 @@ docs_case() { # <pr> <branch> <file> <review line or empty> <expect ship|refuse>
     if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
   elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 }
-docs_case 134 feat-docs-pass notes/doc.md "Review: PASS head=@HEAD@" ship "docs only PR lands on a cold Review: PASS"
-docs_case 135 feat-docs-frag changelog.d/135-x.md "Review: PASS head=@HEAD@ main=$(printf 'b%.0s' {1..40})" ship "changelog fragment PR lands on Review: PASS with a main= tail"
+docs_case 134 feat-docs-pass notes/doc.md "Review: PASS head=@HEAD@ model=opus" ship "docs only PR lands on a cold Review: PASS"
+docs_case 135 feat-docs-frag changelog.d/135-x.md "Review: PASS head=@HEAD@ main=$(printf 'b%.0s' {1..40}) model=opus" ship "changelog fragment PR lands on Review: PASS with a main= tail"
 docs_case 136 feat-docs-none notes/doc2.md "" refuse "docs only PR without Review refuses" "needs a cold 'Review: PASS head="
 docs_case 137 feat-docs-stale notes/doc3.md "Review: PASS head=$(printf 'c%.0s' {1..40})" refuse "Review at another head refuses" "needs a cold 'Review: PASS head="
 docs_case 138 feat-code-review-only notes/code.sh "Review: PASS head=@HEAD@" refuse "a code PR does not land on Review: PASS" "missing Verdict comment"
@@ -635,7 +635,7 @@ run_ship --repo example/repo --pr 145
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "is the same agent and model as the builder" <<<"$SHIP_OUT"; then ok "a docs Verdict from the builder's own agent and model refuses"; else bad "a docs Verdict from the builder's own agent and model refuses" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 # 13e. Tier 0 (#1730): test files and docs only, 150 changed lines or fewer, take the docs lane (cold Review: PASS, no Verdict)
-docs_case 1730 feat-t0-pass script/tests/test_t0.py "Review: PASS head=@HEAD@" ship "tier 0 test only PR lands on a cold Review: PASS and green Checks"
+docs_case 1730 feat-t0-pass script/tests/test_t0.py "Review: PASS head=@HEAD@ model=opus" ship "tier 0 test only PR lands on a cold Review: PASS and green Checks"
 docs_case 1731 feat-t0-none script/tests/test_t0b.py "" refuse "tier 0 PR without Review refuses" "needs a cold 'Review: PASS head="
 docs_case 1732 feat-t0-helper script/tests/lib/t0.sh "Review: PASS head=@HEAD@" refuse "a shared test helper is not tier 0 and needs a Verdict" "missing Verdict comment"
 docs_case 1733 feat-t0-auth script/tests/test_auth.py "Review: PASS head=@HEAD@" refuse "a protected path (auth) is not tier 0" "missing Verdict comment"
@@ -648,6 +648,44 @@ mf_pr_add 1735 feat-t0-red "Body" script/tests/test_red.py
 h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1735.json"); gh pr comment 1735 --repo example/repo --body "Review: PASS head=$h" >/dev/null
 run_ship --repo example/repo --pr 1735
 if [ "$SHIP_RC" -ne 0 ] && grep -Fq "checks" <<<"$SHIP_OUT"; then ok "tier 0 still needs green Checks at the head"; else bad "tier 0 still needs green Checks at the head" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+
+# 13f. Review: PASS with model=none (or no model) is not a cold review: the docs lane falls through to a Verdict at the head (#1730 follow-up)
+review_none_case() { # <pr> <branch> <file> <Verdict result or none> <review line> <expect ship|refuse> <label> [text]
+  local n=$1 b=$2 f=$3 res=$4 line=$5 expect=$6 label=$7 text=${8:-} h
+  mf_pr_add "$n" "$b" "Body" "$f"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json"); mf_self_review "$n" "$h" cursor/grok-4.7-high; set_checks "$n" "$green_checks"
+  gh pr comment "$n" --repo example/repo --body "${line//@HEAD@/$h}" >/dev/null
+  [ "$res" = none ] || post_verdict "$n" "$res" "$h"
+  : > "$MF_GH_LOG"
+  run_ship --repo example/repo --pr "$n"
+  if [ "$expect" = ship ]; then
+    if [ "$SHIP_RC" -eq 0 ] && grep -q "pr merge $n" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+  elif [ "$SHIP_RC" -ne 0 ] && grep -Fq "$text" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "$label"; else bad "$label" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+}
+review_none_case 1740 feat-none-only notes/n1.md none "Review: PASS head=@HEAD@ model=none" refuse "a docs PR with Review: PASS model=none and no Verdict refuses" "no Verdict: PASS found"
+review_none_case 1741 feat-none-pass notes/n2.md PASS "Review: PASS head=@HEAD@ model=none" ship "a docs PR with Review: PASS model=none lands on a Verdict: PASS"
+review_none_case 1742 feat-none-notes notes/n3.md PASS+NOTES "Review: PASS head=@HEAD@ model=none" ship "a docs PR with Review: PASS model=none lands on a Verdict: PASS+NOTES"
+review_none_case 1743 feat-none-real notes/n4.md none "Review: PASS head=@HEAD@ model=opus" ship "a docs PR with a real-model Review: PASS lands without a Verdict"
+review_none_case 1744 feat-none-nomodel notes/n5.md none "Review: PASS head=@HEAD@" refuse "a docs PR with Review: PASS and no model refuses without a Verdict" "no Verdict: PASS found"
+review_none_case 1745 feat-none-tier0 script/tests/test_none.py none "Review: PASS head=@HEAD@ model=none" refuse "a tier 0 code-and-test PR with Review: PASS model=none and no Verdict refuses" "no Verdict: PASS found"
+# Masking: an edited or minimized later comment cannot hide an earlier unedited FAIL at the head
+mf_pr_add 1746 feat-mask-vfail "Body" notes/m1.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1746.json"); mf_self_review 1746 "$h" cursor/grok-4.7-high; set_checks 1746 "$green_checks"
+gh pr comment 1746 --repo example/repo --body "Review: PASS head=$h model=none" >/dev/null
+post_verdict 1746 FAIL "$h"; post_verdict 1746 PASS "$h"; mf_comment_flag 1746 2 edited true
+run_ship --repo example/repo --pr 1746
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "newest Verdict on PR 1746 is FAIL" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "an edited Verdict: PASS does not hide an earlier unedited Verdict: FAIL"; else bad "an edited Verdict: PASS does not hide an earlier unedited Verdict: FAIL" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+mf_pr_add 1747 feat-mask-minimized "Body" notes/m2.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1747.json"); mf_self_review 1747 "$h" cursor/grok-4.7-high; set_checks 1747 "$green_checks"
+gh pr comment 1747 --repo example/repo --body "Review: PASS head=$h model=none" >/dev/null
+post_verdict 1747 FAIL "$h"; post_verdict 1747 PASS "$h"; mf_comment_flag 1747 2 minimized true
+run_ship --repo example/repo --pr 1747
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "newest Verdict on PR 1747 is FAIL" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then ok "a minimized Verdict: PASS does not hide an earlier unedited Verdict: FAIL"; else bad "a minimized Verdict: PASS does not hide an earlier unedited Verdict: FAIL" "rc=$SHIP_RC out=$SHIP_OUT"; fi
+mf_pr_add 1748 feat-mask-review "Body" notes/m3.md
+h=$(jq -r .headRefOid "$MF_GH_DIR/pr-1748.json"); set_checks 1748 "$green_checks"
+gh pr comment 1748 --repo example/repo --body "Review: FAIL head=$h model=opus" >/dev/null; gh pr comment 1748 --repo example/repo --body "Review: PASS head=$h model=opus" >/dev/null; mf_comment_flag 1748 1 edited true
+run_ship --repo example/repo --pr 1748
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "newest Review on PR 1748 is FAIL" <<<"$SHIP_OUT"; then ok "an edited Review: PASS does not hide an earlier unedited Review: FAIL"; else bad "an edited Review: PASS does not hide an earlier unedited Review: FAIL" "rc=$SHIP_RC out=$SHIP_OUT"; fi
 
 # 14-15. Patch-id carry refuses an empty or whitespace-only commit after the verdict head (#771)
 blank_case() { # <pr> <branch> <empty|whitespace>
