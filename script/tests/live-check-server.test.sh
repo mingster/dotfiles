@@ -60,7 +60,7 @@ if [[ "$out1" == *"url=${url} sha=${sha1}"* ]] \
   && grep -q "started server" "$tmp/err1" \
   && [ "$(cat "$start_count_file")" -eq 1 ] \
   && [ ! -d "$state_dir/lock" ] \
-  && bash "$SUT" --state-dir "$state_dir" --port "$port" --url "$url" status >/dev/null; then
+  && bash "$SUT" --dir "$checkout_dir" --state-dir "$state_dir" --port "$port" --url "$url" status >/dev/null; then
   ok "starts shared server on main, runs verifier command, releases lock, keeps server up"
 else
   bad "starts shared server on main (out=$out1 err=$(cat "$tmp/err1"))"
@@ -178,7 +178,7 @@ wait "$holder_pid" 2>/dev/null || true
 
 if [ "$rc6" -eq 75 ] \
   && grep -q "30m wait limit" "$tmp/err6" \
-  && bash "$SUT" --state-dir "$state_dir" --port "$port" --url "$url" status >/dev/null; then
+  && bash "$SUT" --dir "$checkout_dir" --state-dir "$state_dir" --port "$port" --url "$url" status >/dev/null; then
   ok "exits 75 naming 30m wait limit on lock timeout without stopping running server"
 else
   bad "lock timeout exit code or message (rc=$rc6 err=$(cat "$tmp/err6"))"
@@ -273,6 +273,20 @@ if [[ "$ssh_out11" == *"SSH_HOST=remote-box"* ]] \
   ok "remote host does not receive the caller's local state dir"
 else
   bad "remote state dir leaked (out=$ssh_out11)"
+fi
+
+# 12. No checkout for this host (no --dir, no env, empty ship.local.json): status exits 3 and names the missing key
+empty_cfg="$tmp/empty-ship.local.json"
+echo '{}' > "$empty_cfg"
+set +e
+env -u LIVE_CHECK_DIR bash "$SUT" --config "$empty_cfg" --repo "example-org/sample-web" \
+  --state-dir "$tmp/state12" status >"$tmp/out12" 2>"$tmp/err12"
+rc12=$?
+set -e
+if [ "$rc12" -eq 3 ] && grep -q 'live_check_server\.example-org/sample-web\.dir' "$tmp/err12"; then
+  ok "missing checkout config exits 3 and names live_check_server.<repo>.dir"
+else
+  bad "missing checkout config (rc=$rc12 err=$(cat "$tmp/err12"))"
 fi
 
 bash "$SUT" --state-dir "$state_dir" stop >/dev/null 2>&1 || true

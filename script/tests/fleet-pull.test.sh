@@ -650,5 +650,31 @@ else
   bad "SECRETS_GATE at a missing path should skip without sudo (ec=$sync_ec): $sync_out"
 fi
 
+# 31. No live_check_server entry in script/ship.local.json: one warning line naming it; an entry silences it; exit 0 in both
+fp31="$tmp/fp31"
+mkdir -p "$fp31/script"
+cp "$pull_script" "$fp31/script/fleet-pull.sh"
+state31="$tmp/state31"
+state31_bare="$tmp/state31.git"
+make_repo "$state31" "$state31_bare"
+printf '{"hosts":[],"repos":[]}\n' >"$state31/fleet-pull.json"
+git -C "$state31" add fleet-pull.json
+git -C "$state31" commit -qm cfg31
+git -C "$state31" push -q origin main
+set +e
+out31a=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state31" SECRETS_GATE="$tmp/no-gate" bash "$fp31/script/fleet-pull.sh" 2>&1)
+ec31a=$?
+printf '{"live_check_server":{"default":{"dir":"/tmp/x"}}}\n' >"$fp31/script/ship.local.json"
+out31b=$(env -u FLEET_PULL_CONFIG AGENT_STATE_DIR="$state31" SECRETS_GATE="$tmp/no-gate" bash "$fp31/script/fleet-pull.sh" 2>&1)
+ec31b=$?
+set -e
+warn31a=$(grep -c '^warning:.*live_check_server' <<<"$out31a" || true)
+warn31b=$(grep -c '^warning:.*live_check_server' <<<"$out31b" || true)
+if [ "$ec31a" -eq 0 ] && [ "$ec31b" -eq 0 ] && [ "$warn31a" -eq 1 ] && [ "$warn31b" -eq 0 ]; then
+  ok "fleet-pull warns once when live_check_server is absent and stays quiet when it is set"
+else
+  bad "fleet-pull live_check_server warning (ec=$ec31a/$ec31b warn=$warn31a/$warn31b): $out31a"
+fi
+
 echo "fleet-pull: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
