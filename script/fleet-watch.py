@@ -4034,18 +4034,54 @@ def host_workers(rpc_call, on):
 
 ORPHAN_IDLE_SECONDS = 15 * 60
 _WORKER_TITLE_RE = re.compile(r'^#\d+\|[\w-]+')
-_RUN_TITLE_RE = re.compile(r'^[\w.-]+ run \d+\b')
-_RUN_WORKTREE_RE = re.compile(r'^auto-[\w.-]+-run-\d+')
+_RUN_TITLE_RE = re.compile(r'^([\w.-]+) run \d+\b')
+_RUN_WORKTREE_RE = re.compile(r'^auto-([\w.-]+)-run-\d+')
+RUN_ENDED_STATUSES = frozenset({'completed'})  # automation run records; other statuses are not known to end a run
+
+
+def run_terminal_job(title, path):
+    """The job of an automation run terminal (`<job> run N` title or `auto-<job>-run-<n>` worktree), else ''."""
+    m = _RUN_TITLE_RE.match(title) or _RUN_WORKTREE_RE.match(path.split('/')[-1])
+    return m.group(1) if m else ''
+
+
+def run_records_ended(rpc_call, env):
+    """Worktree paths of the automation runs that the Orca record on `env` says completed (#2002). A failed read is none."""
+    try:
+        runs = (rpc_call('automations', 'runs', '--limit', '100', *_env_args(env)) or {}).get('runs')
+    except SEND_ERRORS:
+        return set()
+    out = set()
+    for r in runs if isinstance(runs, list) else ():
+        ws = str(r.get('workspaceId') or '') if isinstance(r, dict) else ''
+        if isinstance(r, dict) and r.get('status') in RUN_ENDED_STATUSES and '::' in ws:
+            out.add(ws.split('::', 1)[1].rstrip('/'))
+    return out
+
+
+def run_tail_finished(rpc_call, handle, env, job):
+    """True when the terminal's tail holds the wrapper's `ok <job>` or `FAILED <job>` reply line (#2002)."""
+    try:
+        read = rpc_call('terminal', 'read', '--terminal', handle, '--limit', '200', *_env_args(env))
+    except SEND_ERRORS:
+        return False
+    tail = ((read or {}).get('terminal') or {}).get('tail') or []
+    reply = re.compile(r'\s*(?:ok|FAILED) %s(?=[:\s])' % re.escape(job))
+    return any(reply.match(str(line)) for line in tail)
 
 
 def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
     """Close a worker (`#N|role`), automation run (`<job> run N`) or `auto-<job>-run-<n>` worktree terminal that no
-    live row holds and that has been idle 15 minutes or more, on each fleet host (#1963). `hosts` are environment
-    names, '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, whose
-    rows carry `_host_read: False`, or whose worker list fleet_rows could not read, is skipped. A terminal with no lastOutputAt counts as not idle. Closing goes
-    through close_worker_terminal, so close_guard keeps the coordinator's and live terminals. With `dry_run`, each
-    terminal it would close is passed to dry_run as one line and nothing is closed. Returns the handles closed."""
+    live row holds on each fleet host (#1963). It closes when idle 15 minutes or more. A run terminal whose job has
+    finished closes without that wait (#2002): its Orca run record is `completed`, or its tail has the job's
+    `ok <job>` or `FAILED <job>` reply line. Workers never use the finished test. `hosts` are environment names,
+    '' for this host; `rows` are the pass's fleet_rows. A host whose terminal list cannot be read, whose rows carry
+    `_host_read: False`, or whose worker list fleet_rows could not read, is skipped. A terminal with no
+    lastOutputAt counts as not idle. Closing goes through close_worker_terminal, so close_guard keeps the
+    coordinator's and live terminals. With `dry_run`, each terminal it would close is passed to dry_run as one line
+    and nothing is closed. Returns the handles closed."""
     names = environment_name_by_id() if any(hosts or ()) else {}
+    ended_by_env = {}
     unread, live_handles, live_paths = set(_UNREAD_WORKER_HOSTS), set(), set()
     for row in rows or ():
         if not isinstance(row, dict):
@@ -4081,15 +4117,25 @@ def orphan_terminal_sweep(config, now, rpc_call, hosts, rows, dry_run=None):
             if handle in live_handles or (path and path in live_paths) or close_guard(handle):
                 continue
             last = t.get('lastOutputAt')  # ms; 0 or a bool is no known output time
-            if (isinstance(last, bool) or not isinstance(last, (int, float)) or last <= 0
-                    or now - last / 1000.0 < ORPHAN_IDLE_SECONDS):
+            idle = (not isinstance(last, bool) and isinstance(last, (int, float)) and last > 0
+                    and now - last / 1000.0 >= ORPHAN_IDLE_SECONDS)
+            job = '' if _WORKER_TITLE_RE.match(title) else run_terminal_job(title, path)
+            if not idle and not (job and _run_job_finished(rpc_call, env, handle, path, job, ended_by_env)):
                 continue
             if dry_run is not None:
-                dry_run('orphan sweep: would close %s (%s) on %s, idle %dm' % (
-                    handle, title, env or 'this host', (now - last / 1000.0) // 60))
+                how = 'idle %dm' % ((now - last / 1000.0) // 60) if idle else 'run finished'
+                dry_run('orphan sweep: would close %s (%s) on %s, %s' % (handle, title, env or 'this host', how))
             elif close_worker_terminal(rpc_call, handle, env) == 'closed':
                 closed.append(handle)
     return closed
+
+
+def _run_job_finished(rpc_call, env, handle, path, job, ended_by_env):
+    """True when the run record on `env` says this run's worktree completed, or the tail shows its reply line. The
+    record is read once per host per pass (#2002)."""
+    if env not in ended_by_env:
+        ended_by_env[env] = run_records_ended(rpc_call, env)
+    return (bool(path) and path.rstrip('/') in ended_by_env[env]) or run_tail_finished(rpc_call, handle, env, job)
 
 
 def sweep_hosts(config):
