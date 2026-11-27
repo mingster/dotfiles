@@ -20,7 +20,7 @@ One **coordinator agent** holds the CEO role. It reads the issue tracker, plans 
 
 **Worker agents** each take one task. They work in their own **worktree**, a separate git checkout so their edits never collide with other tasks. When a worker finishes, it sends **worker_done**, an orchestration message that ends its turn and reports what it did.
 
-The **user** is the human who approves money rules and prices, spending, customer messages, irreversible data deletion, production once a real store is live, and one look at a new feature or page before production. Agents run the rest without waiting on chat.
+The **user** is the human who approves a feature once, when its intent is Accepted (the spec and its gated file edits inherit that approval), and who approves money rules and prices, spending, customer messages, irreversible data deletion, production once a real store is live, and one look at a new feature or page before production. Agents run the rest without waiting on chat.
 
 Full role names and boundaries live in [Agent team reference](agents/team-reference.md).
 
