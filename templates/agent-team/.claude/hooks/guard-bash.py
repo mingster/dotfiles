@@ -509,11 +509,13 @@ def join_continuations(command):
     return "".join(out)
 
 
-def segments(command):
+def segments(command, depths=None):
     """Split a command line on control operators, keeping quoted text intact. A keyword that starts a command
-    (do, then, else, elif, !, time [-p]) is a break too, so a command after it is judged as its own segment (#1810)."""
+    (do, then, else, elif, !, time [-p]) is a break too, so a command after it is judged as its own segment (#1810).
+    A `depths` list gets each segment's `( ... )` subshell depth (#2023)."""
     command = join_continuations(command)
     out, buf, quote, i = [], [], None, 0
+    groups, levels, level = [], [], 0
     while i < len(command):
         c = command[i]
         if not quote and not "".join(buf).strip() and not c.isspace():
@@ -539,13 +541,23 @@ def segments(command):
         elif c in ";|&\n" or (c in "({" and not "".join(buf).strip()):
             out.append("".join(buf))
             buf = []
+            if c in "({":
+                groups.append(c)
         elif c in ")}" and not quote:
             out.append("".join(buf))
             buf = []
+            if groups:
+                groups.pop()
         else:
             buf.append(c)
+        while len(levels) < len(out):
+            levels.append(level)
+        level = groups.count("(")
         i += 1
     out.append("".join(buf))
+    levels.append(level)
+    if depths is not None:
+        depths += [d for s, d in zip(out, levels) if s.strip()]
     return [s.strip() for s in out if s.strip()]
 
 
@@ -2541,11 +2553,12 @@ def pending_add_paths(step):
             paths_only = True
         elif a not in ADD_TRUSTED_OPTIONS and not a.startswith("--chmod="):
             blind = True
-    out = set()
+    out, every, hit = set(), set(), set()
     for base in ([GATE_CWD] if unknown else _uniq([GATE_CWD, step.cwd])):
         top, changed = _changed_files(git, base)
         if not top:
             continue
+        every |= changed
         if blind:
             out |= changed
             continue
@@ -2553,7 +2566,7 @@ def pending_add_paths(step):
         for flag, value in zip(step.repo[::2], step.repo[1::2]):
             if flag == "-C":
                 folder = os.path.join(folder, value)
-        for spec in specs:
+        for n, spec in enumerate(specs):
             if not _literal(spec):
                 out |= changed
                 continue
@@ -2562,9 +2575,12 @@ def pending_add_paths(step):
             full = os.path.join(os.path.realpath(os.path.dirname(joined)), os.path.basename(joined))
             rel = os.path.relpath(full, os.path.realpath(top)).replace("\\", "/")
             hits = changed if rel == "." else {p for p in changed if p == rel or p.startswith(rel + "/")}
-            if not hits:
-                hits = changed | ({rel} if rel != ".." and not rel.startswith("../") else set())
-            out |= hits
+            if hits:
+                hit.add(n)
+            out |= hits | ({rel} if rel != ".." and not rel.startswith("../") else set())
+    # A path that is a changed file from neither folder is not trusted: it counts as `git add -A`.
+    if not blind and any(n not in hit for n in range(len(specs))):
+        out |= every
     return out
 
 
@@ -4683,8 +4699,14 @@ def _git_steps_text(text, cwd, depth, sub, steps):
 
 
 def _git_steps_part(part, cwd, depth, sub, steps):
-    """Walk one flat part; return the tracked folder after it (None when unknown)."""
-    for seg in segments(part):
+    """Walk one flat part; return the tracked folder after it (None when unknown). A `cd` inside `( ... )`
+    ends with the subshell."""
+    depths, saved = [], []
+    for seg, level in zip(segments(part, depths), depths):
+        while len(saved) > level:
+            cwd = saved.pop()
+        while len(saved) < level:
+            saved.append(cwd)
         tokens = _skip_run_lead(words(seg))
         prog, args = program_and_args(tokens)
         if not prog:
@@ -4754,8 +4776,8 @@ def gate_git_steps(steps):
     if any(s.verb == "built" for s in steps):
         deny("Refused: this command runs `git add` or `git commit` next to a git subcommand built from a "
              "variable or a substitution (`git $verb`)." + GIT_STEP_FIX)
-    if adds and any(s.cwd is None for _, s in commits):
-        deny("Refused: this command runs `git add` and a `git commit` whose folder is not known (`cd \"$X\"`, "
+    if any(s.cwd is None for _, s in commits):
+        deny("Refused: this command runs a `git commit` whose folder is not known (`cd \"$X\"`, "
              "`cd -`, `popd`, `git -C \"$d\"`)." + GIT_STEP_FIX)
     pending = {}
     for i, commit in commits:
@@ -4770,15 +4792,16 @@ def gate_git_steps(steps):
 
 def check_git_steps(command):
     """The commit gate, once over the whole command (#2023). What it cannot read is denied when the raw
-    command names git and commit."""
-    if "git" not in command:
+    command names git with add, stage or commit, quotes and backslashes taken out."""
+    plain = re.sub(r"[\"'\\]", "", RAW_COMMAND + "\n" + command)
+    if not re.search(r"\bgit\b", plain):
         return
     try:
         gate_git_steps(git_steps(command, GATE_CWD))
     except SystemExit:
         raise
     except Exception:
-        if re.search(r"\bgit\b", RAW_COMMAND) and re.search(r"\bcommit\b", RAW_COMMAND):
+        if re.search(r"\b(?:add|stage|commit)\b", plain):
             deny("Refused: the `git add` and `git commit` steps in this command could not be read, so the "
                  "commit gate cannot check them." + GIT_STEP_FIX)
 

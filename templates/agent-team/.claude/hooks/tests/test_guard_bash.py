@@ -2459,6 +2459,32 @@ class ChainedRefusals(ChainedRepo):
         self.assertIn("could not be read", out["permissionDecisionReason"])
 
 
+class ChainedReviewFixes(ChainedRepo):
+    """#2023, review of PR #2031: folder tracking, unknown commit folders and unreadable text."""
+
+    def test_cd_subdir_add_unprotected_is_allowed(self):
+        self.assertAllowed(f"cd src && git add app.txt && git commit {self.M}")
+
+    def test_cd_in_subshell_does_not_leak(self):
+        self.write("agents/team-facts.md", "old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "decoy")
+        self.write("agents/team-facts.md", "new\n")
+        self.assertGated(f"cd docs && (cd ..) && git add agents/team-facts.md && git commit {self.M}")
+
+    def test_commit_with_unknown_dash_c_folder_is_refused(self):
+        self.assertRefused(f'd=.; git -C "$d" commit -a {self.M}')
+
+    def test_commit_after_unknown_cd_is_refused(self):
+        self.assertRefused(f'cd "$REPO" && git commit -a {self.M}')
+
+    def test_unreadable_text_after_an_add_is_denied(self):
+        self.assertDenied(f'git add {self.P} && bash -c "${{CMD:-"true"}}"', "could not be read")
+
+    def test_quoted_git_word_is_still_gated(self):
+        self.assertGated(f'"g"it add {self.P} && "g"it commit {self.M}')
+
+
 class ChainedAllowed(ChainedRepo):
     """#2023: what the new pass keeps allowing."""
 
