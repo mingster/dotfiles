@@ -538,8 +538,7 @@ substitution as `agent-team.sh`, or when the path is a deletion `agent-team.sh c
 A copy that differs from that render still needs `--verdict-from`. An Accepted intent passes when every commit
 in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
 (<where approved>)` trailer, meaning the approver already accepted it in chat; one commit without
-it refuses the PR. A gated file that the spec beside an Accepted intent lists under `## Owner steps` also passes with `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, when the cited PR is merged, its intent says Accepted on that date and the file is in that list (`script/lib/protected-paths.sh`). The form never covers hooks, `settings.json`, the approval tooling or accepting an intent, which keep the owner's own trailer. In an agent team the coordinator accepts intents and specs and signs that
-trailer; the owner accepts only those that set money rules or prices (Owner pauses).
+it refuses the PR. A gated file that the spec beside an Accepted intent lists under `## Owner steps` also passes with `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, when the cited PR is merged, its intent says Accepted on that date and the file is in that list (`script/lib/protected-paths.sh`). The form never covers hooks, `settings.json`, the approval tooling or accepting an intent, which keep the owner's own trailer. In an agent team the owner approves once, when the intent is Accepted; the spec, its ADRs and its Owner steps files inherit that approval through that trailer (`team.md`, Owner approval at intent).
 It squash merges and reads the PR back as `MERGED`.
 
 ### Interpreters (asdf)
