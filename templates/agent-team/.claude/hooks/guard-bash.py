@@ -2524,11 +2524,13 @@ def pending_add_paths(add_args, cwd):
         return changed if update_all else set()
     out = set()
     for spec in specs:
-        full = os.path.realpath(os.path.join(folder, os.path.expanduser(spec)))
+        joined = os.path.normpath(os.path.join(folder, os.path.expanduser(spec)))
+        # Resolve the parent only: a symlink at the path itself is the staged path, not its target.
+        full = os.path.join(os.path.realpath(os.path.dirname(joined)), os.path.basename(joined))
         rel = os.path.relpath(full, os.path.realpath(top)).replace("\\", "/")
         if rel == ".." or rel.startswith("../"):
             continue
-        if rel == "." or os.path.isdir(full):
+        if rel == "." or os.path.isdir(joined):
             prefix = "" if rel == "." else rel + "/"
             out |= {p for p in changed if p.startswith(prefix)}
         elif re.search(r"[*?\[]", rel):
@@ -2549,14 +2551,21 @@ def check_role_file_gate(base, args):
             staged = set((gate_run([*git, "diff", "--cached", "--name-only"], None) or "").split())
             if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
                 staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
+            # A path an earlier add stages is not in the index yet, so matches_main would compare the old blob
+            # with origin/main and wrongly exempt it. Pending paths are never exempt.
+            pending = set()
             for add_args, add_cwd in EARLIER_GIT:
-                staged |= pending_add_paths(add_args, add_cwd)
+                pending |= pending_add_paths(add_args, add_cwd)
+            staged |= pending
+
+            def exempt(f):
+                return f not in pending and matches_main(git, f, rest)
+
             if adopted:
-                managed = sorted(f for f in staged if is_template_managed_rel(f)
-                                 and not matches_main(git, f, rest))
+                managed = sorted(f for f in staged if is_template_managed_rel(f) and not exempt(f))
                 if managed:
                     deny_template_managed(managed[0])
-            staged = {f for f in staged if not (adopted and is_template_managed_rel(f) and matches_main(git, f, rest))}
+            staged = {f for f in staged if not (adopted and is_template_managed_rel(f) and exempt(f))}
             files = {f for f in staged if is_protected(f)} | ship_protected(staged)
             if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
                 deny_role_files(files, "This commit")
@@ -3032,6 +3041,27 @@ def check_indirection(base, args):
                             "run that file.")
 
 
+def check_chain(text, depth, cwd):
+    """Check the segments of one command text in order (#2023). Each git segment is recorded in EARLIER_GIT
+    after it is checked, so a commit later in the chain sees the adds before it. The outer list is restored
+    on return, so a nested shell or eval chain does not leak into the outer one."""
+    outer = EARLIER_GIT[:]
+    EARLIER_GIT.clear()
+    try:
+        cur = cwd
+        for seg in segments(text):
+            check_segment(seg, depth, cwd=cur)
+            prog, args = program_and_args(words(seg))
+            if prog and os.path.basename(prog) == "git":
+                EARLIER_GIT.append((args, cur))
+            if prog in ("cd", "pushd") and args:
+                dest = next((a for a in args if not a.startswith("-")), None)
+                if dest:
+                    cur = os.path.normpath(os.path.join(cur or os.getcwd(), os.path.expanduser(dest)))
+    finally:
+        EARLIER_GIT[:] = outer
+
+
 def check_segment(segment, depth=0, cwd=None):
     if depth > 3:
         deny("Shell command nesting exceeds the guard inspection limit. Split the command into separate calls.")
@@ -3127,8 +3157,7 @@ def check_segment(segment, depth=0, cwd=None):
     if base == "eval":
         for text in [" ".join(args), *substitutions(" ".join(args))]:
             check_hidden_script_paths(text, transfer_cwd)
-            for seg in segments(text):
-                check_segment(seg, depth + 1, cwd=transfer_cwd)
+            check_chain(text, depth + 1, transfer_cwd)
     if base in SHELLS or base in {"source", "."}:
         idx = next((i for i, a in enumerate(args) if re.match(r"^-[A-Za-z]*c[A-Za-z]*$", a)), None)
         if idx is not None:
@@ -3144,14 +3173,7 @@ def check_segment(segment, depth=0, cwd=None):
                     )
                 for text in [script, *substitutions(script)]:
                     check_hidden_script_paths(text, transfer_cwd)
-                    cur_cwd = transfer_cwd
-                    for seg in segments(text):
-                        check_segment(seg, depth + 1, cwd=cur_cwd)
-                        p2, a2 = program_and_args(words(seg))
-                        if p2 in ("cd", "pushd") and a2:
-                            dest = next((x for x in a2 if not x.startswith("-")), None)
-                            if dest:
-                                cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+                    check_chain(text, depth + 1, transfer_cwd)
         else:
             script = next((a for a in args if not a.startswith("-")), None)
             if script and os.path.basename(script) in BLOCKED_SCRIPTS:
@@ -4621,18 +4643,8 @@ def check_command(command):
     CODE_COMMAND = command
     check_exact_only_scripts(command, GATE_CWD)
     texts = [command, *substitutions(command)]
-    EARLIER_GIT.clear()
     for text in texts:
-        cur_cwd = GATE_CWD
-        for seg in segments(text):
-            check_segment(seg, cwd=cur_cwd)
-            prog, args = program_and_args(words(seg))
-            if prog and os.path.basename(prog) == "git":
-                EARLIER_GIT.append((args, cur_cwd))
-            if prog in ("cd", "pushd") and args:
-                dest = next((a for a in args if not a.startswith("-")), None)
-                if dest:
-                    cur_cwd = os.path.normpath(os.path.join(cur_cwd or os.getcwd(), os.path.expanduser(dest)))
+        check_chain(text, 0, GATE_CWD)
     # After the rules above, so an existing deny keeps its reason. This only closes paths they cannot see.
     for text in texts:
         check_hidden_script_paths(text, GATE_CWD)

@@ -2253,11 +2253,8 @@ class DenyMessagesNameRewrite(ProjectConfigGuardTest):
                 self.assertAllowed(command)
 
 
-class ChainedAddCommitGate(GuardTest):
-    """#2023: `git add <path> && git commit` in one command. The add has not staged anything when the hook
-    runs, so the role file gate must count the paths the earlier add segments will stage."""
-    PROTECTED = "docs/agents/team-facts.md"
-    TRAILER = "Owner-approved: mingster 2026-11-28"
+class ChainedRepo(GuardTest):
+    """A throwaway git repo in the temp home, and the hook run from inside it."""
 
     def setUp(self):
         super().setUp()
@@ -2279,6 +2276,13 @@ class ChainedAddCommitGate(GuardTest):
                              env=dict(os.environ, HOME=self.home), cwd=self.repo, timeout=20)
         self.assertEqual(out.returncode, 0, out.stderr)
         return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+
+class ChainedAddCommitGate(ChainedRepo):
+    """#2023: `git add <path> && git commit` in one command. The add has not staged anything when the hook
+    runs, so the role file gate must count the paths the earlier add segments will stage."""
+    PROTECTED = "docs/agents/team-facts.md"
+    TRAILER = "Owner-approved: mingster 2026-11-28"
 
     def test_chained_add_of_protected_path_denied_without_trailer(self):
         self.write(self.PROTECTED)
@@ -2302,6 +2306,12 @@ class ChainedAddCommitGate(GuardTest):
         self.assertIsNotNone(reason)
         self.assertIn("Owner-approved:", reason)
 
+    def test_chained_add_inside_shell_c_denied_without_trailer(self):
+        self.write(self.PROTECTED)
+        reason = self.gate(f"bash -c 'git add {self.PROTECTED} && git commit -m \"tweak\"'")
+        self.assertIsNotNone(reason)
+        self.assertIn("Owner-approved:", reason)
+
     def test_chained_add_of_unprotected_path_allowed(self):
         self.write("web/app.ts")
         self.assertIsNone(self.gate('git add web/app.ts && git commit -m "app"'))
@@ -2309,6 +2319,35 @@ class ChainedAddCommitGate(GuardTest):
     def test_commit_before_add_in_chain_allowed(self):
         self.write(self.PROTECTED)
         self.assertIsNone(self.gate(f'git commit -m "app" && git add {self.PROTECTED}'))
+
+
+class AdoptedChainedAddGate(ChainedRepo):
+    """#2023 review: in an adopted project a template managed file that origin/main already has is exempt
+    from the commit gate. A chained `git add` has not staged the edit yet, so the exemption must not apply
+    to it: `git add <file> && git commit` and `git add -A && git commit` are denied as template managed."""
+    ROLE = ".claude/agents/elon.md"
+
+    def setUp(self):
+        super().setUp()
+        os.makedirs(os.path.join(self.repo, ".claude", "agents"))
+        self.write(".claude/settings.project.json")
+        self.write(self.ROLE)
+        subprocess.run(["git", "add", "-A"], cwd=self.repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "adopt"], cwd=self.repo, check=True, capture_output=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", "HEAD"], cwd=self.repo, check=True,
+                       capture_output=True)
+        with open(os.path.join(self.repo, self.ROLE), "w") as f:
+            f.write("edited\n")
+
+    def test_chained_add_of_template_managed_file_denied(self):
+        reason = self.gate(f'git add {self.ROLE} && git commit -m "tweak"')
+        self.assertIsNotNone(reason)
+        self.assertIn("template managed", reason)
+
+    def test_chained_add_all_flag_denied_for_template_managed_file(self):
+        reason = self.gate('git add -A && git commit -m "tweak"')
+        self.assertIsNotNone(reason)
+        self.assertIn("template managed", reason)
 
 
 if __name__ == "__main__":
