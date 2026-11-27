@@ -10325,7 +10325,8 @@ def _issue_scan_pass(
     if list_issues is None:
         list_issues = fetch_ready_issues
     if issue_state is None:
-        issue_state = fetch_issue_state
+        # A Blocked by ref may be a PR, which `gh issue view` refuses (#2027).
+        issue_state = fetch_ref_state
     blocker_states = {}
 
     started = state.setdefault('issue_scan_started', {})
