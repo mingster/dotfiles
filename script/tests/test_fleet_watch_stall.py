@@ -793,6 +793,132 @@ class MainTerminalListFailure(unittest.TestCase):
             self.assertEqual(default_log.read_text(), 'seed\n')
 
 
+class GrokVerifierStall(unittest.TestCase):
+    """ADR 0003: a silent or startup dead Grok verifier is not restarted on Grok."""
+
+    def test_a_stalled_grok_verifier_is_released_and_not_restarted(self):
+        released, calls = [], []
+        row = {'dispatchId': 'ctx_g', 'taskId': 'task_g', 'terminal': 'term_g', 'agent': 'grok',
+               'workspace': 'ws::/work/g', 'workerState': 'ready', 'dispatchStatus': 'dispatched',
+               'terminalState': 'active', 'projection': {'liveness': {'verdict': 'idle'}}}
+        state = {'own_dispatches': {'ctx_g': {'kind': 'verifier', 'agent': 'grok', 'repo': 'o/r', 'pr': 7}}}
+        config = {'worker_stall': {'label_repo': 'o/r', 'stall_idle_seconds': 600}}
+        with patch.object(fw, 'release_worker', lambda _rpc, w: released.append(w['dispatchId']) or 'closed'):
+            _notices, log = fw.worker_stall_pass(
+                config, state, 100_000, [row], {'term_g': 1000}, lambda *a: calls.append(a) or {},
+                act=lambda _command: 0, head_of=lambda _w: '', holds_work=lambda _w: False)
+        self.assertEqual(released, ['ctx_g'], log)
+        self.assertEqual([c for c in calls if c[0] == 'bash' or 'worker-start' in c], [])
+
+
+class SimStall(unittest.TestCase):
+    """#1970: a 0% CPU xcodebuild of a live worker is reported, and nothing is killed. Fake rows and processes."""
+
+    ROW = {'dispatchId': 'ctx_ios', 'terminal': 'term_ios', 'workerState': 'ready', 'dispatchStatus': 'dispatched',
+           'terminalState': 'active', 'projection': {'liveness': {'verdict': 'live'}},
+           'workspace': 'ws::/work/ios'}
+
+    def proc(self, **changes):
+        return dict({'pid': 4242, 'cpu': 0.0, 'age': 1000, 'cwd': '/work/ios/app',
+                     'command': '/usr/bin/xcodebuild -scheme App test'}, **changes)
+
+    def run_pass(self, state, now, procs, row=None, config=None):
+        calls = []
+        notices = fw.sim_stall_pass(config or {}, state, now, [row or self.ROW], lambda *a: calls.append(a),
+                                    processes=lambda _rpc, _host: procs, env_names={'env-b': 'host-b'})
+        return notices, calls
+
+    def test_reported_once_per_pass_with_nothing_killed(self):
+        state = {}
+        self.assertEqual(self.run_pass(state, 1000, [self.proc()]), ([], []))
+        notices, calls = self.run_pass(state, 1900, [self.proc(age=1900)])
+        self.assertEqual(len(notices), 1)
+        self.assertIsInstance(notices[0], fw.Urgent)
+        self.assertIn('PID 4242', notices[0])
+        self.assertIn('shared booted simulator', notices[0])
+        self.assertEqual([c[:4] for c in calls], [('terminal', 'send', '--terminal', 'term_ios')])
+        self.assertIn('PID 4242', calls[0][5])
+        notices, calls = self.run_pass(state, 2200, [self.proc(age=2200)])
+        self.assertEqual((len(notices), calls), (1, []))
+
+    def test_cpu_use_a_young_process_or_no_owner_is_no_stall(self):
+        for change in ({'cpu': 3.0}, {'age': 100}, {'cwd': '/elsewhere'}):
+            state = {}
+            self.run_pass(state, 1000, [self.proc(**change)])
+            self.assertEqual(self.run_pass(state, 1900, [self.proc(**change)]), ([], []), change)
+
+    def test_cpu_in_between_and_a_reused_pid_restart_the_clock(self):
+        for middle in (self.proc(cpu=50.0), self.proc(age=30)):
+            state = {}
+            self.run_pass(state, 1000, [self.proc()])
+            self.run_pass(state, 1600, [middle])
+            self.assertEqual(self.run_pass(state, 1900, [self.proc(age=1900)])[0], [])
+
+    def test_an_unread_host_keeps_the_clock(self):
+        state = {}
+        self.run_pass(state, 1000, [self.proc()])
+        self.run_pass(state, 1500, None)
+        self.assertEqual(len(self.run_pass(state, 1900, [self.proc(age=1900)])[0]), 1)
+
+    def test_a_remote_host_is_read_only_when_listed_and_told_on_that_host(self):
+        row = dict(self.ROW, _host='env-b', _host_terminal='term_b', _host_workspace='ws::/work/ios', resource=None, workspace=None)
+        state = {}
+        self.assertEqual(self.run_pass(state, 1000, [self.proc()], row=row), ([], []))
+        self.assertEqual(state['sim_stall'], {})
+        config = {'sim_stall': {'hosts': ['host-b']}}
+        self.run_pass(state, 1000, [self.proc()], row=row, config=config)
+        notices, calls = self.run_pass(state, 1900, [self.proc(age=1900)], row=row, config=config)
+        self.assertIn('on host-b', notices[0])
+        self.assertEqual(calls[0][3], 'term_b')
+        self.assertEqual(calls[0][-2:], ('--environment', 'env-b'))
+
+    def test_the_lister_prints_tree_cpu_and_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp)
+            (fake / 'ps').write_text(
+                '#!/bin/sh\ncat <<EOF\n'
+                ' 10 1 0.0 20:00 bash /work/ios/build-and-test.sh\n'
+                ' 11 10 0.0 19:00 /usr/bin/xcodebuild -scheme App test\n'
+                ' 20 1 0.0 01-00:00:05 /usr/bin/xcodebuild test\n'
+                ' 21 20 7.5 00:10 swift-frontend\n'
+                ' 30 1 0.0 20:00 vim build-and-test.sh\n'
+                'EOF\n')
+            (fake / 'lsof').write_text('#!/bin/sh\necho p1\necho n/work/ios\n')
+            for name in ('ps', 'lsof'):
+                (fake / name).chmod(0o755)
+            out = subprocess.run(['bash', str(fw.SIM_STALL_SCRIPT)], capture_output=True, text=True, check=True,
+                                 env=dict(os.environ, PATH='%s:%s' % (tmp, os.environ['PATH']))).stdout
+        self.assertEqual([line.split('|')[:5] for line in out.splitlines()], [
+            ['SIM', '11', '0.0', '1140', '/work/ios'], ['SIM', '20', '7.5', '86405', '/work/ios'], ['SIM-END']])
+        rows = fw.sim_stall_processes(None, '', run=lambda *a, **k: subprocess.CompletedProcess(a, 0, out, ''))
+        self.assertEqual([r['pid'] for r in rows], [11, 20])
+
+    def test_a_remote_read_joins_wrapped_rows_and_closes_its_terminal(self):
+        record = 'SIM|4242|0.0|1000|/work/ios|/usr/bin/xcodebuild -scheme App test|EOR'
+        calls = []
+
+        def rpc(tail):
+            def call(*args):
+                calls.append(args[:2])
+                if args[:2] == ('worktree', 'list'):
+                    return {'worktrees': [{'path': '/srv/x'}]}
+                if args[:2] == ('terminal', 'create'):
+                    return {'terminal': {'handle': 'term_p'}}
+                return {'terminal': {'tail': tail}} if args[:2] == ('terminal', 'read') else {}
+            return call
+
+        rows = fw.sim_stall_processes(rpc([record[:30], record[30:], 'SIM-END']), 'env-b')
+        self.assertEqual([(r['pid'], r['cwd']) for r in rows], [(4242, '/work/ios')])
+        self.assertIn(('terminal', 'close'), calls)
+        # No end marker (an old checkout, a cut screen) is unread, not "no processes".
+        self.assertIsNone(fw.sim_stall_processes(rpc(['bash: no such file']), 'env-b'))
+
+        def broken(*_args):
+            raise RuntimeError('host gone')
+
+        self.assertIsNone(fw.sim_stall_processes(broken, 'env-b'))
+
+
 if __name__ == '__main__':
     unittest.main()
 

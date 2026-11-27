@@ -589,4 +589,17 @@ ec=0; out=$(agy_pick antigravity 2>/dev/null) || ec=$?
 [ "$(jq -r '.ok' <<<"$out")" = false ] && [ "$(jq -r '.reason' <<<"$out")" = 'no eligible host is signed in to agy' ] \
   || fail "both marked gives the agy reason: $out"
 
+# ADR 0003: pick --agent grok reads grok_hosts from the fleet pull config; with none listed only this host starts it.
+printf '{"grok_hosts": ["HostC"]}\n' >"$tmp/pull-listed.json"
+printf '{"grok_hosts": []}\n' >"$tmp/pull-empty.json"
+jq '. + {local_host: "hostc"}' "$tmp/agy.json" >"$tmp/grok-local.json"
+grok_pick() { # <pull config> <fleet config>
+  FLEET_PULL_CONFIG="$1" FLEET_LOAD_SCRIPT="$tmp/load-agy.sh" FLEET_WATCH_CONFIG="$2" \
+    python3 "$py" pick --spec "$tmp/light-brief.md" --json --agent grok
+}
+out=$(grok_pick "$tmp/pull-listed.json" "$tmp/agy.json" 2>/dev/null) || fail "grok must place on a grok host: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostc ] || fail "grok places only on grok_hosts: $out"
+out=$(grok_pick "$tmp/pull-empty.json" "$tmp/grok-local.json" 2>/dev/null) || fail "grok with none listed must place here: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostc ] || fail "with none listed grok stays on this host: $out"
+
 echo "worker-placement.test.sh passed"

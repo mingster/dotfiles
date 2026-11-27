@@ -2244,15 +2244,15 @@ REAP_ORPHAN_SCRIPT = Path(__file__).with_name('reap-orphan-tests.sh')
 REAP_ORPHAN_REMOTE = 'bash "$HOME/dotfiles/script/reap-orphan-tests.sh" || echo "reap-orphan-tests failed"'
 
 
-def reap_orphan_remote_lines(rpc_call, host):
-    """Run reap-orphan-tests.sh on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
+def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
+    """Run reap-orphan-tests.sh (or another probe command) on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
     worktrees = (rpc_call('worktree', 'list', '--environment', host) or {}).get('worktrees') or []
     rows = [r for r in worktrees if isinstance(r, dict) and r.get('path') and not r.get('isArchived')]
     rows.sort(key=lambda r: not r.get('isMainWorktree'))
     if not rows:
         return []
     created = rpc_call('terminal', 'create', '--environment', host, '--worktree', 'path:%s' % rows[0]['path'],
-                       '--command', REAP_ORPHAN_REMOTE)
+                       '--command', command)
     handle = ((created or {}).get('terminal') or {}).get('handle')
     if not handle:
         return []
@@ -2292,6 +2292,102 @@ def orphan_reaper_notices(config, rpc_call=None, run=None):
                 notices.append('%s: orphan test runner %s' % (name, line))
             elif line == 'reap-orphan-tests failed':
                 notices.append('%s: reap-orphan-tests failed to run' % name)
+    return notices
+
+
+SIM_STALL_SCRIPT = Path(__file__).with_name('sim-stall-list.sh')
+SIM_STALL_REMOTE = 'bash "$HOME/dotfiles/script/sim-stall-list.sh"'
+SIM_STALL_SECONDS = 15 * 60
+SIM_RECORD_RE = re.compile(r'SIM\|(\d+)\|(\d+(?:\.\d+)?)\|(\d+)\|([^|]*)\|(.*?)\|EOR')
+
+
+def sim_stall_processes(rpc_call, host, run=subprocess.run):
+    """xcodebuild and build-and-test.sh processes on one host ('' is this one), or None when it cannot be read."""
+    try:
+        if host:
+            lines = reap_orphan_remote_lines(rpc_call, host, SIM_STALL_REMOTE)
+        else:
+            done = run(['bash', str(SIM_STALL_SCRIPT)], capture_output=True, text=True, timeout=60)
+            if done.returncode != 0:
+                return None
+            lines = (done.stdout or '').splitlines()
+    except (OSError, subprocess.SubprocessError, OrcaReadError, TerminalNotFound) + SEND_ERRORS:
+        return None
+    # A terminal read returns screen rows, so a long record may be wrapped: join the rows, then cut on the markers.
+    text = ''.join(str(line) for line in lines)
+    if 'SIM-END' not in text:
+        return None
+    return [{'pid': int(pid), 'cpu': float(cpu), 'age': int(age), 'cwd': cwd, 'command': command}
+            for pid, cpu, age, cwd, command in SIM_RECORD_RE.findall(text)]
+
+
+def _sim_owner(proc, rows):
+    """The live worker row whose checkout holds the process's directory or is named in its command."""
+    for row in rows:
+        path = (worker_checkout_path(row) or str(row.get('_host_workspace') or '').split('::')[-1]).rstrip('/')
+        if not path.startswith('/'):
+            continue
+        if proc['cwd'] == path or proc['cwd'].startswith(path + '/') or (path + '/') in proc['command']:
+            return row
+    return None
+
+
+def sim_stall_pass(config, state, now, workers, rpc_call, processes=sim_stall_processes, env_names=None):
+    """Report an xcodebuild or build-and-test.sh of a live worker that sat at 0% CPU for 15 minutes (#1970).
+
+    The worker gets one terminal line per process and the coordinator one line per pass. Nothing is stopped or killed.
+    This host is always read; a remote host only when the config lists it under sim_stall.hosts."""
+    block = config.get('sim_stall') if isinstance(config.get('sim_stall'), dict) else {}
+    if block.get('enabled') is False:
+        return []
+    remote_hosts = {str(h).lower() for h in block.get('hosts') or []}
+    by_host = {}
+    for row in workers or []:
+        if not isinstance(row, dict) or not worker_row_is_live(row):
+            continue
+        env = row.get('_host') or ''
+        if not env and worker_is_remote(row, config):
+            env = remote_environment(row)
+        if env:
+            if env_names is None:
+                env_names = environment_name_by_id()
+            if host_cap_name(env, config, env_names).lower() not in remote_hosts:
+                continue
+        by_host.setdefault(env, []).append(row)
+    book = state.setdefault('sim_stall', {})
+    notices = []
+    seen, unread = set(), set()
+    for env, rows in by_host.items():
+        procs = processes(rpc_call, env)
+        if procs is None:
+            unread.add(env)
+            continue
+        for proc in procs:
+            owner = _sim_owner(proc, rows)
+            if owner is None or proc['cpu'] > 0:
+                continue
+            key = '%s:%s' % (env, proc['pid'])
+            entry = book.get(key)
+            # A reused pid is a younger process than the one first seen.
+            if not entry or proc['age'] < entry.get('age', 0):
+                entry = book[key] = {'since': now}
+            entry['age'] = proc['age']
+            seen.add(key)
+            if proc['age'] < SIM_STALL_SECONDS or now - entry['since'] < SIM_STALL_SECONDS:
+                continue
+            text = ('PID %d (%s) has been at 0%% CPU for %d minutes, likely stuck on the shared booted simulator. '
+                    'Nothing was killed.' % (proc['pid'], proc['command'][:80], int((now - entry['since']) // 60)))
+            handle = owner.get('_host_terminal') or worker_terminal_handle(owner)
+            if handle and not entry.get('told'):
+                try:
+                    rpc_call('terminal', 'send', '--terminal', handle, '--text', text, '--enter', *_env_args(env))
+                    entry['told'] = True
+                except SEND_ERRORS as error:
+                    log_send_failed(handle, error)
+            notices.append(Urgent('iOS simulator stall, worker %s%s: %s' % (
+                owner.get('dispatchId'), ' on %s' % host_cap_name(env, config, env_names) if env else '', text)))
+    for key in [k for k in book if k not in seen and k.rsplit(':', 1)[0] not in unread]:
+        book.pop(key)
     return notices
 
 
@@ -4279,7 +4375,16 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
         _record_stall_restart(state, old_dispatch, result, now, log_bits, pending)
 
+    def grok_verifier_row(did):
+        row = _own_row(state, did) or {}
+        return row.get('kind') == 'verifier' and row.get('agent') == 'grok'
+
     def restart_own(w, did):
+        if grok_verifier_row(did):
+            # A stalled Grok verifier is not restarted on Grok: release it, and babysit starts the next family.
+            outcome = release_worker(rpc_call, w)
+            log_bits.append('grok_stall_release=%s:%s' % (did, outcome))
+            return
         row = _own_row(state, did)
         key = park_id('stall', did)
         if row is not None and row.get('parked'):
@@ -4360,8 +4465,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         """An own worker that died at startup is released and started once more, then parked (#1221).
         Needs a startup stage or error on the row (worker-list rows carry no lastError); without one nothing fires."""
         row = _own_row(state, did)
-        if row is None or row.get('startup_handled') or _retry_recorded(state, did):
-            return
+        if row is None or row.get('startup_handled') or _retry_recorded(state, did) or grok_verifier_row(did):
+            return  # babysit replaces a dead Grok verifier with the next family (ADR 0003)
         row['startup_handled'] = True
         repo = label_target(w) or fault_target()
         pr_num = worker_pr_number(w)
@@ -7958,10 +8063,12 @@ def _usage_gate_argv():
     return [cli]
 
 
-def pick_role(role, run=subprocess.run, avoid_family=None, tier=None):
+def pick_role(role, run=subprocess.run, avoid_family=None, tier=None, avoid_provider=None):
     command = _usage_gate_argv() + ['pick', '--role', role, '--json', '--auto']
     if avoid_family:
         command += ['--avoid-family', avoid_family]
+    if avoid_provider:
+        command += ['--avoid-provider', avoid_provider]
     if tier:
         command += ['--tier', tier]
     USAGE_GATE_CALLS[0] += 1
@@ -9255,11 +9362,45 @@ def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_work
     return blocked()
 
 
+GROK_FALLBACK_TITLE = 'Grok verifier start failed or stalled'
+
+
+def grok_fell_back(state, repo, number):
+    return str(number) in (state.get('grok_fallback') or {}).get(repo, {})
+
+
+def grok_fallback(state, repo, number, why, file_issue=None):
+    """Remember that this PR's verifier no longer takes Grok, and file one issue for a real failure (ADR 0003).
+
+    `why` None is a deferred start (no slot or host): the PR falls back, with no issue. An open issue with the
+    same title is reused, and a failed create is tried again at the next failure."""
+    state.setdefault('grok_fallback', {}).setdefault(repo, {})[str(number)] = why or 'deferred'
+    if why:
+        (file_issue or grok_fallback_issue)('%s#%s: %s' % (repo, number, why))
+
+
+def grok_fallback_issue(detail, find=None, create=None):
+    if (find or main_red_find_issue)(FAULT_REPO, GROK_FALLBACK_TITLE):
+        return
+    body = ('A Grok verifier failed: %s. That PR now gets the next verifier family (ADR 0003).\n\n'
+            '## Acceptance\n- [ ] A Grok verifier starts and posts a Verdict (check the folder trust prompt first).'
+            % one_line_reason(detail))
+    # No labels: an issue scan must not start a builder on a provider fault.
+    (create or main_red_create_issue)(FAULT_REPO, GROK_FALLBACK_TITLE, body, labels=())
+
+
+def grok_fallback_prune(state, repo, open_numbers):
+    book = (state.get('grok_fallback') or {}).get(repo)
+    if isinstance(book, dict):
+        for key in [k for k in book if k not in {str(n) for n in open_numbers}]:
+            book.pop(key)
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
-    closed_fetch=None, runner_fetch=None, standing_io=None, pr_state_fetch=None,
+    closed_fetch=None, runner_fetch=None, standing_io=None, pr_state_fetch=None, file_issue=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -9307,6 +9448,7 @@ def babysit_pass(
     cap = babysit_cap(config)
     started = 0
     picks = {}
+    grok_taken = False
     runner_state = {}
 
     def review_gate_open(pr_row, repo_name):
@@ -9327,12 +9469,13 @@ def babysit_pass(
                 log_bits.append('review_gate_runner_error_%s' % repo_name)
         return runner_state[repo_name] == 'none'
 
-    def cached_pick(role, avoid_family=None):
-        key = (role, avoid_family or '')
+    def cached_pick(role, avoid_family=None, avoid_provider=None):
+        key = (role, avoid_family or '', avoid_provider or '')
         if key not in picks:
             if avoid_family:
                 try:
-                    picks[key] = pick(role, avoid_family=avoid_family)
+                    extra = {'avoid_provider': avoid_provider} if avoid_provider else {}
+                    picks[key] = pick(role, avoid_family=avoid_family, **extra)
                 except TypeError:
                     picks[key] = pick(role)
             else:
@@ -9377,6 +9520,7 @@ def babysit_pass(
                 persist_state()
         if not fetch_failed and not dry_run:
             unknown_builder_prune(state, repo, open_numbers)
+            grok_fallback_prune(state, repo, open_numbers)
     # Tier 1 verifiers start before the rest (#1730).
     rows.sort(key=lambda item: (0 if pr_tier(item[3]) == 1 else 1, item[0], item[1]))
 
@@ -9424,7 +9568,12 @@ def babysit_pass(
                     release_worker(row_for_dispatch(workers, failed_did))
                 park_key = park_id('verifier', repo, number, head)
                 # A dispatch that is itself a stall restart already was the one retry.
-                if not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
+                if _own_row(state, failed_did).get('agent') == 'grok':
+                    # The fresh verifier takes the next family and does not use up the one retry (ADR 0003).
+                    grok_fallback(state, repo, number, 'verifier ended with no Verdict', file_issue)
+                    state['babysit'][repo].pop(str(number), None)
+                    log_bits.append('grok_fallback=%s' % number)
+                elif not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
                     state['babysit'][repo].pop(str(number), None)
                     log_bits.append('verifier_startup_retry=%s' % number)
                 else:
@@ -9541,7 +9690,9 @@ def babysit_pass(
                 if persist_state:
                     persist_state()
             continue
-        picked = cached_pick(role, avoid_fam)
+        # A PR whose Grok verifier failed or stalled takes the next family (ADR 0003).
+        no_grok = 'grok' if kind == 'verifier' and (grok_taken or grok_fell_back(state, repo, number)) else None
+        picked = cached_pick(role, avoid_fam, no_grok)
         chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
             why = pick_failure_reason(picked, avoid)
@@ -9555,6 +9706,7 @@ def babysit_pass(
             detail = '%s %s' % (detail, tag)
         action = 'verifier' if kind == 'verifier' else 'fixer'
         if dry_run:
+            grok_taken = grok_taken or (kind == 'verifier' and agent == 'grok')
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += step
             continue
@@ -9602,13 +9754,24 @@ def babysit_pass(
         # start_fits_pass above still holds a start that would end past PASS_HARD_END (#1820).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
-        if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)
+        # An Orca fence on fleet-watch's own terminal (#1170) is not a Grok fault: it parks and hands off as before.
+        grok_verifier = kind == 'verifier' and agent == 'grok' and 'consumer_fenced' not in (reason or '')
+        if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and not grok_verifier and startup_failure_text(reason)
                 and startup_retry_taken(state, park_key)):
             log_bits.append('startup_retry=%s' % number)
             started_worker = start_worker(command)
             code, reason = start_result_parts(started_worker)
         if code != 0:
             suffix = ':' + reason if reason else ''
+            if grok_verifier:
+                # No park: the next pass starts this PR on the next family. A deferred start files no issue.
+                grok_fallback(state, repo, number, None if code in BABYSIT_DEFERRED_EXITS else reason or 'start failed',
+                              file_issue)
+                lines.append(_babysit_line(repo, number, head, 'skip', 'grok-fallback'))
+                log_bits.append('grok_fallback=%s%s' % (number, suffix))
+                if persist_state:
+                    persist_state()
+                continue
             if code in BABYSIT_DEFERRED_EXITS:
                 # The usage gate or host placement said wait. That is not a failed start, so the next pass retries.
                 lines.append(_babysit_line(repo, number, head, 'skip', 'start-deferred'))
@@ -9621,12 +9784,14 @@ def babysit_pass(
             if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
                 notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, command))
             continue
+        # The cached pick was read before this start, so the rest of the pass counts the Grok slot as taken.
+        grok_taken = grok_taken or (kind == 'verifier' and agent == 'grok')
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
             remember_started_dispatch(state, started_worker, 'verifier', repo)
             own = _own_row(state, dispatch_id_from_start(started_worker))
             if own is not None:
-                own.update(repo=repo, pr=number, head=head)
+                own.update(repo=repo, pr=number, head=head, agent=agent)
             _verifier_head_bucket(state, repo)[str(number)] = head
             if standing_cfg['enabled']:
                 did = dispatch_id_from_start(started_worker)
@@ -12176,6 +12341,13 @@ def _main():
             print('fleet-watch: agy probe skipped: %s' % (repr(error),), file=sys.stderr)
             return []
 
+    def sim_stall_phase():
+        try:
+            return sim_stall_pass(config, state, now, workers, rpc)
+        except Exception as error:
+            print('fleet-watch: simulator stall check skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
     # Before the first phase that can start a worker, so a signed out host is marked first (#1968).
     notices += run_phase('agy_probe', agy_probe_phase, [])
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
@@ -12244,6 +12416,8 @@ def _main():
         inventory_ok=inventory_ok, pr_list=fetch_once,
         waiting=waiting_on_coordinator(state, workers), reaper=reaper_owned(state)), ([], []))
     notices += stall_extra
+    if inventory_ok:
+        notices += run_phase('sim_stall', sim_stall_phase, [])
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))

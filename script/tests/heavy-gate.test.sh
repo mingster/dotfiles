@@ -1444,6 +1444,73 @@ class LightOnlyHostTests(unittest.TestCase):
         self.assertEqual(self.run_gate(['bun', 'run', 'build'], None)[::2], (0, True))
 
 
+class SimulatorSlotTests(unittest.TestCase):
+    """#1970: one shared booted simulator per host; clone runs may overlap. Claims only, nothing waits."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        patched = mock.patch.dict(os.environ, {'HOME': temp.name})
+        patched.start()
+        self.addCleanup(patched.stop)
+        os.environ.pop('HEAVY_GATE_SIMULATOR_CLONE', None)
+
+    def claim(self, kind):
+        slots = module.Slots(3)
+        self.addCleanup(slots.release)
+        return slots.claim(1, simulator=kind), slots
+
+    def done(self, slots):
+        """A finished run: its process groups are proven gone, then the slot is released."""
+        slots.record_groups([])
+        for path in slots.owned:
+            (path / 'running').unlink()
+        slots.release()
+
+    def test_a_second_non_clone_run_waits_while_one_runs(self):
+        for first, second in (('shared', 'shared'), ('clone', 'shared'), ('shared', 'clone')):
+            with self.subTest(first=first, second=second):
+                ok, holder = self.claim(first)
+                self.assertTrue(ok)
+                ok, waiter = self.claim(second)
+                self.assertFalse(ok)
+                self.assertTrue(waiter.simulator_busy)
+                # A job that is not a simulator run still gets a slot.
+                ok, other = self.claim('')
+                self.assertTrue(ok)
+                self.done(other)
+                self.done(holder)
+                ok, waiter = self.claim(second)
+                self.assertTrue(ok)
+                self.done(waiter)
+
+    def test_two_clone_runs_both_start(self):
+        self.assertTrue(self.claim('clone')[0])
+        self.assertTrue(self.claim('clone')[0])
+
+    def test_which_commands_are_simulator_runs(self):
+        for command in (['bash', 'bin/build-and-test.sh'], ['xcodebuild', '-scheme', 'App', 'test'],
+                        ['xcodebuild', 'test-without-building']):
+            self.assertEqual(module.simulator_kind(command), 'shared', command)
+        self.assertEqual(module.simulator_kind(['xcodebuild', '-scheme', 'App', 'build']), '')
+        self.assertEqual(module.simulator_kind(['bun', 'test']), '')
+        with mock.patch.dict(os.environ, {'HEAVY_GATE_SIMULATOR_CLONE': '1'}):
+            self.assertEqual(module.simulator_kind(['xcodebuild', 'test']), 'clone')
+
+    def test_the_gate_says_why_it_waits(self):
+        self.assertTrue(self.claim('shared')[0])
+        args = type('Args', (), {'command': ['--', 'bash', 'build-and-test.sh'], 'weight': 1})()
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {'HEAVY_GATE_MAX_WAIT_SECONDS': '0', 'FLEET_WATCH_CONFIG': '/nonexistent'}), \
+                mock.patch.object(module, 'config', return_value={'slots': 3, 'load_max': 12.0}), \
+                mock.patch.object(module, 'sample', return_value=(0.0, 90.0)), \
+                mock.patch.object(module, 'max_admission_wait', return_value=0), \
+                mock.patch.object(module.time, 'sleep', side_effect=AssertionError('slept')), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(module.gate(args), module.WAIT_CAP_STATUS)
+        self.assertEqual(err.getvalue().count('waiting for the iOS simulator slot'), 2, err.getvalue())
+
+
 class CalibrationMathTests(unittest.TestCase):
     def readings(self, walls=(10, 14, 16), memory=(30, 60, 70)):
         return [dict(copies=n, wall_seconds=w, peak_memory_percent=m)
@@ -1468,6 +1535,7 @@ class CalibrationMathTests(unittest.TestCase):
 
 suite = unittest.TestSuite([unittest.defaultTestLoader.loadTestsFromTestCase(GateTests),
                            unittest.defaultTestLoader.loadTestsFromTestCase(LightOnlyHostTests),
+                           unittest.defaultTestLoader.loadTestsFromTestCase(SimulatorSlotTests),
                            unittest.defaultTestLoader.loadTestsFromTestCase(CalibrationMathTests)])
 if os.environ.get('HEAVY_GATE_TEST_FILTER'):
     names = os.environ['HEAVY_GATE_TEST_FILTER'].split(',')

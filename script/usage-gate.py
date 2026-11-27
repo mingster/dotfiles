@@ -16,10 +16,12 @@ its existing flags. every role takes the first allowed entry of the provider pri
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
 The verifier of a PR (qa-sdet, reviewer) comes from VERIFIERS, one table of builder family to
-ordered verifier families (owner 2026-11-21, #1305): a Claude builder gets Antigravity or Grok,
-whichever has more weekly percent left (unreadable counts as UNKNOWN_LEFT, a tie goes to
-Antigravity); an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
-builder gets Claude only. Strong roles other than qa-sdet never select Grok.
+ordered verifier families (owner 2026-11-21, #1305; ADR 0003, qa-sdet only; the cold reviewer keeps
+Antigravity before Grok): a Claude builder gets Grok, else
+Antigravity; an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
+builder gets Claude only. A Grok verifier needs a free slot: no live grok worker, and the target host
+(pick --host, else any host) listed in grok_hosts of the fleet pull config when it has that key. Usage left
+is not compared. Strong roles other than qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
 A "pauses" entry in the config (provider, until YYYY-MM-DD, reason) makes check and pick
@@ -70,15 +72,15 @@ STRONG_NO_GROK = ("elon", "architect-pm", "secops-finops", "fullstack-dev-strong
 STRONG_TIER_ROLE = "fullstack-dev-strong"  # --tier strong walks this preset chain (#1396)
 GROK_MODEL = "grok-4.7"
 GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
-UNKNOWN_LEFT = 50  # weekly percent left counted for a provider with no fresh reading
-# Verifier table (#1305): builder family -> (verifier families in order, rank them by percent left).
-# A ranked row sorts by left, most first, and the order here breaks a tie. An unranked row takes the
-# first allowed family. A family not listed is never a verifier for that builder.
+# Verifier table (#1305, ADR 0003): builder family -> verifier families, first allowed one wins.
+# A family not listed is never a verifier for that builder.
 VERIFIERS = {
-    "claude": (("gemini", "grok"), True),
-    "gemini": (("claude", "grok"), False),
-    "grok": (("claude",), False),
+    "claude": ("grok", "gemini"),
+    "gemini": ("claude", "grok"),
+    "grok": ("claude",),
 }
+# The cold reviewer (pr-review.sh) is not the verifier ADR 0003 moves: a Claude author keeps Antigravity first.
+REVIEWERS = {**VERIFIERS, "claude": ("gemini", "grok")}
 
 
 def load_config():
@@ -1097,6 +1099,38 @@ def grok_result():
     return result
 
 
+def grok_hosts():
+    """Lowercase grok_hosts, or None when the key is absent. Reads the one file worker-startup.sh checks a
+    remote grok start against (resolve_fleet_pull_config), so pick, placement and start agree."""
+    state = os.environ.get("AGENT_STATE_DIR") or HOME + "/agent-state"
+    path = os.environ.get("FLEET_PULL_CONFIG")
+    if not path and os.path.isfile(os.path.join(state, "fleet-pull.json")):
+        path = os.path.join(state, "fleet-pull.json")
+    if not path:
+        try:
+            with open(os.path.join(state, "fleet-config.json")) as handle:
+                data = json.load(handle)
+            if "repos" in data or "hosts" in data:
+                path = os.path.join(state, "fleet-config.json")
+        except (OSError, ValueError, TypeError):
+            pass
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet-pull.config.json")
+    try:
+        with open(path) as handle:
+            hosts = json.load(handle).get("grok_hosts")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return {str(host).lower() for host in hosts} if isinstance(hosts, list) else None
+
+
+def grok_verifier_row(row, hosts):
+    """The Grok gate row for a verifier pick: also blocked when no target host has the Grok CLI (ADR 0003)."""
+    listed = grok_hosts()
+    if listed is None or (listed & {h.lower() for h in hosts} if hosts else listed):
+        return row
+    return {**row, "verdict": "blocked", "reason": "target host not in grok_hosts"}
+
+
 def table(rows):
     head = ("provider", "verdict", "week%", "today%", "cap%", "reserve%", "running", "reading", "source", "week resets", "next start")
     out = []
@@ -1320,13 +1354,6 @@ def _verifiers_blocked(chain, families, rows):
     return saw
 
 
-def _left(row):
-    """Weekly percent left from a fresh reading; no reading counts as UNKNOWN_LEFT."""
-    if row.get("verdict") == "unknown" or "weekly_used" not in row:
-        return UNKNOWN_LEFT
-    return 100 - row["weekly_used"]
-
-
 def _mark_claude_fallback(candidates, chain, rows):
     """When no other family has quota, offer Opus and Sonnet and select the first."""
     base = next((candidate for candidate in candidates if family(candidate) == "claude"), None)
@@ -1367,13 +1394,13 @@ def _gated_model(entry):
     return None
 
 
-def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False, tier=None):
+def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False, tier=None, hosts=()):
     reported = role
     if tier == "strong":
         role = STRONG_TIER_ROLE
     chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
-    verifiers, ranked = VERIFIERS.get(avoid, (None, False)) if role in ("qa-sdet", "reviewer") else (None, False)
+    verifiers = {"qa-sdet": VERIFIERS, "reviewer": REVIEWERS}.get(role, {}).get(avoid)
     if builder:
         chain = order_builder_chain(chain)
     elif role in ("qa-sdet", "reviewer") and not any(entry["provider"] == "grok" for entry in chain):
@@ -1386,6 +1413,8 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False,
         key = (entry["provider"], _gated_model(entry))
         if key not in rows:
             rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1], auto=auto)
+            if role == "qa-sdet" and verifiers is not None and entry["provider"] == "grok":
+                rows[key] = grok_verifier_row(rows[key], hosts)
     known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
     gated = [r for (p, _), r in rows.items() if p in READERS or p == "grok"]
     fallback = all(r["verdict"] == "blocked" for r in gated)
@@ -1412,11 +1441,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False,
             allowed.append((index, candidate))
     chosen = None
     if verifiers is not None:
-        def order(pair):
-            index, candidate = pair
-            left = _left(rows[(candidate["provider"], _gated_model(candidate))]) if ranked else 0
-            return -left, verifiers.index(family(candidate)), index
-        allowed.sort(key=order)
+        allowed.sort(key=lambda pair: (verifiers.index(family(pair[1])), pair[0]))
     if allowed:
         chosen = allowed[0][1]
     if (role == "qa-sdet" and avoid == "claude" and chosen is None
@@ -1480,7 +1505,7 @@ def main(argv=None):
         if not a.role:
             ap.error("pick requires --role")
         try:
-            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider, a.auto, a.tier)
+            result = pick(a.role, a.avoid_family, a.cap, a.ceiling, a.reserve, a.avoid_provider, a.auto, a.tier, a.host)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             print(f"cannot read role presets: {type(exc).__name__}", file=sys.stderr)
             return 4

@@ -1,0 +1,1 @@
+iOS tests no longer fight over one simulator: a second run on a host waits its turn unless both use their own clone, and fleet-watch reports a test run stuck at 0% CPU for 15 minutes without killing it (#1970).

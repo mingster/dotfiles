@@ -151,6 +151,7 @@ class ProviderPause(Base):
         cli.chmod(0o755)
         env = {'USAGE_GATE_CLI': str(cli), 'USAGE_GATE_CONFIG': str(root / 'config.json'),
                'USAGE_GATE_STATE': str(root / 'state'),
+               'FLEET_PULL_CONFIG': str(root / 'no-pull.json'),
                'USAGE_GATE_PRESETS': str(gate.parent.parent / '.orca' / 'presets.json')}
         with mock.patch.dict(os.environ, env):
             data = fw.pick_role('qa-sdet', avoid_family='claude')
@@ -161,9 +162,9 @@ class ProviderPause(Base):
         self.assertNotIn('grok', model)
         self.assertNotEqual(agent, 'grok')
 
-    def test_a_claude_built_pr_gets_an_antigravity_verifier_before_grok_even_after_the_pause(self):
+    def test_a_claude_built_pr_gets_a_grok_verifier_after_the_pause(self):
         agent, model, _tag = self.pick_verifier('2000-01-01')
-        self.assertEqual((agent, model), ('antigravity', 'gemini-4-argon-high'))
+        self.assertEqual((agent, model), ('grok', 'grok-4.7'))
 
 
 if __name__ == '__main__':
