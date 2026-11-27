@@ -225,6 +225,16 @@ if is_remote_host; then
   exec ssh "$host" "$quoted"
 fi
 
+# Exit 3: this host has no checkout configured, so the phone check cannot run here.
+case "$action" in
+  status|acquire|run)
+    [ -n "$dir" ] || {
+      echo "live-check-server: no checkout on this host: set live_check_server.$(detect_repo_key).dir in script/ship.local.json (host setup, see the header comment of script/live-check-server.sh)" >&2
+      exit 3
+    }
+    ;;
+esac
+
 # Resolved here so a remote host uses its own TMPDIR, not the caller's.
 [ -n "$state_dir" ] || state_dir="${TMPDIR:-/tmp}/live-check-server-${port}"
 mkdir -p "$state_dir"

@@ -254,4 +254,9 @@ done
 if [ -x "$here/secrets-sync.sh" ]; then
    "$here/secrets-sync.sh" || status=1
 fi
+
+# A host with no live_check_server entry cannot run the phone check; warn only, the exit code does not change.
+if ! jq -e '(.live_check_server // {}) | length > 0' "$here/ship.local.json" >/dev/null 2>&1; then
+  echo "warning: $here/ship.local.json has no live_check_server entry, so the phone check cannot run on this host (host setup, see script/live-check-server.sh)"
+fi
 exit "$status"
