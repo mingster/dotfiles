@@ -2244,15 +2244,15 @@ REAP_ORPHAN_SCRIPT = Path(__file__).with_name('reap-orphan-tests.sh')
 REAP_ORPHAN_REMOTE = 'bash "$HOME/dotfiles/script/reap-orphan-tests.sh" || echo "reap-orphan-tests failed"'
 
 
-def reap_orphan_remote_lines(rpc_call, host):
-    """Run reap-orphan-tests.sh on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
+def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
+    """Run reap-orphan-tests.sh (or another probe command) on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
     worktrees = (rpc_call('worktree', 'list', '--environment', host) or {}).get('worktrees') or []
     rows = [r for r in worktrees if isinstance(r, dict) and r.get('path') and not r.get('isArchived')]
     rows.sort(key=lambda r: not r.get('isMainWorktree'))
     if not rows:
         return []
     created = rpc_call('terminal', 'create', '--environment', host, '--worktree', 'path:%s' % rows[0]['path'],
-                       '--command', REAP_ORPHAN_REMOTE)
+                       '--command', command)
     handle = ((created or {}).get('terminal') or {}).get('handle')
     if not handle:
         return []
@@ -2292,6 +2292,106 @@ def orphan_reaper_notices(config, rpc_call=None, run=None):
                 notices.append('%s: orphan test runner %s' % (name, line))
             elif line == 'reap-orphan-tests failed':
                 notices.append('%s: reap-orphan-tests failed to run' % name)
+    return notices
+
+
+SIM_STALL_SCRIPT = Path(__file__).with_name('sim-stall-list.sh')
+SIM_STALL_REMOTE = 'bash "$HOME/dotfiles/script/sim-stall-list.sh"'
+SIM_STALL_SECONDS = 15 * 60
+
+
+def sim_stall_processes(rpc_call, host, run=subprocess.run):
+    """xcodebuild and build-and-test.sh processes on one host ('' is this one), or None when it cannot be read."""
+    try:
+        if host:
+            lines = reap_orphan_remote_lines(rpc_call, host, SIM_STALL_REMOTE)
+        else:
+            done = run(['bash', str(SIM_STALL_SCRIPT)], capture_output=True, text=True, timeout=60)
+            if done.returncode != 0:
+                return None
+            lines = (done.stdout or '').splitlines()
+    except (OSError, subprocess.SubprocessError, OrcaReadError, TerminalNotFound) + SEND_ERRORS:
+        return None
+    rows = []
+    for line in lines:
+        parts = line.split('\t')
+        if len(parts) != 6 or parts[0] != 'sim':
+            continue
+        try:
+            rows.append({'pid': int(parts[1]), 'cpu': float(parts[2]), 'age': int(parts[3]),
+                         'cwd': parts[4], 'command': parts[5]})
+        except ValueError:
+            continue
+    return rows
+
+
+def _sim_owner(proc, rows):
+    """The live worker row whose checkout holds the process's directory or is named in its command."""
+    for row in rows:
+        path = (worker_checkout_path(row) or str(row.get('_host_workspace') or '').split('::')[-1]).rstrip('/')
+        if not path.startswith('/'):
+            continue
+        if proc['cwd'] == path or proc['cwd'].startswith(path + '/') or (path + '/') in proc['command']:
+            return row
+    return None
+
+
+def sim_stall_pass(config, state, now, workers, rpc_call, processes=sim_stall_processes, env_names=None):
+    """Report an xcodebuild or build-and-test.sh of a live worker that sat at 0% CPU for 15 minutes (#1970).
+
+    The worker gets one terminal line per process and the coordinator one line per pass. Nothing is stopped or killed.
+    This host is always read; a remote host only when the config lists it under sim_stall.hosts."""
+    block = config.get('sim_stall') if isinstance(config.get('sim_stall'), dict) else {}
+    if block.get('enabled') is False:
+        return []
+    remote_hosts = {str(h).lower() for h in block.get('hosts') or []}
+    by_host = {}
+    for row in workers or []:
+        if not isinstance(row, dict) or not worker_row_is_live(row):
+            continue
+        env = row.get('_host') or ''
+        if not env and worker_is_remote(row, config):
+            env = remote_environment(row)
+        if env:
+            if env_names is None:
+                env_names = environment_name_by_id()
+            if host_cap_name(env, config, env_names).lower() not in remote_hosts:
+                continue
+        by_host.setdefault(env, []).append(row)
+    book = state.setdefault('sim_stall', {})
+    notices = []
+    seen, unread = set(), set()
+    for env, rows in by_host.items():
+        procs = processes(rpc_call, env)
+        if procs is None:
+            unread.add(env)
+            continue
+        for proc in procs:
+            owner = _sim_owner(proc, rows)
+            if owner is None or proc['cpu'] > 0:
+                continue
+            key = '%s:%s' % (env, proc['pid'])
+            entry = book.get(key)
+            # A reused pid is a younger process than the one first seen.
+            if not entry or proc['age'] < entry.get('age', 0):
+                entry = book[key] = {'since': now}
+            entry['age'] = proc['age']
+            seen.add(key)
+            if proc['age'] < SIM_STALL_SECONDS or now - entry['since'] < SIM_STALL_SECONDS:
+                continue
+            text = ('PID %d (%s) has been at 0%% CPU for %d minutes, likely stuck on the shared booted simulator. '
+                    'Nothing was killed.' % (proc['pid'], proc['command'][:80], int((now - entry['since']) // 60)))
+            handle = owner.get('_host_terminal') or worker_terminal_handle(owner)
+            if handle and not entry.get('told'):
+                try:
+                    rpc_call('terminal', 'send', '--terminal', handle, '--text', text, '--enter', *_env_args(env))
+                    entry['told'] = True
+                except SEND_ERRORS as error:
+                    log_send_failed(handle, error)
+            notices.append(Urgent('iOS simulator stall, worker %s%s: %s' % (
+                owner.get('dispatchId'), ' on %s' % host_cap_name(env, config, env_names) if env else '', text)))
+    for key in [k for k in book if k not in seen and k.rsplit(':', 1)[0] not in unread]:
+        book.pop(key)
     return notices
 
 
@@ -12244,6 +12344,8 @@ def _main():
         inventory_ok=inventory_ok, pr_list=fetch_once,
         waiting=waiting_on_coordinator(state, workers), reaper=reaper_owned(state)), ([], []))
     notices += stall_extra
+    if inventory_ok:
+        notices += run_phase('sim_stall', lambda: sim_stall_pass(config, state, now, workers, rpc), [])
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))

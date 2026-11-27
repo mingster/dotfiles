@@ -292,6 +292,7 @@ class Slots:
         self.groups = set()
         self.authorizations = []
         self.stuck = []
+        self.simulator_busy = False
         self.waiting = self.root / 'waiting'
         self.bound = max_wait()
 
@@ -356,14 +357,24 @@ class Slots:
         return total
 
     def claim(self, weight, exclusive=False, reserve=0, long_job=False,
-              memory=0, host_memory=0):
+              memory=0, host_memory=0, simulator=''):
         with self.allocation():
             self.reclaim()
+            self.simulator_busy = False
             if self.starved_heavier(weight):
                 return False
             occupied = list(self.root.glob('slot-*'))
             if any((p / 'exclusive').exists() for p in occupied) or (exclusive and occupied):
                 return False
+            # Two simulator runs overlap only when each has its own clone (#1970).
+            if simulator:
+                running = []
+                for path in occupied:
+                    with contextlib.suppress(OSError):
+                        running.append((path / 'simulator').read_text())
+                if running and (simulator != 'clone' or any(kind != 'clone' for kind in running)):
+                    self.simulator_busy = True
+                    return False
             # Count even slots above a lowered configuration or a caller override.
             if len(occupied) + weight > self.count - reserve:
                 return False
@@ -392,6 +403,8 @@ class Slots:
                         (staging / 'exclusive').touch()
                     if long_job:
                         (staging / 'long').touch()
+                    if simulator and index == 0:
+                        (staging / 'simulator').write_text(simulator)
                     if memory and index == 0:
                         (staging / 'memory').write_text(str(memory))
                     staging.rename(path)
@@ -844,6 +857,17 @@ def measure_gate(args):
             log_heavy_gate_measure(time.monotonic() - begin, load, free)
 
 
+SIMULATOR_COMMAND = re.compile(r'build-and-test\.sh|\bxcodebuild\b.*\s(?:test|test-without-building)(?:\s|$)')
+
+
+def simulator_kind(command):
+    """'' for no iOS simulator run, 'clone' when HEAVY_GATE_SIMULATOR_CLONE=1 says the run boots its own
+    per-worktree clone, else 'shared' (it uses the one booted simulator)."""
+    if not SIMULATOR_COMMAND.search(' '.join(command)):
+        return ''
+    return 'clone' if os.environ.get('HEAVY_GATE_SIMULATOR_CLONE') == '1' else 'shared'
+
+
 LIGHT_ONLY_EXIT = 3
 HEAVY_COMMAND = re.compile(
     r'playwright|regression|xcodebuild|build-and-test\.sh|\bbun run build\b|\bnext build\b|head-checks-tsc'
@@ -891,6 +915,7 @@ def gate(args):
     long_job = job_class() == 'long' and count > 1
     weight = min(args.weight, count - 1) if long_job else args.weight
     slots = Slots(count)
+    simulator = simulator_kind(args.command[1:])
     last_notice = -math.inf
     nested = holds_slot()
     wait_begin = None
@@ -903,12 +928,15 @@ def gate(args):
                       else '')
             if not reason:
                 if slots.claim(weight, reserve=int(long_job), long_job=long_job,
-                               memory=memory, host_memory=host_memory):
+                               memory=memory, host_memory=host_memory, simulator=simulator):
                     break
                 slots.wait_record(weight)
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
-                if memory:
+                if slots.simulator_busy:
+                    reason = ('waiting for the iOS simulator slot: another run holds it, and two run together '
+                              'only when both set HEAVY_GATE_SIMULATOR_CLONE=1')
+                if memory and not slots.simulator_busy:
                     reason += f' and {memory} MiB of {host_memory} MiB declared memory'
                 if slots.stuck:
                     reason += ('; held with the owner gone and no proof its processes exited: '
