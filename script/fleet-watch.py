@@ -10042,12 +10042,13 @@ def _issue_scan_pass(
     reason = re.sub(r'[,;\s]+', ' ', str(admission.get('reason') or 'unknown')).strip()
     notices += failure_streak_notices(
         state, 'issue_scan_refused', refused, 'issue scan refused on %s: %s' % (host, reason))
+    # Hosts a ready issue may spill to when the local cap is full, even when local admission passed (#2012).
+    spill_hosts = [h for h in (config.get('host_caps') or {}) if not _is_local_coordinator_host(h, config) and h != host]
     remote_hosts = []
     if refused:
         log_bits = ['issue_scan_load', 'issue_scan_refused=%s' % reason]
         count_refused(refusal_token(reason))
-        remote_hosts = [h for h in (config.get('host_caps') or {}) if not _is_local_coordinator_host(h, config)]
-        remote_hosts = [h for h in remote_hosts if h != host]
+        remote_hosts = list(spill_hosts)
     extra_starts = 0
     repos = scan.get('repos') or []
     if pr_fetch is None:
@@ -10452,7 +10453,7 @@ def _issue_scan_pass(
         for repo, row in candidates:
             defer_issue(state, now, repo, row['number'], MAX_WORKERS_REASON, deferred, notices, log_bits, persist_state)
         return notices, log_bits
-    if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
+    if not spill_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
         count_refused('host_cap')
         for repo, row in candidates:
             defer_issue(state, now, repo, row['number'], 'host_cap', deferred, notices, log_bits, persist_state)
@@ -10477,7 +10478,9 @@ def _issue_scan_pass(
             count_refused(MAX_WORKERS_REASON)
             defer_rest(MAX_WORKERS_REASON)
             break
-        if not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts):
+        # The local cap is full when local admission passed but this pass's starts and the occupied seats reach it (#2012).
+        local_full = not remote_hosts and not _issue_scan_has_slot(host, config, admission, extra_starts)
+        if local_full and not spill_hosts:
             count_refused('host_cap')
             defer_rest('host_cap')
             break
@@ -10494,10 +10497,10 @@ def _issue_scan_pass(
                 continue
             route = (labelled[0], chosen[0], chosen[1], chosen[2])
         start_agent = route[1] if route else scan.get('agent') or 'claude'
-        if remote_hosts:
+        if remote_hosts or local_full:
             placed = False
             unmapped = agy_out = 0
-            for candidate in remote_hosts:
+            for candidate in (remote_hosts or spill_hosts):
                 receipt = admit_fn(candidate, config, workers)
                 if not receipt.get('admitted'):
                     why = re.sub(r'[,;\s]+', ' ', str(receipt.get('reason') or 'unknown')).strip()
