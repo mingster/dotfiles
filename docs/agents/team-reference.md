@@ -42,7 +42,7 @@ Each step is one run that does one job and ends. It never waits on a person or a
 ```mermaid
 flowchart TD
     Req["Request from the owner or Elon"] --> Intake["Intake: architect-pm grills with Elon"]
-    Intake --> Design["Design, features only: one document; owner approval only for money rules and prices"]
+    Intake --> Design["Design, features only: one document; the owner approves once, at intent acceptance"]
     Intake & Design --> Ready["Issue is ready"]
     Ready --> Build["Build: fullstack-dev, TDD, local checks, pushes and opens PR"]
     Build --> Checks["Actions Checks"]
@@ -58,7 +58,7 @@ flowchart TD
 | Step | Starts when | Who | Done when |
 | --- | --- | --- | --- |
 | Intake | A request arrives | architect-pm with the coordinator. Sales joins for UI or wording, support for support matters | Issue is ready, or closed as a duplicate |
-| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document; the owner approves only money rules and prices, and looks before production |
+| Design | Intake says it is a feature | Same people, with `capture-intent`, grill, spec and units | One document; the owner approves once, when the intent is Accepted, and the spec, its ADRs and its Owner steps files inherit that approval (`team.md`, Owner approval at intent); the owner looks before production |
 | Build | The 5 minute run finds a ready issue that passes the gates | fullstack-dev | Touched checks green locally, PR open and pushed once |
 | Actions Checks | Push to a PR | GitHub Actions | Required checks pass (`head-checks` on app repos) |
 | Actions Review | Actions Checks pass | `script/pr-review.sh` in GitHub Actions, read only | Bot review comment and `review` status posted |
@@ -219,7 +219,7 @@ Use slash commands below in Claude Code, Cursor and Antigravity. A worker prompt
 | --- | --- | --- | --- |
 | Adopt the team | Install the files, then fill in project facts and tracker setup. | `script/agent-team.sh project <dir> --project-name <name>` | Adopt the team into `~/projects/acme` and show me the facts I need to fill in. |
 | Start a session | Talk to the coordinator, who routes the work and runs `recall` and `ketchup`. | `/elon` or `/ceo` | `/elon Help me choose the next objective.` |
-| Intake and Design | For a new feature, produce one design document (intent, spec and units). The owner approves it only for money rules and prices; a new feature or page builds and gets the owner's look before production. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
+| Intake and Design | For a new feature, produce one design document (intent, spec and units). The owner approves once, when the intent is Accepted: the intent carries a success measure, a never list and a rollback trigger. Agents decide spec questions with the recommended answer and list them under Decisions in the PR; the owner is asked only when a decision changes the intent outcome or touches the never list. A new feature or page builds and gets the owner's look before production. Attach phone screenshots for any new UI page. | `/capture-intent`, `/write-spec`, `/to-spec`, `/to-tickets` | `/capture-intent New users cannot tell whether setup is complete.` |
 | Pre-build grill | Run a multi-role grill only for money (`secops-finops`, `architect-pm`, the coordinator) or new UI pages (`sales-marketing`, the coordinator). The owner reviews money results while the build runs, and only the merge waits; a new page gets the owner's look before production. The coordinator decides all other work on the issue. | `/grill-with-docs`, `/grilling`, `/grill-backlog` | `/grill-backlog Run the pre-build grill on the pending money and UI issues.` |
 | Dispatch and build | The coordinator assigns ready units (`Acceptance criteria`, `Requirement owner`, `Deleted`) under the usage and host gates; `fleet-watch.py` starts builders on `ready-for-agent` units; each builder runs the project's full local check, proves the behaviour on the real artifact, and as PR owner pushes, opens the PR and merges it with `ship.sh` before `worker_done`. | `/elon <objective>` (pstack Orchestrate), `script/worker-startup.sh`, `/tdd` | `/elon Deliver the ready setup tickets.` |
 | Checks and review | Actions `Checks` (`head-checks.sh`) run on push; Actions `Review` (`script/pr-review.sh`) runs the read only bot review, and a cross-family `qa-sdet` verifier runs parent against head as a user would and posts the `Verdict` via `script/post-verdict.sh`. | `script/head-checks.sh`, `script/pr-review.sh`, `script/post-verdict.sh`, `/code-review` | `/code-review Check this branch against main and its ticket.` |
@@ -538,7 +538,7 @@ substitution as `agent-team.sh`, or when the path is a deletion `agent-team.sh c
 A copy that differs from that render still needs `--verdict-from`. An Accepted intent passes when every commit
 in the PR that touches that intent file carries a non-empty `Owner-approved: <owner> <date>
 (<where approved>)` trailer, meaning the approver already accepted it in chat; one commit without
-it refuses the PR. In an agent team the coordinator accepts intents and specs and signs that
+it refuses the PR. A gated file that the spec beside an Accepted intent lists under `## Owner steps` also passes with `Owner-approved: intent <owner/repo>#<PR> accepted <date>`, when the cited PR is merged, its intent says Accepted on that date and the file is in that list (`script/lib/protected-paths.sh`). The form never covers hooks, `settings.json`, the approval tooling or accepting an intent, which keep the owner's own trailer. In an agent team the coordinator accepts intents and specs and signs that
 trailer; the owner accepts only those that set money rules or prices (Owner pauses).
 It squash merges and reads the PR back as `MERGED`.
 
