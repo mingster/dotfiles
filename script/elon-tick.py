@@ -173,7 +173,7 @@ def fleet_watch_status():
         return 'disabled' if state == 'disabled' else 'missing'
     log = Path(os.environ.get('ELON_TICK_FW_LOG') or Path.home() / '.orca/logs/fleet-watch.log')
     try:
-        lines = log.read_text(errors='replace').splitlines()[-200:]
+        lines = log.read_text(errors='replace').splitlines()
     except OSError:
         return 'stale'
     for line in reversed(lines):

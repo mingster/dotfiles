@@ -140,6 +140,11 @@ expect 'W1 no pass for 10 minutes' '[W1] Orca automation fleet-watch finished no
 reset; rm "$FX/fw.log"
 expect 'W1 no log' '[W1] Orca automation fleet-watch finished no pass in the last 10 minutes'
 
+# fleet-watch writes long head-checks receipts into the same log, after the phase=end line (#2014).
+reset; for i in $(seq 300); do echo "  receipt line $i"; done >> "$FX/fw.log"; tick
+[[ $out == "OK nothing to do" && $rc -eq 0 ]] || fail "W1 fresh pass followed by 300 receipt lines is not stale"
+tests=$((tests + 1))
+
 reset; rm "$FX/waiter"
 expect 'M6 no waiter' '[M6] no inbox waiter for run_t'
 
