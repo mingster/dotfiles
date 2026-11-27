@@ -24,6 +24,8 @@
 # with FLEET_WATCH=1 an unreadable list always refuses. A builder start whose issue's last closed PR has two FAILs exits 2 until
 # ready-for-agent is added again. --close-after-fails closes such a PR and relabels its issues needs-triage.
 # A start whose dispatch exists although a later step failed prints the dispatch id and exits 0.
+# A hand-started verifier for an open tier 0 PR (title number) with Review PASS at its head exits 2 (#2025);
+# --allow-overlap REASON overrides.
 # With work_order.max_workers set in the fleet config, a hand start while that many workers are live exits 2 unless
 # --force-over-cap REASON is given; the override is logged to force-over-cap.log. fleet-watch (FLEET_WATCH=1) applies
 # the ceiling itself, so its starts skip this check (#1957).
@@ -1357,6 +1359,47 @@ warn_live_verifier() { # <spec_file> <title> <name> <run> <allow_reason>
   done
 }
 
+# A tier 0 PR with Review PASS at its head ships with no verifier (team.md, Tiers), so a hand start of one is refused (exit 2,
+# #2025). --allow-overlap REASON overrides. fleet-watch (FLEET_WATCH=1) starts its own after a failed auto-ship. A number
+# that is not an open PR (a tier 0 audit issue) or a failed lookup lets the start go on.
+refuse_tier0_verifier() { # <spec_file> <title> <repo_sel> <worktree> <allow_reason>
+  local spec_file=$1 title=$2 allow=$5 num repo info
+  [ "${FLEET_WATCH:-}" != 1 ] || return 0
+  is_verifier_start "$spec_file" "$title" || return 0
+  case "$title" in "#"[0-9]*"|"*) num=${title#\#}; num=${num%%|*} ;; *) return 0 ;; esac
+  command -v gh >/dev/null 2>&1 || return 0
+  repo=$(started_issue_ref "$spec_file" "$title")
+  repo=${repo%%#*}
+  [ -n "$repo" ] || repo=$(start_repo_slug "$3" "$4")
+  [ -n "$repo" ] || return 0
+  info=$(gh pr view "$num" -R "$repo" --json state,headRefOid,files,comments 2>/dev/null) || return 0
+  "$python3" - "$here" "$info" <<'PY' || return 0
+import importlib.util, json, sys
+here, info = sys.argv[1:3]
+def load(name):
+    spec = importlib.util.spec_from_file_location(name.replace('-', '_'), '%s/%s.py' % (here, name))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+try:
+    pr = json.loads(info)
+    head, comments = pr['headRefOid'], pr['comments']
+    rs = load('receipt-state')
+    clean = [c for c in comments if not (c.get('includesCreatedEdit') or c.get('isMinimized'))]
+    skip = (pr['state'] == 'OPEN' and load('pr-tier').classify(pr['files'])[0] == 0
+            and not rs.review_failed_at_head(pr) and rs.newest_receipt_kind(clean, 'Review', head) == 'PASS')
+except Exception:
+    skip = False
+sys.exit(0 if skip else 1)
+PY
+  if [ -n "$allow" ]; then
+    echo "worker-startup: --allow-overlap: PR #$num is tier 0 with Review PASS at head, starting a verifier anyway ($allow)" >&2
+    return 0
+  fi
+  echo "worker-startup: refused: PR #$num is tier 0 with Review PASS at head and ships with no verifier; pass --allow-overlap REASON to start one" >&2
+  exit 2
+}
+
 run_mode() {
   local run='' spec='' title='' agent='' model='' environment='' from=${ORCA_TERMINAL_HANDLE:-}
   local wt='' worktree_sel='' name='' repo='' base='' task='' retry_of='' route_override='' start_out=''
@@ -1447,6 +1490,7 @@ run_mode() {
   refuse_overlapping_issue "$spec" "$title" "$allow_overlap"
   refuse_live_duplicate "$spec" "$title" "$run" "$allow_overlap"
   refuse_over_max_workers "$title" "$force_over_cap"
+  refuse_tier0_verifier "$spec" "$title" "$repo" "$wt" "$allow_overlap"
   refuse_after_two_fails "$spec" "$title"
   run_label_gate
   refuse_before_dotfiles "$spec" "$title" "$skip_dotfiles"

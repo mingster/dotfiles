@@ -1645,6 +1645,41 @@ grep -q 'allow-overlap.*same file, rebased' "$tmp/route.err" && ok || bad "the o
 printf '# fullstack-dev - issue 7880\n\n%s\n' "$spec_saved" >"$spec_file"
 ISSUE_OVERLAP_CLI="$overlap_cli" PICK_STUB_MODE=sonnet route_run "#7880|fullstack-dev" claude claude-sonnet-5-5-medium --allow-delivered "slice"
 [ "$route_ec" -ne 0 ] && grep -q 'overlap: script/a.sh' "$tmp/route.err" && ok || bad "a brief with no Refs line should still be checked from the title (ec=$route_ec)"
+# #2025: a tier 0 PR with Review PASS at its head ships with no verifier, so a hand-started verifier is refused.
+tier0_gh_saved=$(cat "$ghbin/gh"); tier0_spec_saved=$(cat "$spec_file")
+cat >"$ghbin/gh" <<'EOS'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$GH_STUB_LOG"
+[ "$1 $2" = "pr view" ] && cat "$TIER0_PR_JSON"
+exit 0
+EOS
+export TIER0_PR_JSON="$tmp/tier0-pr.json"
+tier0_head=1111111111111111111111111111111111111111
+tier0_pr() { # <state> <path> <reviewed head> [lines]
+  jq -n --arg s "$1" --arg p "$2" --arg h "$tier0_head" --arg r "$3" --argjson n "${4:-52}" \
+    '{state:$s, headRefOid:$h, files:[{path:$p, additions:$n, deletions:0}], comments:[{body:("Review: PASS head=" + $r + " model=none")}]}' >"$TIER0_PR_JSON"
+}
+printf 'Refs acme/app#7950\n\n# qa-sdet - verify PR 7951\n\n%s\n' "$spec_saved" >"$spec_file"
+tier0_pr OPEN docs/guide.md "$tier0_head"
+: >"$GH_STUB_LOG"
+FLEET_WATCH= PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 2 ] && ok || bad "2025: a verifier for a tier 0 PR with Review PASS at head is refused (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'PR #7951 is tier 0.*--allow-overlap REASON' "$tmp/route.err" && ok || bad "2025: refusal names the PR, tier 0 and the override ($(cat "$tmp/route.err"))"
+grep -q 'worker-start' "$tmp/orca-route.log" && bad "2025: refused verifier must not reach worker-start" || ok
+grep -q '^pr view 7951 -R acme/app ' "$GH_STUB_LOG" && ok || bad "2025: the PR is read from the Refs repo ($(cat "$GH_STUB_LOG"))"
+FLEET_WATCH= PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium --allow-overlap "owner wants a second look"
+[ "$route_ec" = 0 ] && ok || bad "2025: --allow-overlap starts the verifier (ec=$route_ec) $(cat "$tmp/route.err")"
+grep -q 'allow-overlap.*tier 0.*owner wants a second look' "$tmp/route.err" && ok || bad "2025: the override reason is logged ($(cat "$tmp/route.err"))"
+FLEET_WATCH=1 PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium
+[ "$route_ec" = 0 ] && ok || bad "2025: fleet-watch still starts a verifier after a failed auto-ship (ec=$route_ec) $(cat "$tmp/route.err")"
+for tier0_case in "OPEN script/a.sh $tier0_head" "OPEN docs/guide.md 2222222222222222222222222222222222222222" \
+  "MERGED docs/guide.md $tier0_head" "OPEN docs/guide.md $tier0_head 200"; do
+  # shellcheck disable=SC2086
+  tier0_pr $tier0_case
+  FLEET_WATCH= PICK_STUB_MODE=sonnet route_run "#7951|qa-sdet" claude claude-sonnet-5-5-medium
+  [ "$route_ec" = 0 ] && ok || bad "2025: verifier should start for $tier0_case (ec=$route_ec) $(cat "$tmp/route.err")"
+done
+printf '%s\n' "$tier0_gh_saved" >"$ghbin/gh"; printf '%s\n' "$tier0_spec_saved" >"$spec_file"
 # fleet-watch issue scan default title "builder - #<n>" is a builder too.
 printf 'Refs acme/app#7880\n\n# builder - #7880\n\n%s\n' "$spec_saved" >"$spec_file"
 PICK_STUB_MODE=sonnet route_run "#7880|builder" claude claude-sonnet-5-5-medium
