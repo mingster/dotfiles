@@ -589,4 +589,15 @@ ec=0; out=$(agy_pick antigravity 2>/dev/null) || ec=$?
 [ "$(jq -r '.ok' <<<"$out")" = false ] && [ "$(jq -r '.reason' <<<"$out")" = 'no eligible host is signed in to agy' ] \
   || fail "both marked gives the agy reason: $out"
 
+# ADR 0003: pick --agent grok places only on grok_hosts; an empty or missing list keeps the old pick.
+jq '. + {grok_hosts: ["HostC"]}' "$tmp/agy.json" >"$tmp/grok.json"
+jq '. + {grok_hosts: []}' "$tmp/agy.json" >"$tmp/grok-empty.json"
+grok_pick() { # <config>
+  FLEET_LOAD_SCRIPT="$tmp/load-agy.sh" FLEET_WATCH_CONFIG="$1" python3 "$py" pick --spec "$tmp/light-brief.md" --json --agent grok
+}
+out=$(grok_pick "$tmp/grok.json" 2>/dev/null) || fail "grok must place on a grok host: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostc ] || fail "grok places only on grok_hosts: $out"
+out=$(grok_pick "$tmp/grok-empty.json" 2>/dev/null) || fail "grok with an empty list must place: $out"
+[ "$(jq -r '.host' <<<"$out")" = hostb ] || fail "an empty grok_hosts keeps the load pick: $out"
+
 echo "worker-placement.test.sh passed"

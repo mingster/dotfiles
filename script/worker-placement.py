@@ -533,6 +533,12 @@ def _pick_host(
         if not signed_in:
             return {'ok': False, 'reason': 'no eligible host is signed in to agy'}
         hosts = signed_in
+    grok = config.get('grok_hosts')
+    if (agent or '').lower() == 'grok' and isinstance(grok, list) and grok:  # ADR 0003: only these have the Grok CLI
+        listed = {str(h).lower() for h in grok}
+        hosts = [h for h in hosts if h.lower() in listed]
+        if not hosts:
+            return {'ok': False, 'reason': 'no eligible fleet host is listed under grok_hosts'}
     try:
         loads = read_loads(load_sensor_path(config), float(os.environ.get('WORKER_PLACEMENT_TIMEOUT', '120')))
     except LoadSensorError as exc:

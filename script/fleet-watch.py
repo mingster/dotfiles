@@ -4379,7 +4379,16 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
             continue
         _record_stall_restart(state, old_dispatch, result, now, log_bits, pending)
 
+    def grok_verifier_row(did):
+        row = _own_row(state, did) or {}
+        return row.get('kind') == 'verifier' and row.get('agent') == 'grok'
+
     def restart_own(w, did):
+        if grok_verifier_row(did):
+            # A stalled Grok verifier is not restarted on Grok: release it, and babysit starts the next family.
+            outcome = release_worker(rpc_call, w)
+            log_bits.append('grok_stall_release=%s:%s' % (did, outcome))
+            return
         row = _own_row(state, did)
         key = park_id('stall', did)
         if row is not None and row.get('parked'):
@@ -4460,8 +4469,8 @@ def worker_stall_pass(config, state, now, workers, term_times, rpc_call, act=Non
         """An own worker that died at startup is released and started once more, then parked (#1221).
         Needs a startup stage or error on the row (worker-list rows carry no lastError); without one nothing fires."""
         row = _own_row(state, did)
-        if row is None or row.get('startup_handled') or _retry_recorded(state, did):
-            return
+        if row is None or row.get('startup_handled') or _retry_recorded(state, did) or grok_verifier_row(did):
+            return  # babysit replaces a dead Grok verifier with the next family (ADR 0003)
         row['startup_handled'] = True
         repo = label_target(w) or fault_target()
         pr_num = worker_pr_number(w)
@@ -8058,10 +8067,12 @@ def _usage_gate_argv():
     return [cli]
 
 
-def pick_role(role, run=subprocess.run, avoid_family=None, tier=None):
+def pick_role(role, run=subprocess.run, avoid_family=None, tier=None, avoid_provider=None):
     command = _usage_gate_argv() + ['pick', '--role', role, '--json', '--auto']
     if avoid_family:
         command += ['--avoid-family', avoid_family]
+    if avoid_provider:
+        command += ['--avoid-provider', avoid_provider]
     if tier:
         command += ['--tier', tier]
     USAGE_GATE_CALLS[0] += 1
@@ -9355,11 +9366,44 @@ def body_gate_blocks_verifier(pr_row, workers, state, repo, dry_run, notify_work
     return blocked()
 
 
+GROK_FALLBACK_TITLE = 'Grok verifier start failed or stalled'
+
+
+def grok_fell_back(state, repo, number):
+    return str(number) in (state.get('grok_fallback') or {}).get(repo, {})
+
+
+def grok_fallback(state, repo, number, why, file_issue=None):
+    """Remember that this PR's verifier no longer takes Grok, and file one issue for a real failure (ADR 0003).
+
+    `why` None is a deferred start (no slot or host): the PR falls back, with no issue. An open issue with the
+    same title is reused, and a failed create is tried again at the next failure."""
+    state.setdefault('grok_fallback', {}).setdefault(repo, {})[str(number)] = why or 'deferred'
+    if why:
+        (file_issue or grok_fallback_issue)('%s#%s: %s' % (repo, number, why))
+
+
+def grok_fallback_issue(detail, find=None, create=None):
+    if (find or main_red_find_issue)(FAULT_REPO, GROK_FALLBACK_TITLE):
+        return
+    body = ('A Grok verifier failed: %s. That PR now gets the next verifier family (ADR 0003).\n\n'
+            '## Acceptance\n- [ ] A Grok verifier starts and posts a Verdict (check the folder trust prompt first).'
+            % one_line_reason(detail))
+    (create or main_red_create_issue)(FAULT_REPO, GROK_FALLBACK_TITLE, body)
+
+
+def grok_fallback_prune(state, repo, open_numbers):
+    book = (state.get('grok_fallback') or {}).get(repo)
+    if isinstance(book, dict):
+        for key in [k for k in book if k not in {str(n) for n in open_numbers}]:
+            book.pop(key)
+
+
 def babysit_pass(
     config, state, workers=None, dry_run=False, persist_state=None,
     pr_fetch=None, start_worker=None, pick=None, owner_check=None,
     release_worker=None, notify_worker=None, now=None, term_times=None,
-    closed_fetch=None, runner_fetch=None, standing_io=None, pr_state_fetch=None,
+    closed_fetch=None, runner_fetch=None, standing_io=None, pr_state_fetch=None, file_issue=None,
 ):
     """One verifier or one fixer per open PR head. Drafts are skipped. Cap defaults to 2."""
     notices = []
@@ -9427,12 +9471,13 @@ def babysit_pass(
                 log_bits.append('review_gate_runner_error_%s' % repo_name)
         return runner_state[repo_name] == 'none'
 
-    def cached_pick(role, avoid_family=None):
-        key = (role, avoid_family or '')
+    def cached_pick(role, avoid_family=None, avoid_provider=None):
+        key = (role, avoid_family or '', avoid_provider or '')
         if key not in picks:
             if avoid_family:
                 try:
-                    picks[key] = pick(role, avoid_family=avoid_family)
+                    extra = {'avoid_provider': avoid_provider} if avoid_provider else {}
+                    picks[key] = pick(role, avoid_family=avoid_family, **extra)
                 except TypeError:
                     picks[key] = pick(role)
             else:
@@ -9477,6 +9522,7 @@ def babysit_pass(
                 persist_state()
         if not fetch_failed and not dry_run:
             unknown_builder_prune(state, repo, open_numbers)
+            grok_fallback_prune(state, repo, open_numbers)
     # Tier 1 verifiers start before the rest (#1730).
     rows.sort(key=lambda item: (0 if pr_tier(item[3]) == 1 else 1, item[0], item[1]))
 
@@ -9524,7 +9570,12 @@ def babysit_pass(
                     release_worker(row_for_dispatch(workers, failed_did))
                 park_key = park_id('verifier', repo, number, head)
                 # A dispatch that is itself a stall restart already was the one retry.
-                if not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
+                if _own_row(state, failed_did).get('agent') == 'grok':
+                    # The fresh verifier takes the next family and does not use up the one retry (ADR 0003).
+                    grok_fallback(state, repo, number, 'verifier ended with no Verdict', file_issue)
+                    state['babysit'][repo].pop(str(number), None)
+                    log_bits.append('grok_fallback=%s' % number)
+                elif not _own_row(state, failed_did).get('retry_of') and startup_retry_taken(state, park_key):
                     state['babysit'][repo].pop(str(number), None)
                     log_bits.append('verifier_startup_retry=%s' % number)
                 else:
@@ -9641,7 +9692,9 @@ def babysit_pass(
                 if persist_state:
                     persist_state()
             continue
-        picked = cached_pick(role, avoid_fam)
+        # A PR whose Grok verifier failed or stalled takes the next family (ADR 0003).
+        no_grok = 'grok' if kind == 'verifier' and grok_fell_back(state, repo, number) else None
+        picked = cached_pick(role, avoid_fam, no_grok)
         chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
             why = pick_failure_reason(picked, avoid)
@@ -9702,13 +9755,23 @@ def babysit_pass(
         # start_fits_pass above still holds a start that would end past PASS_HARD_END (#1820).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
-        if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and startup_failure_text(reason)
+        grok_verifier = kind == 'verifier' and agent == 'grok'
+        if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and not grok_verifier and startup_failure_text(reason)
                 and startup_retry_taken(state, park_key)):
             log_bits.append('startup_retry=%s' % number)
             started_worker = start_worker(command)
             code, reason = start_result_parts(started_worker)
         if code != 0:
             suffix = ':' + reason if reason else ''
+            if grok_verifier:
+                # No park: the next pass starts this PR on the next family. A deferred start files no issue.
+                grok_fallback(state, repo, number, None if code in BABYSIT_DEFERRED_EXITS else reason or 'start failed',
+                              file_issue)
+                lines.append(_babysit_line(repo, number, head, 'skip', 'grok-fallback'))
+                log_bits.append('grok_fallback=%s%s' % (number, suffix))
+                if persist_state:
+                    persist_state()
+                continue
             if code in BABYSIT_DEFERRED_EXITS:
                 # The usage gate or host placement said wait. That is not a failed start, so the next pass retries.
                 lines.append(_babysit_line(repo, number, head, 'skip', 'start-deferred'))
@@ -9726,7 +9789,7 @@ def babysit_pass(
             remember_started_dispatch(state, started_worker, 'verifier', repo)
             own = _own_row(state, dispatch_id_from_start(started_worker))
             if own is not None:
-                own.update(repo=repo, pr=number, head=head)
+                own.update(repo=repo, pr=number, head=head, agent=agent)
             _verifier_head_bucket(state, repo)[str(number)] = head
             if standing_cfg['enabled']:
                 did = dispatch_id_from_start(started_worker)

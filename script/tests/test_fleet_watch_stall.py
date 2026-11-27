@@ -793,6 +793,24 @@ class MainTerminalListFailure(unittest.TestCase):
             self.assertEqual(default_log.read_text(), 'seed\n')
 
 
+class GrokVerifierStall(unittest.TestCase):
+    """ADR 0003: a silent or startup dead Grok verifier is not restarted on Grok."""
+
+    def test_a_stalled_grok_verifier_is_released_and_not_restarted(self):
+        released, calls = [], []
+        row = {'dispatchId': 'ctx_g', 'taskId': 'task_g', 'terminal': 'term_g', 'agent': 'grok',
+               'workspace': 'ws::/work/g', 'workerState': 'ready', 'dispatchStatus': 'dispatched',
+               'terminalState': 'active', 'projection': {'liveness': {'verdict': 'idle'}}}
+        state = {'own_dispatches': {'ctx_g': {'kind': 'verifier', 'agent': 'grok', 'repo': 'o/r', 'pr': 7}}}
+        config = {'worker_stall': {'label_repo': 'o/r', 'stall_idle_seconds': 600}}
+        with patch.object(fw, 'release_worker', lambda _rpc, w: released.append(w['dispatchId']) or 'closed'):
+            _notices, log = fw.worker_stall_pass(
+                config, state, 100_000, [row], {'term_g': 1000}, lambda *a: calls.append(a) or {},
+                act=lambda _command: 0, head_of=lambda _w: '', holds_work=lambda _w: False)
+        self.assertEqual(released, ['ctx_g'], log)
+        self.assertEqual([c for c in calls if c[0] == 'bash' or 'worker-start' in c], [])
+
+
 class SimStall(unittest.TestCase):
     """#1970: a 0% CPU xcodebuild of a live worker is reported, and nothing is killed. Fake rows and processes."""
 

@@ -2280,7 +2280,7 @@ class BuilderCursorRoute(unittest.TestCase):
                     "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
-        self.assertEqual((picked["provider"], picked["model"]), ("antigravity", "gemini-4-argon-high"))
+        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))
 
     def test_a_cursor_entry_in_a_chain_is_never_picked(self):
         chain = [{"provider": "cursor", "model": "grok-4.7-high"},
@@ -2513,17 +2513,24 @@ class Pauses(unittest.TestCase):
         self.assertEqual(ug.load_config()["pauses"], [])
 
 
+def setUpModule():
+    """The verifier pick reads grok_hosts; keep this machine's fleet config out of the tests."""
+    patcher = mock.patch.dict(os.environ, {"FLEET_WATCH_CONFIG": "/nonexistent", "FLEET_PULL_CONFIG": "/nonexistent"})
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 class VerifierTable1305(unittest.TestCase):
-    """One test per row of the verifier decision table (#1305), through the real pick() and the real Grok gate.
+    """One test per row of the verifier decision table (#1305, ADR 0003), through the real pick() and Grok gate.
 
     Mocked: the Claude and Antigravity readings and the live Grok worker count. Grok's row is the real
-    grok_result(), so it has no weekly_used and counts as UNKNOWN_LEFT.
+    grok_result(). grok_hosts is the fleet config key; None leaves it out.
     """
 
     PRESETS = os.path.join(os.path.dirname(__file__), "..", "..", ".orca", "presets.json")
     real_run = staticmethod(ug.run)
 
-    def pick(self, role="qa-sdet", avoid="claude", claude=10, agy=10, grok_live=0):
+    def pick(self, role="qa-sdet", avoid="claude", claude=10, agy=10, grok_live=0, grok_hosts=None, host=None, builder_model=None):
         """claude and agy: weekly percent used, "blocked", or None (Antigravity unreadable). grok_live: live Grok workers."""
         def fake_run(provider, *args, **kwargs):
             if provider == "grok":
@@ -2537,34 +2544,48 @@ class VerifierTable1305(unittest.TestCase):
                     "blocked_until": FUT if blocked else None}
 
         live = [{"agent": "grok"}] * grok_live
-        with mock.patch.dict(os.environ, {"USAGE_GATE_PRESETS": self.PRESETS}), \
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        fleet = os.path.join(tmp, "config.json")
+        with open(fleet, "w") as handle:
+            json.dump({} if grok_hosts is None else {"grok_hosts": grok_hosts}, handle)
+        env = {"USAGE_GATE_PRESETS": self.PRESETS, "FLEET_WATCH_CONFIG": fleet,
+               "FLEET_PULL_CONFIG": os.path.join(tmp, "none.json")}
+        with mock.patch.dict(os.environ, env), \
                 mock.patch.object(ug, "run", side_effect=fake_run), \
                 mock.patch.object(ug, "live_workers", return_value=live), \
                 mock.patch.object(ug, "antigravity_models", return_value=None), \
                 contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
-            status = ug.main(["pick", "--role", role, "--avoid-family", avoid, "--json"])
+            status = ug.main(["pick", "--role", role, "--avoid-family", avoid, "--json",
+                              *(["--host", host] if host else [])])
         return status, json.loads(out.getvalue())
 
     def chosen(self, result):
         selected = result["selected"]
         return selected["provider"] if selected else None
 
-    # Row: claude builder.
-    def test_claude_builder_antigravity_has_more_left_than_unreadable_grok(self):
-        status, result = self.pick(agy=30)  # 70 left against 50
-        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+    # Row: claude builder. Usage left is not compared.
+    def test_claude_builder_gets_grok_when_the_host_has_a_free_slot(self):
+        for agy in (10, 80, None):
+            with self.subTest(agy=agy):
+                status, result = self.pick(agy=agy, grok_hosts=["Host-A"], host="host-a")
+                self.assertEqual((status, self.chosen(result)), (0, "grok"))
+                self.assertEqual(result["selected"]["model"], "grok-4.7")
 
-    def test_claude_builder_unreadable_grok_beats_antigravity_below_fifty_left(self):
-        status, result = self.pick(agy=80)  # 20 left against 50
+    def test_claude_builder_with_one_live_grok_worker_gets_antigravity(self):
+        status, result = self.pick(grok_live=1, grok_hosts=["host-a"], host="host-a")
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+        self.assertEqual(result["selected"]["model"], "gemini-4-argon-high")
+
+    def test_a_target_host_not_in_grok_hosts_gets_antigravity(self):
+        for listed, host in ((["host-a"], "host-b"), ([], "host-a"), ([], None)):
+            with self.subTest(listed=listed, host=host):
+                status, result = self.pick(grok_hosts=listed, host=host)
+                self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+
+    def test_with_no_target_host_any_listed_host_will_do(self):
+        status, result = self.pick(grok_hosts=["host-a"])
         self.assertEqual((status, self.chosen(result)), (0, "grok"))
-
-    def test_claude_builder_tie_goes_to_antigravity(self):
-        status, result = self.pick(agy=50)  # 50 left against 50
-        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
-
-    def test_claude_builder_unreadable_antigravity_ties_with_grok_and_wins(self):
-        status, result = self.pick(agy=None)
-        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
 
     def test_claude_builder_antigravity_blocked_picks_grok(self):
         status, result = self.pick(agy="blocked")
@@ -2583,7 +2604,7 @@ class VerifierTable1305(unittest.TestCase):
                          ["opus", "sonnet"])
 
     def test_claude_builder_a_lower_rank_is_not_a_fallback(self):
-        status, result = self.pick(agy=80)
+        status, result = self.pick(grok_live=1)
         self.assertFalse(result["selected"].get("same_family_fallback"))
 
     # Row: Antigravity builder.
