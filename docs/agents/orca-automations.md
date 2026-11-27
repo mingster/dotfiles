@@ -104,7 +104,7 @@ Dropped for the prune: the merged proof, the last copy and unpushed commit guard
 
 Fail closed: a failed fetch, open PR list (also one that reaches its 1000 row limit), Orca worker or terminal inventory, branch protection lookup, or an unwritable restore log stops every delete in that repo for the day. An unreadable worktree list on any paired host stops origin deletes only, and so does a host the local list omits that is not one of this host's environments. The hosts a paired host omits are its own peers and are ignored, since this host reads each of its environments directly. Each stop is a failure in the round log.
 
-Before each delete the restore log `~/agent-state/branch-prune/<date>.tsv` gets a line (time, host, repo, scope `worktree`, `local` or `remote`, name or path, commit), synced to disk. Restore a branch with `git branch <name> <sha>` (origin: `git push origin <sha>:refs/heads/<name>`). This works only while the commit is still in that host's git store: a local only commit lasts until `git gc` prunes it, about 2 weeks. A delete that fails is listed in the summary, the run goes on, and the round ends non-zero.
+Before each delete the restore log `~/agent-state/branch-prune/<date>.log` (git ignored, so each host keeps its own and none is pushed to agent-state) gets a line (time, host, repo, scope `worktree`, `local` or `remote`, name or path, commit), synced to disk. Restore a branch with `git branch <name> <sha>` (origin: `git push origin <sha>:refs/heads/<name>`). This works only while the commit is still in that host's git store: a local only commit lasts until `git gc` prunes it, about 2 weeks. A delete that fails is listed in the summary, the run goes on, and the round ends non-zero.
 
 Install on a host:
 

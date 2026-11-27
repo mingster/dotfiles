@@ -1787,7 +1787,7 @@ inventory_failed=0
 # The prune's restore log: one line per deleted worktree, local or origin branch (time, host, repo, scope, name or path, sha),
 # appended and synced to disk before the delete. A branch comes back with git branch <name> <sha> (origin: git push origin
 # <sha>:refs/heads/<name>) while git still has the commit. A failed write stops every later delete in this repo.
-prune_log="${AGENT_STATE_DIR:-$HOME/agent-state}/branch-prune/$(date +%F).tsv"
+prune_log="${AGENT_STATE_DIR:-$HOME/agent-state}/branch-prune/$(date +%F).log"
 prune_record() { # stdin: scope<TAB>name or path<TAB>sha lines
   perl -MIO::Handle -e 'my ($f, $pre) = @ARGV; open(my $fh, ">>", $f) or exit 1;
     while (my $l = <STDIN>) { print {$fh} $pre, $l or exit 1 } $fh->flush or exit 1; $fh->sync or exit 1; close($fh) or exit 1;' \
