@@ -16,6 +16,8 @@
 # Allowed files) runs it with --dry-run first and has a "Side effects:" line; a script with no --dry-run cannot be
 # run from a brief. A build or rework brief whose Allowed files is under web/src/app or a components folder has a
 # 390x844 phone step. An explicit "Type: build" brief has a "Tests:" line naming test files.
+# A Verify line that runs bun test without --isolate or --parallel gets a "brief-lint: warning:" line on stderr, because
+# mock.module fakes leak between test files in one process. The exit code does not change (#1996).
 # Usage: brief-lint.sh [--issue-body] <file> [<target-repo-dir>]   (-h and --help print this line; an unreadable file exits 2)
 set -euo pipefail
 
@@ -246,6 +248,7 @@ sec == "Verify" && /[^[:space:]]/ {
   has_verify = 1
   if ($0 ~ /checks-local\.sh/) has_checks_local = 1
   if ($0 ~ /GitHub Checks are green/) github_green = 1
+  if ($0 ~ /(^|[^A-Za-z0-9_-])bun[[:space:]]+test([^A-Za-z0-9_-]|$)/ && $0 !~ /--(isolate|parallel)/) bun_test_plain = 1
 }
 /^Role: qa-sdet([^[:alnum:]-]|$)/ { qa_sdet = 1 }
 END {
@@ -280,6 +283,7 @@ END {
   is_builder = (type_count <= 1 && (brief_type == "" || brief_type == "build" || brief_type == "rework"))
   if (is_builder && ui_brief && !has_phone) { print "brief-lint: UI brief needs a 390x844 phone check step"; rc = 1 }
   if (type_count == 1 && brief_type == "build" && !has_tests) { print "brief-lint: build brief needs a Tests: line naming test files"; rc = 1 }
+  if (bun_test_plain) print "brief-lint: warning: Verify runs bun test without --isolate or --parallel, so mock.module fakes leak between test files; add --isolate" > "/dev/stderr"
   exit rc
 }
 ' "$file" || lint_rc=$?

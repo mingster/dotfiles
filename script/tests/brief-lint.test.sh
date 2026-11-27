@@ -833,5 +833,24 @@ EOF
 rs_out=$(timeout 5 bash "$lint" "$tmp/rstart.md" "$tmp/inst-repo" 2>&1); rs_ec=$?
 if [ "$rs_ec" -eq 0 ] && [ -z "$rs_out" ]; then ok; else bad "multi-backtick installer line should lint in under 5s with no output (ec=$rs_ec, out=$rs_out)"; fi
 
+# 1996. A Verify that runs bun test without --isolate or --parallel warns once on stderr; the exit code stays 0.
+bun_brief() { # <out> <verify line> [<section>]
+  printf 'Refs #1996\n\n## Acceptance\n- [ ] Done.\n\n## Out of scope\nNothing.\n\n## Verify\n%s\n\n`bash script/checks-local.sh`\n' "$2" >"$1"
+}
+bun_brief "$tmp/bun-plain.md" '`cd web && bun test src/a src/b`'
+bun_out=$(bash "$lint" "$tmp/bun-plain.md" 2>&1 >/dev/null); bun_ec=$?
+bun_stdout=$(bash "$lint" "$tmp/bun-plain.md" 2>/dev/null)
+if [ "$bun_ec" -eq 0 ] && [ -z "$bun_stdout" ] && [ "$(printf '%s\n' "$bun_out" | grep -c -- '--isolate')" -eq 1 ]; then ok; else bad "plain bun test should warn once on stderr, exit 0 (ec=$bun_ec, stdout=$bun_stdout, stderr=$bun_out)"; fi
+bun_two=$(printf '`bun test a`\n`bun test b`'); bun_brief "$tmp/bun-two.md" "$bun_two"
+if [ "$(bash "$lint" "$tmp/bun-two.md" 2>&1 | grep -c -- '--isolate')" -eq 1 ]; then ok; else bad "two plain bun test lines should still warn once"; fi
+for v in '`bun test --isolate src/a src/b`' '`bun test --parallel=6 src/a`' '`cd web && bun run test`' '`bunx test`'; do
+  bun_brief "$tmp/bun-ok.md" "$v"
+  bun_o=$(bash "$lint" "$tmp/bun-ok.md" 2>&1); bun_e=$?
+  if [ "$bun_e" -eq 0 ] && [ -z "$bun_o" ]; then ok; else bad "no warning expected for $v (ec=$bun_e, out=$bun_o)"; fi
+done
+printf 'Refs #1996\n\nRun `bun test src/a` by hand.\n\n## Acceptance\n- [ ] `bun test src/a` passes.\n\n## Out of scope\nNothing.\n\n## Verify\n`bash script/checks-local.sh`\n' >"$tmp/bun-outside.md"
+bun_o=$(bash "$lint" "$tmp/bun-outside.md" 2>&1); bun_e=$?
+if [ "$bun_e" -eq 0 ] && [ -z "$bun_o" ]; then ok; else bad "bun test outside Verify should not warn (ec=$bun_e, out=$bun_o)"; fi
+
 echo "brief-lint: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
