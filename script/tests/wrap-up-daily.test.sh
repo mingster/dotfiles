@@ -171,12 +171,12 @@ check 'a round reports ok with free space before and after' grep -Eq 'wrap-up-da
 check 'removes the merged worktree' gone "$tmp/wt-merged"
 check 'removes the idle automation run worktree' gone "$tmp/auto-job-run-1-1"
 check 'logs it as a cleaned automation run' detail_has "Cleaned automation run $tmp/auto-job-run-1-1"
-check 'writes its branch to the restore log' grep -Fq "$(printf 'local\tt/auto-job-run-1-1\t%s' "$auto_sha")" "$tmp/agent-state/branch-prune/$(date +%F).tsv"
+check 'writes its branch to the restore log' grep -Fq "$(printf 'local\tt/auto-job-run-1-1\t%s' "$auto_sha")" "$tmp/agent-state/branch-prune/$(date +%F).log"
 check 'removes the squash merged worktree (PR head not on any remote branch)' gone "$tmp/wt-squash"
 check 'keeps a worktree with uncommitted work' present "$tmp/wt-dirty"
 # #1853 replaced these two keeps: the prune removes work that is not active, and the restore log holds its sha.
 check 'removes a worktree with unpushed commits (not active work, #1853)' gone "$tmp/wt-unpushed"
-check 'logs the unpushed branch with its sha before the delete' grep -Fq "$(printf 'local\tb-unpushed\t%s' "$unpushed_sha")" "$tmp/agent-state/branch-prune/$(date +%F).tsv"
+check 'logs the unpushed branch with its sha before the delete' grep -Fq "$(printf 'local\tb-unpushed\t%s' "$unpushed_sha")" "$tmp/agent-state/branch-prune/$(date +%F).log"
 check 'keeps a worktree with an open PR' present "$tmp/wt-openpr"
 check 'keeps a worktree with a live terminal' present "$tmp/wt-live"
 check 'keeps a worktree a process holds a file open in' present "$tmp/wt-held"
@@ -265,7 +265,7 @@ check 'the repo child leaves the board reserve out of its limit' test "$(head -n
 # worker's worktree, a dirty worktree, and (origin only) a branch checked out on a paired host. Everything else goes.
 export ROUND_REPO="$tmp/p" BOARD_DONE_COORDINATOR_CONF="$board_conf" WRAP_UP_BOARD_DONE="$tmp/board-done-stub" WRAP_UP_BOARD_CLEAN="$tmp/board-clean-stub"
 { printf 'coordinator %s\n' "$(hostname -s)"; prune_repos; } > "$board_conf"
-plog="$tmp/agent-state/branch-prune/$(date +%F).tsv"
+plog="$tmp/agent-state/branch-prune/$(date +%F).log"
 rm -f "$plog"
 git init -q --bare -b main "$tmp/p-origin"
 git init -q -b main "$tmp/p"
