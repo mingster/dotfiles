@@ -57,9 +57,7 @@ class GrokVerifierPick(unittest.TestCase):
             env = dict(os.environ, HOME=tmp, USAGE_GATE_PRESETS=str(presets), USAGE_GATE_STATE=tmp + '/state',
                        USAGE_GATE_ORCA=str(orca), USAGE_GATE_CONFIG=tmp + '/usage-gate.config.json')
             env.pop('USAGE_GATE_CLI', None)
-            env.pop('FLEET_WATCH_CONFIG', None)
-            env.pop('FLEET_PULL_CONFIG', None)
-            env['AGENT_STATE_DIR'] = tmp
+            env['FLEET_PULL_CONFIG'] = tmp + '/no-pull.json'
             with unittest.mock.patch.dict(os.environ, env):
                 data = fw.pick_role('qa-sdet', avoid_family=avoid_family)
         return fw.choose_pick(data, avoid=avoid)
@@ -608,23 +606,23 @@ class GrokFallback(unittest.TestCase):
     GROK = {'selected': {'provider': 'grok', 'model': 'grok-4.7', 'eligible': True}}
     AGY = {'selected': {'provider': 'antigravity', 'model': 'gemini-4-argon-high', 'eligible': True}}
 
-    def run_pass(self, state, code=0, workers=()):
+    def run_pass(self, state, code=0, workers=(), numbers=(7,), reason='folder trust prompt'):
         starts, issues, released = [], [], []
         with tempfile.TemporaryDirectory() as root:
             config = {
                 'issue_scan': {'run': 'run_live', 'from_terminal': 'term_live', 'repo_roots': {REPO: root}},
                 'babysit': {'repos': [REPO], 'startup': '/bin/true'},
             }
-            pr = Sticky().pr()
+            prs = [dict(Sticky().pr(), number=number, headRefName='b%d' % number) for number in numbers]
             fw.babysit_pass(
-                config, state, list(workers), pr_fetch=lambda _repo: [pr],
+                config, state, list(workers), pr_fetch=lambda _repo: prs,
                 start_worker=lambda command: starts.append(command[command.index('--agent') + 1])
-                or fw.BabysitStartResult(code, 'folder trust prompt' if code else '', 'ctx_new'),
+                or fw.BabysitStartResult(code, reason if code else '', 'ctx_new'),
                 pick=lambda role, avoid_family=None, avoid_provider=None: self.AGY if avoid_provider == 'grok'
                 else self.GROK,
                 owner_check=lambda _pr: None, now=1_700_000_000, file_issue=issues.append,
                 release_worker=lambda row: released.append(row['dispatchId']) or 'closed',
-                pr_state_fetch=lambda _repo: [pr],
+                pr_state_fetch=lambda _repo: prs,
             )
         return starts, issues
 
@@ -633,6 +631,16 @@ class GrokFallback(unittest.TestCase):
         self.assertEqual(self.run_pass(state, code=1), (['grok'], ['o/r#7: folder trust prompt']))
         self.assertFalse(state.get('parked'))
         self.assertEqual(self.run_pass(state), (['antigravity'], []))
+
+    def test_the_second_pr_in_one_pass_does_not_reuse_the_grok_slot(self):
+        state = {}
+        self.assertEqual(self.run_pass(state, numbers=(7, 8))[0], ['grok', 'antigravity'])
+        self.assertNotIn('grok_fallback', state)
+
+    def test_an_orca_fence_is_not_a_grok_fault(self):
+        state = {}
+        self.assertEqual(self.run_pass(state, code=1, reason='consumer_fenced'), (['grok'], []))
+        self.assertNotIn('grok_fallback', state)
 
     def test_a_deferred_start_falls_back_with_no_issue(self):
         state = {}
@@ -650,10 +658,10 @@ class GrokFallback(unittest.TestCase):
 
     def test_the_issue_is_filed_once(self):
         created = []
-        fw.grok_fallback_issue('o/r#7: x', find=lambda *_: None, create=lambda *a: created.append(a))
-        fw.grok_fallback_issue('o/r#8: y', find=lambda *_: 12, create=lambda *a: created.append(a))
-        self.assertEqual([(repo, title) for repo, title, _body in created],
-                         [(fw.FAULT_REPO, fw.GROK_FALLBACK_TITLE)])
+        create = lambda *a, **k: created.append((a[0], a[1], k['labels']))
+        fw.grok_fallback_issue('o/r#7: x', find=lambda *_: None, create=create)
+        fw.grok_fallback_issue('o/r#8: y', find=lambda *_: 12, create=create)
+        self.assertEqual(created, [(fw.FAULT_REPO, fw.GROK_FALLBACK_TITLE, ())])
 
     def test_pick_role_passes_avoid_provider(self):
         seen = []

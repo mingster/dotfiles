@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # List this host's xcodebuild and build-and-test.sh processes for fleet-watch's stall check (#1970). Read only.
-# One line each: sim <tab> pid <tab> %CPU of the process and its children <tab> age seconds <tab> cwd <tab> command.
+# One record each: SIM|pid|%CPU of the process and its children|age seconds|cwd|command|EOR, then SIM-END.
+# Pipes, not tabs: a remote host is read from a terminal screen, which expands tabs and may wrap a record.
 # A matched process with a matched child (build-and-test.sh around xcodebuild) is left out.
 set -euo pipefail
 ps -axww -o pid=,ppid=,pcpu=,etime=,command= | awk '
@@ -31,5 +32,6 @@ ps -axww -o pid=,ppid=,pcpu=,etime=,command= | awk '
     for (pid in hit) if (!(pid in wrapper)) printf "%d\t%.1f\t%d\t%s\n", pid, total[pid], age[pid], substr(cmd[pid], 1, 160)
   }' | sort -n | while IFS=$'\t' read -r pid cpu age command; do
   cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1) || cwd=
-  printf 'sim\t%s\t%s\t%s\t%s\t%s\n' "$pid" "$cpu" "$age" "$cwd" "$command"
+  printf 'SIM|%s|%s|%s|%s|%s|EOR\n' "$pid" "$cpu" "$age" "$cwd" "$command"
 done
+echo SIM-END

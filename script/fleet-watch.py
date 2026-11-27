@@ -2298,6 +2298,7 @@ def orphan_reaper_notices(config, rpc_call=None, run=None):
 SIM_STALL_SCRIPT = Path(__file__).with_name('sim-stall-list.sh')
 SIM_STALL_REMOTE = 'bash "$HOME/dotfiles/script/sim-stall-list.sh"'
 SIM_STALL_SECONDS = 15 * 60
+SIM_RECORD_RE = re.compile(r'SIM\|(\d+)\|(\d+(?:\.\d+)?)\|(\d+)\|([^|]*)\|(.*?)\|EOR')
 
 
 def sim_stall_processes(rpc_call, host, run=subprocess.run):
@@ -2312,17 +2313,12 @@ def sim_stall_processes(rpc_call, host, run=subprocess.run):
             lines = (done.stdout or '').splitlines()
     except (OSError, subprocess.SubprocessError, OrcaReadError, TerminalNotFound) + SEND_ERRORS:
         return None
-    rows = []
-    for line in lines:
-        parts = line.split('\t')
-        if len(parts) != 6 or parts[0] != 'sim':
-            continue
-        try:
-            rows.append({'pid': int(parts[1]), 'cpu': float(parts[2]), 'age': int(parts[3]),
-                         'cwd': parts[4], 'command': parts[5]})
-        except ValueError:
-            continue
-    return rows
+    # A terminal read returns screen rows, so a long record may be wrapped: join the rows, then cut on the markers.
+    text = ''.join(str(line) for line in lines)
+    if 'SIM-END' not in text:
+        return None
+    return [{'pid': int(pid), 'cpu': float(cpu), 'age': int(age), 'cwd': cwd, 'command': command}
+            for pid, cpu, age, cwd, command in SIM_RECORD_RE.findall(text)]
 
 
 def _sim_owner(proc, rows):
@@ -9389,7 +9385,8 @@ def grok_fallback_issue(detail, find=None, create=None):
     body = ('A Grok verifier failed: %s. That PR now gets the next verifier family (ADR 0003).\n\n'
             '## Acceptance\n- [ ] A Grok verifier starts and posts a Verdict (check the folder trust prompt first).'
             % one_line_reason(detail))
-    (create or main_red_create_issue)(FAULT_REPO, GROK_FALLBACK_TITLE, body)
+    # No labels: an issue scan must not start a builder on a provider fault.
+    (create or main_red_create_issue)(FAULT_REPO, GROK_FALLBACK_TITLE, body, labels=())
 
 
 def grok_fallback_prune(state, repo, open_numbers):
@@ -9451,6 +9448,7 @@ def babysit_pass(
     cap = babysit_cap(config)
     started = 0
     picks = {}
+    grok_taken = False
     runner_state = {}
 
     def review_gate_open(pr_row, repo_name):
@@ -9693,7 +9691,7 @@ def babysit_pass(
                     persist_state()
             continue
         # A PR whose Grok verifier failed or stalled takes the next family (ADR 0003).
-        no_grok = 'grok' if kind == 'verifier' and grok_fell_back(state, repo, number) else None
+        no_grok = 'grok' if kind == 'verifier' and (grok_taken or grok_fell_back(state, repo, number)) else None
         picked = cached_pick(role, avoid_fam, no_grok)
         chosen = choose_pick(picked, avoid=avoid)
         if not chosen:
@@ -9708,6 +9706,7 @@ def babysit_pass(
             detail = '%s %s' % (detail, tag)
         action = 'verifier' if kind == 'verifier' else 'fixer'
         if dry_run:
+            grok_taken = grok_taken or (kind == 'verifier' and agent == 'grok')
             lines.append(_babysit_line(repo, number, head, action, detail))
             started += step
             continue
@@ -9755,7 +9754,8 @@ def babysit_pass(
         # start_fits_pass above still holds a start that would end past PASS_HARD_END (#1820).
         started_worker = start_worker(command)
         code, reason = start_result_parts(started_worker)
-        grok_verifier = kind == 'verifier' and agent == 'grok'
+        # An Orca fence on fleet-watch's own terminal (#1170) is not a Grok fault: it parks and hands off as before.
+        grok_verifier = kind == 'verifier' and agent == 'grok' and 'consumer_fenced' not in (reason or '')
         if (code != 0 and code not in BABYSIT_DEFERRED_EXITS and not grok_verifier and startup_failure_text(reason)
                 and startup_retry_taken(state, park_key)):
             log_bits.append('startup_retry=%s' % number)
@@ -9784,6 +9784,8 @@ def babysit_pass(
             if park_failure(state, park_key, reason, config, repo=repo, pr=number, head=head):
                 notices.append(park_notice('verifier', '%s#%s' % (repo, number), reason, command))
             continue
+        # The cached pick was read before this start, so the rest of the pass counts the Grok slot as taken.
+        grok_taken = grok_taken or (kind == 'verifier' and agent == 'grok')
         babysit_mark(state, repo, number, head, action)
         if action == 'verifier':
             remember_started_dispatch(state, started_worker, 'verifier', repo)
@@ -12339,6 +12341,13 @@ def _main():
             print('fleet-watch: agy probe skipped: %s' % (repr(error),), file=sys.stderr)
             return []
 
+    def sim_stall_phase():
+        try:
+            return sim_stall_pass(config, state, now, workers, rpc)
+        except Exception as error:
+            print('fleet-watch: simulator stall check skipped: %s' % (repr(error),), file=sys.stderr)
+            return []
+
     # Before the first phase that can start a worker, so a signed out host is marked first (#1968).
     notices += run_phase('agy_probe', agy_probe_phase, [])
     idle_extra, idle_log = run_phase('idle_seat', idle_seat, ([], []))
@@ -12408,7 +12417,7 @@ def _main():
         waiting=waiting_on_coordinator(state, workers), reaper=reaper_owned(state)), ([], []))
     notices += stall_extra
     if inventory_ok:
-        notices += run_phase('sim_stall', lambda: sim_stall_pass(config, state, now, workers, rpc), [])
+        notices += run_phase('sim_stall', sim_stall_phase, [])
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))

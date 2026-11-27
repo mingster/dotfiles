@@ -151,7 +151,7 @@ class ProviderPause(Base):
         cli.chmod(0o755)
         env = {'USAGE_GATE_CLI': str(cli), 'USAGE_GATE_CONFIG': str(root / 'config.json'),
                'USAGE_GATE_STATE': str(root / 'state'),
-               'FLEET_WATCH_CONFIG': str(root / 'no-fleet.json'), 'FLEET_PULL_CONFIG': str(root / 'no-pull.json'),
+               'FLEET_PULL_CONFIG': str(root / 'no-pull.json'),
                'USAGE_GATE_PRESETS': str(gate.parent.parent / '.orca' / 'presets.json')}
         with mock.patch.dict(os.environ, env):
             data = fw.pick_role('qa-sdet', avoid_family='claude')

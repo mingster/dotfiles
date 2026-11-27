@@ -308,6 +308,14 @@ def load_fleet_watch():
     return module
 
 
+def load_usage_gate():
+    path = Path(__file__).resolve().parent / 'usage-gate.py'
+    spec = importlib.util.spec_from_file_location('usage_gate_for_placement', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_agy_signin():
     path = Path(__file__).resolve().parent / 'agy-signin.py'
     spec = importlib.util.spec_from_file_location('agy_signin_for_placement', path)
@@ -533,10 +541,11 @@ def _pick_host(
         if not signed_in:
             return {'ok': False, 'reason': 'no eligible host is signed in to agy'}
         hosts = signed_in
-    grok = config.get('grok_hosts')
-    if (agent or '').lower() == 'grok' and isinstance(grok, list) and grok:  # ADR 0003: only these have the Grok CLI
-        listed = {str(h).lower() for h in grok}
-        hosts = [h for h in hosts if h.lower() in listed]
+    if (agent or '').lower() == 'grok':
+        # Only grok_hosts have the Grok CLI. With none listed, only this host can start it (require_grok_host).
+        listed = load_usage_gate().grok_hosts() or {str(config.get('local_host') or '').lower()} - {''}
+        if listed:
+            hosts = [h for h in hosts if h.lower() in listed]
         if not hosts:
             return {'ok': False, 'reason': 'no eligible fleet host is listed under grok_hosts'}
     try:

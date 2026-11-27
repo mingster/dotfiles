@@ -2515,7 +2515,7 @@ class Pauses(unittest.TestCase):
 
 def setUpModule():
     """The verifier pick reads grok_hosts; keep this machine's fleet config out of the tests."""
-    patcher = mock.patch.dict(os.environ, {"FLEET_WATCH_CONFIG": "/nonexistent", "FLEET_PULL_CONFIG": "/nonexistent"})
+    patcher = mock.patch.dict(os.environ, {"FLEET_PULL_CONFIG": "/nonexistent"})
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
 
@@ -2549,8 +2549,7 @@ class VerifierTable1305(unittest.TestCase):
         fleet = os.path.join(tmp, "config.json")
         with open(fleet, "w") as handle:
             json.dump({} if grok_hosts is None else {"grok_hosts": grok_hosts}, handle)
-        env = {"USAGE_GATE_PRESETS": self.PRESETS, "FLEET_WATCH_CONFIG": fleet,
-               "FLEET_PULL_CONFIG": os.path.join(tmp, "none.json")}
+        env = {"USAGE_GATE_PRESETS": self.PRESETS, "FLEET_PULL_CONFIG": fleet}
         with mock.patch.dict(os.environ, env), \
                 mock.patch.object(ug, "run", side_effect=fake_run), \
                 mock.patch.object(ug, "live_workers", return_value=live), \
@@ -2606,6 +2605,23 @@ class VerifierTable1305(unittest.TestCase):
     def test_claude_builder_a_lower_rank_is_not_a_fallback(self):
         status, result = self.pick(grok_live=1)
         self.assertFalse(result["selected"].get("same_family_fallback"))
+
+    def test_the_cold_reviewer_keeps_antigravity_first_and_ignores_grok_hosts(self):
+        status, result = self.pick(role="reviewer", grok_hosts=["host-a"])
+        self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+        status, result = self.pick(role="reviewer", agy="blocked", grok_hosts=[])
+        self.assertEqual((status, self.chosen(result)), (0, "grok"))
+
+    def test_grok_hosts_comes_from_the_pull_config_worker_startup_reads(self):
+        with tempfile.TemporaryDirectory() as state:
+            with open(os.path.join(state, "fleet-config.json"), "w") as handle:
+                json.dump({"hosts": [], "grok_hosts": ["Host-A"]}, handle)
+            with mock.patch.dict(os.environ, {"AGENT_STATE_DIR": state}):
+                os.environ.pop("FLEET_PULL_CONFIG")
+                self.assertEqual(ug.grok_hosts(), {"host-a"})
+                with open(os.path.join(state, "fleet-pull.json"), "w") as handle:
+                    json.dump({"grok_hosts": []}, handle)
+                self.assertEqual(ug.grok_hosts(), set())
 
     # Row: Antigravity builder.
     def test_antigravity_builder_gets_claude_even_when_grok_is_idle(self):

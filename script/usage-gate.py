@@ -16,10 +16,11 @@ its existing flags. every role takes the first allowed entry of the provider pri
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
 The verifier of a PR (qa-sdet, reviewer) comes from VERIFIERS, one table of builder family to
-ordered verifier families (owner 2026-11-21, #1305; ADR 0003): a Claude builder gets Grok, else
+ordered verifier families (owner 2026-11-21, #1305; ADR 0003, qa-sdet only; the cold reviewer keeps
+Antigravity before Grok): a Claude builder gets Grok, else
 Antigravity; an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
 builder gets Claude only. A Grok verifier needs a free slot: no live grok worker, and the target host
-(pick --host, else any host) listed in the fleet config's grok_hosts when it has that key. Usage left
+(pick --host, else any host) listed in grok_hosts of the fleet pull config when it has that key. Usage left
 is not compared. Strong roles other than qa-sdet never select Grok.
 Grok has no usage API: check --provider grok allows a start only while no grok worker
 is live on this host (Orca worker state).
@@ -78,6 +79,8 @@ VERIFIERS = {
     "gemini": ("claude", "grok"),
     "grok": ("claude",),
 }
+# The cold reviewer (pr-review.sh) is not the verifier ADR 0003 moves: a Claude author keeps Antigravity first.
+REVIEWERS = {**VERIFIERS, "claude": ("gemini", "grok")}
 
 
 def load_config():
@@ -1097,18 +1100,27 @@ def grok_result():
 
 
 def grok_hosts():
-    """Lowercase grok_hosts of the first fleet config that has the key, else None (no host rule)."""
+    """Lowercase grok_hosts, or None when the key is absent. Reads the one file worker-startup.sh checks a
+    remote grok start against (resolve_fleet_pull_config), so pick, placement and start agree."""
     state = os.environ.get("AGENT_STATE_DIR") or HOME + "/agent-state"
-    for path in (os.environ.get("FLEET_WATCH_CONFIG") or HOME + "/.config/fleet-watch/config.json",
-                 os.environ.get("FLEET_PULL_CONFIG") or os.path.join(state, "fleet-pull.json")):
+    path = os.environ.get("FLEET_PULL_CONFIG")
+    if not path and os.path.isfile(os.path.join(state, "fleet-pull.json")):
+        path = os.path.join(state, "fleet-pull.json")
+    if not path:
         try:
-            with open(os.path.expanduser(path)) as handle:
-                hosts = json.load(handle).get("grok_hosts")
-        except (OSError, ValueError, AttributeError):
-            continue
-        if isinstance(hosts, list):
-            return {str(host).lower() for host in hosts}
-    return None
+            with open(os.path.join(state, "fleet-config.json")) as handle:
+                data = json.load(handle)
+            if "repos" in data or "hosts" in data:
+                path = os.path.join(state, "fleet-config.json")
+        except (OSError, ValueError, TypeError):
+            pass
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet-pull.config.json")
+    try:
+        with open(path) as handle:
+            hosts = json.load(handle).get("grok_hosts")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return {str(host).lower() for host in hosts} if isinstance(hosts, list) else None
 
 
 def grok_verifier_row(row, hosts):
@@ -1388,7 +1400,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False,
         role = STRONG_TIER_ROLE
     chain, _pinned = role_chain(role)
     builder = is_builder_role(role)
-    verifiers = VERIFIERS.get(avoid) if role in ("qa-sdet", "reviewer") else None
+    verifiers = {"qa-sdet": VERIFIERS, "reviewer": REVIEWERS}.get(role, {}).get(avoid)
     if builder:
         chain = order_builder_chain(chain)
     elif role in ("qa-sdet", "reviewer") and not any(entry["provider"] == "grok" for entry in chain):
@@ -1401,7 +1413,7 @@ def pick(role, avoid, cap, ceiling, per_worker, avoid_provider=None, auto=False,
         key = (entry["provider"], _gated_model(entry))
         if key not in rows:
             rows[key] = run(entry["provider"], cap, ceiling, per_worker=per_worker, model=key[1], auto=auto)
-            if verifiers is not None and entry["provider"] == "grok":
+            if role == "qa-sdet" and verifiers is not None and entry["provider"] == "grok":
                 rows[key] = grok_verifier_row(rows[key], hosts)
     known = antigravity_models() if any(e["provider"] == "antigravity" for e in chain) else None
     gated = [r for (p, _), r in rows.items() if p in READERS or p == "grok"]

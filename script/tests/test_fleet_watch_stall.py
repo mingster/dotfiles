@@ -861,7 +861,7 @@ class SimStall(unittest.TestCase):
         self.assertEqual(len(self.run_pass(state, 1900, [self.proc(age=1900)])[0]), 1)
 
     def test_a_remote_host_is_read_only_when_listed_and_told_on_that_host(self):
-        row = dict(self.ROW, _host='env-b', _host_terminal='term_b', _host_workspace='ws::/work/ios', resource=None)
+        row = dict(self.ROW, _host='env-b', _host_terminal='term_b', _host_workspace='ws::/work/ios', resource=None, workspace=None)
         state = {}
         self.assertEqual(self.run_pass(state, 1000, [self.proc()], row=row), ([], []))
         self.assertEqual(state['sim_stall'], {})
@@ -888,10 +888,35 @@ class SimStall(unittest.TestCase):
                 (fake / name).chmod(0o755)
             out = subprocess.run(['bash', str(fw.SIM_STALL_SCRIPT)], capture_output=True, text=True, check=True,
                                  env=dict(os.environ, PATH='%s:%s' % (tmp, os.environ['PATH']))).stdout
-        self.assertEqual([line.split('\t')[:5] for line in out.splitlines()], [
-            ['sim', '11', '0.0', '1140', '/work/ios'], ['sim', '20', '7.5', '86405', '/work/ios']])
+        self.assertEqual([line.split('|')[:5] for line in out.splitlines()], [
+            ['SIM', '11', '0.0', '1140', '/work/ios'], ['SIM', '20', '7.5', '86405', '/work/ios'], ['SIM-END']])
         rows = fw.sim_stall_processes(None, '', run=lambda *a, **k: subprocess.CompletedProcess(a, 0, out, ''))
         self.assertEqual([r['pid'] for r in rows], [11, 20])
+
+    def test_a_remote_read_joins_wrapped_rows_and_closes_its_terminal(self):
+        record = 'SIM|4242|0.0|1000|/work/ios|/usr/bin/xcodebuild -scheme App test|EOR'
+        calls = []
+
+        def rpc(tail):
+            def call(*args):
+                calls.append(args[:2])
+                if args[:2] == ('worktree', 'list'):
+                    return {'worktrees': [{'path': '/srv/x'}]}
+                if args[:2] == ('terminal', 'create'):
+                    return {'terminal': {'handle': 'term_p'}}
+                return {'terminal': {'tail': tail}} if args[:2] == ('terminal', 'read') else {}
+            return call
+
+        rows = fw.sim_stall_processes(rpc([record[:30], record[30:], 'SIM-END']), 'env-b')
+        self.assertEqual([(r['pid'], r['cwd']) for r in rows], [(4242, '/work/ios')])
+        self.assertIn(('terminal', 'close'), calls)
+        # No end marker (an old checkout, a cut screen) is unread, not "no processes".
+        self.assertIsNone(fw.sim_stall_processes(rpc(['bash: no such file']), 'env-b'))
+
+        def broken(*_args):
+            raise RuntimeError('host gone')
+
+        self.assertIsNone(fw.sim_stall_processes(broken, 'env-b'))
 
 
 if __name__ == '__main__':
