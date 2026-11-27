@@ -33,6 +33,36 @@ def newest_comment_receipt(comments, label, head):
     return best
 
 
+def is_flagged_comment(comment):
+    """True when the comment was edited or minimized after posting."""
+    return bool(comment.get('includesCreatedEdit') or comment.get('isMinimized')
+                or comment.get('edited') or comment.get('minimized'))
+
+
+def counted_receipt_comments(comments):
+    """Comments that count toward a receipt: unflagged ones, plus flagged FAIL receipts (an edit never hides a FAIL)."""
+    counted = []
+    for comment in comments or []:
+        if not isinstance(comment, dict):
+            continue
+        if is_flagged_comment(comment) and not re.match(r'^(?:Review|Verdict|Checks): FAIL\b', receipt_first_line(comment.get('body'))):
+            continue
+        counted.append(comment)
+    return counted
+
+
+def cold_review_passed(comments, head):
+    """True when the newest counted Review at head is PASS and names a real model (model=none is not a cold review)."""
+    comment = newest_comment_receipt(counted_receipt_comments(comments), 'Review', head)
+    if not comment:
+        return False
+    first = receipt_first_line(comment.get('body'))
+    if not first.startswith('Review: PASS'):
+        return False
+    model = re.search(r'(?:^| )model=(\S+)', first)
+    return bool(model) and model.group(1) != 'none'
+
+
 def newest_receipt_kind(comments, label, head):
     """PASS, FAIL, or None from the newest receipt of ``label`` at ``head``."""
     comment = newest_comment_receipt(comments, label, head)
@@ -77,13 +107,13 @@ def checks_receipt_at_head(pr):
 
 def merge_refuse_review_fail(pr, head):
     """Ship preflight: refuse when the newest Review receipt at head is FAIL."""
-    return newest_receipt_kind(pr.get('comments'), 'Review', head) == 'FAIL'
+    return newest_receipt_kind(counted_receipt_comments(pr.get('comments')), 'Review', head) == 'FAIL'
 
 
 def review_failed_at_head(pr):
     """Fleet rework: fail when newest Review or newest Verdict at head is FAIL (per kind, not merged)."""
     head = pr.get('headRefOid') or ''
-    comments = pr.get('comments') or []
+    comments = counted_receipt_comments(pr.get('comments'))
     for label in ('Review', 'Verdict'):
         if newest_receipt_kind(comments, label, head) == 'FAIL':
             return True

@@ -912,10 +912,13 @@ mechanical)
 docs)
   # Docs only (markdown or changelog.d): a cold "Review: PASS head=<head>" at the head, or a Verdict (below). Newest Review at the head decides;
   # an edited or minimized PASS never counts.
+  # A PASS with model=none (or no model) is not a cold review: it reads as none, so the Verdict branch below decides (#1730 follow-up).
   review=$(jq -r --arg h "$head" '
-    [.comments[]? | select((.body // "" | split("\n")[0]) | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
-      | {r: (.body | split("\n")[0] | capture("^Review: (?<r>PASS|FAIL)").r), f: ((.includesCreatedEdit // false) or (.isMinimized // false))}
-      | select(.r == "FAIL" or .f == false)] | last // {r: "none"} | .r' <<<"$info")
+    [.comments[]? | (.body // "" | split("\n")[0]) as $line
+      | select($line | test("^Review: (PASS|FAIL) head=" + $h + "( main=[0-9a-f]{40})?($| )"))
+      | {r: ($line | capture("^Review: (?<r>PASS|FAIL)").r), m: ([$line | capture("(^| )model=(?<m>[^ ]+)") | .m][0] // ""), f: ((.includesCreatedEdit // false) or (.isMinimized // false))}
+      | select(.r == "FAIL" or .f == false)] | last // {r: "none", m: ""}
+    | if .r == "PASS" and (.m == "" or .m == "none") then "none" else .r end' <<<"$info")
   # A Verdict from post-verdict.sh at the exact head also counts, with the same author and builder checks as the verdict
   # lane. A Verdict at another head does not count; a FAIL Review or FAIL Verdict at the head refuses.
   load_newest_verdict
@@ -929,7 +932,7 @@ docs)
         PASS|PASS+NOTES)
           [ -n "$v_agent" ] || refuse "Verdict on PR $pr does not record the verifier agent and model; post it with post-verdict.sh --agent <agent> --model <model>"
           same_pair_gate "$pr_body" "$v_agent" "$v_model" "PR $pr" "$v_tag" "$diff" ;;
-        *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head' comment or a Verdict: PASS at that head" ;;
+        *) refuse "docs only PR $pr needs a cold 'Review: PASS head=$head model=<name>' comment or a Verdict: PASS at that head (no Verdict: PASS found there; Review: PASS model=none is not a cold review)" ;;
       esac ;;
   esac
   ;;

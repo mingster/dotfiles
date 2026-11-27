@@ -215,3 +215,66 @@ class IssueHasLiveDispatchTests(unittest.TestCase):
             rows = fw.fetch_workers({'runs': [{'id': 'run_1'}]})
         self.assertEqual(rows[0]['_task_spec'], 'Refs #42\n')
         self.assertTrue(fw.issue_has_live_dispatch(rows, 42))
+
+
+class ModelNoneIsNotColdReviewTests(unittest.TestCase):
+    """Review: PASS model=none is not a cold review: tier 0 waits for a Verdict, and the verifier gate still opens (#1730 follow-up)."""
+    HEAD = 'a' * 40
+    TIER0_FILES = [{'path': 'script/tests/test_docs_gate.py', 'additions': 10, 'deletions': 2}]
+
+    def pr(self, *comments, files=None, head=HEAD):
+        row = {
+            'number': 9, 'state': 'OPEN', 'isDraft': False, 'headRefOid': head,
+            'files': self.TIER0_FILES if files is None else files,
+            'statusCheckRollup': [{'name': 'script-tests', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'}],
+            'mergeable': 'MERGEABLE', 'mergeStateStatus': 'CLEAN', 'comments': list(comments),
+        }
+        return row
+
+    def comment(self, body, **flags):
+        return dict({'body': body, 'createdAt': '2026-11-28T10:00:00Z'}, **flags)
+
+    def verdict(self, status='PASS', head=HEAD):
+        return self.comment('Verdict: %s head=%s verifier=ctx_v author=ctx_a agent=claude model=opus' % (status, head))
+
+    def test_model_none_review_is_not_cold_and_waits(self):
+        row = self.pr(self.comment('Review: PASS head=%s model=none' % self.HEAD))
+        self.assertTrue(fw.review_passed_at_head(row))
+        self.assertFalse(fw.cold_review_passed_at_head(row))
+        self.assertFalse(fw.tier0_ship_pending({}, {}, 'owner/repo', row))
+        self.assertEqual(fw.classify_open_pr(row, repo_root=None), 'waiting')
+
+    def test_valid_verdict_is_ready(self):
+        row = self.pr(self.comment('Review: PASS head=%s model=none' % self.HEAD), self.verdict())
+        self.assertEqual(fw.classify_open_pr(row, repo_root=None), 'ready')
+
+    def test_real_model_review_is_ready_without_verdict(self):
+        row = self.pr(self.comment('Review: PASS head=%s model=opus' % self.HEAD))
+        self.assertTrue(fw.cold_review_passed_at_head(row))
+        self.assertEqual(fw.classify_open_pr(row, repo_root=None), 'ready')
+
+    def test_real_model_review_keeps_tier0_ship_pending(self):
+        row = self.pr(self.comment('Review: PASS head=%s model=opus' % self.HEAD))
+        config = {'issue_scan': {'enabled': True, 'pr_repos': ['owner/repo']}}
+        self.assertTrue(fw.tier0_ship_pending(config, {}, 'owner/repo', row))
+
+    def test_verifier_gate_still_opens_for_model_none(self):
+        row = self.pr(self.comment('Review: PASS head=%s model=none' % self.HEAD))
+        self.assertTrue(fw.review_passed_at_head(row))
+
+    def test_edited_fail_after_real_pass_is_not_cold(self):
+        row = self.pr(
+            self.comment('Review: PASS head=%s model=opus' % self.HEAD),
+            self.comment('Review: FAIL head=%s model=opus' % self.HEAD, includesCreatedEdit=True),
+        )
+        self.assertFalse(fw.cold_review_passed_at_head(row))
+        self.assertTrue(fw.review_failed_at_head(row))
+
+    def test_edited_pass_does_not_hide_unedited_verdict_fail(self):
+        row = self.pr(
+            self.comment('Review: PASS head=%s model=none' % self.HEAD),
+            self.verdict(status='FAIL'),
+            self.comment(self.verdict(status='PASS')['body'], isMinimized=True),
+        )
+        self.assertFalse(fw.pr_verdict_valid_for_head(row, repo_root=None))
+        self.assertFalse(fw.classify_open_pr(row, repo_root=None) == 'ready')

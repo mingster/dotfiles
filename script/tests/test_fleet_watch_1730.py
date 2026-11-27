@@ -24,7 +24,7 @@ def pr(number, files, review=True, verdict=False, head=None):
     head = head[:40]
     comments = []
     if review:
-        comments.append({'body': 'Review: PASS head=%s' % head})
+        comments.append({'body': 'Review: PASS head=%s model=opus' % head})
     if verdict:
         comments.append({'body': 'Verdict: PASS head=%s verifier=ctx_v author=ctx_a' % head})
     return {

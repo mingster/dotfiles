@@ -5519,7 +5519,7 @@ def classify_open_pr(pr_row, workflow_watch_state=None, repo='', repo_root=None)
             and pr_checks_all_success(pr_row)
             and (pr_verdict_valid_for_head(pr_row, repo_root=repo_root)
                  # Tier 0 (tests and docs only, #1730) ships on Review PASS at the head, with no Verdict.
-                 or (pr_tier(pr_row) == 0 and review_passed_at_head(pr_row)))):
+                 or (pr_tier(pr_row) == 0 and cold_review_passed_at_head(pr_row)))):
         return 'ready'
     return 'waiting'
 
@@ -6923,6 +6923,11 @@ def review_passed_at_head(pr):
         and not (c.get('includesCreatedEdit') or c.get('isMinimized') or c.get('edited') or c.get('minimized'))
     ]
     return rs.newest_receipt_kind(valid_comments, 'Review', head) == 'PASS'
+
+
+def cold_review_passed_at_head(pr):
+    """True when review_passed_at_head holds and the PASS names a real model. Review: PASS model=none is not a cold review (#1730 follow-up)."""
+    return review_passed_at_head(pr) and rs.cold_review_passed(pr.get('comments'), pr.get('headRefOid') or '')
 
 
 def _pr_has_review_lane(pr):
@@ -9388,7 +9393,7 @@ def tier0_ship_pending(config, state, repo, pr_row):
     Once the auto-ship has tried this head and the PR is still open, or when fleet-watch does not auto-ship
     this repo, the old rule applies and a verifier starts."""
     head = pr_row.get('headRefOid') or ''
-    if pr_tier(pr_row) != 0 or not review_passed_at_head(pr_row):
+    if pr_tier(pr_row) != 0 or not cold_review_passed_at_head(pr_row):
         return False
     scan = config.get('issue_scan') or {}
     if not scan.get('enabled') or repo not in (scan.get('pr_repos') or scan.get('repos') or []):
