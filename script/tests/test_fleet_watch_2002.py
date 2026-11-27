@@ -43,7 +43,7 @@ class RunFleet(Fleet):
 
 
 OK_LINE = ['repo /x seconds=36', 'ok wrap-up-daily: skip: load 16.70 at or above 0.7 per core (exit=0, 0s)']
-WORKING = ['repo /Users/mtsai/projects/riben.life seconds=330', 'Reviewing the wrap-up log', 'load 0.4']
+WORKING = ['repo /work/project-a seconds=330', 'Reviewing the wrap-up log', 'load 0.4']
 
 
 class RunTerminalFinished(Base):
