@@ -69,6 +69,8 @@ EOF
   printf 'fleet-watch: enabled\nwrap-up-daily: enabled\n' > "$FX/fw.status"
   fw_end 60
   printf '#!/usr/bin/env bash\necho "ctx_a term_a OK"\n' > "$FX/ww.sh"
+  # check-fleet-status.py --count stand in (#2022): prints $FX/real (default 1, the one live row), exits 1 with $FX/real.fail.
+  printf '#!/usr/bin/env bash\n[[ -e "$FX/real.fail" ]] && exit 1\ncat "$FX/real" 2>/dev/null || echo 1\n' > "$FX/rc.sh"
   printf '#!/usr/bin/env bash\necho "mailbox $*" >> "$FX/calls"\n' > "$FX/root/.claude/bin/support-mailbox.sh"
   : > "$FX/calls"
 }
@@ -99,7 +101,7 @@ fw_end() {
 
 tick() {
   set +e
-  out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_FW_STATUS="cat $FX/fw.status" ELON_TICK_FW_LOG="$FX/fw.log" ELON_TICK_WORKER_WATCH="$FX/ww.sh" \
+  out=$(env -u FLEET_WATCH_STATE HOME="$FX/home" PATH="$work/bin:$PATH" ELON_TICK_FW_STATUS="cat $FX/fw.status" ELON_TICK_FW_LOG="$FX/fw.log" ELON_TICK_WORKER_WATCH="$FX/ww.sh" ELON_TICK_REAL_COUNT="bash $FX/rc.sh" \
     bash "$root/script/elon-tick.sh" --run run_t --config "$FX/config.json" 2>&1)
   rc=$?
   set -e
@@ -305,6 +307,19 @@ reset; sed -i.bak 's/"target_workers":1/"target_workers":3/' "$FX/config.json"
 echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":44,"title":"b","body":"## Acceptance\n- x","labels":[{"name":"ready-for-agent"}]}]' \
   > "$FX/gh-issue-o_proj.json"
 expect 'W3 under target with supply' '[W3] 1 of 3 workers live and 1 ready issue(s); check fleet-watch is starting them (next by the fleet-watch queue key: o/proj#44;'
+
+# #2022: W3 prints the real count (a live agent with recent activity), not Orca's rows. Orca lists 1 live row here.
+reset; sed -i.bak 's/"target_workers":1/"target_workers":3/' "$FX/config.json"
+echo '[{"number":40,"title":"bug","body":"","labels":[]},{"number":44,"title":"b","body":"## Acceptance\n- x","labels":[{"name":"ready-for-agent"}]}]' \
+  > "$FX/gh-issue-o_proj.json"
+echo 2 > "$FX/real"
+expect 'W3 prints the real count' '[W3] 2 of 3 workers live (Orca lists 1) and 1 ready issue(s)'
+
+reset; echo 0 > "$FX/real"
+expect 'W3 real count below Orca rows' '[W3] 0 of 1 workers live (Orca lists 1) and no ready-for-agent issue'
+
+reset; touch "$FX/real.fail"; sed -i.bak 's/"target_workers":1/"target_workers":3/' "$FX/config.json"
+expect 'W3 falls back to Orca rows when the real count is unreadable' '[W3] 1 of 3 workers live and no ready-for-agent issue'
 
 reset; echo '[{"number":40,"title":"bug","body":"","labels":[{"name":"needs-triage"}]}]' > "$FX/gh-issue-o_proj.json"
 expect 'W4 triage queue' '[W4] o/proj has 1 needs-triage issue(s)'

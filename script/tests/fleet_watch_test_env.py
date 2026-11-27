@@ -86,3 +86,8 @@ def quiet_host(test, fw):
         patcher = patch.object(fw, name, return_value=value)
         patcher.start()
         test.addCleanup(patcher.stop)
+
+
+# The printed live count comes from `check-fleet-status.py --count`, which reads the real fleet (#2022).
+# `false` fails, so a test sees no real count and keeps the count of the worker rows it passes in.
+os.environ.setdefault('FLEET_WATCH_REAL_COUNT_COMMAND', 'false')

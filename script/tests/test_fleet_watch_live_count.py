@@ -1,8 +1,10 @@
 """Live count (#1781): a gone remote dispatch is not live, and a worker question nobody answered is raised."""
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 spec = importlib.util.spec_from_file_location('fleet_watch_live_count', Path(__file__).parent.parent / 'fleet-watch.py')
@@ -154,6 +156,53 @@ class WorkOrderSplit(unittest.TestCase):
         fw.unanswered_ask_notices(state, NOW, [ask('msg_q1', 'd2')], workers)
         line = fw.work_order_supply_line(config, NOW, workers, 5, waiting=fw.waiting_on_coordinator(state, workers))
         self.assertEqual(line, 'work order: 3 live (2 working, 1 waiting on coordinator), supply 5')
+
+
+class RealCount(unittest.TestCase):
+    """The printed count is check-fleet-status.py's real count; Orca's rows only back it up (#2022)."""
+
+    def setUp(self):
+        fw._REAL_COUNT_CACHE.clear()
+        self.addCleanup(fw._REAL_COUNT_CACHE.clear)
+
+    def with_command(self, command):
+        patcher = mock.patch.dict(os.environ, {'FLEET_WATCH_REAL_COUNT_COMMAND': command})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_real_count_reads_the_command(self):
+        self.with_command('echo 5')
+        self.assertEqual(fw.real_live_count(), 5)
+
+    def test_unreadable_command_gives_none(self):
+        for command in ('false', 'echo not-a-number', 'no-such-command-xyz'):
+            fw._REAL_COUNT_CACHE.clear()
+            self.with_command(command)
+            self.assertIsNone(fw.real_live_count(), command)
+
+    def test_supply_line_prints_the_real_count_not_the_orca_rows(self):
+        self.with_command('echo 1')
+        config = {'work_order': {'min_active': 3, 'target_workers': 8}}
+        workers = [live_worker('d1'), live_worker('d2'), live_worker('d3')]
+        state = {}
+        fw.unanswered_ask_notices(state, NOW, [ask('msg_q1', 'd2')], workers)
+        line = fw.work_order_supply_line(config, NOW, workers, 5, waiting=fw.waiting_on_coordinator(state, workers))
+        self.assertEqual(line, 'work order: 1 live (0 working, 1 waiting on coordinator), supply 5')
+
+    def test_supply_line_keeps_the_orca_count_when_the_real_count_is_unreadable(self):
+        self.with_command('false')
+        config = {'work_order': {'min_active': 3, 'target_workers': 8}}
+        workers = [live_worker('d1'), live_worker('d2')]
+        self.assertEqual(fw.work_order_supply_line(config, NOW, workers, 0),
+                         'work order: 2 live (2 working, 0 waiting on coordinator), supply 0')
+
+    def test_status_notice_and_waste_parts_print_the_real_count(self):
+        self.with_command('echo 3')
+        config = {'work_order': {'min_active': 3, 'target_workers': 8}}
+        workers = [live_worker('d%d' % n) for n in range(6)]
+        self.assertEqual(fw.pass_waste_parts(workers)[0], 'live=3')
+        with mock.patch.object(fw, 'work_order_keeps_target', return_value=True):
+            self.assertEqual(fw.work_order_status_notice(config, {}, NOW, workers, 1), 'work order: 3 of 8 live, started 1')
 
 
 if __name__ == '__main__':

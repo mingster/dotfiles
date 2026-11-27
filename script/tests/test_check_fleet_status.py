@@ -103,6 +103,28 @@ class CheckFleetStatus(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"{self.host}: UNREACHABLE", out)
 
+    def test_count_prints_only_the_really_active_workers(self):
+        f = Fleet({"local": [worker(1), worker(2), worker(3)]},
+                  {"term_1": term(1), "term_2": term(30), "term_3": term(1, agent=None)})
+        code, out = run_main(f, "--count")
+        self.assertEqual((code, out), (0, "1\n"))
+
+    def test_count_adds_every_host(self):
+        f = Fleet({"local": [worker(1)], "envB": [worker(2)]}, {"term_1": term(1), "term_2": term(1)}, envs=["envB"])
+        self.assertEqual(run_main(f, "--count"), (0, "2\n"))
+
+    def test_count_with_an_unreadable_host_exits_one_and_names_it(self):
+        f = Fleet({"local": [worker(1)], "envB": None}, {"term_1": term(1)}, envs=["envB"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = run_main(f, "--count")
+        self.assertEqual((code, out), (1, "1\n"))
+        self.assertIn("unreachable: envB", err.getvalue())
+
+    def test_count_ignores_a_failed_load_probe(self):
+        f = Fleet({"local": [worker(1)]}, {"term_1": term(1)}, sensor=f"{self.host} unreachable\n")
+        self.assertEqual(run_main(f, "--count"), (0, "1\n"))
+
     def test_help_prints_usage_and_what_is_checked_on_stdout_and_exits_zero(self):
         def no_orca(cmd, timeout=15):
             raise AssertionError(cmd)
@@ -113,7 +135,7 @@ class CheckFleetStatus(unittest.TestCase):
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = cfs.main([flag])
             self.assertEqual(code, 0, flag)
-            self.assertIn("Usage: check-fleet-status.py [--window-minutes N] [--json]", out.getvalue())
+            self.assertIn("Usage: check-fleet-status.py [--window-minutes N] [--json | --count]", out.getvalue())
             self.assertIn("each worker Orca reports", out.getvalue())
             self.assertEqual(err.getvalue(), "", flag)
 

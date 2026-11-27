@@ -2639,7 +2639,8 @@ def metrics_digest(log_lines, count=12):
 
 def pass_waste_parts(workers):
     """`live=N`, plus the dispatch ids that are start_unknown or a second live worker on one `#N|role` title."""
-    parts = ['live=%d' % active_worker_count(workers)]
+    real = real_live_count()
+    parts = ['live=%d' % (active_worker_count(workers) if real is None else real)]
     unknown, seen, dupes = [], set(), []
     for w in workers or []:
         if not isinstance(w, dict):
@@ -6260,9 +6261,13 @@ def work_order_supply_line(config, now, workers, supply, host=None, admission=No
     There is no fleet-wide count limit (#1757): starts follow each host's load and cap, so the line shows those, not N of T."""
     if work_order_settings(config, now) is None:
         return None
-    live = active_worker_count(workers)
+    real = real_live_count()
     asking = len({w.get('dispatchId') for w in workers or [] if isinstance(w, dict) and worker_row_is_live(w)} & set(waiting))
-    shown = worker_count.label(*worker_count_split(workers))
+    if real is None:
+        live = active_worker_count(workers)
+        shown = worker_count.label(*worker_count_split(workers))
+    else:
+        live, shown, asking = real, str(real), min(asking, real)
     line = 'work order: %s live (%d working, %d waiting on coordinator), supply %d' % (shown, live - asking, asking, supply)
     if host and isinstance(admission, dict):
         load = admission.get('load_per_core')
@@ -6596,7 +6601,8 @@ def work_order_status_notice(config, state, now, workers, started):
     if not started or not work_order_keeps_target(config, now):
         return None
     target = work_order_settings(config)[1]
-    live = active_worker_count(workers)
+    real = real_live_count()
+    live = active_worker_count(workers) if real is None else real
     if live >= target:
         return None
     try:
@@ -6615,6 +6621,31 @@ def worker_count_split(workers):
         worker_count.bucket(worker_row_is_live(w), worker_liveness_verdict(w))
         for w in workers or [] if isinstance(w, dict)
     )
+
+
+REAL_COUNT_TTL_SECONDS = 60
+_REAL_COUNT_CACHE = {}
+
+
+def real_live_count():
+    """Workers really working, from `check-fleet-status.py --count` (a live agent with a recent screen change), or None
+    when it cannot be read. Orca's own rows count a worker that sits idle or whose agent is gone (#2022), so every
+    printed count uses this one. Admission and caps keep reading Orca's rows. FLEET_WATCH_REAL_COUNT_COMMAND replaces the command."""
+    cached = _REAL_COUNT_CACHE.get('v')
+    if cached and time.monotonic() - cached[0] < REAL_COUNT_TTL_SECONDS:
+        return cached[1]
+    command = shlex.split(os.environ.get('FLEET_WATCH_REAL_COUNT_COMMAND') or '') or [
+        sys.executable, str(Path(__file__).with_name('check-fleet-status.py')), '--count']
+    value = None
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=110, check=False)
+        text = proc.stdout.strip() if isinstance(proc.stdout, str) else ''
+        if proc.returncode == 0 and text.isdigit():
+            value = int(text)
+    except (subprocess.SubprocessError, OSError):
+        pass
+    _REAL_COUNT_CACHE['v'] = (time.monotonic(), value)
+    return value
 
 
 def active_worker_count(workers):

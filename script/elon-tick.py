@@ -98,6 +98,7 @@ def gather(args, config):
     attempt('state', lambda: read_json(args.state))
     snap['fleet_watch'] = fleet_watch_status()
     snap['waiter'] = waiter_alive(args.run)
+    snap['real_live'] = real_live_count()
     attempt('watch', lambda: worker_watch(args.run))
     snap['mail'] = {}
     roots = config.get('repo_roots') or {}
@@ -190,6 +191,19 @@ def fleet_watch_status():
 def waiter_alive(run):
     pattern = os.environ.get('ELON_TICK_WAITER_PATTERN') or ('orchestration check --run %s.*--wait' % re.escape(run))
     return subprocess.run(['pgrep', '-f', pattern], capture_output=True, check=False).returncode == 0
+
+
+def real_live_count():
+    """Workers really working (check-fleet-status.py --count), or None when it cannot be read (#2022).
+    Orca's rows also count idle workers and gone agents, so W3 prints this number instead."""
+    command = shlex.split(os.environ.get('ELON_TICK_REAL_COUNT') or '') or [
+        sys.executable, str(HERE / 'check-fleet-status.py'), '--count']
+    try:
+        out = subprocess.run(command, capture_output=True, text=True, timeout=110, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = out.stdout.strip()
+    return int(text) if out.returncode == 0 and text.isdigit() else None
 
 
 def worker_watch(run):
@@ -605,9 +619,12 @@ def check_supply(snap):
     target = (snap['config'].get('work_order') or {}).get('target_workers')
     if isinstance(snap['workers'], Unreadable):
         return not_checked('W3', snap['workers'])
-    live = sum(1 for w in snap['workers'] if '_unreadable_host' not in w and worker_live(w))
+    listed = sum(1 for w in snap['workers'] if '_unreadable_host' not in w and worker_live(w))
+    real = snap.get('real_live')
+    live = listed if real is None else real
     if not isinstance(target, int) or live >= target:
         return []
+    note = '' if real is None or real == listed else ' (Orca lists %d)' % listed
     if isinstance(snap['tasks'], Unreadable):
         return not_checked('W3', snap['tasks'])
     try:
@@ -615,9 +632,9 @@ def check_supply(snap):
     except Unreadable as e:
         return not_checked('W3', e)
     if ready:
-        return ['[W3] %d of %d workers live and %d ready issue(s); check fleet-watch is starting them (%s)'
-                % (live, target, len(ready), next_issue_text(snap, ready))]
-    return ['[W3] %d of %d workers live and no ready-for-agent issue; start architect-pm supply' % (live, target)]
+        return ['[W3] %d of %d workers live%s and %d ready issue(s); check fleet-watch is starting them (%s)'
+                % (live, target, note, len(ready), next_issue_text(snap, ready))]
+    return ['[W3] %d of %d workers live%s and no ready-for-agent issue; start architect-pm supply' % (live, target, note)]
 
 
 def check_queues(snap):

@@ -1,0 +1,1 @@
+The live-worker count in the elon-tick W3 line and the fleet-watch work order line now comes from check-fleet-status.py --count (a live agent with recent activity), not Orca rows. New settle-orphan-task.sh settles a dispatched task whose dispatch record is gone on every server (#2022).

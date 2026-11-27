@@ -16,7 +16,10 @@ Hosts come from the same place fleet-workers.py uses: this machine plus
 memory come from the fleet load sensor worker-placement.py uses (FLEET_LOAD_SCRIPT, else
 ~/.claude/state/fleet-load.sh). Nothing here names a host.
 
-Usage: check-fleet-status.py [--window-minutes N] [--json]
+Usage: check-fleet-status.py [--window-minutes N] [--json | --count]
+--count prints one number, the workers really active on every reachable host (the count elon-tick and
+fleet-watch print). It exits 1 and names the hosts on stderr when a host's worker list cannot be read, so a caller
+never treats a partial number as the whole fleet.
 Exit 0 when report and reality match, 1 on any mismatch or unreachable host, 2 on bad usage.
 """
 import json
@@ -28,7 +31,7 @@ import sys
 import time
 
 DEFAULT_WINDOW_MINUTES = 10
-USAGE = "Usage: check-fleet-status.py [--window-minutes N] [--json]"
+USAGE = "Usage: check-fleet-status.py [--window-minutes N] [--json | --count]"
 HELP = (USAGE + "\nChecks every fleet host: each worker Orca reports as live and in progress must be "
         "really active (a live agent with a recent screen change or a running tool). Exits 1 on any "
         "mismatch or unreachable host.")
@@ -112,7 +115,7 @@ def judge(worker, terminal, now_ms, window_ms):
 
 
 def check_host(label, env, sensor, now_ms, window_ms, local=False):
-    host = {"host": label, "reachable": True, "load": None, "cores": None, "memfree": None, "free_pct": None, "reported": 0, "real": 0, "mismatches": []}
+    host = {"host": label, "reachable": True, "load": None, "cores": None, "memfree": None, "free_pct": None, "reported": 0, "real": 0, "listed": False, "mismatches": []}
     if label in sensor:
         row = sensor[label]
         if row is None:
@@ -125,6 +128,7 @@ def check_host(label, env, sensor, now_ms, window_ms, local=False):
     if listed is None or "workers" not in listed:
         host["reachable"] = False
         return host
+    host["listed"] = True
     for w in listed["workers"]:
         if w.get("host") != "local" or w.get("liveness") != "live" or w.get("outcome") != "in_progress":
             continue
@@ -160,6 +164,7 @@ def host_line(h):
 def main(argv):
     window = DEFAULT_WINDOW_MINUTES
     as_json = False
+    count_only = False
     args = list(argv)
     if any(a in ("-h", "--help") for a in args):
         print(HELP)
@@ -168,6 +173,8 @@ def main(argv):
         a = args.pop(0)
         if a == "--json":
             as_json = True
+        elif a == "--count":
+            count_only = True
         elif a == "--window-minutes" and args and args[0].isdigit():
             window = int(args.pop(0))
         else:
@@ -176,6 +183,14 @@ def main(argv):
     now_ms = time.time() * 1000
     sensor = sensor_rows()
     hosts = [check_host(label, env, sensor, now_ms, window * 60000, local=not env) for label, env in fleet_hosts()]
+    if count_only:
+        # The count needs only a readable worker list; a failed load probe does not make it partial.
+        down = [h["host"] for h in hosts if not h["listed"]]
+        print(sum(h["real"] for h in hosts if h["listed"]))
+        if down:
+            print("unreachable: " + ", ".join(down), file=sys.stderr)
+            return 1
+        return 0
     if as_json:
         print(json.dumps(hosts, indent=2))
     else:
