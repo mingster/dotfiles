@@ -7451,7 +7451,7 @@ def babysit_settings(config):
     return startup, run_id, from_terminal, roots
 
 
-START_FINISH_BY = 140.0  # a start may begin only if it can end before this many seconds into the pass (#1820)
+START_FINISH_BY = 140.0  # a start may begin only if it can end before this many seconds into the pass (#1820); not the issue start (#2009)
 START_COST_AGY = 105.0  # an antigravity start that keeps worker-startup's 60 s sign in screen wait
 START_COST_OTHER = 45.0  # any other start
 START_TAIL = 25.0  # work after the last start (audit, issue scan, deliver, save, process exit) took 10 to 22 s in the #1820 live check
@@ -10578,7 +10578,9 @@ def _issue_scan_pass(
                 count_refused('usage_gate')
                 log_bits.append('issue_scan_gate=%s' % gate_reason)
                 break
-        if not start_allowed(start_cost(command)):
+        # PASS_HARD_END, not START_FINISH_BY: the notice, PR and scan steps before this use about 110 s, so no start
+        # fit 140 s and the fleet filled at 0 or 1 per pass (#2009). Supply made the same change (#1889).
+        if not start_fits_pass(start_cost(command)):
             log_bits.append('issue_start_budget=%d' % row['number'])
             continue
         attempts += 1

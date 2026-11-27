@@ -1,0 +1,1 @@
+- fleet-watch: an issue start now uses the pass hard end (250 s, with the tail) instead of the 140 s start line, so a pass whose notice, PR and scan steps take about 110 s still starts ready issues while seats are free (#2009). The 280 s precheck timeout still holds.

@@ -64,9 +64,10 @@ def triage_run(issues, backlog, state, order=None, supply_recent=True, starts_ou
 
 # Each scenario runs one start site with a start stub and returns (starts, log bits, state before, state after).
 def issue_start(held):
+    # The issue start holds on the pass end (#2009), not the start line.
     starts, state = [], {'issue_scan_backlog_sweep_at': TRIAGE_NOW, 'work_order_supply_at': TRIAGE_NOW}
     before = copy.deepcopy(state)
-    with spent() if held else patch.object(fw, 'start_allowed', return_value=True):
+    with patch.object(fw, 'start_fits_pass', return_value=not held):
         _t, bits, state = triage_run([row(1)], backlog=0, state=state, starts_out=starts)
     return starts, bits, before, state
 
@@ -274,6 +275,7 @@ class StartBudget(unittest.TestCase):
             with self.subTest(scenario=scenario.__name__):
                 allowed = iter([True])
                 with patch.object(fw, 'start_allowed', side_effect=lambda cost: next(allowed, True)), \
+                        patch.object(fw, 'start_fits_pass', return_value=True), \
                         patch.object(fw, 'pass_deadline_reached', return_value=False), \
                         patch.object(fw, '_PASS_BEGAN', 1000.0), patch.object(fw.time, 'time', return_value=1000.0 + 900.0):
                     fw.begin_pass_counts()
@@ -293,7 +295,7 @@ class StartBudget(unittest.TestCase):
 
     def test_a_held_issue_start_does_not_count_toward_the_deferral_escalation(self):  # case 11
         state = {'issue_scan_backlog_sweep_at': TRIAGE_NOW}
-        with spent():
+        with patch.object(fw, 'start_fits_pass', return_value=False):
             for _ in range(4):
                 fw.begin_pass_counts()
                 _t, bits, state = triage_run([row(1)], backlog=0, state=state)
