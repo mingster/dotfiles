@@ -3731,7 +3731,9 @@ def release_worker(rpc_call, row):
         return 'kept:no_dispatch'
     host = row.get('_host') or ''
     wheres = ((_env_args(host),) if host else ()) + ((),)
-    handle = resolve_worker_terminal(rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
+    # A row marked `_terminal_gone` has no terminal on its host: worker-show would only name the dead handle.
+    handle = '' if row.get('_terminal_gone') else resolve_worker_terminal(
+        rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
     for where in wheres:
         try:
             rpc_call('orchestration', 'worker-stop', '--dispatch', did, *where)
@@ -4213,6 +4215,7 @@ def release_worker_by_fragment(fragment, config, rpc_call, hosts, allow_live=Fal
             handle = ''
             row.pop('terminal', None)
             row.pop('agentTerminalHandle', None)
+            row['_terminal_gone'] = True
         row['_host_terminal'] = handle
     why = close_guard(handle, did)
     if why and why != 'no_handle':
