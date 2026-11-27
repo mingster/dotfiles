@@ -6047,7 +6047,7 @@ def issue_scan_backlog_sweep_roles_remaining(state):
 
 
 def issue_scan_try_backlog_sweep(
-    config, state, now, repos, ready_queue_count, host, admission, extra_starts,
+    config, state, now, repos, ready_queue_count, host, admission, extra_starts, workers,
     start_worker, persist_state,
 ):
     log_bits = []
@@ -6103,6 +6103,10 @@ def issue_scan_try_backlog_sweep(
         if command is None:
             log_bits.append('backlog_sweep_skip=%s' % role)
             continue
+        if at_max_workers(config, workers):
+            # Each role is a live worker: the ceiling holds for the next one too (#2016). It stays due for a later pass.
+            log_bits.append('backlog_sweep_max_workers')
+            break
         if not start_allowed(start_cost(command)):
             log_bits.append('backlog_sweep_budget=%s' % role)
             break
@@ -10439,7 +10443,7 @@ def _issue_scan_pass(
         extra_starts += triage_used
         queue_count = None if list_failed else ready_queue_count
         sweep_bits = ['backlog_sweep_max_workers'] if at_max_workers(config, workers) else issue_scan_try_backlog_sweep(
-            config, state, now, repos, queue_count, host, admission, extra_starts,
+            config, state, now, repos, queue_count, host, admission, extra_starts, workers,
             start_worker, persist_state,
         )
         log_bits.extend(sweep_bits)

@@ -367,6 +367,48 @@ def live_rows(n):
              'projection': {'liveness': {'verdict': 'unverifiable'}, 'host': {'id': 'local'}}} for i in range(n)]
 
 
+class BacklogSweepMaxWorkers(unittest.TestCase):
+    """#2016: the sweep starts two roles, so the work_order.max_workers ceiling is checked before each one."""
+    CONFIG = {'issue_scan': {'run': 'run_x', 'agent': 'claude', 'model': 'm1', 'repo_roots': {'o/r': '/work/app'}}}
+
+    def setUp(self):
+        fw.end_pass_clock()
+        self.config = copy.deepcopy(self.CONFIG)
+        self.config['work_order'] = {'max_workers': 3}
+
+    def sweep(self, workers, state):
+        starts = []
+        fw.begin_pass_counts()
+        with patch.object(fw, '_write_issue_scan_spec', return_value='/tmp/spec.md'), \
+                patch.object(fw, '_issue_scan_startup_script', return_value='/work/startup.sh'):
+            bits = fw.issue_scan_try_backlog_sweep(
+                self.config, state, TRIAGE_NOW, ['o/r'], 0, 'local', {'occupied': 0}, 0, workers,
+                lambda cmd: (starts.append(cmd), 0)[1], None,
+            )
+        return starts, bits
+
+    def test_one_seat_left_starts_exactly_one_role(self):
+        state = {}
+        starts, bits = self.sweep(live_rows(2), state)
+        self.assertEqual(len(starts), 1, bits)
+        self.assertEqual(state.get('issue_scan_backlog_sweep_roles'), ['architect-pm'])
+
+    def test_held_role_starts_on_a_later_pass_with_a_free_seat(self):
+        state = {}
+        self.sweep(live_rows(2), state)
+        starts, bits = self.sweep(live_rows(1), state)
+        self.assertEqual(len(starts), 1, bits)
+        self.assertIn('--title', starts[0])
+        self.assertIn('#0|sales-marketing', starts[0])
+
+    def test_at_max_workers_starts_nothing(self):
+        state = {}
+        starts, bits = self.sweep(live_rows(3), state)
+        self.assertEqual(starts, [])
+        self.assertIn('backlog_sweep_max_workers', bits)
+        self.assertNotIn('issue_scan_backlog_sweep_roles', state)
+
+
 class ForcedSupply(unittest.TestCase):
     def tearDown(self):
         fw.end_pass_clock()

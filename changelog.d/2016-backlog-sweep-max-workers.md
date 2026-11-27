@@ -1,0 +1,1 @@
+- fleet-watch: the backlog sweep checks work_order.max_workers before each role it starts, so it can no longer start one worker above the ceiling. A held role stays due for a later pass.
