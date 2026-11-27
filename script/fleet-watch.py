@@ -3731,7 +3731,8 @@ def release_worker(rpc_call, row):
         return 'kept:no_dispatch'
     host = row.get('_host') or ''
     wheres = ((_env_args(host),) if host else ()) + ((),)
-    handle = resolve_worker_terminal(rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
+    handle = '' if row.get('_terminal_gone') else resolve_worker_terminal(
+        rpc_call, did, host, row.get('_host_terminal') or worker_terminal_handle(row))
     for where in wheres:
         try:
             rpc_call('orchestration', 'worker-stop', '--dispatch', did, *where)
@@ -4216,8 +4217,9 @@ def release_worker_by_fragment(fragment, config, rpc_call, hosts, allow_live=Fal
     if row is not None and worker_row_is_live(row) and not allow_live:
         return 1, 'refused: %s is still live; pass --live to stop it; nothing closed' % did
     if row is not None and handle not in {t['handle'] for e, t in terminals if e == env}:
-        # The terminal is already gone from the host's list: release without closing it (#1999).
-        row.update(_host_terminal='', terminal='', agentTerminalHandle='')
+        # The terminal is already gone from the host's list: release without closing it (#1999). The flag stops
+        # release_worker from asking worker-show again, which can still name the gone handle.
+        row.update(_host_terminal='', _terminal_gone=True)
         handle = ''
     result = release_worker(rpc_call, row) if row is not None else close_worker_terminal(rpc_call, handle, env)
     if result == 'kept:no_handle' and row is not None:
