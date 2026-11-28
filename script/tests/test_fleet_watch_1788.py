@@ -4,8 +4,13 @@ The blocker is read from the issue body (a `Blocked by` line, or items under a `
 looked up on every pass, and the issue is skipped for that pass when its state cannot be read.
 """
 import functools
+import json
+import os
 import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from test_fleet_watch_scan import REPO, OTHER_REPO, NOW, fw, issue
@@ -242,6 +247,39 @@ class DefaultLookupReadsPullRequests(unittest.TestCase):
         _, log = self.run_default([issue(10079, ['ready-for-agent'], blocked_body('Blocked by #10077'))], {})
         self.assertNotIn('issue_start=10079', log)
         self.assertIn('issue_blocker_unknown=10079:by=#10077', log)
+
+
+class DotfilesUnblockedReadsPullRequests(unittest.TestCase):
+    """#2027 follow-up: script/dotfiles-unblocked.py (worker-startup) reads a Blocked by ref through fetch_ref_state, so a PR number resolves."""
+
+    SCRIPT = Path(__file__).parent.parent / 'dotfiles-unblocked.py'
+    FLEET_WATCH = Path(__file__).parent.parent / 'fleet-watch.py'
+
+    def run_unblocked(self, body, states):
+        """Run the script with a fake `gh` on PATH. states maps a number to OPEN or CLOSED; any other number fails like gh does."""
+        with tempfile.TemporaryDirectory() as bin_dir:
+            gh = Path(bin_dir) / 'gh'
+            # The REST route answers a PR too. `gh issue view` (fetch_issue_state) refuses a PR, so every other form fails.
+            lines = ['#!/bin/sh', 'if [ "$1" = api ]; then', '  case "$2" in']
+            lines += ['    repos/%s/issues/%d) echo %s; exit 0 ;;' % (REPO, n, s) for n, s in states.items()]
+            lines += ['  esac', 'fi', 'exit 1', '']
+            gh.write_text('\n'.join(lines))
+            gh.chmod(0o755)
+            env = dict(os.environ, PATH=bin_dir + os.pathsep + os.environ.get('PATH', ''))
+            issues = json.dumps([issue(10079, ['ready-for-agent'], body)])
+            proc = subprocess.run([sys.executable, str(self.SCRIPT), str(self.FLEET_WATCH), REPO, issues],
+                                  capture_output=True, text=True, env=env, timeout=60, check=False)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return [row['number'] for row in json.loads(proc.stdout)]
+
+    def test_merged_pr_under_blocked_by_keeps_the_issue(self):
+        self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'CLOSED'}), [10079])
+
+    def test_open_pr_under_blocked_by_drops_the_issue(self):
+        self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'OPEN'}), [])
+
+    def test_unreadable_reference_keeps_the_issue_so_the_start_refuses(self):
+        self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {}), [10079])
 
 
 if __name__ == '__main__':
