@@ -1,0 +1,1 @@
+pr-review: a head-checks.conf fetch from GitHub that fails with anything other than HTTP 404 now fails the review closed with a "cannot read ... to check the Perf: rule" message, instead of silently turning the Perf: rule off (#2094).
