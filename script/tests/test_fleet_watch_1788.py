@@ -283,8 +283,8 @@ class DotfilesUnblockedReadsPullRequests(unittest.TestCase):
     def test_open_pr_under_blocked_by_drops_the_issue(self):
         self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'OPEN'}), [])
 
-    def test_unreadable_reference_keeps_the_issue_so_the_start_refuses(self):
-        self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {}), [10079])
+    def test_unreadable_reference_drops_the_issue(self):
+        self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {}), [])
 
 
 if __name__ == '__main__':

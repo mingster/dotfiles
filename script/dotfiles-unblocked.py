@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Drop issues whose body names an open `Blocked by #N` (same check fleet-watch uses, #1823).
-
-An unreadable reference is kept, so worker-startup refuses the start (fail closed).
+"""Drop issues whose body names an open or unreadable `Blocked by #N` (same check fleet-watch uses, #1823).
 
 Usage: dotfiles-unblocked.py <fleet-watch.py> <repo> <issues-json>
 Prints the issues that are not blocked as JSON.
@@ -21,7 +19,7 @@ def main(argv):
     keep = []
     for issue in json.loads(raw):
         open_refs, unknown = fw.issue_open_blockers(issue, repo, fw.fetch_ref_state, cache)
-        if not open_refs:
+        if not open_refs and not unknown:
             keep.append(issue)
     print(json.dumps(keep))
 
