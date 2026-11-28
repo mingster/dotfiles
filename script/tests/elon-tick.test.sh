@@ -78,7 +78,10 @@ EOF
 
 # heavy_state <at> <hosts json> <unread json> [open_asks json]: the fleet-watch state with its heavy job report (#2068).
 heavy_state() {
-  printf '{"open_asks":%s,"heavy_jobs":{"at":%s,"hosts":%s,"unread":%s}}' "${4:-{\}}" "$1" "$2" "$3" \
+  # macOS bash 3.2 keeps the backslash in "${4:-{\}}", so the default is set here instead.
+  local asks=${4:-}
+  [[ -n $asks ]] || asks='{}'
+  printf '{"open_asks":%s,"heavy_jobs":{"at":%s,"hosts":%s,"unread":%s}}' "$asks" "$1" "$2" "$3" \
     > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
 }
 
@@ -361,13 +364,13 @@ expect 'H1 stale fleet-watch' '[H1] NOT CHECKED: fleet-watch finished no recent 
 # The mistakes table: both copies identical, every row names a check id that elon-tick prints and this file tests.
 out=$(diff "$root/docs/agents/elon-mistakes.md" "$root/templates/agent-team/docs/agents/elon-mistakes.md" 2>&1) \
   || fail 'docs and template elon-mistakes.md differ'
-ids=$(grep -oE '^\| [MW][0-9]+ \|' "$root/docs/agents/elon-mistakes.md" | tr -d '| ')
+ids=$(grep -oE '^\| [MWH][0-9]+ \|' "$root/docs/agents/elon-mistakes.md" | tr -d '| ')
 [[ -n $ids ]] || fail 'elon-mistakes.md has no check rows'
 for id in $ids; do
   grep -q "'\[$id\]" "$root/script/elon-tick.py" || fail "row $id has no check in elon-tick.py"
   grep -qE "[\"']\[$id\]" "$0" || fail "row $id has no case in this test"
 done
-for id in $(grep -oE "'\[[MW][0-9]+\]" "$root/script/elon-tick.py" | tr -d "'[]" | sort -u); do
+for id in $(grep -oE "'\[[MWH][0-9]+\]" "$root/script/elon-tick.py" | tr -d "'[]" | sort -u); do
   grep -q "^| $id |" "$root/docs/agents/elon-mistakes.md" || fail "check $id has no row in elon-mistakes.md"
 done
 tests=$((tests + 1))

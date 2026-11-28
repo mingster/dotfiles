@@ -21,5 +21,6 @@ Each row is a mistake the coordinator made in a real Run, and the check in `~/do
 | W3 | Fewer live workers than `work_order.target_workers`, or more live workers than `work_order.max_workers`. | Under target: check that fleet-watch is starting the ready issues (the line names the next by its queue key), or start architect-pm supply when none are ready. Over the ceiling: find the hand start in `force-over-cap.log` and start nothing more until the count drops. |
 | W4 | `needs-triage` and `ready-for-human` issues waited unseen. | Triage them, or batch them to the owner. |
 | W5 | A worker question or escalation went unanswered for 15 minutes. | Answer it. |
+| H1 | Heavy jobs (builds, full tsc, Playwright or regression runs, iOS test runs, emulators) and orphan simulators, emulators or dev servers ran with no one watching them or owning them. | `[H1] heavy job`: watch it until it ends, and stop it (worker-stop or kill its pid) only if it is stuck. `[H1] orphan`: clean it up on that host with the command the line names. |
 
 GitHub budget: one `gh pr list` and one `gh issue list` per repo per run. Repos come from `pr_watch.repos` in the fleet-watch config; the mailbox from each repo's `repo_roots` checkout.
