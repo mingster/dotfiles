@@ -6,6 +6,9 @@
 # Prints each overlap and exits 1 on any. Exit 0: none. Exit 2: usage.
 # Also warns (stderr, exit unchanged) when the Allowed files mix owner-reviewed files with code (#1748): file two issues.
 # An entry that ends in / covers every file under it. Bundle overlapping work into one issue.
+# Shared append-only paths (#2050): the config key overlap_shared_paths (a list of globs, in $FLEET_WATCH_CONFIG or
+# ~/.config/fleet-watch/config.json) names files every feature appends to, such as locale files. An overlap on one of
+# them is ignored and printed. A glob's * also matches across /, so **/translation.json does not match a root-level file.
 set -euo pipefail
 usage() { sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
@@ -31,6 +34,25 @@ allowed_files() { # reads a body on stdin
     sec { print }
   ' | tr '`",'"'"'' '    ' | tr -s '[:space:]' '\n' | sed -e 's/[.;:)]*$//' -e 's|^\./||' \
     | grep -E '/|\.[A-Za-z0-9]+$' | awk '!seen[$0]++' || true
+}
+
+# Shared append-only globs from the fleet-watch config (#2050). No file or no key, or a bad file, means none.
+shared=()
+cfg=${FLEET_WATCH_CONFIG:-$HOME/.config/fleet-watch/config.json}
+if [ -f "$cfg" ]; then
+  while IFS= read -r g; do [ -n "$g" ] && shared+=("$g"); done < <(jq -r '.overlap_shared_paths[]? // empty' "$cfg" 2>/dev/null || true)
+fi
+is_shared() { # <path>: matches a configured shared append-only glob
+  local g
+  for g in ${shared[@]+"${shared[@]}"}; do
+    # shellcheck disable=SC2254
+    case "$1" in $g) return 0 ;; esac
+  done
+  return 1
+}
+ignored=""
+ignore() { # <path> <what>: prints a shared path once, then the overlap is not counted
+  case " $ignored " in *" $1 "*) ;; *) ignored+=" $1"; echo "ignored shared path: $1 (shared append-only, $2)" ;; esac
 }
 
 covers() { # <a> <b>: same path, or one is a directory entry above the other
@@ -87,7 +109,11 @@ while IFS= read -r num; do
     [ -n "$a" ] || continue
     while IFS= read -r b; do
       [ -n "$b" ] || continue
-      if covers "$a" "$b"; then report "$a" "the Allowed files of in-progress issue #$num"; break; fi
+      if covers "$a" "$b"; then
+        if is_shared "$a"; then ignore "$a" "in-progress issue #$num"; continue; fi
+        if is_shared "$b"; then ignore "$b" "in-progress issue #$num"; continue; fi
+        report "$a" "the Allowed files of in-progress issue #$num"; break
+      fi
     done <<<"$theirs"
   done <<<"$mine"
 done < <(jq -r '.[].number' <<<"$inflight")
@@ -102,7 +128,11 @@ while IFS= read -r num; do
     [ -n "$a" ] || continue
     while IFS= read -r b; do
       [ -n "$b" ] || continue
-      if covers "$a" "$b"; then report "$b" "open PR #$num (it touches $b; allowed here: $a)"; break; fi
+      if covers "$a" "$b"; then
+        if is_shared "$a"; then ignore "$a" "open PR #$num"; continue; fi
+        if is_shared "$b"; then ignore "$b" "open PR #$num"; continue; fi
+        report "$b" "open PR #$num (it touches $b; allowed here: $a)"; break
+      fi
     done <<<"$files"
   done <<<"$mine"
 done < <(jq -r '.[].number' <<<"$prs")

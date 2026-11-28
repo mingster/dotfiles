@@ -107,6 +107,36 @@ printf 'x\n\n## Allowed files\n- AGENTS.md\n- docs/agents/\n' >"$FAKE/issue-34.m
 run 34
 if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "a directory entry is not code"; else bad "dir entry (rc=$rc, $out)"; fi
 
+# shared append-only paths from the config key overlap_shared_paths (#2050)
+export FLEET_WATCH_CONFIG="$TMP/fleet-watch.json"
+echo '{"overlap_shared_paths": ["**/translation.json"]}' >"$FLEET_WATCH_CONFIG"
+echo '[]' >"$FAKE/inflight.json"; echo '[]' >"$FAKE/prs.json"
+printf 'x\n\n## Allowed files\n- locales/en/translation.json\n' >"$FAKE/issue-40.md"
+jq -n '[{number: 41, body: "## Allowed files\n- locales/en/translation.json\n"}]' >"$FAKE/inflight.json"
+run 40
+if [ "$rc" -eq 0 ] && grep -qF "ignored shared path: locales/en/translation.json" <<<"$out"; then ok "a shared-path-only overlap with an in-progress issue is allowed and named"; else bad "shared in-flight (rc=$rc, $out)"; fi
+
+echo '[]' >"$FAKE/inflight.json"
+jq -n '[{number: 42, body: "x", files: [{path: "locales/en/translation.json"}]}]' >"$FAKE/prs.json"
+run 40
+if [ "$rc" -eq 0 ] && grep -qF "ignored shared path: locales/en/translation.json" <<<"$out"; then ok "a shared-path-only overlap with an open PR is allowed and named"; else bad "shared PR (rc=$rc, $out)"; fi
+
+printf 'x\n\n## Allowed files\n- locales/en/translation.json\n- script/alpha.sh\n' >"$FAKE/issue-43.md"
+jq -n '[{number: 44, body: "x", files: [{path: "locales/en/translation.json"}, {path: "script/alpha.sh"}]}]' >"$FAKE/prs.json"
+run 43
+if [ "$rc" -eq 1 ] && grep -qF "overlap: script/alpha.sh" <<<"$out" && grep -qF "ignored shared path: locales/en/translation.json" <<<"$out"; then ok "an overlap on a file that is not shared is still refused"; else bad "non-shared still refused (rc=$rc, $out)"; fi
+
+printf 'x\n\n## Allowed files\n- locales/\n' >"$FAKE/issue-45.md"
+jq -n '[{number: 46, body: "x", files: [{path: "locales/en/translation.json"}, {path: "locales/en/other.json"}]}]' >"$FAKE/prs.json"
+run 45
+if [ "$rc" -eq 1 ] && grep -qF "overlap: locales/en/other.json" <<<"$out"; then ok "a shared file does not stop the check on a later file under the same directory entry"; else bad "dir after shared (rc=$rc, $out)"; fi
+
+echo '{"overlap_shared_paths": ["**/translation.json"]' >"$FLEET_WATCH_CONFIG"
+printf 'x\n\n## Allowed files\n- locales/en/translation.json\n' >"$FAKE/issue-47.md"
+run 47
+[ "$rc" -eq 1 ] && ok "a bad config file ignores no path" || bad "bad config (rc=$rc, $out)"
+unset FLEET_WATCH_CONFIG
+
 run
 [ "$rc" -eq 2 ] && ok "no arguments is a usage error" || bad "usage (rc=$rc)"
 
