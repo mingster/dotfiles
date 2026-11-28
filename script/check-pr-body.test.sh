@@ -100,6 +100,16 @@ if [ "$rc" -eq 1 ] && grep -qF "Readers:" <<<"$out"; then ok "no --diff: the bra
 out=$(cd "$TMP/repo" && bash "$SCRIPT" "$TMP/readers.md" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "no --diff: a Readers: section passes the branch diff" || bad "git default Readers (rc=$rc, $out)"
 
+# #2065: a "# perf-paths:" line in the checkout's head-checks.conf asks for a Perf: line.
+mkdir -p "$TMP/repo/.agents"
+echo '# perf-paths: web/src/' >"$TMP/repo/.agents/head-checks.conf"
+printf 'diff --git a/web/src/a.ts b/web/src/a.ts\n+x\n' >"$TMP/web.diff"
+out=$(cd "$TMP/repo" && bash "$SCRIPT" --diff "$TMP/web.diff" "$TMP/good.md" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && grep -qF "because the diff touches web/src/a.ts" <<<"$out"; then ok "a perf path without Perf: is refused"; else bad "perf refused (rc=$rc, $out)"; fi
+{ cat "$TMP/good.md"; printf '\nPerf: n/a: no data reads changed\n'; } >"$TMP/perf.md"
+out=$(cd "$TMP/repo" && bash "$SCRIPT" --diff "$TMP/web.diff" "$TMP/perf.md" 2>&1); rc=$?
+[ "$rc" -eq 0 ] && ok "a Perf: line passes a perf path" || bad "perf pass (rc=$rc, $out)"
+
 run "$TMP/missing.md"
 [ "$rc" -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (rc=$rc)"
 run
