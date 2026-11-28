@@ -73,16 +73,8 @@ fi
 # Owner-reviewed paths come from the ship.sh path rules, so the two cannot drift.
 # shellcheck source=lib/protected-paths.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/protected-paths.sh"
-# Also the prefixes the commit gate protects (PROTECTED_PATHS in guard-bash.py). A directory entry that
-# is not under one of them is skipped: it names no single file, so it is neither owner-reviewed nor code.
-owner_prefixes=(.claude/agents/ .claude/model-routing.md docs/agents/issue-tracker.md docs/agents/triage-labels.md
-  docs/agents/domain.md docs/agents/team-facts.md docs/agents/deploy-facts.md templates/agent-team/docs/agents/
-  templates/agent-team/.claude/agents/)
-owner_path() { # <path>
-  local p
-  owner_only_path "$1" || protected_path "$1" && return 0
-  for p in "${owner_prefixes[@]}"; do case "$1" in "$p"*) return 0 ;; esac; done
-  return 1
+owner_path() { # <path>: hooks, settings, rules, protected-paths.sh and docs/intent/ (owner decision 2026-11-28, #2061)
+  owner_only_path "$1" || protected_path "$1"
 }
 owner_files="" code_files=""
 while IFS= read -r a; do
