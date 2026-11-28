@@ -2244,6 +2244,26 @@ REAP_ORPHAN_SCRIPT = Path(__file__).with_name('reap-orphan-tests.sh')
 REAP_ORPHAN_REMOTE = 'bash "$HOME/dotfiles/script/reap-orphan-tests.sh" || echo "reap-orphan-tests failed"'
 
 
+PROBE_END_LINE = 'PROBE-END'
+PROBE_POLL_SECONDS = 2
+PROBE_DEADLINE_SECONDS = 60
+
+
+def _probe_output_until_end(rpc_call, host, handle):
+    """Poll the probe terminal until its end line shows up, then return the read (#2078).
+
+    A remote terminal made with --command keeps its shell open after the command ends, so its status stays
+    `running` and `terminal wait --for exit` never returns (and rpc() caps that wait at 15 s, which raised and
+    marked the host unread). The probe therefore prints PROBE_END_LINE last, and this polls the output for it."""
+    deadline = time.monotonic() + PROBE_DEADLINE_SECONDS
+    while True:
+        read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
+        tail = ((read or {}).get('terminal') or {}).get('tail') or []
+        if any(str(line).strip() == PROBE_END_LINE for line in tail) or time.monotonic() >= deadline:
+            return read
+        time.sleep(PROBE_POLL_SECONDS)
+
+
 def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
     """Run reap-orphan-tests.sh (or another probe command) on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
     worktrees = (rpc_call('worktree', 'list', '--environment', host) or {}).get('worktrees') or []
@@ -2252,13 +2272,12 @@ def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
     if not rows:
         return []
     created = rpc_call('terminal', 'create', '--environment', host, '--worktree', 'path:%s' % rows[0]['path'],
-                       '--command', command)
+                       '--command', '%s; echo %s' % (command, PROBE_END_LINE))
     handle = ((created or {}).get('terminal') or {}).get('handle')
     if not handle:
         return []
     try:
-        rpc_call('terminal', 'wait', '--environment', host, '--terminal', handle, '--for', 'exit', '--timeout-ms', '60000')
-        read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
+        read = _probe_output_until_end(rpc_call, host, handle)
     finally:
         close_worker_terminal(rpc_call, handle, host)
     return [str(line) for line in ((read or {}).get('terminal') or {}).get('tail') or []]

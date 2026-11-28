@@ -907,11 +907,11 @@ class SimStall(unittest.TestCase):
                 return {'terminal': {'tail': tail}} if args[:2] == ('terminal', 'read') else {}
             return call
 
-        rows = fw.sim_stall_processes(rpc([record[:30], record[30:], 'SIM-END']), 'env-b')
+        rows = fw.sim_stall_processes(rpc([record[:30], record[30:], 'SIM-END', fw.PROBE_END_LINE]), 'env-b')
         self.assertEqual([(r['pid'], r['cwd']) for r in rows], [(4242, '/work/ios')])
         self.assertIn(('terminal', 'close'), calls)
         # No end marker (an old checkout, a cut screen) is unread, not "no processes".
-        self.assertIsNone(fw.sim_stall_processes(rpc(['bash: no such file']), 'env-b'))
+        self.assertIsNone(fw.sim_stall_processes(rpc(['bash: no such file', fw.PROBE_END_LINE]), 'env-b'))
 
         def broken(*_args):
             raise RuntimeError('host gone')
