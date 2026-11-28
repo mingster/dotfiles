@@ -5904,6 +5904,42 @@ def issue_has_live_dispatch(workers, number):
                for w in workers or [])
 
 
+def issue_brief_refs(row):
+    """Same repo issue numbers on the Issues or Refs lines of the issue's brief: worker-startup holds every one of them (#1839)."""
+    lines = ' '.join(_SPEC_REFS_LINE_RE.findall(issue_scan_brief_text(row)))
+    return {int(n) for n in re.findall(r'(?<![\w/.-])#(\d+)', lines)}
+
+
+def issue_live_ref(workers, row):
+    """The issue number a live worker holds for this start (its own, or one its brief bundles), else None (#2062)."""
+    for number in [row['number']] + sorted(issue_brief_refs(row) - {row['number']}):
+        if issue_has_live_dispatch(workers, number):
+            return number
+    return None
+
+
+OVERLAP_HOLD_PASSES = 6  # an overlap refusal is not retried for this many passes unless the issue or the open PRs change (#2062)
+
+
+def overlap_fingerprint(row, pr_rows):
+    """Brief text plus the open PR heads: the two things check-issue-overlap.sh reads (#2062)."""
+    prs = sorted('%s@%s' % (p.get('number'), p.get('headRefOid') or '') for p in pr_rows or [] if isinstance(p, dict))
+    return hashlib.sha256((issue_scan_brief_text(row) + '\0' + ','.join(prs)).encode('utf-8')).hexdigest()
+
+
+def overlap_hold(state, repo, row, pr_rows):
+    """True while an overlap refusal still stands: same fingerprint and fewer than OVERLAP_HOLD_PASSES passes (#2062)."""
+    book = state.get('issue_scan_overlap', {}).get(repo, {})
+    entry = book.get(str(row['number']))
+    if not entry:
+        return False
+    if entry.get('fp') != overlap_fingerprint(row, pr_rows) or entry.get('passes', 0) >= OVERLAP_HOLD_PASSES:
+        book.pop(str(row['number']), None)
+        return False
+    entry['passes'] = entry.get('passes', 0) + 1
+    return True
+
+
 def build_issue_start_command(config, repo, issue_row, placement=None, route=None):
     """placement is (host, repo_id) to start on a remote host instead of the local checkout.
 
@@ -10370,8 +10406,9 @@ def _issue_scan_pass(
             continue
         ready_queue_count += len(issues)
         for row in issues:
-            if issue_has_live_dispatch(workers, row['number']):
-                log_bits.append('issue_live=%d' % row['number'])
+            live_ref = issue_live_ref(workers, row)
+            if live_ref is not None:
+                log_bits.append('issue_live=%d' % row['number'] + ('' if live_ref == row['number'] else ':ref=%d' % live_ref))
                 continue
             if not issue_scan_eligible(row):
                 continue
@@ -10403,6 +10440,10 @@ def _issue_scan_pass(
             updated = row.get('updatedAt') or ''
             if park_is_active(state, park_id('issue', repo, row['number'], updated), config):
                 log_bits.append('issue_parked=%d' % row['number'])
+                continue
+            if overlap_hold(state, repo, row, listed[repo]):
+                # check-issue-overlap refused this brief against these PRs: no start time until either changes (#2062).
+                defer_issue(state, now, repo, row['number'], 'overlap_held', deferred, notices, log_bits, persist_state)
                 continue
             if restart:
                 restart_started(repo, row['number'], 'ready')
@@ -10659,9 +10700,15 @@ def _issue_scan_pass(
             if persist_state:
                 persist_state()
             log_bits.append('issue_start_deferred=%d%s' % (row['number'], suffix))
+            if 'overlaps other work in flight' in str(reason or '').lower():
+                state.setdefault('issue_scan_overlap', {}).setdefault(repo, {})[str(row['number'])] = {
+                    'fp': overlap_fingerprint(row, listed.get(repo)), 'passes': 0}
+                if persist_state:
+                    persist_state()
             defer_issue(state, now, repo, row['number'], reason or 'start_deferred', deferred, notices, log_bits, persist_state)
             continue
         if code == 0:
+            state.get('issue_scan_overlap', {}).get(repo, {}).pop(str(row['number']), None)
             clear_issue_deferral(state, repo, row['number'])
             remember_started_dispatch(state, started_worker, 'issue', repo)
             if placement:
