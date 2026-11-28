@@ -2499,26 +2499,10 @@ def matches_main(git, rel, rest):
 
 
 def check_role_file_gate(base, args):
-    root = find_project_root(GATE_CWD or os.getcwd())
-    adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
     git = ["git"]
     if base == "git":
-        verb, rest, repo = git_verb(args)
+        verb, _, repo = git_verb(args)
         git += repo
-        if verb == "commit":
-            staged = set((gate_run([*git, "diff", "--cached", "--name-only"], None) or "").split())
-            if "--all" in rest or any(a.startswith("-") and not a.startswith("--") and "a" in a for a in rest):
-                staged |= set((gate_run([*git, "diff", "--name-only"], None) or "").split())
-            if adopted:
-                managed = sorted(f for f in staged if is_template_managed_rel(f)
-                                 and not matches_main(git, f, rest))
-                if managed:
-                    deny_template_managed(managed[0])
-            staged = {f for f in staged if not (adopted and is_template_managed_rel(f) and matches_main(git, f, rest))}
-            files = {f for f in staged if is_protected(f)} | ship_protected(staged)
-            if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, repo)):
-                deny_role_files(files, "This commit")
-            return
         if verb != "push":
             return
     elif not (base == "gh" and args[:2] == ["pr", "create"]):
@@ -4573,6 +4557,448 @@ def check_secrets_dir_by_variable(command):
         _deny_hidden()
 
 
+# ---------------------------------------------------------------- Plain commit gate (#2023)
+
+# Only a command in a small closed grammar ("plain") gets the staged path check. Any other command that may commit
+# is refused, so a form the reader gets wrong refuses a command instead of letting a commit through. Agent shell
+# state does not carry over between tool calls, so a commit hidden in a variable is spelled out in the same command.
+COMMIT_REFUSE = ("This command commits, but the guard cannot read it with certainty ({}). Run `git add <paths>` and "
+                 "`git commit -m ...` as plain commands: literal program names, no variables or substitutions in the "
+                 "program or folder, no `eval`, `<shell> -c`, wrappers, subshells, functions, globs or line "
+                 "continuations. A heredoc message as `-m \"$(cat <<'EOF' ... EOF)\"` is fine.")
+MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--subject", "--spec", "--question", "--reason",
+                 "--comment", "--description"}
+VALUE_END = r"(?=[ \t\n;&|]|\Z)"
+HEREDOC_VALUE = re.compile(r"\"\$\(cat <<(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\n(?:.*?\n)?\2\n[ \t]*\)\"" + VALUE_END, re.S)
+QUOTED_VALUE = re.compile(r"(?:'[^']*'|\"(?:[^\"\\`$]|\\.|\$(?!\())*\")" + VALUE_END, re.S)
+LONG_FLAG_EQ = re.compile(r"(--[a-z-]+)=")
+COMMIT_WORD = re.compile(r"(?<![a-z0-9_-])commit(?![a-z0-9_])")
+BUILT_GIT_SUBCOMMAND = re.compile(r"(?<![a-z0-9_.-])git(?:\s+(?:-[cC]\s+\S+|-\S+))*\s+[$`]")
+PLAIN_CHAR = re.compile(r"[A-Za-z0-9_./~=:@%+,-]")
+NAME_REF = re.compile(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
+OUT_REDIRECT = re.compile(r"[0-9]?>&[0-9](?![A-Za-z0-9_./~=:@%+,-])|[0-9]?>>?[ \t]*")
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "fi", "while", "until", "for", "do", "done", "case", "esac", "select",
+                  "function", "coproc"}
+OPAQUE_PROGRAMS = SHELLS | WRAPPERS | SHELL_KEYWORDS | {"eval", "source", ".", "exec", "command", "builtin", "xargs",
+                                                        "find", "env", "timeout", "watch", "script", "alias", "trap"}
+EXPORTERS = {"export", "declare", "typeset", "readonly", "local"}
+ADD_OPTIONS = {"-A", "--all", "-u", "--update", "-f", "--force", "-v", "--verbose", "-N", "--intent-to-add", "-n",
+               "--dry-run", "--"}
+COMMIT_VALUE_FLAGS = {"-m", "--message", "-F", "--file", "-C", "-c", "--reuse-message", "--reedit-message", "--author",
+                      "--date", "-t", "--template", "--fixup", "--squash", "--trailer", "--cleanup"}
+COMMIT_PATHS_FLAGS = {"-i", "-o", "--include", "--only", "--pathspec-from-file", "-p", "--patch", "--interactive"}
+
+
+class _NotPlain(Exception):
+    """The command is outside the plain grammar. The message is the first reason, for the refusal."""
+
+
+class _Word:
+    def __init__(self, raw, text, quoted, dollar, glob):
+        self.raw, self.text, self.quoted, self.dollar, self.glob = raw, text, quoted, dollar, glob
+
+
+def _mask_word_end(text, i):
+    """End of the word at `i` for the mask scan, or None at a `$(`, backtick, `$'` or `<` (the rest stays unmasked)."""
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in " \t\n;&|()":
+            return i
+        if c in "`<" or text.startswith(("$(", "$'"), i):
+            return None
+        if c == "\\":
+            i += 2
+        elif c == "'":
+            k = text.find("'", i + 1)
+            if k < 0:
+                raise ValueError("unclosed quote")
+            i = k + 1
+        elif c == '"':
+            i += 1
+            while True:
+                if i >= n:
+                    raise ValueError("unclosed quote")
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == "`" or text.startswith("$(", i):
+                    return None
+                i += 1
+                if text[i - 1] == '"':
+                    break
+        else:
+            i += 1
+    return i
+
+
+def _mask_scan(text):
+    out, seg, value_next, i = [], [], False, 0
+    while i < len(text):
+        c = text[i]
+        if c in " \t":
+            out.append(c)
+            i += 1
+            continue
+        if c in "\n;&|()":
+            out.append(c)
+            seg, value_next, i = [], False, i + 1
+            continue
+        kind = None
+        if seg and seg[0] == "git":
+            kind = "git"
+        elif seg and (seg[0] == "gh" or seg[:2] == ["orca", "orchestration"]):
+            kind = "text"
+        flag = LONG_FLAG_EQ.match(text, i) if kind else None
+        start = flag.end() if flag and flag.group(1) in MESSAGE_FLAGS else i if value_next else None
+        if start is not None:
+            value = HEREDOC_VALUE.match(text, start) or (kind == "text" and QUOTED_VALUE.match(text, start))
+            if value:
+                out.append(text[i:start] + '"TEXT"')
+                seg.append("TEXT")
+                value_next, i = False, value.end()
+                continue
+        if c == "#":
+            break
+        end = _mask_word_end(text, i)
+        if end is None:
+            break
+        word = text[i:end]
+        out.append(word)
+        seg.append(word)
+        value_next, i = bool(kind) and word in MESSAGE_FLAGS, end
+    return "".join(out) + text[i:]
+
+
+def mask_inert_text(text):
+    """Step 1 of #2023: the value of a message flag that is inert text becomes "TEXT". A closed `"$(cat <<'X' ...
+    X)"` that is a whole value in a git, gh or `orca orchestration` command, and in gh and `orca orchestration` also
+    one quoted string with no backtick and no `$(`. Any error or unclosed form leaves the text unmasked."""
+    try:
+        return _mask_scan(text)
+    except Exception:
+        return text
+
+
+def commit_trigger(masked):
+    """True when the command may commit: the word `commit`, or `git` and its options followed by a built word."""
+    try:
+        flat = _unquoted_text(masked)
+        return bool(COMMIT_WORD.search(flat) or BUILT_GIT_SUBCOMMAND.search(flat))
+    except Exception:
+        return "commit" in re.sub(r"\\\n|[\\'\"\s]", "", RAW_COMMAND.lower())
+
+
+def _plain_word(text, i):
+    start, parts, quoted, dollar, glob, n = i, [], False, False, False, len(text)
+    while i < n:
+        c = text[i]
+        if c in " \t;|>" or text.startswith("&&", i):
+            break
+        if c == "&":
+            raise _NotPlain("a lone `&`")
+        if PLAIN_CHAR.match(c):
+            parts.append(c)
+            i += 1
+        elif c == "$":
+            ref = NAME_REF.match(text, i)
+            if not ref:
+                raise _NotPlain("a `$` that is not `$NAME`")
+            parts.append(ref.group(0))
+            dollar, i = True, ref.end()
+        elif c == "'":
+            k = text.find("'", i + 1)
+            if k < 0:
+                raise _NotPlain("an unclosed quote")
+            glob = glob or any(ch in text[i + 1:k] for ch in "*?[")
+            parts.append(text[i + 1:k])
+            quoted, i = True, k + 1
+        elif c == '"':
+            quoted, i = True, i + 1
+            while True:
+                if i >= n:
+                    raise _NotPlain("an unclosed quote")
+                d = text[i]
+                if d == '"':
+                    i += 1
+                    break
+                if d == "\\":
+                    if text[i + 1:i + 2] not in ('"', "\\", "`", "$"):
+                        raise _NotPlain("a backslash")
+                    parts.append(text[i + 1])
+                    i += 2
+                elif d == "`":
+                    raise _NotPlain("a backtick")
+                elif d == "$":
+                    ref = NAME_REF.match(text, i)
+                    if not ref:
+                        raise _NotPlain("a `$` that is not `$NAME`")
+                    parts.append(ref.group(0))
+                    dollar, i = True, ref.end()
+                else:
+                    glob = glob or d in "*?["
+                    parts.append(d)
+                    i += 1
+        elif c == "\\":
+            raise _NotPlain("a backslash")
+        else:
+            raise _NotPlain(f"the character `{c}`")
+    return _Word(text[start:i], "".join(parts), quoted, dollar, glob), i
+
+
+def _plain_segments(text):
+    """The words of each segment and the operators between them, or _NotPlain. Output redirects are dropped."""
+    if "\n" in text:
+        raise _NotPlain("a newline")
+    segs, ops, i = [[]], [], 0
+    while i < len(text):
+        c = text[i]
+        if c in " \t":
+            i += 1
+            continue
+        op = next((o for o in ("&&", "||", ";", "|") if text.startswith(o, i)), None)
+        if op:
+            if not segs[-1]:
+                raise _NotPlain(f"an empty command before `{op}`")
+            ops.append(op)
+            segs.append([])
+            i += len(op)
+            continue
+        redirect = OUT_REDIRECT.match(text, i)
+        if redirect and (c == ">" or text[i + 1:i + 2] == ">"):
+            i = redirect.end()
+            if "&" not in redirect.group(0):
+                target, i = _plain_word(text, i)
+                if not target.text or target.quoted or target.dollar:
+                    raise _NotPlain("a redirect to a target that is not literal")
+            continue
+        word, i = _plain_word(text, i)
+        segs[-1].append(word)
+    if not segs[-1]:
+        if not ops or ops[-1] != ";":
+            raise _NotPlain("an empty command")
+        segs.pop()
+        ops.pop()
+    return segs, ops
+
+
+class _GitStep:
+    def __init__(self, verb, args, folder):
+        self.verb, self.args, self.folder = verb, args, folder
+
+
+def _git_step(words, folder):
+    """The add, stage or commit step of one plain `git` segment, or None for any other subcommand."""
+    i = 1
+    while i < len(words):
+        w = words[i]
+        if w.raw == "-C":
+            value = words[i + 1] if i + 1 < len(words) else None
+            if value is None or value.quoted or value.dollar or not value.text:
+                raise _NotPlain("a `git -C` folder that is not literal")
+            folder = os.path.normpath(os.path.join(folder, os.path.expanduser(value.text)))
+            i += 2
+        elif w.raw in ("--no-pager", "-P"):
+            i += 1
+        elif w.text.startswith("-"):
+            raise _NotPlain(f"the git option `{w.text}`")
+        else:
+            break
+    if i >= len(words):
+        return None
+    sub = words[i]
+    if sub.quoted or sub.dollar:
+        raise _NotPlain("a git subcommand that is not literal")
+    if sub.text in GIT_RUNS_PROGRAMS:
+        raise _NotPlain(f"`git {sub.text}` runs other programs")
+    args = words[i + 1:]
+    if sub.text in ("add", "stage"):
+        for w in args:
+            if w.text == "--":
+                break
+            if w.text.startswith("-") and w.text not in ADD_OPTIONS:
+                raise _NotPlain(f"the `git {sub.text}` option `{w.text}`")
+        return _GitStep("add", args, folder)
+    if sub.text == "commit":
+        return _GitStep("commit", args, folder)
+    return None
+
+
+def plain_commit_steps(masked):
+    """Step 2 of #2023: the add and commit steps of a plain command in written order, and whether it has a `|`.
+    Raises _NotPlain, naming the first reason, for any command outside the grammar."""
+    segs, ops = _plain_segments(masked)
+    folder, steps = GATE_CWD or os.getcwd(), []
+    for n, words in enumerate(segs):
+        if all(ASSIGN_WORD.match(w.raw) for w in words):
+            if any(GIT_ENV_ASSIGN.match(w.raw) for w in words):
+                raise _NotPlain("a `GIT_*` variable")
+            continue
+        if ASSIGN_WORD.match(words[0].raw):
+            raise _NotPlain("a variable set before a program")
+        prog = words[0]
+        if prog.quoted or prog.dollar:
+            raise _NotPlain("a program name that is quoted or built from a variable")
+        base = os.path.basename(prog.text)
+        if base in OPAQUE_PROGRAMS or INTERPRETERS.match(base):
+            raise _NotPlain(f"`{base}` runs other commands")
+        if base in ("pushd", "popd"):
+            raise _NotPlain(f"`{base}`")
+        if base == "cd":
+            dest = words[1] if len(words) == 2 else None
+            if (n or not ops or ops[0] != "&&" or dest is None or dest.quoted or dest.dollar
+                    or dest.text.startswith("-") or any(o in (";", "||") for o in ops)):
+                raise _NotPlain("a `cd` that is not the first step followed only by `&&` and `|`")
+            folder = os.path.normpath(os.path.join(folder, os.path.expanduser(dest.text)))
+            continue
+        if base in EXPORTERS and any(GIT_ENV_ASSIGN.match(w.text) for w in words[1:]):
+            raise _NotPlain("a `GIT_*` variable")
+        if base != "git":
+            if any(os.path.basename(w.text) == "git" for w in words[1:]):
+                raise _NotPlain(f"`{base}` is given `git` to run")
+            continue
+        step = _git_step(words, folder)
+        if step:
+            steps.append(step)
+    return steps, "|" in ops
+
+
+def _names(text):
+    return [p for p in (text or "").split("\0") if p]
+
+
+def _all_changed(folder):
+    """(top level, the modified, deleted, staged and untracked files of the whole repo) seen from `folder`."""
+    top = (gate_run(["git", "rev-parse", "--show-toplevel"], folder) or "").strip()
+    if not top:
+        return None, set()
+    out = set()
+    for cmd in (["diff", "--name-only", "-z"], ["diff", "--cached", "--name-only", "-z"],
+                ["ls-files", "--others", "--exclude-standard", "-z"]):
+        out |= set(_names(gate_run(["git", "-C", top, *cmd], folder)))
+    return top, out
+
+
+def pending_add_paths(step):
+    """Repo paths a plain `git add` step stages. A path word is trusted only when it resolves, exactly, to a changed
+    file or a folder holding one; any other path counts as itself plus every changed file. `-A`, `-u`, no path,
+    a `$`, a leading `:` or a quoted glob count as every changed file. `-n` stages nothing."""
+    specs, every, paths_only = [], False, False
+    for w in step.args:
+        if not paths_only and w.text == "--":
+            paths_only = True
+        elif not paths_only and w.text.startswith("-"):
+            if w.text in ("-n", "--dry-run"):
+                return set()
+            every = every or w.text in ("-A", "--all", "-u", "--update")
+        else:
+            specs.append(w)
+    top, changed = _all_changed(step.folder)
+    if not top:
+        return set()
+    if every or not specs or any(w.dollar or "$" in w.text or w.text.startswith(":") or w.glob for w in specs):
+        return set(changed)
+    out = set()
+    for w in specs:
+        joined = os.path.normpath(os.path.join(step.folder, os.path.expanduser(w.text)))
+        # Resolve the parent only: a symlink at the path itself is the staged path, not its target.
+        full = os.path.join(os.path.realpath(os.path.dirname(joined)), os.path.basename(joined))
+        rel = os.path.relpath(full, os.path.realpath(top)).replace("\\", "/")
+        hits = changed if rel == "." else {p for p in changed if p == rel or p.startswith(rel + "/")}
+        out |= hits or (changed | ({rel} if rel != ".." and not rel.startswith("../") else set()))
+    return out
+
+
+def _commit_reads(args):
+    """(commits the worktree too, counts as every changed file) for the words after `git commit`."""
+    worktree, every, i = False, False, 0
+    while i < len(args):
+        t = args[i].text
+        flag = t.split("=", 1)[0] if t.startswith("--") else t
+        if flag in COMMIT_VALUE_FLAGS:
+            value = t.split("=", 1)[1] if "=" in t and t.startswith("--") else (
+                args[i + 1].raw if i + 1 < len(args) else "")
+            if flag not in ("-m", "--message") and "$" in value:
+                every = True
+            i += 1 if "=" in t and t.startswith("--") else 2
+            continue
+        if "$" in args[i].raw or flag in COMMIT_PATHS_FLAGS or not t.startswith("-") or t in ("-", "--"):
+            every = True
+        elif t == "--all":
+            worktree = True
+        elif not t.startswith("--"):
+            for k, ch in enumerate(t[1:]):
+                worktree = worktree or ch == "a"
+                every = every or ch in "iop"
+                if ch in "mFCctSu":
+                    if k == len(t) - 2 and ch in "mFCct":
+                        i += 1
+                        if ch != "m" and i < len(args) and "$" in args[i].raw:
+                            every = True
+                    break
+        i += 1
+    return worktree, every
+
+
+def check_commit_step(step, pending):
+    """Step 4 of #2023: the owner gate for one plain commit. Staged is the index at the step's folder, the worktree
+    for `-a`, every changed file for a path or `$` word, and `pending`, the paths earlier adds stage. Only a file
+    that comes from the index alone may be exempt through matches_main."""
+    rest = [w.text for w in step.args]
+    git = ["git", "-C", step.folder]
+    worktree, every = _commit_reads(step.args)
+    staged = set(_names(gate_run(["git", "diff", "--cached", "--name-only", "-z"], step.folder)))
+    extra = set(pending)
+    if worktree:
+        extra |= set(_names(gate_run(["git", "diff", "--name-only", "-z"], step.folder)))
+    if every:
+        extra |= _all_changed(step.folder)[1]
+    root = find_project_root(step.folder)
+    adopted = is_adopted_project(root) and not sync_enabled(RAW_COMMAND)
+
+    def exempt(f):
+        return adopted and is_template_managed_rel(f) and f not in extra and matches_main(git, f, rest)
+
+    staged |= extra
+    if adopted:
+        managed = sorted(f for f in staged if is_template_managed_rel(f) and not exempt(f))
+        if managed:
+            deny_template_managed(managed[0])
+    staged = {f for f in staged if not exempt(f)}
+    files = {f for f in staged if is_protected(f)} | ship_protected(staged)
+    if files and not OWNER_TRAILER.search(RAW_COMMAND + "\n" + commit_message_file(rest, ["-C", step.folder])):
+        deny_role_files(files, "This commit")
+
+
+def check_commit_gate(command):
+    """The only commit gate (#2023). A command that may commit and is not plain is refused; a plain one gets the
+    staged path check. Any error refuses a command that may commit."""
+    try:
+        masked = mask_inert_text(report_command_text(command).rstrip())
+    except Exception:
+        masked = command
+    if not commit_trigger(masked):
+        return
+    try:
+        steps, piped = plain_commit_steps(masked)
+        pending = set()
+        if piped:
+            for step in steps:
+                if step.verb == "add":
+                    pending |= pending_add_paths(step)
+        for step in steps:
+            if step.verb == "commit":
+                check_commit_step(step, pending)
+            elif not piped:
+                pending |= pending_add_paths(step)
+    except SystemExit:
+        raise
+    except _NotPlain as reason:
+        deny(COMMIT_REFUSE.format(reason))
+    except Exception:
+        deny(COMMIT_REFUSE.format("the check raised an error"))
+
+
 def check_command(command):
     command = report_command_text(command)
     global CODE_COMMAND
@@ -4646,7 +5072,8 @@ def main():
     except SystemExit:
         raise
     except Exception:
-        return
+        pass  # the commit gate below still runs
+    check_commit_gate(command)
 
 
 if __name__ == "__main__":

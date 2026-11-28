@@ -855,7 +855,8 @@ class ProjectConfigRules(GuardTest):
         self.assertDenied(f"bin/run-production-data-step.sh {self.SHA} some-step", "--schema --apply")
 
     def test_commit_message_heredoc_is_data(self):
-        self.assertAllowed("bash -n x.sh && git commit -F - <<'EOF'\nadd bin/owner-approve.sh\nEOF")
+        # #2023: `shellcheck`, not `bash -n`, since `bash` in a command that commits is refused.
+        self.assertAllowed("shellcheck x.sh && git commit -F - <<'EOF'\nadd bin/owner-approve.sh\nEOF")
         self.assertAllowed("git commit -q -F- <<\"EOF\"\ngit push -f origin main\nEOF")
         self.assertDenied("git commit -F - <<EOF\nbin/owner-approve.sh host\nEOF")  # unquoted: expands
         self.assertDenied("git commit -F - <<'EOF'\nmsg\nEOF\ngit push -f origin x", "force-push")
@@ -2251,6 +2252,232 @@ class DenyMessagesNameRewrite(ProjectConfigGuardTest):
                         "sed -i '' 's/subprocess/x/g' a"):
             with self.subTest(command=command):
                 self.assertAllowed(command)
+
+
+class ChainedRepo(GuardTest):
+    """A throwaway git repo in the temp home, with the hook run from inside it (#2023).
+    P is a protected file and U an unprotected one, both committed and then modified, unstaged."""
+    P = "docs/agents/team-facts.md"
+    U = "src/app.txt"
+    M = "-m tweak"
+
+    def setUp(self):
+        super().setUp()
+        self.repo = os.path.join(self.home, "repo")
+        os.makedirs(self.repo)
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "user.name", "t")
+        self.git("config", "commit.gpgsign", "false")
+        for rel in (self.P, self.U):
+            self.write(rel, "old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "init")
+        for rel in (self.P, self.U):
+            self.write(rel, "new\n")
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+
+    def write(self, rel, text="x\n"):
+        path = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    def bash(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home), cwd=self.repo, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["hookSpecificOutput"]["permissionDecisionReason"] if out.stdout.strip() else None
+
+    def assertGated(self, command):
+        return self.assertDenied(command, "Owner-approved:")
+
+    def assertRefused(self, command):
+        return self.assertDenied(command, "the guard cannot read it with certainty")
+
+    def assertNotCommitDenied(self, command):
+        reason = self.bash(command)
+        self.assertFalse(reason and ("Owner-approved:" in reason or "cannot read it with certainty" in reason),
+                         f"{command}: {reason}")
+
+    def run_main_with(self, command, name, error):
+        """Run the hook in process with `name` patched to raise, and return its deny reason."""
+        spec = importlib.util.spec_from_file_location(f"guard_bash_inject_{name}", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.repo})
+        buf = io.StringIO()
+        with mock.patch.object(mod, name, side_effect=error), mock.patch.dict(os.environ, {"HOME": self.home}), \
+                mock.patch("sys.stdin", io.StringIO(payload)), mock.patch("sys.stdout", buf):
+            with self.assertRaises(SystemExit):
+                mod.main()
+        out = json.loads(buf.getvalue())["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        return out["permissionDecisionReason"]
+
+
+P, U, M = ChainedRepo.P, ChainedRepo.U, ChainedRepo.M
+TRAILER = '-m "tweak" -m "Owner-approved: mingster 2026-11-28"'
+
+# Plain commands that stage P: denied by the staged path check (#2023).
+PLAIN_GATED = {
+    "add_protected": f"git add {P} && git commit {M}",
+    "stage_protected": f"git stage {P} && git commit {M}",
+    "add_all": f"git add -A && git commit {M}",
+    "add_dot": f"git add . && git commit {M}",
+    "add_folder": f"git add docs && git commit {M}",
+    "cd_add_all": f"cd docs && git add -A && git commit {M}",
+    "git_dash_c_add_all": f"git -C docs add -A && git commit {M}",
+    "variable_path": f'f={P}; git add "$f" && git commit {M}',
+    "magic_slash": f"git add ':/{P}' && git commit {M}",
+    "magic_top": f"git add ':(top){P}' && git commit {M}",
+    "quoted_glob": f"git add 'docs/agents/*.md' && git commit {M}",
+    "commit_all": f"git commit -a {M}",
+    "commit_path_operand": f"git commit {M} {P}",
+    "dollar_commit_word": f"git add {U} && git commit $FLAGS {M}",
+    "add_piped": f"git add {P} | cat && git commit {M}",
+}
+
+# Not plain, and the trigger fires: refused with the step 3 message, trailer or not.
+REFUSED = {
+    "F1_2_variable_folder": f'd=.; git -C "$d" commit -a {M}',
+    "F1_2_cd_variable": f'cd "$REPO" && git commit -a {M}',
+    "F1_3_shell_c_default": f'CMD="git commit -m tweak"; git add {P} && bash -c "${{CMD:-"true"}}"',
+    "F1_3_built_verb": f'verb=commit; git add {P} && git $verb -m "${{MSG:-"tweak"}}"',
+    "F1_3_quoted_program": f'"g"it add {P} && "g"it commit {M}',
+    "F1_3_backslash_program": f"g\\it add {P} && g\\it commit {M}",
+    "F1_1_subshell_cd": f"cd docs && (cd ..) && git add agents/team-facts.md && git commit {M}",
+    "F1_4_if_subshell_add": f"if (git add {P}); then git commit {M}; fi",
+    "F2_4_if_subshell_commit": f"git add {P} && if (git commit {M}); then :; fi",
+    "F1_4_xargs_n": f"echo {P} | xargs -n 1 git add && git commit {M}",
+    "F1_4_xargs_i": f"echo {P} | xargs -I {{}} git add {{}} && git commit {M}",
+    "F1_4_nice": f"nice -n 5 git add {P} && git commit {M}",
+    "F2_4_timeout": f"timeout -k 5 10 git add {P} && git commit {M}",
+    "F2_4_env_chdir": f"env -C docs/agents git add team-facts.md && git commit {M}",
+    "F1_5_variable_program": f"CMD=git; git add {P} && /usr/bin/$CMD commit {M}",
+    "F1_5_glued_variable_folder": f'git add {P} && git -C"$d" commit {M}',
+    "F1_5_glued_folder": f"git -Cdocs add agents/team-facts.md && git -Cdocs commit {M}",
+    "F2_1_continuation": f"g\\\nit add {P} && g\\\nit commit {M}",
+    "F2_1_continuation_lone_commit": f"g\\\nit commit {M}",
+    "F2_1_ansi_c_program": f"$'\\x67it' add {P} && $'\\x67it' commit {M}",
+    "F2_1_continuation_unclosed": f'git add {P} && git com\\\nmit -m "unclosed',
+    "F2_2_built_verbs": f"a=add; c=commit; git $a {P} && git $c {M}",
+    "F2_2_built_verb_lone_commit": f"c=commit; git $c -a {M}",
+    "F2_2_eval": f"cmd='git add {P} && git commit -m tweak'; eval \"$cmd\"",
+    "F2_2_bash_c_variable": f"cmd='git add {P} && git commit -m tweak'; bash -c \"$cmd\"",
+    "F2_3_brace_in_subshell": f"cd docs && (echo ${{x}}; cd ..) && git add agents/team-facts.md && git commit {M}",
+    "F2_6_built_program": f"g=g; ${{g}}it add {P} && ${{g}}it commit {M}",
+    "F2_6_function": f"c() {{ git commit {M}; }}; git add {P} && c",
+    "F2_7_nested_substitution": f'z=$(cd "$X" && y=$(git add {U}; git commit {M}))',
+    "F2_8_shell_c_positional": f"bash -c 'echo \"$1\" && git add {P} && git commit {M}' _ 'x\" #\"'",
+    "sh_c_commit": f"git add {P} && sh -c 'git commit {M}'",
+    "bash_c_add": f"bash -c 'git add {U}' && git commit {M}",
+    "quoted_tool": f'git add {U} && "$HOME/bin/tool" && git commit {M}',
+    "lone_ampersand": f"git add {U} && git commit {M} &",
+    "git_dir_assignment": f"GIT_DIR=.git git commit {M}",
+    "git_config_override": f"git -c core.hooksPath=/dev/null commit {M}",
+    "trailer_does_not_lift": f"git add {P} && git commit {TRAILER} | tee $(mktemp)",
+    "newline_between_steps": f"git add {P}\ngit commit {M}",
+    "newline_in_message": f'git add {U} && git commit -m "tweak\n\nbody"',
+    "heredoc_to_a_non_text_sink": f"sort <<'EOF'\ngit add {P} && git commit {M}\nEOF",
+}
+
+# Allowed with P modified and unstaged.
+ALLOWED = {
+    "trailer": f"git add {P} && git commit {TRAILER}",
+    "add_unprotected": f"git add {U} && git commit {M}",
+    "F1_1_cd_unprotected": f"cd src && git add app.txt && git commit {M}",
+    "dash_c_unprotected": f"git -C src add app.txt && git -C src commit {M}",
+    "braces_in_message": f'git add {U} && git commit -m "fix(guard): handle {{a,b}} and [x]"',
+    "heredoc_message": (f"git add {U} && git commit -m \"$(cat <<'EOF'\nbody with `backticks`, $(x), eval and the "
+                        "words git commit\nEOF\n)\""),
+    "redirects": f"git status; git add {U} && git commit {M} > /dev/null 2>&1",
+    "log_variable": "git log $B | head -5",
+    "log_grep_commit": "git log --oneline --grep commit | head",
+    "for_loop": 'for f in $(git diff --name-only); do echo "$f"; done',
+    "diff_substitution": "git diff $(git merge-base HEAD origin/main) | head",
+    "gh_comment": 'gh issue comment 1 --body "run \\`git commit\\` separately"',
+    "orca_send": 'orca orchestration send --to x --subject done --body "ran git add and git commit" --json',
+    "gh_heredoc": "gh pr create --title x --body \"$(cat <<'EOF'\ngit commit && eval $(x)\nEOF\n)\"",
+    "npm_ls": "npm test && ls -la | grep x",
+    "echo_date": 'echo "$(date)"',
+    "bash_c_echo": "bash -c 'echo hi'",
+}
+# Allowed with U staged beforehand and P modified and unstaged.
+ALLOWED_U_STAGED = {
+    "message_names_eval": 'git commit -m "fix bash -c and eval handling"',
+    "add_after_commit": f"git commit {M} && git add {P}",
+    "echo_add_text": f"echo 'git add {P}' && git commit {M}",
+    "heredoc_file_message": "git commit -F - <<'EOF'\nfix: git commit and eval in the body\nEOF",
+}
+
+
+def _table_tests(table, check, stage_u=False):
+    def make(command):
+        def test(self):
+            if stage_u:
+                self.git("add", self.U)
+            check(self, command)
+        return test
+    return {f"test_{key}": make(command) for key, command in table.items()}
+
+
+ChainedPlainGate = type("ChainedPlainGate", (ChainedRepo,), {
+    "__doc__": "#2023: a plain command that stages a protected path is denied by the staged path check.",
+    **_table_tests(PLAIN_GATED, ChainedRepo.assertGated)})
+ChainedRefusals = type("ChainedRefusals", (ChainedRepo,), {
+    "__doc__": "#2023: a command that may commit and is not plain is refused, with or without a trailer.",
+    **_table_tests(REFUSED, ChainedRepo.assertRefused)})
+ChainedAllowed = type("ChainedAllowed", (ChainedRepo,), {
+    "__doc__": "#2023: plain commits of unprotected files, text that only names git commit, and other commands.",
+    **_table_tests(ALLOWED, ChainedRepo.assertAllowed),
+    **_table_tests(ALLOWED_U_STAGED, ChainedRepo.assertAllowed, stage_u=True)})
+
+
+class ChainedGateEdges(ChainedRepo):
+    """#2023: symlinks, an adopted project, injected errors, blocked_scripts and the mask's edges."""
+
+    def test_protected_symlink(self):
+        os.remove(os.path.join(self.repo, self.P))
+        os.symlink("../../src/app.txt", os.path.join(self.repo, self.P))
+        self.assertGated(f"git add {self.P} && git commit {self.M}")
+
+    def test_adopted_template_managed_add(self):
+        role = ".claude/agents/elon.md"
+        self.write(".claude/settings.project.json", "{}\n")
+        self.write(role, "old\n")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "adopt")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write(role, "edited\n")
+        self.assertDenied(f"git add {role} && git commit {self.M}", "template managed")
+
+    def test_error_in_the_pass_refuses(self):
+        reason = self.run_main_with(f"git add {self.U} && git commit {self.M}", "plain_commit_steps",
+                                    RuntimeError("injected"))
+        self.assertIn("the guard cannot read it with certainty", reason)
+
+    def test_error_in_check_command_still_runs_the_pass(self):
+        reason = self.run_main_with(f"git add {self.P} && git commit {self.M}", "check_command",
+                                    RuntimeError("injected"))
+        self.assertIn("Owner-approved:", reason)
+
+    def test_blocked_scripts_mention_is_not_a_commit_gate_deny(self):
+        os.makedirs(os.path.join(self.repo, ".claude", "hooks"), exist_ok=True)
+        with open(os.path.join(self.repo, ".claude", "hooks", "guard-config.json"), "w") as f:
+            json.dump({"blocked_scripts": ["deploy-raw.sh"]}, f)
+        self.git("add", self.U)
+        self.assertNotCommitDenied(f'git commit -m "mention deploy-raw.sh" && git add {self.P}')
+
+    def test_mask_keeps_commit_outside_the_value(self):
+        for command in (f"echo \"gh issue comment --body '\" && git commit {self.M} && echo \"'\" &",
+                        f"gh x --body 'y'$(git commit {self.M})",
+                        f"eval --body \"$(cat <<'EOF'\n;git add {self.P}; git commit -m x\nEOF\n)\""):
+            with self.subTest(command=command):
+                self.assertRefused(command)
 
 
 if __name__ == "__main__":
