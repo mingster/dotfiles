@@ -458,18 +458,23 @@ same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-fami
   fi
   # #1882: a sixth argument (the PR's own diff) turns on the Readers: rule. --verdict-from checks a merged
   # source PR's body, which never saw this diff, so it passes none.
-  local gate_diff="" gate_conf="" gate_target=()
+  local gate_diff="" gate_conf="" gate_target=() gate_err=""
   if [ -n "${6:-}" ]; then
     gate_diff=$(mktemp) || refuse "cannot create a temp file"
     printf '%s\n' "$6" >"$gate_diff"
     # #2070: the Perf: rule reads the --repo target's .agents/head-checks.conf, as pr-review.sh does: this checkout when
-    # its origin is $repo, else the file on GitHub (empty when unreadable, so the rule is off).
+    # its origin is $repo, else the file on GitHub. #2079: a 404 means the target has no conf (the rule is off); any other
+    # fetch error (network, auth, 5xx) refuses the ship, so the Perf: rule is never skipped by accident.
     shopt -s nocasematch
     if [[ "${origin_url%.git}" == *[:/]"$repo" ]]; then
       gate_target=(--repo-dir "$top")
     else
       gate_conf=$(mktemp) || refuse "cannot create a temp file"
-      gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' >"$gate_conf" 2>/dev/null || : >"$gate_conf"
+      if ! gate_err=$(gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' 2>&1 >"$gate_conf"); then
+        grep -q 'HTTP 404' <<<"$gate_err" \
+          || { rm -f "$gate_diff" "$gate_conf"; refuse "cannot read $repo .agents/head-checks.conf to check the Perf: rule: $(head -n 1 <<<"$gate_err")"; }
+        : >"$gate_conf"
+      fi
       gate_target=(--conf "$gate_conf")
     fi
     shopt -u nocasematch

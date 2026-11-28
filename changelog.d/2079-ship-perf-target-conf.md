@@ -1,1 +1,1 @@
-- `ship.sh` reads the `Perf:` rule from the `--repo` target checkout (its `.agents/head-checks.conf`, or GitHub when the folder is another repo), not from the folder it runs in. (#2079)
+- `ship.sh` reads the `Perf:` rule from the `--repo` target checkout (its `.agents/head-checks.conf`, or GitHub when the folder is another repo), not from the folder it runs in. A GitHub read that fails for a reason other than 404 now refuses the ship instead of skipping the rule. (#2079)
