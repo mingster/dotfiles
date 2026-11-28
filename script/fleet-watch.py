@@ -2244,6 +2244,24 @@ REAP_ORPHAN_SCRIPT = Path(__file__).with_name('reap-orphan-tests.sh')
 REAP_ORPHAN_REMOTE = 'bash "$HOME/dotfiles/script/reap-orphan-tests.sh" || echo "reap-orphan-tests failed"'
 
 
+PROBE_POLL_SECONDS = 2
+PROBE_DEADLINE_SECONDS = 60
+
+
+def _probe_output_when_done(rpc_call, host, handle):
+    """Poll the probe terminal until it stops running, then read its output (#2078).
+
+    One `terminal wait` cannot cover a slow probe: rpc() caps every Orca call at 15 s, so a wait that outlasts that
+    raised OrcaReadError and the host was reported unread. A read is quick, so poll it instead."""
+    deadline = time.monotonic() + PROBE_DEADLINE_SECONDS
+    while True:
+        read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
+        status = ((read or {}).get('terminal') or {}).get('status')
+        if status != 'running' or time.monotonic() >= deadline:
+            return read
+        time.sleep(PROBE_POLL_SECONDS)
+
+
 def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
     """Run reap-orphan-tests.sh (or another probe command) on a remote host the way start-remote-worker.sh runs a probe: a terminal there."""
     worktrees = (rpc_call('worktree', 'list', '--environment', host) or {}).get('worktrees') or []
@@ -2257,8 +2275,7 @@ def reap_orphan_remote_lines(rpc_call, host, command=REAP_ORPHAN_REMOTE):
     if not handle:
         return []
     try:
-        rpc_call('terminal', 'wait', '--environment', host, '--terminal', handle, '--for', 'exit', '--timeout-ms', '60000')
-        read = rpc_call('terminal', 'read', '--environment', host, '--terminal', handle, '--limit', '200')
+        read = _probe_output_when_done(rpc_call, host, handle)
     finally:
         close_worker_terminal(rpc_call, handle, host)
     return [str(line) for line in ((read or {}).get('terminal') or {}).get('tail') or []]
