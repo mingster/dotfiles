@@ -4,7 +4,12 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
+
+# Load by file path so both `python3 -m unittest <file>` and `discover` work from the repo root.
+# Keeps log lines off ~/.orca/logs (#1864). Must run before fleet-watch.py loads.
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_watch_test_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_watch_test_env)
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')
 fw = importlib.util.module_from_spec(spec)
