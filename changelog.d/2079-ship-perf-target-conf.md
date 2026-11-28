@@ -1,0 +1,1 @@
+- `ship.sh` reads the `Perf:` rule from the `--repo` target checkout (its `.agents/head-checks.conf`, or GitHub when the folder is another repo), not from the folder it runs in. (#2079)
