@@ -1,0 +1,1 @@
+tests: `script/tests/test_fleet_watch_2009.py` loads its shared env helper and sibling test modules by file path, so `python3 -m unittest script/tests/test_fleet_watch_2009.py` runs from the repo root instead of failing with `ModuleNotFoundError: No module named 'fleet_watch_test_env'` (#2009).

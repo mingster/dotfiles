@@ -4,16 +4,23 @@ The issue scan start used START_FINISH_BY (140 s), which the notice, PR and scan
 start fit and the fleet filled at 0 or 1 worker per pass. It now uses the pass hard end (PASS_HARD_END, with the tail),
 the same rule as supply (#1889), so the 280 s precheck timeout still holds (#1838)."""
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
+
+# Load by file path so both `python3 -m unittest <file>` and `discover` work from the repo root.
+# Keeps log lines off ~/.orca/logs (#1864). Must run before fleet-watch.py loads.
+_env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(__file__).parent / 'fleet_watch_test_env.py')
+fleet_watch_test_env = importlib.util.module_from_spec(_env_spec)
+_env_spec.loader.exec_module(fleet_watch_test_env)
 
 SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'
 spec = importlib.util.spec_from_file_location('fleet_watch_2009', SCRIPT)
 fw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fw)
 
+sys.path.insert(0, str(Path(__file__).parent))  # sibling test modules below, for path invocation
 from test_fleet_watch_1204 import fake_rpc  # noqa: E402
 from test_fleet_watch_1216 import row  # noqa: E402
 from test_fleet_watch_park import scan_config as park_config  # noqa: E402
