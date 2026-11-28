@@ -30,7 +30,7 @@ want=$(printf '%s\n' "# support login" "SUPPORT_RO_DATABASE_URL=postgresql://ro_
   "SUPPORT_GH_TOKEN=ghp_$SECRET")
 [ "$rc" = 0 ] && [ "$(cat "$F")" = "$want" ] && ok "host replaced, other bytes kept" || bad "host replaced (rc=$rc)"
 case "$out" in *"$SECRET"*|*ro_user*|*5432*) bad "success output printed a value" ;; *) ok "success output prints no value" ;; esac
-mode=$(stat -f %Lp "$F" 2>/dev/null || stat -c %a "$F")
+mode=$(python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$F")
 [ "$mode" = 600 ] && ok "mode 600 kept" || bad "mode is $mode"
 [ -z "$(find "$TMP" -name '.set-env-key.*')" ] && ok "no temp file left" || bad "temp file left"
 
