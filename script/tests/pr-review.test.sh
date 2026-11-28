@@ -276,17 +276,17 @@ if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
 # #2079 / #2094: outside the target checkout, the head-checks.conf fetch decides the Perf: rule. A 404 means no conf and the run goes on.
 issue_comments_set
 printf 'Review: PASS\nok\n' > "$tmp/answer"
-FAKE_CONF_ERR='gh: Not Found (HTTP 404)' run
+GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='gh: Not Found (HTTP 404)' run
 grep -qE "^Review: PASS head=$sha model=sonnet( patch=[^ ]+)?\$" "$tmp/posted" \
   || fail "a head-checks.conf 404 treats the target as having no conf and still reviews"
 # Any other fetch error fails closed: no agent, no review, one reason line naming the file.
-if FAKE_CONF_ERR='gh: Internal Server Error (HTTP 500)' run >"$tmp/conf-500.out" 2>&1; then
+if GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='gh: Internal Server Error (HTTP 500)' run >"$tmp/conf-500.out" 2>&1; then
   fail "a head-checks.conf HTTP 500 must fail the review run"
 fi
 grep -qF 'cannot read fake/o .agents/head-checks.conf to check the Perf: rule: gh: Internal Server Error (HTTP 500)' "$tmp/conf-500.out" \
   || fail "a head-checks.conf HTTP 500 names the file in the cannot read message"
 [ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "a head-checks.conf HTTP 500 runs no review agent and posts nothing"
-if FAKE_CONF_ERR='dial tcp: lookup api.github.com: no such host' run >"$tmp/conf-net.out" 2>&1; then
+if GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='dial tcp: lookup api.github.com: no such host' run >"$tmp/conf-net.out" 2>&1; then
   fail "a head-checks.conf network failure must fail the review run"
 fi
 grep -qF 'cannot read fake/o .agents/head-checks.conf to check the Perf: rule: dial tcp' "$tmp/conf-net.out" \
