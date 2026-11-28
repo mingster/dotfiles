@@ -69,7 +69,7 @@ grep -Fq 'repo mapping' <<<"$out" && fail "over ceiling must not say repo mappin
 # Least loaded host wins, not the first one under its ceiling.
 cat >"$tmp/load-spread.sh" <<'EOS'
 #!/usr/bin/env bash
-printf 'host-primary cores=8 load=4.5 1.0 1.0\n'
+printf 'host-primary cores=8 load=4.5 4.5 4.5\n'
 printf 'host-remote cores=8 load=1.0 1.0 1.0\n'
 printf 'host-remote-2 cores=8 load=1.0 1.0 1.0\n'
 EOS
@@ -134,7 +134,7 @@ counted_pick() { # <load script> [extra pick args...]
 }
 
 # 1. A host at its host_caps count is skipped even when it has the lowest load.
-workers_for host-remote=2
+workers_for host-primary=2 host-remote=2
 out=$(counted_pick "$tmp/load-counted.sh" 2>"$tmp/counted.err") || fail "cap skip pick failed: $out $(cat "$tmp/counted.err")"
 grep -Fq 'worker-placement: host=host-remote-2 load_1m=6.0 workers=0/2' <<<"$out" || fail "full host must be skipped: $out"
 workers_for host-primary=2 host-remote=2 host-remote-2=2
@@ -160,7 +160,7 @@ grep -Fq 'host=host-remote-2' <<<"$out" || fail "5 minute load must count in the
 workers_for host-remote-2=1
 cat >"$tmp/load-flat.sh" <<'EOF'
 #!/usr/bin/env bash
-printf 'host-primary cores=8 load=1.0 1.0 1.0\n'
+printf 'host-primary cores=8 load=4.0 4.0 4.0\n'
 printf 'host-remote cores=8 load=3.0 3.0 3.0\n'
 printf 'host-remote-2 cores=8 load=1.0 1.0 1.0\n'
 EOF
@@ -176,10 +176,11 @@ for _ in 1 2 3 4 5; do
   out=$(counted_pick "$tmp/load-flat.sh" --record --json 2>/dev/null) || fail "burst pick failed: $out"
   seq_hosts="$seq_hosts $(python3 -c 'import json,sys; print(json.load(sys.stdin)["host"])' <<<"$out")"
 done
-first_four=$(tr ' ' '\n' <<<"${seq_hosts% *}" | sed '/^$/d' | sort | uniq -c | tr -s ' ')
-[ "$first_four" = " 2 host-remote
- 2 host-remote-2" ] && [ "${seq_hosts##* }" = host-primary ] \
-  || fail "burst must spread and fill remotes before the coordinator host:$seq_hosts"
+counts=$(tr ' ' '\n' <<<"$seq_hosts" | sed '/^$/d' | sort | uniq -c | tr -s ' ')
+[ "$counts" = " 1 host-primary
+ 2 host-remote
+ 2 host-remote-2" ] \
+  || fail "burst must spread the five starts by worker share across all hosts:$seq_hosts"
 grep -c '"host"' "$tmp/recent.json" >/dev/null || fail "recent starts file not written"
 # A pick without --record leaves the recent file alone.
 before=$(cat "$tmp/recent.json")
@@ -191,10 +192,10 @@ printf '{"starts":[{"host":"host-remote-2","at":%s,"workers":2}]}\n' "$old" >"$t
 out=$(counted_pick "$tmp/load-flat.sh" --record 2>/dev/null) || fail "expired recent pick failed: $out"
 grep -Fq 'host=host-remote-2 load_1m=1.0 workers=0/2' <<<"$out" || fail "expired start must not count: $out"
 
-# 3. Every host_caps host is eligible (order only breaks ties); the coordinator host goes last.
+# 3. Every host_caps host is eligible (order only breaks ties); the busier coordinator host loses on load.
 cat >"$tmp/load-extra.sh" <<'EOF'
 #!/usr/bin/env bash
-printf 'host-primary cores=8 load=0.5 0.5 0.5\n'
+printf 'host-primary cores=8 load=4.0 4.0 4.0\n'
 printf 'host-remote cores=8 load=4.0 4.0 4.0\n'
 printf 'host-remote-2 cores=8 load=4.0 4.0 4.0\n'
 printf 'host-extra cores=8 load=1.0 1.0 1.0\n'
@@ -204,17 +205,17 @@ rm -f "$tmp/recent.json"
 workers_for
 out=$(counted_pick "$tmp/load-extra.sh" 2>/dev/null) || fail "extra host pick failed: $out"
 grep -Fq 'host=host-extra' <<<"$out" || fail "a host_caps host missing from order must be eligible: $out"
-grep -Fq 'host=host-primary' <<<"$out" && fail "coordinator host must go last while another host has room: $out"
+grep -Fq 'host=host-primary' <<<"$out" && fail "a busier coordinator host must not win while a less loaded host has room: $out"
 workers_for host-remote=2 host-remote-2=2 host-extra=2
 out=$(counted_pick "$tmp/load-extra.sh" 2>/dev/null) || fail "coordinator fallback pick failed: $out"
-grep -Fq 'host=host-primary load_1m=0.5 workers=0/2' <<<"$out" || fail "coordinator host takes the start when the rest are full: $out"
+grep -Fq 'host=host-primary load_1m=4.0 workers=0/2' <<<"$out" || fail "coordinator host takes the start when the rest are full: $out"
 
 # 4. An unreadable inventory warns and places on load alone.
 out=$(WORKER_PLACEMENT_COUNT_WORKERS=1 ORCA_CLI_COMMAND=false WORKER_PLACEMENT_RECENT_FILE="$tmp/recent.json" \
   FLEET_LOAD_SCRIPT="$tmp/load-counted.sh" FLEET_WATCH_CONFIG="$tmp/counted.json" \
   python3 "$py" pick 2>"$tmp/noinv.err") || fail "no inventory pick failed: $out"
 grep -Fq 'worker count unavailable' "$tmp/noinv.err" || fail "no inventory must warn: $(cat "$tmp/noinv.err")"
-grep -Fq 'host=host-remote load_1m=0.5' <<<"$out" || fail "no inventory places on load: $out"
+grep -Eq 'host=host-(primary|remote) load_1m=0.5' <<<"$out" || fail "no inventory places on load: $out"
 
 # 5. Spread under load ratio (trial #1232): a quiet host must not take every back to back start
 # while other hosts with free slots sit at a high load ratio.
@@ -252,7 +253,6 @@ workers_for
 : >"$tmp/trial.err"
 picked=$(trial_picks)
 [ "$(distinct "$picked")" -ge 3 ] || fail "four starts must reach at least 3 hosts (inventory ok):$picked"
-grep -Fq 'host-primary' <<<"$picked" && fail "coordinator host must not be picked while others have room:$picked"
 picked=$(trial_picks false)
 [ "$(distinct "$picked")" -ge 3 ] || fail "four starts must reach at least 3 hosts (inventory failed):$picked"
 grep -Fq 'worker count unavailable' "$tmp/trial.err" || fail "failed inventory must warn: $(cat "$tmp/trial.err")"
@@ -324,7 +324,7 @@ seat_env() {
     FLEET_WATCH_CONFIG="$tmp/home/.config/fleet-watch/config.json" "$@"
 }
 out=$(seat_env "$py3" "$py" pick 2>"$tmp/sp.err") || fail "scoped pick failed: $out $(cat "$tmp/sp.err")"
-grep -Fq "host-remote-2" <<<"$out" || fail "scoped pick should still place: $out"
+grep -Fq "host=host-primary load_1m=0.5 workers=0/2" <<<"$out" || fail "scoped pick should still place on the least used host: $out"
 out=$(seat_env "$py3" "$py" seats 2>"$tmp/seats.err") || fail "seats failed: $(cat "$tmp/seats.err")"
 grep -Fq 'host-primary: 0/2 live=0 retained=0 retained_workers=none' <<<"$out" || fail "seats must count the active Run only: $out"
 grep -Fq 'host-remote: 1/2 live=0 retained=1 retained_workers=d_kept(' <<<"$out" || fail "seats must name the retained worker: $out"
@@ -555,6 +555,39 @@ out=$(lo_pick "$tmp/lo.json" "$tmp/light-brief.md" 2>/dev/null) || fail "a light
 [ "$(jq -r '.host' <<<"$out")" = host-light ] || fail "a light brief places on the light-only host: $out"
 out=$(lo_pick "$tmp/lo-none.json" "$tmp/heavy-brief.md" 2>/dev/null) || fail "no light_only_hosts key must change nothing: $out"
 [ "$(jq -r '.host' <<<"$out")" = host-light ] || fail "no light_only_hosts key keeps normal placement: $out"
+
+# The local host competes on the same keys as a remote host: an idle local host beats a busy remote one.
+cat >"$tmp/load-local-idle.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-local cores=12 load=2.6 2.6 2.6\n'
+printf 'host-remote cores=8 load=7.8 7.8 7.8\n'
+EOS
+chmod +x "$tmp/load-local-idle.sh"
+cat >"$tmp/local-idle.json" <<'EOS'
+{
+  "local_host": "host-local",
+  "host_caps": {"host-local": 5, "host-remote": 8},
+  "host_load_ceilings": {"host-local": 12, "host-remote": 8},
+  "worker_placement": {"order": ["host-local", "host-remote"], "repos": {}}
+}
+EOS
+out=$(FLEET_LOAD_SCRIPT="$tmp/load-local-idle.sh" FLEET_WATCH_CONFIG="$tmp/local-idle.json" \
+  python3 "$py" pick --spec "$tmp/light-brief.md" --json 2>/dev/null) || fail "light start with an idle local host must place: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-local ] || fail "an idle local host gets the light start over a busy remote: $out"
+
+# A heavy start skips a light-only local host even when it is idle, and takes the remote host.
+cat >"$tmp/local-idle-light.json" <<'EOS'
+{
+  "local_host": "host-local",
+  "light_only_hosts": ["host-local"],
+  "host_caps": {"host-local": 5, "host-remote": 8},
+  "host_load_ceilings": {"host-local": 12, "host-remote": 8},
+  "worker_placement": {"order": ["host-local", "host-remote"], "repos": {}}
+}
+EOS
+out=$(FLEET_LOAD_SCRIPT="$tmp/load-local-idle.sh" FLEET_WATCH_CONFIG="$tmp/local-idle-light.json" \
+  python3 "$py" pick --spec "$tmp/heavy-brief.md" --json 2>/dev/null) || fail "heavy start must take the remote host: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-remote ] || fail "a heavy start skips a light-only local host: $out"
 
 
 # #1966: pick --agent antigravity skips a host signed out of agy, even when it would win on load.
