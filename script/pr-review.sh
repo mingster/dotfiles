@@ -212,10 +212,14 @@ if [ -z "${review_me:-}" ]; then
   exit 1
 fi
 
+# #2066: same rule as ship.sh. A "Review: PASS" with model=none or no model is not a cold review, so it neither
+# settles a head nor carries to another one.
+cold_review_def='def not_cold: (.body // "" | split("\n")[0]) | test("^Review: PASS ") and ((test(" model=(?!none( |$))[^ ]") | not));'
+
 issue_comments_json=$(
   gh api --paginate "repos/$repo/issues/$pr/comments" |
     jq --arg login "$review_me" \
-      '[.[] | select(.user.login == $login) | select(.created_at == .updated_at)] | sort_by(.created_at)'
+      "$cold_review_def"'[.[] | select(.user.login == $login) | select(.created_at == .updated_at) | select(not_cold | not)] | sort_by(.created_at)'
 ) || issue_comments_json='[]'
 comments=$(
   jq -r '.[].body // ""' <<<"$issue_comments_json"
@@ -331,7 +335,16 @@ while IFS= read -r f || [ -n "$f" ]; do
 done <<<"$names"
 
 skill_md='(^|/)(skills/[^/]+/SKILL\.md|.agents/skills/[^/]+/SKILL\.md)$'
-if [ "$docs_only" -eq 1 ] && [ -n "$names" ] && ! grep -qE "$skill_md" <<<"$names" && [ "$has_review_strong" -eq 0 ]; then
+# A model=none PASS already at this head means this is a rerun asking for the cold review (#2066).
+none_at_head=0
+if gh api --paginate "repos/$repo/issues/$pr/comments" |
+  jq -e --arg login "$review_me" --arg h "$head" "$cold_review_def"'
+    [.[] | select(.user.login == $login) | select(.created_at == .updated_at) | select(not_cold)
+      | select(.body | split("\n")[0] | ascii_downcase | contains("head=" + ($h | ascii_downcase)))]
+    | length > 0' >/dev/null; then
+  none_at_head=1
+fi
+if [ "$docs_only" -eq 1 ] && [ "$none_at_head" -eq 0 ] && [ -n "$names" ] && ! grep -qE "$skill_md" <<<"$names" && [ "$has_review_strong" -eq 0 ]; then
   post_review_status success
   review_f=$(mktemp)
   trap 'rm -f "$review_f"' EXIT
@@ -450,8 +463,8 @@ fi
 # #1841: two runs on one head both pass the "head already reviewed" check while neither has posted. The later one
 # drops its result, so one head never carries two cold Reviews (a duplicate FAIL would count toward needs-redesign).
 if gh api --paginate "repos/$repo/issues/$pr/comments" |
-  jq -e --arg login "$review_me" --arg h "$head" '
-    [.[] | select(.user.login == $login) | select(.created_at == .updated_at)
+  jq -e --arg login "$review_me" --arg h "$head" "$cold_review_def"'
+    [.[] | select(.user.login == $login) | select(.created_at == .updated_at) | select(not_cold | not)
       | (.body // "" | split("\n")[0])
       | select(test("^(Review|Verdict): ") and (ascii_downcase | contains("head=" + ($h | ascii_downcase))))]
     | length > 0' >/dev/null; then
