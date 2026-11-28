@@ -1,0 +1,1 @@
+The Bash guard asks for permission, instead of denying, for one credential edit: `script/set-env-key.py <file> <KEY> --replace-host <old> <new>` as the whole command, or a whole command matching a project's `secrets_edit_ask` pattern. The script swaps one URL host in place and prints no value. Reading or printing the folder stays denied (#2083).
