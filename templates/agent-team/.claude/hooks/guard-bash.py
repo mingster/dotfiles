@@ -4589,6 +4589,8 @@ ADD_OPTIONS = {"-A", "--all", "-u", "--update", "-f", "--force", "-v", "--verbos
 COMMIT_VALUE_FLAGS = {"-m", "--message", "-F", "--file", "-C", "-c", "--reuse-message", "--reedit-message", "--author",
                       "--date", "-t", "--template", "--fixup", "--squash", "--trailer", "--cleanup"}
 COMMIT_PATHS_FLAGS = {"-i", "-o", "--include", "--only", "--pathspec-from-file", "-p", "--patch", "--interactive"}
+# Git verbs that stage or move a path without `git add`, so the staged check cannot see what they touch (#2030).
+INDEX_OTHER_VERBS = {"rm", "mv", "apply", "update-index"}
 
 
 class _NotPlain(Exception):
@@ -4829,6 +4831,8 @@ def _git_step(words, folder):
         return _GitStep("add", args, folder)
     if sub.text == "commit":
         return _GitStep("commit", args, folder)
+    if sub.text in INDEX_OTHER_VERBS:
+        raise _NotPlain(f"`git {sub.text}`, which stages or moves a path without `git add`")
     return None
 
 

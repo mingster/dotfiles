@@ -2337,6 +2337,10 @@ PLAIN_GATED = {
     "quoted_glob": f"git add 'docs/agents/*.md' && git commit {M}",
     "commit_all": f"git commit -a {M}",
     "commit_path_operand": f"git commit {M} {P}",
+    "commit_o_flag": f"git commit -o {M} {P}",
+    "commit_i_flag": f"git commit -i {M} {P}",
+    "commit_only_flag": f"git commit --only {M} {P}",
+    "commit_include_flag": f"git commit --include {M} {P}",
     "dollar_commit_word": f"git add {U} && git commit $FLAGS {M}",
     "add_piped": f"git add {P} | cat && git commit {M}",
 }
@@ -2380,6 +2384,13 @@ REFUSED = {
     "git_config_override": f"git -c core.hooksPath=/dev/null commit {M}",
     "trailer_does_not_lift": f"git add {P} && git commit {TRAILER} | tee $(mktemp)",
     "newline_between_steps": f"git add {P}\ngit commit {M}",
+    # #2030: these stage or move P without `git add`, so the staged check cannot see them. Refused, not let through.
+    "git_rm_cached": f"git rm -q --cached {P} && git commit {M}",
+    "git_rm_worktree": f"git rm -q {P} && git commit {M}",
+    "git_mv": f"git mv {P} docs/moved.md && git commit {M}",
+    "git_apply_cached": f"git apply --cached x.patch && git commit {M}",
+    "git_update_index": f"git update-index --add {P} && git commit {M}",
+    "sudo_u_chained_add": f"sudo -u root git add {P} && git commit {M}",
     "newline_in_message": f'git add {U} && git commit -m "tweak\n\nbody"',
     "heredoc_to_a_non_text_sink": f"sort <<'EOF'\ngit add {P} && git commit {M}\nEOF",
     # Cold review of 10f68dc: a folder missing at hook time, `${` in a masked value, a misread quote.
