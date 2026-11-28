@@ -17,8 +17,8 @@
 # is given (the coordinator host accepts only chrome-dev, line-desktop or host-file).
 # A fullstack-dev brief whose issue (the "#<n>|" title number) a merged PR already closed (Closes, Fixes, Resolves)
 # is refused unless --allow-delivered REASON is given (#1158, #1811).
-# A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label) waits, unless
-# --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
+# A builder start for another repo is refused while a dotfiles issue labeled ready-for-agent (no hold label, with
+# acceptance criteria) waits, unless --skip-dotfiles-first REASON is given; the reason is logged (docs/agents/labels.md, Start order). A failed gh call lets it go on.
 # A start whose issue (the title issue, or any #N on the brief's Issues: or Refs: lines) already has a live worker of the same
 # role class in the run exits 2, and so does an unreadable task list (#1839). --allow-overlap REASON overrides on a hand start;
 # with FLEET_WATCH=1 an unreadable list always refuses. A builder start whose issue's last closed PR has two FAILs exits 2 until
@@ -1256,6 +1256,27 @@ drop_blocked_issues() { # <repo> <issues_json>
   printf '%s' "$out"
 }
 
+# fleet-watch never starts an issue with no acceptance criteria in its body or a comment, so it cannot hold other repos back
+# (#2047). Uses fleet-watch's own parser, reads stdin (comments can exceed the argument limit) and drops the comments from
+# the output. Any failure returns the list unchanged.
+drop_unaccepted_issues() { # <issues_json>
+  local out
+  out=$(printf '%s' "$1" | "$python3" -c '
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("fleet_watch_acceptance", sys.argv[1])
+fw = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = fw
+spec.loader.exec_module(fw)
+keep = []
+for issue in json.load(sys.stdin):
+    texts = [issue.get("body")] + [c.get("body") for c in issue.pop("comments", None) or []]
+    if any(fw.issue_scan_has_acceptance(t) for t in texts):
+        keep.append(issue)
+print(json.dumps(keep))
+' "$here/fleet-watch.py" 2>/dev/null) || { printf '%s' "$1"; return 0; }
+  printf '%s' "$out"
+}
+
 # Owner rule 2026-11-20: every dotfiles issue starts before any other repo's. The hand dispatch path obeys it too.
 # A builder brief that Refs another repo is refused while a ready dotfiles issue waits. Rework and verify briefs, a brief
 # with no explicit repo, and a failed gh call go on. A start takes the free seat, so a ready issue plus a start request is the seat test.
@@ -1286,7 +1307,8 @@ refuse_before_dotfiles() { # <spec_file> <title> <skip_reason>
   # The three tiers of issue_scan_queue_key in fleet-watch.py (#1791): 0 a main red or red gate fixer, 1 a P0 or bug issue,
   # 2 the rest. A lower tier in any repo starts first; within a tier dotfiles goes first.
   local tier_def='def tier: if ((.title // "") | startswith("main red: ") or startswith("red gate: ")) then 0 elif ([.labels[].name] | index("P0") != null or index("bug") != null) then 1 else 2 end; '
-  ready_json=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels,title,body 2>/dev/null) || ready_json=
+  ready_json=$(gh issue list --repo "$dot" --label ready-for-agent --state open --limit 100 --json number,labels,title,body,comments 2>/dev/null) || ready_json=
+  ready_json=$(drop_unaccepted_issues "$ready_json")
   ready_json=$(drop_blocked_issues "$dot" "$ready_json")
   startable=$(printf '%s' "$ready_json" | jq -c --argjson cant "$cant_start" "$tier_def"'[.[] | select(((.number | tostring) as $n | $cant | index($n)) == null) | select((.labels | map(.name)) as $l | ($l | index("ready-for-agent") != null) and (["blocked","owner","deferred","tracking","needs-redesign","needs-elon","status:進行中"] | map(. as $h | $l | index($h) != null) | any | not)) | {number, tier: tier}]' 2>/dev/null) || startable=
   waiting=$(printf '%s' "$startable" | jq -r 'map("#\(.number)") | join(", ")' 2>/dev/null) || waiting=
