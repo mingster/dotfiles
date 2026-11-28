@@ -2,11 +2,13 @@
 import copy
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from fleet_watch_test_env import isolated_main_env
 from test_fleet_watch_start_unknown import Base, CONFIG, COORD, FIXTURE, Fleet, NOW, fw, local_row
 
