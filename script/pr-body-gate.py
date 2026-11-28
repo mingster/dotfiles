@@ -9,8 +9,12 @@ Two opt-in rules (#1840), off unless the caller passes the input:
 --diff <file>: when the diff changes an existing function or field, the body has a Readers: section
 naming each changed name, every item with a test or a reason.
 --asked no: the worker sent no ask, so the body has a Decisions: section (Decisions: none is fine).
+
+One per-repo rule (#2065), on with --diff: a "# perf-paths: <prefix> ..." line in .agents/head-checks.conf of the
+current checkout, and a diff touching one of those prefixes, need a "Perf: <text>" line in the body.
 """
 import re
+import subprocess
 import sys
 
 _ACCEPT_HEAD = re.compile(r'^(?:## Acceptance(?: criteria)?\b|\*\*Acceptance(?: criteria)?:\*\*)', re.I)
@@ -45,6 +49,9 @@ _FIELD_PATTERNS = {
 _TEST_PATH = re.compile(r'(?:^|/)(?:tests?/|test_[^/]*$|[^/]*[._-](?:test|spec)\.[A-Za-z0-9]+$)')
 _TEST_REF = re.compile(r'[\w./-]*(?:test|spec)[\w./-]*\.[A-Za-z0-9]+|\btest\b', re.I)
 _REASON_REF = re.compile(r'\b(?:reason|because)\b', re.I)
+_PERF_CONF = re.compile(r'^#[ \t]*perf-paths:(.*)$', re.M)
+_PERF_LINE = re.compile(r'^Perf:[ \t]*\S', re.M)
+_DIFF_PATHS = re.compile(r'^diff --git a/(.+?) b/(.+)$', re.M)
 _ISSUE_LINK_FMT = (
     r'\b(?:Closes|Closed|Close|Fixes|Fixed|Fix|Resolves|Resolved|Resolve|Refs)\s+(?:[A-Za-z0-9_./-]+)?#%s\b'
 )
@@ -209,10 +216,33 @@ def decisions_block_reason(body, asked):
     return None
 
 
+def perf_paths():
+    """Path prefixes the current checkout marks perf relevant. Empty outside a checkout or with no line."""
+    try:
+        top = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True, check=True)
+        with open(top.stdout.strip() + '/.agents/head-checks.conf', encoding='utf-8', errors='replace') as handle:
+            conf = handle.read()
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return [prefix for line in _PERF_CONF.findall(conf) for prefix in line.split()]
+
+
+def perf_block_reason(body, diff):
+    prefixes = tuple(perf_paths())
+    if not prefixes or _PERF_LINE.search(body or ''):
+        return None
+    for pair in _DIFF_PATHS.findall(diff):
+        for path in pair:
+            if path.startswith(prefixes):
+                return ('PR body needs a Perf: line (Perf: <checked items> or Perf: n/a: no data reads changed) '
+                        'because the diff touches %s' % path)
+    return None
+
+
 def finish_block_reason(body, issue=None, diff=None, asked=None):
     """None when the body may finish. Otherwise the one-line reason.
 
-    diff (unified diff text) turns on the Readers: rule; asked=False turns on the Decisions: rule."""
+    diff (unified diff text) turns on the Readers: and Perf: rules; asked=False turns on the Decisions: rule."""
     if unchecked_acceptance(body):
         return 'unchecked Acceptance items'
     if not self_check_has_command_and_output(body):
@@ -223,7 +253,7 @@ def finish_block_reason(body, issue=None, diff=None, asked=None):
     if not has_valid_builder_line(body):
         return "PR body needs a 'Builder: agent=<provider> model=<model>' line (provider claude, antigravity, grok or cursor, never a role or host)"
     if diff is not None:
-        reason = readers_block_reason(body, diff)
+        reason = readers_block_reason(body, diff) or perf_block_reason(body, diff)
         if reason:
             return reason
     return decisions_block_reason(body, asked)

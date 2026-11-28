@@ -1,0 +1,1 @@
+- The PR body gate asks for a `Perf:` line when the diff touches a path listed on a `# perf-paths:` line in the project's `.agents/head-checks.conf` (checks run from that checkout). (#2065)

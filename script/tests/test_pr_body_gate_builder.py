@@ -157,6 +157,53 @@ class DecisionsGateTests(unittest.TestCase):
         self.assertIsNone(gate.finish_block_reason(GOOD))
 
 
+class PerfGateTests(unittest.TestCase):
+    """#2065: a diff on a path the checkout marks perf relevant needs a Perf: line."""
+
+    WEB = 'diff --git a/web/src/page.tsx b/web/src/page.tsx\n+x\n'
+    DOCS = 'diff --git a/docs/a.md b/docs/a.md\n+x\ndiff --git a/changelog.d/1-x.md b/changelog.d/1-x.md\n+x\n'
+    NEED = ('PR body needs a Perf: line (Perf: <checked items> or Perf: n/a: no data reads changed) '
+            'because the diff touches web/src/page.tsx')
+
+    def setUp(self):
+        import os
+        import subprocess
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(os.chdir, os.getcwd())
+        root = Path(tmp.name)
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        (root / '.agents').mkdir()
+        self.conf = root / '.agents' / 'head-checks.conf'
+        self.conf.write_text('# perf-paths: web/src/\ntrue\n')
+        (root / 'sub').mkdir()
+        os.chdir(root / 'sub')
+
+    def test_body_without_perf_is_refused(self):
+        self.assertEqual(gate.finish_block_reason(GOOD, diff=self.WEB), self.NEED)
+
+    def test_perf_line_passes(self):
+        for line in ('Perf: n/a: no data reads changed', 'Perf: checked N+1 and caching'):
+            self.assertIsNone(gate.finish_block_reason(GOOD + '\n' + line + '\n', diff=self.WEB), line)
+
+    def test_empty_perf_line_is_refused(self):
+        self.assertEqual(gate.finish_block_reason(GOOD + '\nPerf:\n\nmore\n', diff=self.WEB), self.NEED)
+
+    def test_renamed_from_path_counts(self):
+        moved = 'diff --git a/web/src/page.tsx b/lib/page.tsx\n'
+        self.assertEqual(gate.finish_block_reason(GOOD, diff=moved), self.NEED)
+
+    def test_docs_and_changelog_only_needs_none(self):
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=self.DOCS))
+
+    def test_no_config_line_or_file_needs_none(self):
+        self.conf.write_text('true\n')
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=self.WEB))
+        self.conf.unlink()
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=self.WEB))
+
+
 class CliTests(unittest.TestCase):
     def run_cli(self, args, text):
         import io
