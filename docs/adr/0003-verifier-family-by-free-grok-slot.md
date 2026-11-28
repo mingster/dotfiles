@@ -1,6 +1,6 @@
-# A Claude built PR gets a Grok verifier when a Grok slot is free
+# A Claude built PR gets an Antigravity verifier first, then Grok when a Grok slot is free
 
-Status: Accepted  
+Status: Accepted 2026-11-27. Point 1 of the Decision was superseded on 2026-11-28 (see the amendment at the end): Antigravity first, Grok only when Antigravity is blocked. The text below is the original 2026-11-27 record, kept as history.  
 Date: 2026-11-27
 
 The rule from 2026-11-21 ([#1305](https://github.com/mingster/dotfiles/issues/1305)) said a verifier comes from a model family other than the builder's, and that between Antigravity and Grok the pick goes to whichever has more usage left. Neither provider reports usage: `usage-gate.py show` gives no reading for Antigravity, and Grok has no usage API at all. With nothing to compare, the pick fell through to the fixed order (Claude, Antigravity, Grok), and since Antigravity always reads as allowed, no verifier reached Grok in over two days. Every Claude built PR was checked by Antigravity, so one provider carried all verifier load and a lapsed Antigravity sign in on a host stalled verification there. The owner accepted this change on 2026-11-27, recorded on [#1970](https://github.com/mingster/dotfiles/issues/1970).
