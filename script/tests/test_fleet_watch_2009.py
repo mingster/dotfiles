@@ -70,8 +70,13 @@ class IssueStartAfterSlowSteps(unittest.TestCase):
 
     def test_the_issues_no_start_fits_log_the_budget_hold(self):
         starts, bits, _elapsed = pass_at_110_seconds()
-        held = [b for b in bits if b.startswith('issue_start_budget=')]
+        started = {int(b.split('=')[1]) for b in bits if b.startswith('issue_start=')}
+        held = {int(b.split('=')[1]) for b in bits if b.startswith('issue_start_budget=')}
+        self.assertGreaterEqual(len(starts), 2, bits)
+        self.assertGreaterEqual(len(held), 1, bits)
         self.assertEqual(len(starts) + len(held), len(ISSUES), bits)
+        self.assertEqual(started | held, set(ISSUES), bits)
+        self.assertFalse(started & held, bits)
 
 
 if __name__ == '__main__':
