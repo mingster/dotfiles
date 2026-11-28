@@ -1,0 +1,1 @@
+check-issue-overlap: the fleet-watch config key `overlap_shared_paths` (a list of globs) names shared append-only files, such as locale files, that every feature appends to. An overlap on those paths no longer refuses a builder start, and the check prints each path it ignored (#2050).
