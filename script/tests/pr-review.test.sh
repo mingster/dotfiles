@@ -71,6 +71,9 @@ case "$1" in
       esac
     elif [[ "$*" == *"/issues/"*"/comments"* ]]; then
       [ -f "$FAKE/issue-comments.json" ] && cat "$FAKE/issue-comments.json" || echo "[]"
+    elif [[ "$*" == *"/contents/.agents/head-checks.conf"* && -n "${FAKE_CONF_ERR:-}" ]]; then
+      echo "$FAKE_CONF_ERR" >&2
+      exit 1
     elif [[ "$*" == *"/pulls/"*"/files"* ]]; then
       [ -f "$FAKE/files-api-lines" ] && cat "$FAKE/files-api-lines"
     else
@@ -269,6 +272,26 @@ grep -qF "Readers:" "$tmp/readers.out" || fail "the Readers: refusal names the s
 rm -f "$tmp/diff-patch"
 
 if FAKE_GH_DOWN=1 run; then fail "a GitHub failure fails the run"; fi
+
+# #2079 / #2094: outside the target checkout, the head-checks.conf fetch decides the Perf: rule. A 404 means no conf and the run goes on.
+issue_comments_set
+printf 'Review: PASS\nok\n' > "$tmp/answer"
+GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='gh: Not Found (HTTP 404)' run
+grep -qE "^Review: PASS head=$sha model=sonnet( patch=[^ ]+)?\$" "$tmp/posted" \
+  || fail "a head-checks.conf 404 treats the target as having no conf and still reviews"
+# Any other fetch error fails closed: no agent, no review, one reason line naming the file.
+if GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='gh: Internal Server Error (HTTP 500)' run >"$tmp/conf-500.out" 2>&1; then
+  fail "a head-checks.conf HTTP 500 must fail the review run"
+fi
+grep -qF 'cannot read fake/o .agents/head-checks.conf to check the Perf: rule: gh: Internal Server Error (HTTP 500)' "$tmp/conf-500.out" \
+  || fail "a head-checks.conf HTTP 500 names the file in the cannot read message"
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "a head-checks.conf HTTP 500 runs no review agent and posts nothing"
+if GITHUB_REPOSITORY=fake/o FAKE_CONF_ERR='dial tcp: lookup api.github.com: no such host' run >"$tmp/conf-net.out" 2>&1; then
+  fail "a head-checks.conf network failure must fail the review run"
+fi
+grep -qF 'cannot read fake/o .agents/head-checks.conf to check the Perf: rule: dial tcp' "$tmp/conf-net.out" \
+  || fail "a head-checks.conf network failure names the file in the cannot read message"
+[ ! -e "$tmp/posted" ] && [ ! -e "$tmp/claude-args" ] || fail "a head-checks.conf network failure runs no review agent and posts nothing"
 
 # gh api user fails (workflow_run token): no GITHUB_ACTOR is fatal; with GITHUB_ACTOR the run proceeds
 if GITHUB_ACTOR='' FAKE_USER_FAIL=1 run; then fail "gh api user fail without GITHUB_ACTOR must exit non-zero"; fi

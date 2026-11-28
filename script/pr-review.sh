@@ -192,7 +192,12 @@ if [ -n "$gate_top" ] && [[ "$gate_origin" == *[:/]"$repo" ]]; then
   gate_target=(--repo-dir "$gate_top")
 else
   gate_conf=$(mktemp)
-  gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' >"$gate_conf" 2>/dev/null || : >"$gate_conf"
+  # #2079: a 404 means the target has no conf (the rule is off); any other fetch error (network, auth, 5xx) fails closed.
+  if ! gate_err=$(gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' 2>&1 >"$gate_conf"); then
+    grep -q 'HTTP 404' <<<"$gate_err" \
+      || { rm -f "$gate_conf"; echo "cannot read $repo .agents/head-checks.conf to check the Perf: rule: $(head -n 1 <<<"$gate_err")" >&2; exit 1; }
+    : >"$gate_conf"
+  fi
   gate_target=(--conf "$gate_conf")
 fi
 shopt -u nocasematch
