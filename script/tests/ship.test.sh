@@ -344,7 +344,9 @@ readers_case() { # <pr> <extra body>; sets SHIP_RC and SHIP_OUT
   mf_pr_add "$n" "feat-readers-$n" "Closes #9"
   h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
   mf_self_review "$n" "$h"
-  [ -z "$2" ] || jq --arg l "$2" '.body = (.body + "\n" + $l + "\n")' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  if [ -n "$2" ]; then
+    jq --arg l "$2" '.body = (.body + "\n" + $l + "\n")' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  fi
   set_checks "$n" "$green_checks"
   post_verdict "$n" PASS "$h"
   mkdir -p "$MF_DIR/readers-$n"
@@ -924,6 +926,25 @@ if [ "$SHIP_RC" -ne 0 ] && grep -Fq "exclusive" <<<"$SHIP_OUT"; then ok "--verdi
   cp -R "$repo_root/.agents/skills/setup-matt-pocock-skills" "$fx/.agents/skills/setup-matt-pocock-skills"
   # check-skill-refs.sh looks each /skill the generated AGENTS.md names up under $fx; stub SKILL.md files stand in (git drops empty dirs, and the pinned check reads the commit) for the vendored skills.
   for d in "$repo_root"/.agents/skills/*/; do mkdir -p "$fx/.agents/skills/$(basename "$d")"; : > "$fx/.agents/skills/$(basename "$d")/SKILL.md"; done
+  # #2039: `check --pinned` takes about 5 s and most cases below hand it the same tree, so the real check runs
+  # once per distinct input (checked tree plus fixture refs) and its exit code and output are replayed.
+  mv "$fx/script/agent-team.sh" "$fx/script/agent-team.real.sh"
+  mkdir -p "$MF_DIR/check-cache"
+  cat > "$fx/script/agent-team.sh" <<EOS
+#!/usr/bin/env bash
+real="\$(dirname "\$0")/agent-team.real.sh"
+[ "\${1:-} \${2:-} \$#" = "check --pinned 3" ] || exec bash "\$real" "\$@"
+key=\$({ "$MF_REAL_GIT" -C "$fx" rev-parse HEAD refs/remotes/origin/main
+  cd "\$3" && find . -name .git -prune -o -print | LC_ALL=C sort | while IFS= read -r f; do
+    if [ -L "\$f" ]; then echo "l \$f \$(readlink "\$f")"
+    elif [ -f "\$f" ]; then x=-; [ -x "\$f" ] && x=x; echo "f\$x \$f \$(cksum < "\$f")"
+    else echo "d \$f"; fi
+  done; } | cksum | tr ' ' -)
+hit="$MF_DIR/check-cache/\$key"
+if [ ! -f "\$hit.rc" ]; then bash "\$real" "\$@" >"\$hit.out" 2>&1; echo \$? >"\$hit.rc"; fi
+cat "\$hit.out"
+exit "\$(cat "\$hit.rc")"
+EOS
   "$MF_REAL_GIT" -C "$fx" init -q -b main && "$MF_REAL_GIT" -C "$fx" add . && "$MF_REAL_GIT" -C "$fx" commit -qm fx
   "$MF_REAL_GIT" -C "$fx" update-ref refs/remotes/origin/main HEAD
   g() { "$MF_REAL_GIT" -C "$MF_REPO" "$@"; }
