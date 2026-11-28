@@ -17,6 +17,7 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - Execution facts: `~/dotfiles/templates/agent-team/docs/agents/qa-sdet-execution.md`.
 - A UI flow with an avoidable tap or field is a finding (`team.md`, Shortest UI path).
 - Performance: when `docs/agents/team-facts.md` names a performance checklist, check the diff against it. A miss or a missing `Perf:` line is a FAIL naming the file and line, sent back to the builder.
+- `script/pr-body-gate.py` enforces the `Perf:` line when `.agents/head-checks.conf` lists `# perf-paths:`.
 - Verdict rules: `team.md`, Verdict. Verify only builds from a different model family than yours.
 
 Before `worker_done`, shut down any simulator, emulator or dev server you started (`xcrun simctl shutdown <udid>`, stop the emulator, kill the dev server). A heavy job is one at a time per host, and fleet-watch stops what you leave behind when you end, but it lists it for the coordinator as a miss (#2068).

@@ -204,6 +204,47 @@ class PerfGateTests(unittest.TestCase):
         self.assertIsNone(gate.finish_block_reason(GOOD, diff=self.WEB))
 
 
+class PerfTargetTests(unittest.TestCase):
+    """#2070: a caller outside the target checkout names it."""
+
+    def setUp(self):
+        import os
+        import subprocess
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(os.chdir, os.getcwd())
+        self.root = Path(tmp.name) / 'target'
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        (self.root / '.agents').mkdir()
+        self.conf = self.root / '.agents' / 'head-checks.conf'
+        self.conf.write_text('# perf-paths: web/src/\n')
+        os.chdir(tmp.name)
+
+    def test_repo_dir_or_conf_path_enforces_perf(self):
+        for target in ({'repo_dir': str(self.root)}, {'conf_path': str(self.conf)}):
+            self.assertEqual(gate.finish_block_reason(GOOD, diff=PerfGateTests.WEB, **target), PerfGateTests.NEED)
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=PerfGateTests.WEB))
+
+    def test_empty_repo_dir_never_reads_the_cwd(self):
+        import os
+        os.chdir(self.root)
+        self.assertIsNone(gate.finish_block_reason(GOOD, diff=PerfGateTests.WEB, repo_dir=''))
+
+    def test_fleet_watch_bounce_reads_the_target_checkout(self):
+        from unittest.mock import patch
+        worker = {'dispatchId': 'd1'}
+        message = {'id': 'm1', 'type': 'worker_done', 'payload': {'dispatchId': 'd1'}}
+        config = {'issue_scan': {'repo_roots': {'o/r': str(self.root)}}}
+        with patch.object(fw, 'worker_pr_number', return_value=7), \
+                patch.object(fw, 'repo_for_worker', return_value='o/r'), \
+                patch.object(fw, 'mail_worker'):
+            lines = fw.bounce_builder_dones(
+                [message], [worker], lambda repo, number: GOOD + '\nDecisions: none\n', None, {}, config,
+                diff_of=lambda repo, number: PerfGateTests.WEB)
+        self.assertEqual(lines, ['bounce o/r#7 ' + PerfGateTests.NEED])
+
+
 class CliTests(unittest.TestCase):
     def run_cli(self, args, text):
         import io
