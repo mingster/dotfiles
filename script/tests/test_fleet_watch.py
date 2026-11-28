@@ -239,9 +239,10 @@ class ModelNoneIsNotColdReviewTests(unittest.TestCase):
 
     def test_model_none_review_is_not_cold_and_waits(self):
         row = self.pr(self.comment('Review: PASS head=%s model=none' % self.HEAD))
+        config = {'issue_scan': {'enabled': True, 'pr_repos': ['owner/repo']}}
         self.assertTrue(fw.review_passed_at_head(row))
         self.assertFalse(fw.cold_review_passed_at_head(row))
-        self.assertFalse(fw.tier0_ship_pending({}, {}, 'owner/repo', row))
+        self.assertFalse(fw.tier0_ship_pending(config, {}, 'owner/repo', row))
         self.assertEqual(fw.classify_open_pr(row, repo_root=None), 'waiting')
 
     def test_valid_verdict_is_ready(self):
