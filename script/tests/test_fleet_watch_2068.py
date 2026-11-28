@@ -132,6 +132,19 @@ class TeardownOnRelease(unittest.TestCase):
         self.release({'dispatchId': 'ctx_a', '_host': ''})
         self.assertEqual(self.booted(), ['AAAA', 'BBBB', 'CCCC'])
 
+    def test_a_suffixed_worktree_name_and_an_emulator_by_directory_are_the_workers(self):
+        self.sims.write_text('AAAA verify-10779-se\nBBBB shared-iPhone-15\n')
+        suffixed = self.root / 'app' / 'issue-10779-fix'
+        suffixed.mkdir()
+        emulator = {'type': 'emu', 'id': '9', 'name': 'Pixel_8', 'pid': 0, 'age': 5, 'cwd': str(suffixed / 'android'), 'kind': 'emulator', 'command': ''}
+        killed = []
+        with patch.object(fw, 'stop_process', side_effect=lambda pid: killed.append(pid) or True):
+            sim = fw.heavy_resources_local()
+            lines = fw.teardown_heavy_resources(str(suffixed), resources=sim + [dict(emulator, pid=4242)])
+        self.assertEqual(killed, [4242])
+        self.assertEqual(self.booted(), ['BBBB'])
+        self.assertEqual(sorted(l.split(' ', 2)[1] for l in lines), ['emulator', 'simulator'])
+
     def test_a_remote_worker_is_torn_down_on_its_host(self):
         sent = []
 
@@ -186,12 +199,57 @@ class Report(unittest.TestCase):
     def test_owned_resources_are_not_orphans(self):
         found = [self.res(type='sim', id='AAAA', name='verify-40-se', kind='simulator', cwd='', age=0),
                  self.res(type='dev', id='7', pid=7, kind='dev server', command='next-server')]
-        self.assertEqual(self.report(found)['hosts'], {})
+        out = self.report(found)['hosts']['host-a']
+        self.assertEqual(out['orphans'], [])  # the live worker's simulator is its running job, its dev server is neither
+
+    def test_a_live_workers_simulator_is_listed_as_its_job(self):
+        found = [self.res(type='sim', id='AAAA', name='verify-40-se', kind='simulator', cwd='', age=1200)]
+        out = self.report(found)
+        self.assertEqual(out['hosts']['host-a']['jobs'], [{'worker': 'ctx_a', 'kind': 'simulator', 'minutes': 20}])
+
+    def test_a_remote_workers_resources_match_by_host_name_not_environment_id(self):
+        row = self.rows(_host='env-id-1')[0]
+        found = [self.res(cwd='/w/workspaces/app/issue-40')]
+        with patch.object(fw, 'sweep_hosts', return_value=['env-id-1']), patch.object(fw, 'worker_checkout_path', side_effect=lambda w: w.get('workspace') or ''):
+            out = fw.heavy_job_report({'local_host': 'host-a', 'host_caps': {'host-b': 4}}, 1, [row], None,
+                                      lister=lambda _r, _h: found, env_names={'env-id-1': 'host-b'})
+        self.assertEqual(out['hosts']['host-b']['jobs'][0]['worker'], 'ctx_a')
 
     def test_an_unreadable_host_is_named(self):
         with patch.object(fw, 'sweep_hosts', return_value=['']):
             out = fw.heavy_job_report({'local_host': 'host-a'}, 1, [], None, lister=lambda _r, _h: None)
         self.assertEqual(out['unread'], ['host-a'])
+
+
+_wp_spec = importlib.util.spec_from_file_location('worker_placement_2068', Path(__file__).parent.parent / 'worker-placement.py')
+wp = importlib.util.module_from_spec(_wp_spec)
+_wp_spec.loader.exec_module(wp)
+
+
+class SettledHeavyWorker(unittest.TestCase):
+    def busy(self, released):
+        claim = {'host': 'host-b', 'at': 100.0, 'dispatch': 'ctx_1', 'heavy': True, 'id': 'c1'}
+        return wp.heavy_busy_hosts({}, ['host-b'], [claim], released, {'ctx_1'}, None, now=100.0 + 3600)
+
+    def test_a_live_heavy_worker_holds_its_host(self):
+        self.assertEqual(list(self.busy(set())), ['host-b'])
+
+    def test_a_settled_heavy_worker_frees_its_host_though_the_inventory_still_lists_it(self):
+        self.assertEqual(self.busy({'ctx_1'}), {})
+
+
+class RemoteReadback(unittest.TestCase):
+    def test_every_resource_type_survives_the_terminal_read(self):
+        found = [
+            {'type': 'sim', 'id': 'AAAA', 'name': 'verify-1-se', 'pid': 0, 'age': 0, 'cwd': '', 'kind': 'simulator', 'command': ''},
+            {'type': 'dev', 'id': '7', 'name': '', 'pid': 7, 'age': 90, 'cwd': '/w/a', 'kind': 'dev server', 'command': 'next-server'},
+            {'type': 'job', 'id': '8', 'name': '', 'pid': 8, 'age': 60, 'cwd': '/w/b', 'kind': 'build', 'command': 'bun run build'},
+        ]
+        lines = fw.format_heavy_resources(found)
+        # a terminal read wraps long lines; the parser joins the rows first
+        wrapped = [chunk for line in lines for chunk in (line[:30], line[30:])]
+        self.assertEqual(fw.parse_heavy_resources(wrapped), found)
+        self.assertIsNone(fw.parse_heavy_resources(lines[:-1]))
 
 
 class Classify(unittest.TestCase):

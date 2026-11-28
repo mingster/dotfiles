@@ -343,12 +343,16 @@ def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], 
         workers = fw.deduplicate_workers(fw.fetch_workers(config))
         env_names = fw._resolve_env_names(workers, config, None)
         released = fw.persisted_released_ids(os.environ.get('FLEET_WATCH_STATE'))
+        # A settled worker (exited, finished or released in Orca) holds no heavy slot, whether or not fleet-watch released
+        # it. Its seat is counted by admit as before; only the heavy slot is dropped.
+        settled = set(released) | {w['dispatchId'] for w in workers if isinstance(w, dict) and isinstance(w.get('dispatchId'), str)
+                                   and (fw.worker_terminal_released(w) or not fw.worker_row_is_live(w))}
         counts: dict[str, int] = {}
         for host in hosts:
             receipt = fw.admit(host, config, workers=workers, env_names=env_names, released_ids=released)
             counts[host] = int(receipt.get('occupied') or 0)
         known = {w['dispatchId'] for w in workers if isinstance(w, dict) and isinstance(w.get('dispatchId'), str)}
-        return counts, known | set(released), set(released)
+        return counts, known | set(released), settled
     except Exception as exc:  # inventory is advisory; never block placement on it
         print('worker-placement: worker count unavailable (%s); placing on load only' % exc, file=sys.stderr)
         return None

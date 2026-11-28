@@ -3723,7 +3723,7 @@ def close_worker_terminal(rpc_call, handle, environment='', dispatch_id=''):
 
 # ---- heavy jobs and what they leave behind (#2068) ------------------------------------------------------------
 
-HEAVY_RES_RE = re.compile(r'HR\|(\w+)\|(\d*)\|([^|]*)\|(\d*)\|([^|]*)\|(\w*)\|(.*?)\|EOR')
+HEAVY_RES_RE = re.compile(r'HR\|(\w+)\|(\d*)\|([^|]*)\|(\d*)\|([^|]*)\|([^|]*)\|(.*?)\|EOR')
 HEAVY_JOB_KINDS = ('xcodebuild', 'build', 'tsc', 'playwright', 'regression', 'tests')
 
 
@@ -3894,21 +3894,25 @@ def _under(cwd, path):
 
 
 def owner_tokens(path):
-    """Words that name a worktree in a simulator or emulator name: its folder name and the issue number in it."""
+    """Words that name a worktree in a simulator or emulator name: its folder name and every number in it."""
     base = os.path.basename(path.rstrip('/'))
-    number = re.search(r'(\d+)$', base)
-    return base, (number.group(1) if number else '')
+    return base, re.findall(r'\d{2,}', base)
 
 
 def name_owned_by(name, path):
-    """A booted device belongs to a worktree when its name holds the folder name or the issue number (verify-10779-se)."""
-    base, number = owner_tokens(path)
-    return bool(name) and (bool(base) and base in name or bool(number) and re.search(r'(?<!\d)%s(?!\d)' % number, name) is not None)
+    """A booted device belongs to a worktree when its name holds the folder name or a number from it (verify-10779-se)."""
+    base, numbers = owner_tokens(path)
+    if not name:
+        return False
+    return (bool(base) and base in name) or any(re.search(r'(?<!\d)%s(?!\d)' % n, name) for n in numbers)
 
 
 def resource_owned_by(res, path):
-    if res['type'] in ('sim', 'emu'):
+    """A simulator is the worktree's by name; an emulator by name or by a working directory under it; a dev server or job by directory."""
+    if res['type'] == 'sim':
         return name_owned_by(res['name'], path)
+    if res['type'] == 'emu':
+        return name_owned_by(res['name'], path) or _under(res['cwd'], path)
     return _under(res['cwd'], path)
 
 
@@ -4005,22 +4009,24 @@ def heavy_job_report(config, now, workers, rpc_call, lister=None, env_names=None
     job on the host could be using), or a dev server whose directory no live worker holds. Hosts that cannot be read
     are listed under `unread`."""
     lister = lister or heavy_resources_on
+    env_names = environment_name_by_id() if env_names is None else env_names
     rows_by_host = {}
     for row in workers or []:
         if isinstance(row, dict) and worker_row_is_live(row):
             env = row.get('_host') or ''
             if not env and worker_is_remote(row, config):
                 env = remote_environment(row)
-            rows_by_host.setdefault(env, []).append(row)
+            key = host_cap_name(env, config, env_names).lower() if env else ''
+            rows_by_host.setdefault(key, []).append(row)
     report = {'at': now, 'hosts': {}, 'unread': []}
     local = (config.get('local_host') or '').strip() or 'local'
     for env in sweep_hosts(config):
         found = lister(rpc_call, env)
-        name = local if not env else host_cap_name(env, config, env_names or {})
+        name = local if not env else host_cap_name(env, config, env_names)
         if found is None:
             report['unread'].append(name)
             continue
-        rows = rows_by_host.get(env, [])
+        rows = rows_by_host.get(name.lower() if env else '', [])
         paths = [(row, (worker_checkout_path(row) or str(row.get('_host_workspace') or '').split('::')[-1]).rstrip('/'))
                  for row in rows]
         busy = any(r['type'] == 'job' and r['kind'] == 'xcodebuild' for r in found)
@@ -4028,11 +4034,11 @@ def heavy_job_report(config, now, workers, rpc_call, lister=None, env_names=None
         for res in found:
             owner = next((row.get('dispatchId') for row, path in paths if path.startswith('/') and (
                 resource_owned_by(res, path))), None)
-            if res['type'] == 'job':
+            if res['type'] == 'job' or (owner is not None and res['type'] in ('sim', 'emu')):
                 if owner is None and re.search(r'/_checks(?:-\d+)?(?:/|$)', res['cwd'] or ''):
                     owner = 'head-checks'
                 jobs.append({'worker': owner or 'no live worker', 'kind': res['kind'], 'minutes': res['age'] // 60})
-            elif owner is None:
+            elif owner is None and res['type'] != 'job':
                 if res['type'] == 'sim' and busy:
                     continue  # the shared booted simulator while a test run uses it
                 orphans.append({'type': res['type'], 'name': res['name'] or res['command'][:60], 'id': res['id'],
