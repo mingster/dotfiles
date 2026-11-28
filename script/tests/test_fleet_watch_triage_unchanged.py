@@ -1,7 +1,10 @@
 """An unchanged triage backlog never starts a second triage, even under the urgent work order (#1723)."""
 import datetime
+import sys
 import unittest
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_triage import NOW, fw, run
 
 ORDER = {'min_active': 3, 'target_workers': 8}

@@ -1,7 +1,10 @@
 """#1692: issue_scan skips an issue with a live dispatch titled '#<n>|', whatever its labels say."""
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_1216 import fw, row, run_pass
 
 

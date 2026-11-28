@@ -2,9 +2,12 @@
 
 The run's Orca automation record (status completed) or its tail (the wrapper's `ok <job>` or `FAILED <job>` line)
 says the job ended. Worker terminals and guarded terminals keep their rules."""
+import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_start_unknown import Base, CONFIG, COORD, Fleet, NOW, fw, local_row
 
 FRESH = (NOW - 60) * 1000  # the status line repainted a minute ago

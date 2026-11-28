@@ -1,9 +1,12 @@
 """#1746: a red gate issue starts its fixer first, and a PR whose receipt names an open red gate waits."""
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import test_fleet_watch_1088 as base
 from test_fleet_watch_1216 import fw, issue_of, row, run_pass
 

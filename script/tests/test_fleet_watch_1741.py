@@ -1,6 +1,9 @@
 """#1741: one escalation per worker and signal, for a CI run stuck in progress and for a worker with no push and no output."""
+import sys
 import unittest
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_stall import base_worker, fw
 
 T0 = 1_700_000_000
