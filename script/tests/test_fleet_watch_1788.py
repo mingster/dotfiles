@@ -260,7 +260,8 @@ class DotfilesUnblockedReadsPullRequests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as bin_dir:
             gh = Path(bin_dir) / 'gh'
             # The REST route answers a PR too. `gh issue view` (fetch_issue_state) refuses a PR, so every other form fails.
-            lines = ['#!/bin/sh', 'if [ "$1" = api ]; then', '  case "$2" in']
+            calls = Path(bin_dir) / 'calls.log'
+            lines = ['#!/bin/sh', 'echo "$*" >> "%s"' % calls, 'if [ "$1" = api ]; then', '  case "$2" in']
             lines += ['    repos/%s/issues/%d) echo %s; exit 0 ;;' % (REPO, n, s) for n, s in states.items()]
             lines += ['  esac', 'fi', 'exit 1', '']
             gh.write_text('\n'.join(lines))
@@ -269,11 +270,15 @@ class DotfilesUnblockedReadsPullRequests(unittest.TestCase):
             issues = json.dumps([issue(10079, ['ready-for-agent'], body)])
             proc = subprocess.run([sys.executable, str(self.SCRIPT), str(self.FLEET_WATCH), REPO, issues],
                                   capture_output=True, text=True, env=env, timeout=60, check=False)
+            self.gh_calls = calls.read_text().splitlines() if calls.exists() else []
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return [row['number'] for row in json.loads(proc.stdout)]
 
     def test_merged_pr_under_blocked_by_keeps_the_issue(self):
         self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'CLOSED'}), [10079])
+        # Only the REST route reads a PR. The old `gh issue view` lookup also keeps the issue here, so the call is what goes red.
+        self.assertIn('api repos/%s/issues/10077 --jq .state' % REPO, self.gh_calls)
+        self.assertFalse(any(c.startswith('issue view') for c in self.gh_calls), self.gh_calls)
 
     def test_open_pr_under_blocked_by_drops_the_issue(self):
         self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'OPEN'}), [])
