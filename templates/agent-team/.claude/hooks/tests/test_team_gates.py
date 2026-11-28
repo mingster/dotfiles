@@ -182,10 +182,39 @@ class RoleFileGate(Gate):
         sh(self.repo, "git", "add", rel)
         sh(self.repo, "git", "commit", "-q", "-m", message)
 
-    def test_commit_staged_role_file_denied(self):
-        self.write(".claude/agents/elon.md", "v2\n")
+    def test_commit_staged_guard_logic_denied(self):
+        self.write(".claude/hooks/guard-bash.py", "v2\n")
         sh(self.repo, "git", "add", "-A")
-        self.assertDenied('git commit -m "tweak elon"', "Owner-approved:", self.repo)
+        self.assertDenied('git commit -m "tweak guard"', "Owner-approved:", self.repo)
+
+    def test_commit_role_files_allowed_without_trailer(self):
+        for rel in (
+            ".claude/agents/elon.md",
+            ".claude/model-routing.md",
+            "AGENTS.md",
+            "docs/agents/team.md",
+            "docs/agents/team-facts.md",
+            "templates/agent-team/docs/agents/team.md",
+            "templates/agent-team/.claude/agents/elon.md",
+        ):
+            with self.subTest(rel=rel):
+                sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
+                self.write(rel, "x\n")
+                sh(self.repo, "git", "add", "-A")
+                with mock.patch.dict(os.environ, {"AGENT_TEAM_SYNC": "1"}):
+                    self.assertAllowed('git commit -m "tweak role"', self.repo)
+
+    def test_commit_intent_and_hook_paths_denied_without_trailer(self):
+        for rel in (
+            "docs/intent/a/intent.md",
+            "script/lib/protected-paths.sh",
+            "templates/agent-team/.claude/hooks/guard-bash.py",
+        ):
+            with self.subTest(rel=rel):
+                sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
+                self.write(rel, "x\n")
+                sh(self.repo, "git", "add", "-A")
+                self.assertDenied('git commit -m "tweak guard"', "Owner-approved:", self.repo)
 
     def test_commit_with_trailer_allowed(self):
         self.write("docs/agents/team-facts.md", "x\n")
@@ -194,13 +223,8 @@ class RoleFileGate(Gate):
 
     def test_commit_protected_docs_and_template_paths_denied_without_trailer(self):
         for rel in (
-            "docs/agents/issue-tracker.md",
-            "docs/agents/triage-labels.md",
-            "docs/agents/domain.md",
-            "docs/agents/team-facts.md",
-            "docs/agents/deploy-facts.md",
-            "templates/agent-team/docs/agents/team.md",
-            "templates/agent-team/.claude/agents/elon.md",
+            "templates/agent-team/.claude/hooks/guard-config.json",
+            "script/lib/protected-paths.sh",
         ):
             with self.subTest(rel=rel):
                 sh(self.repo, "git", "reset", "-q", "--hard", "HEAD")
@@ -223,13 +247,11 @@ class RoleFileGate(Gate):
 
     def test_commit_ship_protected_paths_need_trailer(self):
         for rel in (
-            "AGENTS.md",
             ".claude/hooks/x",
             ".claude/settings.json",
             "docs/intent/a/intent.md",
             "foo.rules",
             "bin/owner-approve.sh",
-            "docs/agents/team.md",
             "templates/agent-team/.claude/settings.json",
         ):
             with self.subTest(rel=rel):
@@ -277,15 +299,20 @@ class RoleFileGate(Gate):
         self.assertAllowed('git commit -m "app"', self.repo)
 
     def test_commit_all_flag_sees_unstaged_role_file(self):
-        self.write(".claude/agents/elon.md", "v2\n")
+        self.commit_real(".claude/hooks/x", "add hook" + TRAILER)
+        self.write(".claude/hooks/x", "v2\n")
         self.assertDenied('git commit -am "tweak elon"', "Owner-approved:", self.repo)
 
     def test_push_with_untrailered_role_commit_denied(self):
-        self.commit_real(".claude/agents/elon.md", "tweak elon")
+        self.commit_real(".claude/hooks/x", "tweak hook")
         self.assertDenied("git push origin work", "Owner-approved:", self.repo)
 
+    def test_push_with_untrailered_role_commit_allowed(self):
+        self.commit_real(".claude/agents/elon.md", "tweak elon")
+        self.assertAllowed("git push origin work", self.repo)
+
     def test_push_with_trailer_allowed(self):
-        self.commit_real("docs/agents/team-facts.md", "tweak team-facts" + TRAILER)
+        self.commit_real(".claude/hooks/x", "tweak hook" + TRAILER)
         self.assertAllowed("git push origin work", self.repo)
 
     def test_push_without_role_files_allowed(self):
@@ -293,11 +320,15 @@ class RoleFileGate(Gate):
         self.assertAllowed("git push origin work", self.repo)
 
     def test_pr_create_with_untrailered_role_commit_denied(self):
-        self.commit_real(".claude/model-routing.md", "tweak routing")
+        self.commit_real(".claude/hooks/x", "tweak hook")
         self.assertDenied('gh pr create --title "x" --body "y"', "Owner-approved:", self.repo)
 
+    def test_pr_create_with_untrailered_routing_commit_allowed(self):
+        self.commit_real(".claude/model-routing.md", "tweak routing")
+        self.assertAllowed('gh pr create --title "x" --body "y"', self.repo)
+
     def test_pr_create_with_trailer_allowed(self):
-        self.commit_real(".claude/model-routing.md", "tweak routing" + TRAILER)
+        self.commit_real(".claude/hooks/x", "tweak hook" + TRAILER)
         self.assertAllowed('gh pr create --title "x" --body "y"', self.repo)
 
     def stage(self, rel):
@@ -388,7 +419,7 @@ class RoleFileGate(Gate):
         self.assertDenied('git commit -m "differs"', "template managed", self.repo)
 
     def test_git_dash_c_checks_the_named_folder(self):
-        self.stage(".claude/agents/elon.md")
+        self.stage(".claude/hooks/x")
         self.assertDenied(f'git -C {self.repo} commit -m "x"', "Owner-approved:", self.home)
 
     def test_git_dash_c_elsewhere_is_not_a_false_deny(self):
@@ -406,7 +437,7 @@ class RoleFileGate(Gate):
             self.assertDenied(f'git {form} commit -m "x"', "the guard cannot read it with certainty", self.home)
 
     def test_commit_file_trailer_is_read(self):
-        self.stage(".claude/agents/elon.md")
+        self.stage(".claude/hooks/x")
         self.write("msg.txt", "tweak" + TRAILER + "\n")
         self.write("bare.txt", "tweak\n")
         for flag in ("-F msg.txt", "--file msg.txt", "--file=msg.txt"):
@@ -415,7 +446,7 @@ class RoleFileGate(Gate):
         self.assertDenied("git commit -F bare.txt", "Owner-approved:", self.repo)
 
     def test_commit_file_fifo_does_not_hang(self):
-        self.stage(".claude/agents/elon.md")
+        self.stage(".claude/hooks/x")
         os.mkfifo(os.path.join(self.repo, "fifo.txt"))
         self.assertDenied("git commit -F fifo.txt", "Owner-approved:", self.repo)
 

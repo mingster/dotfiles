@@ -7093,8 +7093,6 @@ def pr_owner_only_reason(pr, run=subprocess.run, repo_root=None):
             'ensure_commit_in_store "$base" || exit 0\n'
             'diff=$(git diff "$base..$head" -- docs/intent 2>/dev/null || true)\n'
             'intent_acceptance_receipt\n'
-            'collect_owner_receipt_paths\n'
-            'text_lane_owner_receipt\n'
         )
         env['BABYSIT_ROOT'] = repo_root
         env['BABYSIT_HEAD'] = head

@@ -1744,12 +1744,12 @@ class ProductionTestData(GuardTest):
         local_sha = self.git("rev-parse", "HEAD").strip()
         self.git("branch", "-f", "origin/main", local_sha)
         try:
-            self.assertDenied("git push origin HEAD:production", "Owner-approved")
+            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
         finally:
             self.git("branch", "-D", "origin/main")
         self.git("tag", "-f", "origin/main", local_sha)
         try:
-            self.assertDenied("git push origin HEAD:production", "Owner-approved")
+            self.assertDenied("git push origin HEAD:production", "owner-approve.sh")
         finally:
             self.git("tag", "-d", "origin/main")
 
@@ -1893,20 +1893,26 @@ class BuilderOwnerPathGate(GuardTest):
                 brief = self.brief(title)
                 self.assertTrue(brief.startswith("Worker role: "), brief)
                 self.session(brief)
-                reason = self.write("AGENTS.md")
+                reason = self.write(".claude/settings.json")
                 self.assertIsNotNone(reason)
                 self.assertIn("needs the owner", reason)
 
     def test_same_task_retry_brief_is_refused(self):
         first = self.brief("#7|fullstack-dev")
         self.session(first, "retry: the same task, please continue")
-        self.assertIsNotNone(self.write("AGENTS.md"))
+        self.assertIsNotNone(self.write(".claude/settings.json"))
+
+    def test_builder_on_a_role_file_or_agents_md_is_not_refused(self):
+        self.session(self.brief("#7|fullstack-dev"))
+        for rel in ("AGENTS.md", ".claude/agents/elon.md", ".claude/model-routing.md", "docs/agents/team.md"):
+            with self.subTest(rel=rel):
+                self.assertIsNone(self.write(rel))
 
     def test_other_roles_and_unstamped_briefs_are_not_refused(self):
         for title in ("#7|qa-sdet", "#7|architect-pm", "#7|release-manager", "free text title"):
             with self.subTest(title=title):
                 self.session(self.brief(title))
-                self.assertIsNone(self.write("AGENTS.md"))
+                self.assertIsNone(self.write(".claude/settings.json"))
 
     def test_builder_on_a_normal_path_is_not_refused(self):
         self.session(self.brief("#7|fullstack-dev"))
@@ -1914,7 +1920,7 @@ class BuilderOwnerPathGate(GuardTest):
 
     def test_allowed_files_name_lets_the_builder_through(self):
         for eol in ("\n", "\r\n"):
-            for path in ("AGENTS.md", self.HOOK_PATH):
+            for path in (".claude/settings.json", self.HOOK_PATH):
                 with self.subTest(path=path, eol=repr(eol)):
                     self.session(self.brief("#7|fullstack-dev", allowed=[path, "docs/x.md"], eol=eol))
                     self.assertIsNone(self.write(path))
@@ -2257,7 +2263,7 @@ class DenyMessagesNameRewrite(ProjectConfigGuardTest):
 class ChainedRepo(GuardTest):
     """A throwaway git repo in the temp home, with the hook run from inside it (#2023).
     P is a protected file and U an unprotected one, both committed and then modified, unstaged."""
-    P = "docs/agents/team-facts.md"
+    P = "docs/intent/a/intent.md"
     U = "src/app.txt"
     M = "-m tweak"
 
@@ -2334,7 +2340,7 @@ PLAIN_GATED = {
     "variable_path": f'f={P}; git add "$f" && git commit {M}',
     "magic_slash": f"git add ':/{P}' && git commit {M}",
     "magic_top": f"git add ':(top){P}' && git commit {M}",
-    "quoted_glob": f"git add 'docs/agents/*.md' && git commit {M}",
+    "quoted_glob": f"git add 'docs/intent/*/*.md' && git commit {M}",
     "commit_all": f"git commit -a {M}",
     "commit_path_operand": f"git commit {M} {P}",
     "commit_o_flag": f"git commit -o {M} {P}",

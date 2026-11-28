@@ -97,7 +97,7 @@ class Protected(unittest.TestCase):
             if shell:
                 hits += 1
                 self.assertEqual(tier(f(path, 1)), 2, path)
-        self.assertGreater(hits, 8)
+        self.assertGreater(hits, 4)
 
 
 class Cli(unittest.TestCase):

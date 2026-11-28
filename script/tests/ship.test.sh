@@ -192,55 +192,34 @@ else
   bad "merge read back not MERGED fails and leaves the board status alone" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 8. Protected path without approval refuses (and with approval merges)
-mf_pr_add 8 feat-protected "Body" AGENTS.md
+# 8. Owner-only path without approval refuses
+mf_pr_add 8 feat-protected "Body" .claude/hooks/guard-bash.py
 h8=$(jq -r .headRefOid "$MF_GH_DIR/pr-8.json")
 mf_self_review 8 "$h8"
 set_checks 8 "$green_checks"
 gh pr comment 8 --repo example/repo --body "Review: PASS head=$h8 model=opus" >/dev/null
+post_verdict 8 PASS "$h8"
 : > "$MF_GH_LOG"
 run_ship --repo example/repo --pr 8
 if [ "$SHIP_RC" -ne 0 ] && [ "$(wc -l <<<"$SHIP_OUT" | tr -d ' ')" -eq 1 ] \
-  && grep -q "Owner-approved" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  && grep -q "waits for the owner" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
   ok "protected path without approval refuses"
 else
   bad "protected path without approval refuses" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
-# 8b. Intent trailer (#1982): a gated file listed in the cited spec's Owner steps merges; one that is not refuses
-mkdir -p "$MF_GH_DIR/contents/docs/intent/2026-11-27-example"
-printf '{"number":80,"state":"MERGED","baseRefName":"main","headRefName":"intent-80","files":[{"path":"docs/intent/2026-11-27-example/intent.md"}],"comments":[]}\n' > "$MF_GH_DIR/pr-80.json"
-printf '# Example\n\nStatus: Proposed 2026-11-26 · Accepted 2026-11-27\n' > "$MF_GH_DIR/contents/docs/intent/2026-11-27-example/intent.md"
-# shellcheck disable=SC2016 # literal Markdown backticks
-printf '# Example: spec\n\n## Owner steps\n- `AGENTS.md`: add the rule.\n' > "$MF_GH_DIR/contents/docs/intent/2026-11-27-example/spec.md"
-intent_trailer_pr() { # <pr> <branch> <path>: the PR's one commit carries the intent trailer
-  local h
-  mf_pr_add "$1" "$2" "Body" "$3"
-  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q "$2"
-  "$MF_REAL_GIT" -C "$MF_REPO" commit -q --amend -m "$2" -m "Owner-approved: intent example/repo#80 accepted 2026-11-27"
-  "$MF_REAL_GIT" -C "$MF_REPO" push -q -f origin "$2"
-  "$MF_REAL_GIT" -C "$MF_REPO" checkout -q main
-  h=$("$MF_REAL_GIT" -C "$MF_REPO" rev-parse "$2")
-  jq --arg h "$h" '.headRefOid = $h' "$MF_GH_DIR/pr-$1.json" > "$MF_GH_DIR/pr-$1.tmp" && mv "$MF_GH_DIR/pr-$1.tmp" "$MF_GH_DIR/pr-$1.json"
-  mf_self_review "$1" "$h"
-  set_checks "$1" "$green_checks"
-  post_verdict "$1" PASS "$h"
-}
-intent_trailer_pr 81 feat-intent-listed AGENTS.md
+# 8b. A role file needs no Owner-approved trailer (owner decision 2026-11-28)
+mf_pr_add 83 feat-role-file "Body" .claude/agents/example.md
+h83=$(jq -r .headRefOid "$MF_GH_DIR/pr-83.json")
+mf_self_review 83 "$h83"
+set_checks 83 "$green_checks"
+post_verdict 83 PASS "$h83"
 : > "$MF_GH_LOG"
-run_ship --repo example/repo --pr 81
-if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 81 " "$MF_GH_LOG"; then
-  ok "intent trailer merges a gated file listed in the cited spec's Owner steps"
+run_ship --repo example/repo --pr 83
+if [ "$SHIP_RC" -eq 0 ] && grep -q "gh pr merge 83 " "$MF_GH_LOG"; then
+  ok "a role file merges on a passing Verdict with no Owner-approved trailer"
 else
-  bad "intent trailer merges a gated file listed in the cited spec's Owner steps" "rc=$SHIP_RC out=$SHIP_OUT"
-fi
-intent_trailer_pr 82 feat-intent-unlisted .claude/agents/example.md
-: > "$MF_GH_LOG"
-run_ship --repo example/repo --pr 82
-if [ "$SHIP_RC" -ne 0 ] && grep -q "is not listed under Owner steps" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
-  ok "intent trailer refuses a gated file missing from the cited spec's Owner steps"
-else
-  bad "intent trailer refuses a gated file missing from the cited spec's Owner steps" "rc=$SHIP_RC out=$SHIP_OUT"
+  bad "a role file merges on a passing Verdict with no Owner-approved trailer" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
 # 9. --dry-run merges nothing
