@@ -649,6 +649,20 @@ if [ "$sync_ec" -eq 0 ] && grep -qF "skipped" <<<"$sync_out" \
 else
   bad "SECRETS_GATE at a missing path should skip without sudo (ec=$sync_ec): $sync_out"
 fi
+# 30b (#1988): end to end, fleet-pull.sh itself calls secrets-sync.sh and honors SECRETS_GATE; the fake sudo proves the call
+state30="$tmp/state30"
+mkdir -p "$state30"
+printf '{"hosts":[],"repos":[]}\n' >"$state30/fleet-pull.json"
+rm -f "$tmp/sudo-called" "$tmp/fake-gate-called"
+set +e
+fp30_out=$(env -u FLEET_PULL_CONFIG PATH="$sync_bin:$PATH" AGENT_STATE_DIR="$state30" SECRETS_GATE="$tmp/fake-gate" bash "$pull_script" 2>&1)
+fp30_ec=$?
+set -e
+if [ "$fp30_ec" -eq 0 ] && [ -e "$tmp/sudo-called" ] && grep -qF "$tmp/fake-gate sync" "$tmp/sudo-called"; then
+  ok "fleet-pull.sh invokes secrets-sync.sh, so SECRETS_GATE reaches the fake sudo"
+else
+  bad "fleet-pull.sh should call the fake sudo with the fake gate (ec=$fp30_ec): $fp30_out"
+fi
 
 # 31. No live_check_server entry in script/ship.local.json: one warning line naming it; an entry silences it; exit 0 in both
 fp31="$tmp/fp31"
