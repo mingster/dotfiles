@@ -1512,6 +1512,73 @@ class SecretsRefsSearch(GuardTest):
                 self.assertDenied(command)
 
 
+class CredentialEditAsks(GuardTest):
+    """#2083: one URL host edit in a credential file asks for permission; reading or printing it stays denied."""
+
+    FILE = "vault/secrets/support/support.env"
+    ROOT_ACTION = "ssh devhost 'sudo -n /usr/local/sbin/host-root support-env-host old.example.org 127.0.0.1'"
+
+    def setUp(self):
+        super().setUp()
+        script_dir = os.path.join(self.home, "dotfiles", "script")
+        os.makedirs(script_dir)
+        self.script = os.path.join(script_dir, "set-env-key.py")
+        with open(self.script, "w") as f:
+            f.write("#!/usr/bin/env python3\n")
+        os.makedirs(os.path.join(self.home, "other"))
+        with open(os.path.join(self.home, "other", "set-env-key.py"), "w") as f:
+            f.write("#!/usr/bin/env python3\n")
+        cfg = {"secrets_dir": "vault/secrets", "secrets_edit_ask": [
+            r"ssh devhost 'sudo -n /usr/local/sbin/host-root support-env-host [A-Za-z0-9.-]+ [A-Za-z0-9.-]+'"]}
+        path = os.path.join(self.home, "guard-config.json")
+        with open(path, "w") as f:
+            json.dump(cfg, f)
+        self.extra_env = {"GUARD_CONFIG": path}
+
+    def decision(self, command):
+        payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": self.home}
+        out = subprocess.run([sys.executable, HOOK], input=json.dumps(payload), text=True, capture_output=True,
+                             env=dict(os.environ, HOME=self.home, **self.extra_env), cwd=self.home, timeout=20)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        if not out.stdout.strip():
+            return "allow", ""
+        body = json.loads(out.stdout)["hookSpecificOutput"]
+        return body["permissionDecision"], body["permissionDecisionReason"]
+
+    def test_the_edit_asks_instead_of_denying(self):
+        edit = f"{self.FILE} SUPPORT_RO_DATABASE_URL --replace-host old.example.org 127.0.0.1"
+        for command in (f"~/dotfiles/script/set-env-key.py {edit}", f"{self.script} {edit}",
+                        f"python3 ~/dotfiles/script/set-env-key.py {edit}", self.ROOT_ACTION):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("prints no value", reason)
+
+    def test_reads_and_other_shapes_stay_denied(self):
+        edit = f"{self.FILE} SUPPORT_RO_DATABASE_URL --replace-host old.example.org 127.0.0.1"
+        for command in (f"cat {self.FILE}",
+                        f"grep SUPPORT_RO_DATABASE_URL {self.FILE}",
+                        f"sed -i s/old/new/ {self.FILE}",
+                        f"~/dotfiles/script/set-env-key.py {edit}; cat {self.FILE}",       # a second command
+                        f"~/dotfiles/script/set-env-key.py {edit} && cat {self.FILE}",
+                        f"~/dotfiles/script/set-env-key.py {edit} | tee /tmp/x",
+                        f"cat {self.FILE} | ~/dotfiles/script/set-env-key.py {edit}",
+                        f"~/dotfiles/script/set-env-key.py {edit} > /tmp/out",            # a redirect
+                        f"{self.home}/other/set-env-key.py {edit}",                       # not the dotfiles script
+                        f"bash -c '~/dotfiles/script/set-env-key.py {edit}'",
+                        f"~/dotfiles/script/set-env-key.py {self.FILE} K --replace-host old.example.org 'a/b'",
+                        f"~/dotfiles/script/set-env-key.py {self.FILE} K --set-value x",  # not a host swap
+                        f"~/dotfiles/script/set-env-key.py vault/secrets/* K --replace-host a b"):
+            with self.subTest(command=command):
+                decision, _ = self.decision(command)
+                self.assertEqual(decision, "deny")
+
+    def test_root_action_inside_a_larger_command_is_denied(self):
+        for command in (self.ROOT_ACTION + "; cat x", self.ROOT_ACTION + "\nls", "echo hi && " + self.ROOT_ACTION):
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
+
 class ProductionTestData(GuardTest):
     """release-manager pushes the production branch with no owner go only while the facts say test data."""
 

@@ -9,7 +9,10 @@ Blocks these kinds of accident:
    `bash bin/deploy-win.sh` or `FOO=1 sh -c "bin/deploy-win.sh"` are not.
 2. Printing a secret into the session log: reading `.env` files, `secrets/`, key
    files, or echoing secret environment variables. Use `python3 "$HOME/.claude/bin/env-peek.py"`
-   to check a value without printing it.
+   to check a value without printing it. One edit asks instead of denying (#2083): the whole command
+   `~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host <old> <new>`, or a command matching a
+   `secrets_edit_ask` pattern in guard-config.json. It swaps one URL host in place and prints no value.
+   A `secrets_edit_ask` pattern found inside a larger command is denied.
 3. A PayPal API call other than GET and the token request.
 4. Risky production commands without the owner's go (`check_risky`): a push to a
    configured stage or production branch, any force push, promote/rollback/apply
@@ -40,7 +43,7 @@ Blocks these kinds of accident:
    and `$-` are never path expansions. Another variable counts only in a path word.
 
 Anything it cannot parse is let through: the deny rules in settings.json are the
-backstop. Exit 0 always; a block is a JSON permissionDecision of "deny".
+backstop. Exit 0 always; a block is a JSON permissionDecision of "deny", and the credential edit above is "ask".
 """
 from __future__ import annotations
 
@@ -97,6 +100,7 @@ EXACT_ONLY_SCRIPTS: list[str] = []
 SECRETS_DIR_RELPATHS: list[str] = []
 FORCE_PUSH_BRANCHES: list[str] = ["main"]
 SECRETS_STDIN_OK: list[re.Pattern] = []
+SECRETS_EDIT_ASK: list[re.Pattern] = []
 WORKTREE_ENV_ALLOW: list[str] = []
 HOST_DEPLOY_PATTERNS: dict[str, list[re.Pattern]] = {}
 PROMOTE_STEPS: dict | None = None
@@ -204,6 +208,7 @@ GATE_CWD = None
 RAW_COMMAND = ""
 CODE_COMMAND = ""  # RAW_COMMAND without the quoted text sink heredocs: what an interpreter on stdin could run
 HOOK_INPUT: dict = {}
+EDIT_ASK = ""  # set when the whole command is an approvable credential edit (#2083)
 
 
 def deny(reason):
@@ -211,6 +216,17 @@ def deny(reason):
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }))
+    sys.exit(0)
+
+
+def ask(reason):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
             "permissionDecisionReason": reason,
         }
     }))
@@ -237,7 +253,7 @@ def load_guard_config(start_dir):
     global BLOCKED_SCRIPTS, PRODUCTION_HOSTS, PRODUCTION_HOSTS_ERROR, BACKSTOP_HOSTS
     global STAGE_BRANCHES, PRODUCTION_BRANCHES, STAGE_BRANCH_COMPONENTS, PROMOTE_RULES, ROLLBACK_SCRIPTS
     global APPLY_SCRIPTS, SCHEMA_OVERRIDE, APPROVAL_NAMESPACE, APPROVAL_FILE_OVERRIDE
-    global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
+    global SIGN_IN_SCRIPT, SECRETS_STDIN_OK, SECRETS_EDIT_ASK, WORKTREE_ENV_ALLOW, SECRETS_DIR, SECRETS_WRITE_REDIRECT
     global CONFIG_LOADED_FROM, HOST_DEPLOY_PATTERNS, REMOTE_READ_ONLY, SECRETS_DIR_EXCEPTIONS, FORCE_PUSH_BRANCHES
     global EXACT_ONLY_SCRIPTS, SECRETS_DIR_RELPATHS, GRILL_APPROVERS, PROMOTE_STEPS, PRE_GO_LIVE_UNTIL, PRE_GO_LIVE_HOST_UNTIL
 
@@ -265,6 +281,7 @@ def load_guard_config(start_dir):
     SECRETS_DIR_RELPATHS = []
     FORCE_PUSH_BRANCHES = ["main"]
     SECRETS_STDIN_OK = []
+    SECRETS_EDIT_ASK = []
     WORKTREE_ENV_ALLOW = []
     HOST_DEPLOY_PATTERNS = {}
     PROMOTE_STEPS = None
@@ -442,6 +459,14 @@ def load_guard_config(start_dir):
         if isinstance(pat, str) and pat.strip():
             try:
                 SECRETS_STDIN_OK.append(re.compile(pat))
+            except re.error:
+                pass
+
+    # Whole commands that edit a credential file through a fixed root action and print no value (#2083): ask.
+    for pat in cfg_expect("secrets_edit_ask", list, "list") or []:
+        if isinstance(pat, str) and pat.strip():
+            try:
+                SECRETS_EDIT_ASK.append(re.compile(pat))
             except re.error:
                 pass
 
@@ -646,8 +671,47 @@ def is_refs_invocation(prog, args, cwd=None):
         return False
 
 
+SET_ENV_KEY = "~/dotfiles/script/set-env-key.py"
+ENV_KEY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+HOST_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+EDIT_ASK_REASON = ("This edits one key in a credential file: {what}. It prints no value. Approve only this exact "
+                   "command; a worker relays it to Elon word for word first, and Elon asks the owner.")
+
+
+def credential_edit_ask(command, cwd=None):
+    """The reason to ask when the whole command is one approvable credential edit, else "" (#2083).
+    Either `[python3] ~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host <old> <new>` (the dotfiles
+    script by real path, plain words only), or a full match of a `secrets_edit_ask` pattern from guard-config.json.
+    Shell syntax (a second command, pipe, redirect, expansion, quote, glob or comment) is never this shape."""
+    text = command.strip()
+    if any(p.fullmatch(text) for p in SECRETS_EDIT_ASK) and "\n" not in text and "\r" not in text:
+        return EDIT_ASK_REASON.format(what=f"`{text}`")
+    if not text or re.search(r"[\s;&|<>()$`*?\[\]{}\\'\"#!]", text.replace(" ", "")):
+        return ""
+    tokens = text.split(" ")
+    if tokens and os.path.basename(tokens[0]) in {"python3", "python"}:
+        tokens = tokens[1:]
+    if len(tokens) != 6 or tokens[3] != "--replace-host" or tokens[1].startswith("-"):
+        return ""
+    prog, path, key, _, old, new = tokens
+    if not ENV_KEY_NAME.fullmatch(key) or not HOST_NAME.fullmatch(old) or not HOST_NAME.fullmatch(new):
+        return ""
+    try:
+        canonical = os.path.realpath(os.path.expanduser(SET_ENV_KEY))
+        joined = os.path.expanduser(prog)
+        if not os.path.isabs(joined):
+            joined = os.path.join(cwd or os.getcwd(), joined)
+        if not os.path.isfile(canonical) or os.path.realpath(joined) != canonical:
+            return ""
+    except (OSError, ValueError):
+        return ""
+    return EDIT_ASK_REASON.format(what=f"the host in {key} in {path} goes from {old} to {new}")
+
+
 def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     """Deny a segment that reads the secrets dir: readers, interpreters, redirects, copies out, cd."""
+    if EDIT_ASK:
+        return  # the whole command is the one credential edit, which asks at the end of main
     text = SECRETS_WRITE_REDIRECT.sub("", segment)
     if not SECRETS_DIR.search(text) or base in SECRETS_NONREAD:
         return
@@ -677,7 +741,9 @@ def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     message = (" When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
                "`gh ... --body-file -` and a quoted heredoc." if base in {"git", "gh"} else "")
     deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
-         f"secrets dir.{exception} Anything else, ask Elon.{message}")
+         f"secrets dir.{exception} To change one URL host in a file there, run `{SET_ENV_KEY} <file> <KEY> "
+         f"--replace-host <old> <new>` as the whole command: it asks for permission and prints no value. "
+         f"Anything else, ask Elon.{message}")
 
 
 KILL_FORMS = ("Stop a port owner with kill $(lsof -ti tcp:<port> -sTCP:LISTEN), or a job you started "
@@ -5059,7 +5125,7 @@ def main():
     tool_input = data.get("tool_input")
     if not isinstance(tool_input, dict):
         tool_input = {}
-    global GATE_CWD, RAW_COMMAND, HOOK_INPUT
+    global GATE_CWD, RAW_COMMAND, HOOK_INPUT, EDIT_ASK
     HOOK_INPUT = data
     session_role.cached = None
     raw_cwd = data.get("cwd")
@@ -5078,6 +5144,10 @@ def main():
     raw_cmd = tool_input.get("command")
     command = raw_cmd if isinstance(raw_cmd, str) else ""
     RAW_COMMAND = command
+    EDIT_ASK = credential_edit_ask(command, GATE_CWD)
+    if not EDIT_ASK and any(p.search(command) for p in SECRETS_EDIT_ASK):
+        deny("This command holds a credential edit from `secrets_edit_ask` in guard-config.json inside a larger "
+             "command. Run the edit alone, exactly as the pattern lists it: then it asks for permission.")
     check_background_wait(command)
     try:
         check_command(command)
@@ -5086,6 +5156,8 @@ def main():
     except Exception:
         pass  # the commit gate below still runs
     check_commit_gate(command)
+    if EDIT_ASK:
+        ask(EDIT_ASK)
 
 
 if __name__ == "__main__":
