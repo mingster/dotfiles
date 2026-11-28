@@ -6883,11 +6883,14 @@ def sum_open_issues(repos, count_open):
     return total
 
 
+_STALE_BLOCKED_KEEP_LABELS = (ISSUE_HOLD_LABELS - {'blocked'}) | {'ready-for-human', 'ready-for-agent', 'status:進行中'}
+
+
 def fetch_blocked_issues(repo, run=subprocess.run):
-    """Open issues labeled blocked, with the body and the native blockedBy, or None when gh fails."""
+    """Open issues labeled blocked, with the body, the native blockedBy, labels and comments, or None when gh fails."""
     try:
         proc = run(['gh', 'issue', 'list', '--repo', repo, '--label', 'blocked', '--state', 'open', '--limit', '100',
-                    '--json', 'number,body,blockedBy'], capture_output=True, text=True, timeout=30, check=True)
+                    '--json', 'number,body,blockedBy,labels,comments'], capture_output=True, text=True, timeout=30, check=True)
         return json.loads(proc.stdout)
     except (subprocess.SubprocessError, OSError, ValueError, TypeError):
         return None
@@ -6935,8 +6938,15 @@ def clear_stale_blocked(repos, list_blocked=None, ref_state=None, act=None):
             open_refs, unknown = issue_open_blockers(row, repo, ref_state, cache)
             if open_refs or unknown:
                 continue
+            edit = ['gh', 'issue', 'edit', str(number), '--repo', repo, '--remove-label', 'blocked']
+            if not (_issue_label_names(row) - {'blocked'}) & _STALE_BLOCKED_KEEP_LABELS:
+                # No hold, state or claim label is left, so restore a state label or the issue is never scanned (#2087).
+                texts = [row.get('body') or '']
+                texts += [entry.get('body') or '' for entry in (row.get('comments') or []) if isinstance(entry, dict)]
+                state = 'ready-for-agent' if any(issue_scan_has_acceptance(text) for text in texts) else 'needs-triage'
+                edit += ['--add-label', state]
             # Comment only after the label came off, so a failing edit does not comment every pass.
-            if act(['gh', 'issue', 'edit', str(number), '--repo', repo, '--remove-label', 'blocked']) != 0:
+            if act(edit) != 0:
                 bits.append('unblock_fail=%s' % number)
                 continue
             names = ', '.join(_blocker_label(ref, repo) for ref in refs)

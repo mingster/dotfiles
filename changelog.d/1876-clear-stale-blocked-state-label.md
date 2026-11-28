@@ -1,0 +1,1 @@
+fleet-watch restores a state label when clear_stale_blocked removes blocked from an unblocked issue: ready-for-agent when it has acceptance criteria, else needs-triage, so the issue is not left unscanned (#1876, #2087).
