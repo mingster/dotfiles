@@ -671,8 +671,44 @@ def check_asks(snap):
     return out
 
 
+HEAVY_STATE_SECONDS = 15 * 60  # the report is written each pass; three missed passes is stale
+ORPHAN_CLEANUP = {
+    'sim': 'xcrun simctl shutdown %s',
+    'emu': 'kill %s',
+    'dev': 'kill %s',
+}
+
+
+def check_heavy(snap):
+    """H1: every running heavy job (host, worker, kind, minutes) and every orphan, with the command that cleans it up (#2068).
+
+    A heavy job is a build, full tsc, Playwright or regression run, an iOS test run or an emulator. An orphan is a booted
+    simulator or emulator, or a dev server, that no live worker owns. fleet-watch writes both lists into its state each pass."""
+    if isinstance(snap['state'], Unreadable):
+        return not_checked('H1', snap['state'])
+    if snap['fleet_watch'] is not None:
+        return not_checked('H1', 'fleet-watch finished no recent pass, so its heavy job report is stale')
+    report = snap['state'].get('heavy_jobs')
+    if not isinstance(report, dict) or snap['now'] - report.get('at', 0) > HEAVY_STATE_SECONDS:
+        return not_checked('H1', 'fleet-watch wrote no heavy job report in the last %d minutes' % (HEAVY_STATE_SECONDS // 60))
+    out = []
+    for host in report.get('unread') or []:
+        out += not_checked('H1', 'host %s heavy jobs unreadable' % host)
+    for host, entry in sorted((report.get('hosts') or {}).items()):
+        for job in entry.get('jobs') or []:
+            out.append('[H1] heavy job on %s: %s runs %s for %d minutes; the coordinator watches it until it ends, '
+                       'nothing to clean up unless it is stuck (stop it with worker-stop or kill its pid)'
+                       % (host, job.get('worker'), job.get('kind'), job.get('minutes', 0)))
+        for orphan in entry.get('orphans') or []:
+            clean = ORPHAN_CLEANUP.get(orphan.get('type'), 'kill %s') % orphan.get('id')
+            out.append('[H1] orphan %s %s on %s, up %d minutes, no live worker owns it; clean it up on that host with: %s'
+                       % ({'sim': 'simulator', 'emu': 'emulator', 'dev': 'dev server'}.get(orphan.get('type'), 'process'),
+                          orphan.get('name'), host, orphan.get('minutes', 0), clean))
+    return out
+
+
 CHECKS = (check_fleet_watch, check_m6, check_watch, check_asks, check_m1, check_m2, check_m7, check_m5,
-          check_m4, check_m8, check_m3, check_supply, check_queues)
+          check_m4, check_m8, check_m3, check_heavy, check_supply, check_queues)
 
 
 def main(argv):

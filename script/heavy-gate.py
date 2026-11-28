@@ -857,7 +857,10 @@ def measure_gate(args):
             log_heavy_gate_measure(time.monotonic() - begin, load, free)
 
 
-SIMULATOR_COMMAND = re.compile(r'build-and-test\.sh|\bxcodebuild\b.*\s(?:test|test-without-building)(?:\s|$)')
+# A simulator or emulator run takes the one device slot: an iOS test run, a simctl boot or an Android emulator (#2068).
+SIMULATOR_COMMAND = re.compile(
+    r'build-and-test\.sh|\bxcodebuild\b.*\s(?:test|test-without-building)(?:\s|$)|\bsimctl\s+boot\b'
+    r'|(?:^|[\s/])emulator(?:\s|$)|(?:^|\s)-avd\s')
 
 
 def simulator_kind(command):
@@ -871,6 +874,7 @@ def simulator_kind(command):
 LIGHT_ONLY_EXIT = 3
 HEAVY_COMMAND = re.compile(
     r'playwright|regression|xcodebuild|build-and-test\.sh|\bbun run build\b|\bnext build\b|head-checks-tsc'
+    r'|\bsimctl\s+boot\b|(?:^|[\s/])(?:emulator|avdmanager)(?:\s|$)|(?:^|\s)-avd\s'
     r'|(?:^|[\s/])tsc(?:\.js)?(?:\s|$)|(?:^|[\s/])(?:createdb|dropdb|psql|pg_dump|pg_restore)(?:\s|$)')
 
 
@@ -934,7 +938,7 @@ def gate(args):
                 reason = (f'waiting for {weight} of {count - 1} slots (one is kept for short jobs)'
                           if long_job else f'waiting for {weight} of {count} slots')
                 if slots.simulator_busy:
-                    reason = ('waiting for the iOS simulator slot: another run holds it, and two run together '
+                    reason = ('waiting for the iOS simulator slot (also taken by an Android emulator): another run holds it, and two run together '
                               'only when both set HEAVY_GATE_SIMULATOR_CLONE=1')
                 if memory and not slots.simulator_busy:
                     reason += f' and {memory} MiB of {host_memory} MiB declared memory'

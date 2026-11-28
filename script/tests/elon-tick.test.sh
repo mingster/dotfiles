@@ -56,7 +56,8 @@ reset() {
 {"pr_watch":{"repos":["o/proj","o/dot"]},"repo_roots":{"o/proj":"$FX/root"},"work_order":{"target_workers":1}}
 EOF
   mkdir -p "$FX/home/.local/state/agent-team"
-  echo '{"open_asks":{}}' > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+  heavy_state "$now" '{}' '[]'
+
   echo '{"ok":true,"result":{"environments":[]}}' > "$FX/envs.json"
   echo '{"ok":true,"result":{"tasks":[{"id":"t1","status":"dispatched","title":"#40|fullstack-dev"}]}}' > "$FX/tasks.json"
   echo '{"ok":true,"result":{"tasks":[{"id":"t1","task_title":"#40|fullstack-dev","spec":"Refs o/proj#40\nRole: fullstack-dev"}]}}' > "$FX/tasks-full.json"
@@ -73,6 +74,12 @@ EOF
   printf '#!/usr/bin/env bash\n[[ -e "$FX/real.fail" ]] && exit 1\ncat "$FX/real" 2>/dev/null || echo 1\n' > "$FX/rc.sh"
   printf '#!/usr/bin/env bash\necho "mailbox $*" >> "$FX/calls"\n' > "$FX/root/.claude/bin/support-mailbox.sh"
   : > "$FX/calls"
+}
+
+# heavy_state <at> <hosts json> <unread json> [open_asks json]: the fleet-watch state with its heavy job report (#2068).
+heavy_state() {
+  printf '{"open_asks":%s,"heavy_jobs":{"at":%s,"hosts":%s,"unread":%s}}' "${4:-{\}}" "$1" "$2" "$3" \
+    > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
 }
 
 # worker <liveness> <outcome> [workspace]: a worker-list reply with one row for dispatch ctx_a, task t1.
@@ -153,10 +160,10 @@ expect 'M6 no waiter' '[M6] no inbox waiter for run_t'
 reset; printf '#!/usr/bin/env bash\necho "ctx_a term_a IDLE > "\nexit 4\n' > "$FX/ww.sh"
 expect 'W2 idle worker' '[W2] worker ctx_a is IDLE'
 
-reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 3600)) > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+reset; heavy_state "$now" '{}' '[]' "{\"msg_1\":{\"at\":$((now - 3600)),\"dispatch\":\"ctx_a\",\"answered\":false}}"
 expect 'W5 unanswered ask' '[W5] unanswered ask msg_1 from ctx_a for 60 minutes'
 
-reset; printf '{"open_asks":{"msg_1":{"at":%d,"dispatch":"ctx_a","answered":false}}}' $((now - 60)) > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+reset; heavy_state "$now" '{}' '[]' "{\"msg_1\":{\"at\":$((now - 60)),\"dispatch\":\"ctx_a\",\"answered\":false}}"
 tick; [[ $out == "OK nothing to do" ]] || fail 'W5 a fresh ask is not an action'
 tests=$((tests + 1))
 
@@ -240,7 +247,7 @@ reset; m8
 expect 'M8 hand started ready issue' '[M8] ctx_h runs ready issue o/proj#44, which fleet-watch did not start'
 [[ $out == *'[M8] next by the fleet-watch queue key: o/proj#46;'* ]] || fail 'M8 prints the next issue by the queue key'
 
-reset; m8; printf '{"open_asks":{},"own_dispatches":{"ctx_h":{"kind":"issue"}}}' > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+reset; m8; printf '{"open_asks":{},"heavy_jobs":{"at":%d,"hosts":{},"unread":[]},"own_dispatches":{"ctx_h":{"kind":"issue"}}}' "$now" > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
 tick; [[ $out == "OK nothing to do" ]] || fail 'M8 a worker fleet-watch started is not flagged'
 tests=$((tests + 1))
 
@@ -334,6 +341,22 @@ expect 'orca worker-list fails' '[M1] NOT CHECKED: orca orchestration worker-lis
 reset; python3 -c 'import json; print(json.dumps([{"number": n, "title": "", "body": "", "labels": []} for n in range(1000)]))' \
   > "$FX/gh-issue-o_dot.json"
 expect 'issue list cut off at the limit' '[M4] NOT CHECKED: o/dot issue or PR list unreadable'
+
+# H1 (#2068): running heavy jobs and orphans, from the report fleet-watch writes into its state each pass.
+reset; heavy_state "$now" '{"host-a":{"env":"","jobs":[{"worker":"ctx_a","kind":"build","minutes":12},{"worker":"head-checks","kind":"tsc","minutes":3}],"orphans":[]}}' '[]'
+expect 'H1 running heavy job' '[H1] heavy job on host-a: ctx_a runs build for 12 minutes'
+[[ $out == *'[H1] heavy job on host-a: head-checks runs tsc for 3 minutes'* ]] || fail 'H1 lists every job'
+reset; heavy_state "$now" '{"host-a":{"env":"","jobs":[],"orphans":[{"type":"sim","name":"verify-10779-se","id":"AAAA-1","minutes":300},{"type":"dev","name":"next-server","id":"4242","minutes":90}]}}' '[]'
+expect 'H1 orphan simulator' '[H1] orphan simulator verify-10779-se on host-a, up 300 minutes, no live worker owns it; clean it up on that host with: xcrun simctl shutdown AAAA-1'
+[[ $out == *'[H1] orphan dev server next-server on host-a, up 90 minutes'*'with: kill 4242'* ]] || fail 'H1 orphan dev server names kill'
+reset; heavy_state "$now" '{}' '["h1"]'
+expect 'H1 unreadable host' '[H1] NOT CHECKED: host h1 heavy jobs unreadable'
+reset; heavy_state "$((now - 3600))" '{}' '[]'
+expect 'H1 stale report' '[H1] NOT CHECKED: fleet-watch wrote no heavy job report'
+reset; echo '{"open_asks":{}}' > "$FX/home/.local/state/agent-team/fleet-watch.state.json"
+expect 'H1 no report' '[H1] NOT CHECKED: fleet-watch wrote no heavy job report'
+reset; fw_end 1200
+expect 'H1 stale fleet-watch' '[H1] NOT CHECKED: fleet-watch finished no recent pass'
 
 # The mistakes table: both copies identical, every row names a check id that elon-tick prints and this file tests.
 out=$(diff "$root/docs/agents/elon-mistakes.md" "$root/templates/agent-team/docs/agents/elon-mistakes.md" 2>&1) \

@@ -164,7 +164,11 @@ def task_kind(spec_path: Path | None) -> str:
 
 
 HEAVY_LINE = re.compile(r'^Heavy:\s*yes\b', re.IGNORECASE | re.MULTILINE)
-HEAVY_WORDS = re.compile(r'playwright|regression|xcodebuild|build-and-test\.sh|bun run build|head-checks-tsc|\btsc\b|\b(?:createdb|dropdb|psql|pg_dump|pg_restore)\b', re.IGNORECASE)
+HEAVY_WORDS = re.compile(
+    r'playwright|regression|xcodebuild|build-and-test\.sh|bun run build|next build|head-checks-tsc|\btsc\b'
+    r'|\bsimctl\s+boot\b|\bemulator\b|\bavd\b|\bavdmanager\b|\b(?:createdb|dropdb|psql|pg_dump|pg_restore)\b',
+    re.IGNORECASE)
+HEAVY_HOLD_SECONDS = 6 * 3600  # a started heavy worker holds its host's one heavy slot this long, unless it settles
 
 
 def heavy_start(spec_path: Path | None) -> bool:
@@ -324,8 +328,9 @@ def load_agy_signin():
     return module
 
 
-def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], set[str]] | None:
-    """Occupied workers per host, counted the way fleet-watch admit counts them, and every dispatch id the inventory knows.
+def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], set[str], set[str]] | None:
+    """Occupied workers per host, counted the way fleet-watch admit counts them, every dispatch id the inventory knows,
+    and the ids already released (a released heavy worker holds no heavy slot).
 
     None when the inventory cannot be read; the caller then counts 0 live workers (recent starts still count).
     WORKER_PLACEMENT_COUNT_WORKERS=0 skips the inventory (tests without an orca fake), the same as a failed read.
@@ -338,12 +343,16 @@ def live_worker_counts(config: dict, hosts: list[str]) -> tuple[dict[str, int], 
         workers = fw.deduplicate_workers(fw.fetch_workers(config))
         env_names = fw._resolve_env_names(workers, config, None)
         released = fw.persisted_released_ids(os.environ.get('FLEET_WATCH_STATE'))
+        # A settled worker (exited, finished or released in Orca) holds no heavy slot, whether or not fleet-watch released
+        # it. Its seat is counted by admit as before; only the heavy slot is dropped.
+        settled = set(released) | {w['dispatchId'] for w in workers if isinstance(w, dict) and isinstance(w.get('dispatchId'), str)
+                                   and (fw.worker_terminal_released(w) or not fw.worker_row_is_live(w))}
         counts: dict[str, int] = {}
         for host in hosts:
             receipt = fw.admit(host, config, workers=workers, env_names=env_names, released_ids=released)
             counts[host] = int(receipt.get('occupied') or 0)
         known = {w['dispatchId'] for w in workers if isinstance(w, dict) and isinstance(w.get('dispatchId'), str)}
-        return counts, known | set(released)
+        return counts, known | set(released), settled
     except Exception as exc:  # inventory is advisory; never block placement on it
         print('worker-placement: worker count unavailable (%s); placing on load only' % exc, file=sys.stderr)
         return None
@@ -409,12 +418,17 @@ def read_recent(path: Path, window: float, now: float) -> list[dict]:
             at = float(row.get('at'))
         except (TypeError, ValueError):
             continue
-        if now - at <= window:
-            claim = {'host': row['host'], 'at': at}
-            for key in ('id', 'dispatch'):
-                if isinstance(row.get(key), str) and row[key]:
-                    claim[key] = row[key]
-            keep.append(claim)
+        heavy = row.get('heavy') is True
+        # A heavy claim bound to a dispatch outlives the window: its worker holds the host's heavy slot (#2068).
+        if now - at > (HEAVY_HOLD_SECONDS if heavy and isinstance(row.get('dispatch'), str) else window):
+            continue
+        claim = {'host': row['host'], 'at': at}
+        for key in ('id', 'dispatch'):
+            if isinstance(row.get(key), str) and row[key]:
+                claim[key] = row[key]
+        if heavy:
+            claim['heavy'] = True
+        keep.append(claim)
     return keep
 
 
@@ -466,17 +480,54 @@ def bind_start(config: dict, claim_id: str, dispatch_id: str) -> bool:
     return edit_recent(config, bind)
 
 
-def pending_starts(rows: list[dict], known_dispatches: set[str] | None) -> dict[str, int]:
+def pending_starts(rows: list[dict], known_dispatches: set[str] | None, window: float | None = None,
+                   now: float | None = None) -> dict[str, int]:
     """Recent starts per host that the inventory does not show yet. Each is one seat and one worker's memory.
 
     A claim stops counting once its dispatch is in the inventory: a live one is counted there, a settled one holds nothing.
     """
     out: dict[str, int] = {}
     for row in rows:
+        if window is not None and (now or time.time()) - row['at'] > window:
+            continue  # kept longer only as a heavy hold (#2068), not a seat
         if known_dispatches is not None and row.get('dispatch') in known_dispatches:
             continue
         out[row['host']] = out.get(row['host'], 0) + 1
     return out
+
+
+def heavy_busy_hosts(config: dict, hosts: list[str], recent: list[dict], released: set[str] | None,
+                     known: set[str] | None, local_host: str | None, now: float | None = None) -> dict[str, str]:
+    """Hosts that already run a heavy job, with the reason (#2068). A heavy start never goes to one of them.
+
+    Sources: a heavy claim of a start not yet in the inventory or of a live heavy worker; on this host also a live
+    head-checks run (a held _checks.lock under ~/orca/workspaces) and a held heavy-gate slot. A remote host's own
+    head-checks and slots are not visible from here; its heavy workers are, through their claims."""
+    now = time.time() if now is None else now
+    window = recent_start_seconds(config)
+    busy: dict[str, str] = {}
+    for row in recent:
+        if not row.get('heavy') or row['host'] not in hosts:
+            continue
+        dispatch = row.get('dispatch')
+        if dispatch and released is not None and dispatch in released:
+            continue
+        if dispatch and known is not None and dispatch not in known and now - row['at'] > window:
+            continue  # the inventory no longer lists it
+        busy.setdefault(row['host'], 'a heavy worker runs there')
+    if local_host and local_host in hosts and local_host not in busy:
+        try:
+            fw = load_fleet_watch()
+            checks = fw.head_checks_running()
+            slots = fw.heavy_gate_slots_held()
+        except Exception as exc:  # advisory like the worker count; never block placement on it
+            print('worker-placement: local heavy jobs unavailable (%s); placing without them' % exc, file=sys.stderr)
+            checks, slots = None, 0
+        if checks:
+            busy[local_host] = 'head checks run there (%s)' % checks
+        elif slots:
+            busy[local_host] = 'the heavy gate holds %d slot(s)' % slots
+    return busy
 
 
 def pick_host(
@@ -504,7 +555,10 @@ def pick_host(
         result = _pick_host(config, spec_path, repo_selector, rows, agent)
         if result.get('ok'):
             result['claim'] = uuid.uuid4().hex
-            rows.append({'host': result['host'], 'at': time.time(), 'id': result['claim']})
+            claim_row = {'host': result['host'], 'at': time.time(), 'id': result['claim']}
+            if heavy_start(spec_path):
+                claim_row['heavy'] = True
+            rows.append(claim_row)
             tmp = path.with_name(path.name + '.tmp')
             try:
                 tmp.write_text(json.dumps({'starts': rows}), encoding='utf-8')
@@ -554,8 +608,14 @@ def _pick_host(
         return {'ok': False, 'reason': str(exc), 'loads': {}}
     local_host = config.get('local_host') if isinstance(config.get('local_host'), str) else None
     caps = host_caps_of(config)
-    live, known_dispatches = live_worker_counts(config, hosts) or (None, None)
-    pending = pending_starts(recent, known_dispatches)
+    live, known_dispatches, released_ids = live_worker_counts(config, hosts) or (None, None, None)
+    now = time.time()
+    pending = pending_starts(recent, known_dispatches, recent_start_seconds(config), now)
+    heavy = heavy_start(spec_path)
+    heavy_busy = heavy_busy_hosts(
+        config, hosts, recent or read_recent(recent_file_path(config), recent_start_seconds(config), now),
+        released_ids, known_dispatches, config.get('local_host') if isinstance(config.get('local_host'), str) else None, now,
+    ) if heavy else {}
     cores_per_worker = placement_float(config, 'cores_per_worker', DEFAULT_CORES_PER_WORKER)
     mem_per_worker = placement_float(config, 'mem_gb_per_worker', DEFAULT_MEM_GB_PER_WORKER)
     try:
@@ -591,6 +651,11 @@ def _pick_host(
             # #1844: head checks on this host hold the database step on that host's heavy gate.
             print('worker-placement: skip %s (head checks hold the heavy gate: %s)' % (host, held), file=sys.stderr)
             full[host] = 'heavy-gate-held'
+            continue
+        if host in heavy_busy:
+            # #2068: one heavy job per host. A second would push the load past what the host holds.
+            print('worker-placement: skip %s (a heavy job already runs: %s)' % (host, heavy_busy[host]), file=sys.stderr)
+            full[host] = 'heavy-busy'
             continue
         cap = scaled_cap(caps[host], cores, cores_per_worker)
         workers = (0 if live is None else live.get(host, 0)) + pending.get(host, 0)
@@ -645,6 +710,8 @@ def _pick_host(
     if full and len(full) == len(considered):
         if all(v == 'heavy-gate-held' for v in full.values()):
             return {'ok': False, 'reason': 'head checks hold the heavy gate on every eligible host', 'workers': full}
+        if all(v in ('heavy-busy', 'heavy-gate-held') for v in full.values()):
+            return {'ok': False, 'reason': 'a heavy job already runs on every eligible host', 'workers': full}
         return {'ok': False, 'reason': 'all eligible hosts at worker cap', 'workers': full}
     return {'ok': False, 'reason': 'all eligible hosts over load ceiling or worker cap', 'loads': considered,
             'workers': full}
@@ -659,6 +726,13 @@ def check_host(config: dict, host: str, spec_path: Path | None, repo_selector: s
     name = known.get(host.lower())
     if name is not None and host_caps_of(config).get(name, 0) <= 0:
         return {'ok': False, 'host': name, 'reason': 'host_caps is 0, the host takes no workers'}
+    local = config.get('local_host') if isinstance(config.get('local_host'), str) else None
+    if name is not None and heavy_start(spec_path):
+        counts = live_worker_counts(config, [name])
+        busy = heavy_busy_hosts(config, [name], read_recent(recent_file_path(config), recent_start_seconds(config), time.time()),
+                                counts[2] if counts else None, counts[1] if counts else None, local)
+        if name in busy:
+            return {'ok': False, 'host': name, 'reason': 'a heavy job already runs there (%s), a second would overload it' % busy[name]}
     ceiling = ceiling_for(name, config) if name else None
     if name is None or ceiling is None:
         return {'ok': True, 'host': host, 'reason': 'no load limit configured for this host'}

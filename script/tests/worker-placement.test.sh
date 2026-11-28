@@ -602,4 +602,63 @@ out=$(grok_pick "$tmp/pull-listed.json" "$tmp/agy.json" 2>/dev/null) || fail "gr
 out=$(grok_pick "$tmp/pull-empty.json" "$tmp/grok-local.json" 2>/dev/null) || fail "grok with none listed must place here: $out"
 [ "$(jq -r '.host' <<<"$out")" = hostc ] || fail "with none listed grok stays on this host: $out"
 
+# #2068: one heavy job per host. A live head checks run, a held heavy-gate slot or a heavy worker's claim makes a
+# host busy: a heavy start goes elsewhere (or is held), a light start still lands. Simulators and emulators are heavy.
+cat >"$tmp/load-two.sh" <<'EOS'
+#!/usr/bin/env bash
+printf 'host-a cores=8 load=0.5 1.0 1.0\n'
+printf 'host-b cores=8 load=2.0 1.0 1.0\n'
+EOS
+chmod +x "$tmp/load-two.sh"
+cat >"$tmp/two.json" <<'EOS'
+{
+  "local_host": "host-a",
+  "host_caps": {"host-a": 4, "host-b": 4},
+  "host_load_ceilings": {"host-a": 12, "host-b": 12},
+  "worker_placement": {"order": ["host-a", "host-b"], "repos": {}}
+}
+EOS
+heavy_home=$tmp/heavy-home
+mkdir -p "$heavy_home/orca/workspaces/app/_checks.lock"
+echo $$ >"$heavy_home/orca/workspaces/app/_checks.lock/pid"
+two_pick() { # <brief> [extra args]
+  HOME="$heavy_home" WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-2068.json" FLEET_LOAD_SCRIPT="$tmp/load-two.sh" \
+    FLEET_WATCH_CONFIG="$tmp/two.json" python3 "$py" pick --spec "$1" --json "${@:2}" 2>"$tmp/two.err"
+}
+printf 'Worker role: qa-sdet\n\nBoot the iOS simulator: xcrun simctl boot ABCD, then verify.\n' >"$tmp/sim-brief.md"
+printf 'Worker role: qa-sdet\n\nStart the Android emulator with an avd and verify.\n' >"$tmp/emu-brief.md"
+printf 'Worker role: fullstack-dev\n\nRun next build before you push.\n' >"$tmp/nextbuild-brief.md"
+for brief in heavy-brief sim-brief emu-brief nextbuild-brief tsc-brief; do
+  out=$(two_pick "$tmp/$brief.md") || fail "$brief must move off the host a head checks run holds: $out"
+  [ "$(jq -r '.host' <<<"$out")" = host-b ] || fail "$brief must not share host-a with head checks: $out"
+  grep -Fq 'skip host-a (a heavy job already runs: head checks run there' "$tmp/two.err" || fail "$brief stderr: $(cat "$tmp/two.err")"
+done
+out=$(two_pick "$tmp/light-brief.md") || fail "a light start still lands: $out"
+[ "$(jq -r '.ok' <<<"$out")" = true ] || fail "a light start ignores the head checks hold: $out"
+! grep -Fq 'heavy job already runs' "$tmp/two.err" || fail "a light start must not skip a heavy host: $(cat "$tmp/two.err")"
+# A heavy slot held by the heavy gate counts the same.
+sleep 60 & slot_pid=$!
+rm -rf "$heavy_home/orca/workspaces/app/_checks.lock"
+mkdir -p "$heavy_home/.cache/heavy-gate/slot-1"
+echo "$slot_pid" >"$heavy_home/.cache/heavy-gate/slot-1/pid"
+out=$(two_pick "$tmp/heavy-brief.md") || fail "heavy must avoid a held slot: $out"
+[ "$(jq -r '.host' <<<"$out")" = host-b ] || fail "a held heavy-gate slot makes host-a busy: $out"
+kill "$slot_pid"; wait "$slot_pid" 2>/dev/null || true
+# A recorded heavy start holds its host: the second heavy start goes to the other host, and a third is held.
+rm -rf "$heavy_home/.cache"; rm -f "$tmp/recent-2068.json"
+out=$(two_pick "$tmp/sim-brief.md" --record) || fail "first heavy start places: $out"
+first=$(jq -r '.host' <<<"$out")
+out=$(two_pick "$tmp/emu-brief.md" --record) || fail "second heavy start places: $out"
+[ "$(jq -r '.host' <<<"$out")" != "$first" ] || fail "second heavy start must not share $first: $out"
+ec=0; out=$(two_pick "$tmp/heavy-brief.md" --record) || ec=$?
+[ "$ec" = 1 ] && grep -Fq 'a heavy job already runs on every eligible host' <<<"$out" || fail "third heavy start is held (ec=$ec): $out"
+out=$(two_pick "$tmp/light-brief.md") || fail "a light start still lands next to heavy jobs: $out"
+# --on: a forced host with a heavy job is refused; a light start is not.
+chk() { HOME="$heavy_home" WORKER_PLACEMENT_RECENT_FILE="$tmp/recent-2068.json" FLEET_LOAD_SCRIPT="$tmp/load-two.sh" \
+  FLEET_WATCH_CONFIG="$tmp/two.json" python3 "$py" check-host --host host-a --spec "$1"; }
+ec=0; out=$(chk "$tmp/sim-brief.md") || ec=$?
+[ "$ec" != 0 ] && grep -Fq 'a heavy job already runs there' <<<"$out" || fail "forced host with a heavy worker is refused (ec=$ec): $out"
+ec=0; out=$(chk "$tmp/light-brief.md") || ec=$?
+[ "$ec" = 0 ] || fail "forced host takes a light start (ec=$ec): $out"
+
 echo "worker-placement.test.sh passed"

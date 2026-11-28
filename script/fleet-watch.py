@@ -3721,6 +3721,339 @@ def close_worker_terminal(rpc_call, handle, environment='', dispatch_id=''):
     return 'closed'
 
 
+# ---- heavy jobs and what they leave behind (#2068) ------------------------------------------------------------
+
+HEAVY_RES_RE = re.compile(r'HR\|(\w+)\|(\d*)\|([^|]*)\|(\d*)\|([^|]*)\|([^|]*)\|(.*?)\|EOR')
+HEAVY_JOB_KINDS = ('xcodebuild', 'build', 'tsc', 'playwright', 'regression', 'tests')
+
+
+def classify_process(command):
+    """(type, kind) of one process command line: ('dev', 'dev server'), ('emu', 'emulator'),
+    ('job', <HEAVY_JOB_KINDS>) or ('', ''). The program name decides, so an agent whose brief
+    only mentions `next build` never matches (the way reap-orphan-tests.sh reads a command)."""
+    words = command.split()
+    if not words:
+        return '', ''
+    prog = os.path.basename(words[0])
+    rest = [os.path.basename(w) if '/' in w and not w.startswith('-') else w for w in words[1:]]
+    first = rest[0] if rest else ''
+    second = rest[1] if len(rest) > 1 else ''
+    if prog == 'xcodebuild':
+        return 'job', 'xcodebuild'
+    if prog in ('bash', 'sh', 'zsh') and first == 'build-and-test.sh':
+        return 'job', 'xcodebuild'
+    if prog == 'emulator' or prog.startswith('qemu-system'):
+        return 'emu', 'emulator'
+    if prog in ('bun', 'bunx', 'npm', 'npx', 'pnpm', 'yarn'):
+        joined = ' '.join(rest)
+        if re.match(r'(?:run )?build\b', joined):
+            return 'job', 'build'
+        if re.match(r'(?:run )?dev\b|--hot\b', joined):
+            return 'dev', 'dev server'
+        if first == 'next' and second in ('build', 'dev'):
+            return ('job', 'build') if second == 'build' else ('dev', 'dev server')
+        if first == 'test':
+            return 'job', 'tests'
+        if first == 'playwright' or joined.startswith('run playwright'):
+            return 'job', 'playwright'
+        if first == 'tsc':
+            return 'job', 'tsc'
+        if 'regression' in joined:
+            return 'job', 'regression'
+        return '', ''
+    if prog == 'node' or prog.startswith('node'):
+        if first == 'next':
+            return ('job', 'build') if second == 'build' else ('dev', 'dev server') if second == 'dev' else ('', '')
+        if first in ('tsc', 'tsc.js'):
+            return 'job', 'tsc'
+        if first in ('playwright', 'cli.js') and second == 'test':
+            return 'job', 'playwright'
+        if first in ('vite', 'nuxt', 'astro'):
+            return 'dev', 'dev server'
+    if prog.startswith('next-server') or prog == 'vite':
+        return 'dev', 'dev server'
+    if prog == 'php' and first == 'artisan' and second == 'serve':
+        return 'dev', 'dev server'
+    if prog == 'tsc':
+        return 'job', 'tsc'
+    if prog == 'playwright' and first == 'test':
+        return 'job', 'playwright'
+    return '', ''
+
+
+def _etime_seconds(text):
+    days, _, clock = text.rpartition('-')
+    parts = [int(p) for p in clock.split(':') if p.isdigit()]
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + part
+    return seconds + (int(days) * 86400 if days.isdigit() else 0)
+
+
+def process_cwd(pid):
+    """Working directory of a process: /proc where it exists, else lsof; '' when unknown."""
+    try:
+        return os.readlink('/proc/%d/cwd' % pid)
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(['lsof', '-a', '-p', str(pid), '-d', 'cwd', '-Fn'], capture_output=True, text=True,
+                             timeout=10, check=False).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ''
+    return next((line[1:] for line in out.splitlines() if line.startswith('n')), '')
+
+
+def heavy_resources_local(run=subprocess.run):
+    """This host's booted simulators and emulators, dev servers and running heavy jobs, as dicts (#2068):
+    type (sim, emu, dev, job), id (udid or pid), name, pid, age seconds, cwd, kind, command."""
+    found = []
+    try:
+        listing = run(['xcrun', 'simctl', 'list', 'devices', 'booted', '-j'], capture_output=True, text=True, timeout=30)
+        devices = json.loads(listing.stdout or '{}').get('devices') or {}
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        devices = {}
+    for group in devices.values() if isinstance(devices, dict) else []:
+        for device in group if isinstance(group, list) else []:
+            if isinstance(device, dict) and device.get('state') == 'Booted' and device.get('udid'):
+                found.append({'type': 'sim', 'id': device['udid'], 'name': str(device.get('name') or ''), 'pid': 0,
+                              'age': 0, 'cwd': '', 'kind': 'simulator', 'command': ''})
+    try:
+        ps = run(['ps', '-ww', '-u', str(os.getuid()), '-o', 'pid=,etime=,command='], capture_output=True, text=True,
+                 timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        ps = ''
+    for line in ps.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) != 3 or not parts[0].isdigit() or int(parts[0]) == os.getpid():
+            continue
+        kind_type, kind = classify_process(parts[2])
+        if not kind_type:
+            continue
+        pid = int(parts[0])
+        name = ''
+        if kind_type == 'emu':
+            avd = re.search(r'(?:-avd\s+|\s@)(\S+)', parts[2])
+            if not avd:
+                continue
+            name = avd.group(1)
+        found.append({'type': kind_type, 'id': str(pid), 'name': name, 'pid': pid, 'age': _etime_seconds(parts[1]),
+                      'cwd': process_cwd(pid), 'kind': kind, 'command': parts[2][:120].replace('|', '/')})
+    return found
+
+
+def format_heavy_resources(found):
+    return ['HR|%s|%s|%s|%d|%s|%s|%s|EOR' % (r['type'], r['pid'] or '', r['name'], r['age'], r['cwd'], r['kind'],
+                                           (r['id'] if r['type'] == 'sim' else r['command']))
+            for r in found] + ['HR-END']
+
+
+def parse_heavy_resources(lines):
+    """Resources from the lines format_heavy_resources prints, or None when the read did not end (#2068).
+    A terminal read wraps long lines, so the rows are joined and cut on the markers."""
+    text = ''.join(str(line) for line in lines)
+    if 'HR-END' not in text:
+        return None
+    found = []
+    for kind_type, pid, name, age, cwd, kind, tail in HEAVY_RES_RE.findall(text):
+        found.append({'type': kind_type, 'id': tail if kind_type == 'sim' else pid, 'name': name,
+                      'pid': int(pid) if pid else 0, 'age': int(age or 0), 'cwd': cwd, 'kind': kind,
+                      'command': '' if kind_type == 'sim' else tail})
+    return found
+
+
+HEAVY_RES_REMOTE = 'python3 "$HOME/dotfiles/script/fleet-watch.py" --heavy-resources %s %s'
+
+
+def heavy_resources_on(rpc_call, host):
+    """Resources on one host ('' is this one), or None when they cannot be read."""
+    if not host:
+        return heavy_resources_local()
+    try:
+        lines = reap_orphan_remote_lines(rpc_call, host, HEAVY_RES_REMOTE % ('list', ''))
+    except (OSError, subprocess.SubprocessError, OrcaReadError, TerminalNotFound) + SEND_ERRORS:
+        return None
+    return parse_heavy_resources(lines)
+
+
+def _workspaces_root():
+    return os.path.realpath(os.environ.get('FLEET_WATCH_WORKSPACES_ROOT') or os.path.expanduser('~/orca/workspaces'))
+
+
+def teardown_path_ok(path):
+    """True for an absolute worktree path at least two levels below the Orca workspaces folder (<repo>/<name>)."""
+    if not isinstance(path, str) or not path.startswith('/') or '..' in path.split('/'):
+        return False
+    real = os.path.realpath(path)
+    root = _workspaces_root()
+    return real.startswith(root + '/') and len(real[len(root) + 1:].split('/')) >= 2
+
+
+def _under(cwd, path):
+    return bool(cwd) and (cwd == path or cwd.startswith(path.rstrip('/') + '/'))
+
+
+def owner_tokens(path):
+    """Words that name a worktree in a simulator or emulator name: its folder name and every number in it."""
+    base = os.path.basename(path.rstrip('/'))
+    return base, re.findall(r'\d{2,}', base)
+
+
+def name_owned_by(name, path):
+    """A booted device belongs to a worktree when its name holds the folder name or a number from it (verify-10779-se)."""
+    base, numbers = owner_tokens(path)
+    if not name:
+        return False
+    return (bool(base) and base in name) or any(re.search(r'(?<!\d)%s(?!\d)' % n, name) for n in numbers)
+
+
+def resource_owned_by(res, path):
+    """A simulator is the worktree's by name; an emulator by name or by a working directory under it; a dev server or job by directory."""
+    if res['type'] == 'sim':
+        return name_owned_by(res['name'], path)
+    if res['type'] == 'emu':
+        return name_owned_by(res['name'], path) or _under(res['cwd'], path)
+    return _under(res['cwd'], path)
+
+
+def stop_process(pid, grace=None, alive=None, kill=os.kill):
+    """TERM, wait up to the grace, then KILL. By pid only. True when it is gone."""
+    grace = float(os.environ.get('FLEET_WATCH_TEARDOWN_GRACE', '3')) if grace is None else grace
+    alive = alive or (lambda p: _pid_alive(p))
+    try:
+        kill(pid, signal.SIGTERM)
+    except OSError:
+        return not alive(pid)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline and alive(pid):
+        time.sleep(0.1)
+    if alive(pid):
+        try:
+            kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        time.sleep(0.1)
+    return not alive(pid)
+
+
+def _pid_alive(pid):
+    try:
+        done, _status = os.waitpid(pid, os.WNOHANG)  # a child of this process that exited is a zombie until reaped
+        if done:
+            return False
+    except ChildProcessError:
+        pass
+    except OSError:
+        pass
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def teardown_heavy_resources(path, resources=None, run=subprocess.run):
+    """Shut down every simulator or emulator and every dev server that belongs to the worktree `path` (#2068).
+
+    A simulator or emulator is the worktree's when its name holds the folder name or the issue number, a dev server
+    when its working directory is under the path. Nothing else is touched, so the shared booted simulator that other
+    runs use stays up. Returns one line per resource. A path outside the Orca workspaces folder tears down nothing."""
+    if not teardown_path_ok(path):
+        return []
+    real = os.path.realpath(path)
+    found = heavy_resources_local() if resources is None else resources
+    lines = []
+    for res in found:
+        if res['type'] not in ('sim', 'emu', 'dev') or not (resource_owned_by(res, path) or resource_owned_by(res, real)):
+            continue
+        if res['type'] == 'sim':
+            try:
+                done = run(['xcrun', 'simctl', 'shutdown', res['id']], capture_output=True, text=True, timeout=60)
+                gone = done.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                gone = False
+        else:
+            gone = stop_process(res['pid'])
+        label = {'sim': 'simulator', 'emu': 'emulator', 'dev': 'dev server'}[res['type']]
+        lines.append('%s %s %s' % ('stopped' if gone else 'could not stop', label, res['name'] or res['command'][:60] or res['id']))
+    return lines
+
+
+def teardown_worker_resources(rpc_call, row):
+    """On worker end, shut down what the worker left running in its worktree, on its host (#2068).
+    Never raises and never changes what release_worker returns. Returns the teardown lines."""
+    try:
+        host = (row or {}).get('_host') or ''
+        path = (worker_checkout_path(row) or str((row or {}).get('_host_workspace') or '').split('::')[-1]).rstrip('/')
+        if not path.startswith('/'):
+            return []
+        if not host:
+            lines = teardown_heavy_resources(path)
+        else:
+            lines = [str(l).strip() for l in reap_orphan_remote_lines(
+                rpc_call, host, HEAVY_RES_REMOTE % ('teardown --worktree', shlex.quote(path)))
+                if str(l).strip().startswith(('stopped ', 'could not stop '))]
+    except Exception as error:  # a teardown failure must never keep a worker from being released
+        log_fleet_watch('heavy teardown skipped for %s: %r' % ((row or {}).get('dispatchId'), error))
+        return []
+    for line in lines:
+        log_fleet_watch('heavy teardown %s%s: %s' % ((row or {}).get('dispatchId') or '', ' on ' + host if host else '', line))
+    return lines
+
+
+def heavy_job_report(config, now, workers, rpc_call, lister=None, env_names=None):
+    """Per host: running heavy jobs and orphans (#2068), for the fleet-watch state and elon-tick.
+
+    A job is owned by a live worker whose checkout holds its working directory, or by head checks when it runs in a
+    `_checks` worktree. An orphan is a booted simulator or emulator no live worker's name matches (and no heavy
+    job on the host could be using), or a dev server whose directory no live worker holds. Hosts that cannot be read
+    are listed under `unread`."""
+    lister = lister or heavy_resources_on
+    env_names = environment_name_by_id() if env_names is None else env_names
+    rows_by_host = {}
+    for row in workers or []:
+        if isinstance(row, dict) and worker_row_is_live(row):
+            env = row.get('_host') or ''
+            if not env and worker_is_remote(row, config):
+                env = remote_environment(row)
+            key = host_cap_name(env, config, env_names).lower() if env else ''
+            rows_by_host.setdefault(key, []).append(row)
+    report = {'at': now, 'hosts': {}, 'unread': []}
+    local = (config.get('local_host') or '').strip() or 'local'
+    for env in sweep_hosts(config):
+        found = lister(rpc_call, env)
+        name = local if not env else host_cap_name(env, config, env_names)
+        if found is None:
+            report['unread'].append(name)
+            continue
+        rows = rows_by_host.get(name.lower() if env else '', [])
+        paths = [(row, (worker_checkout_path(row) or str(row.get('_host_workspace') or '').split('::')[-1]).rstrip('/'))
+                 for row in rows]
+        busy = any(r['type'] == 'job' and r['kind'] == 'xcodebuild' for r in found)
+        jobs, orphans = [], []
+        for res in found:
+            owner = next((row.get('dispatchId') for row, path in paths if path.startswith('/') and (
+                resource_owned_by(res, path))), None)
+            if res['type'] == 'job' or (owner is not None and res['type'] in ('sim', 'emu')):
+                if owner is None and re.search(r'/_checks(?:-\d+)?(?:/|$)', res['cwd'] or ''):
+                    owner = 'head-checks'
+                jobs.append({'worker': owner or 'no live worker', 'kind': res['kind'], 'minutes': res['age'] // 60})
+            elif owner is None and res['type'] != 'job':
+                if res['type'] == 'sim' and busy:
+                    continue  # the shared booted simulator while a test run uses it
+                orphans.append({'type': res['type'], 'name': res['name'] or res['command'][:60], 'id': res['id'],
+                                'minutes': res['age'] // 60})
+        if jobs or orphans:
+            report['hosts'][name] = {'env': env, 'jobs': jobs, 'orphans': orphans}
+    return report
+
+
+def heavy_jobs_pass(config, state, now, workers, rpc_call, lister=None, env_names=None):
+    """Write the heavy job report into the fleet-watch state for elon-tick to read (#2068)."""
+    state['heavy_jobs'] = heavy_job_report(config, now, workers, rpc_call, lister, env_names)
+    return state['heavy_jobs']
+
+
 def release_worker(rpc_call, row):
     """The one retire path (#1958): stop, release, close the terminal, mark the row released.
 
@@ -3741,6 +4074,7 @@ def release_worker(rpc_call, row):
             code = orchestration_failure_log_code(exc) or 'error'
             if code not in _STOP_SETTLED_CODES:
                 return 'stop_failed:' + code
+    teardown_worker_resources(rpc_call, row)  # #2068: a simulator or dev server the worker left running dies with it
     for where in wheres:
         try:
             rpc_call('orchestration', 'worker-release', '--dispatch', did, *where)
@@ -5663,6 +5997,29 @@ def head_checks_gate_lock(host):
         if lock.name[len('_db-'):].startswith(key) and _lock_holder_live(str(lock)):
             return str(lock)
     return None
+
+
+def head_checks_running():
+    """The lock path of a live head-checks run on this host (any repo's _checks.lock), else None (#2068).
+
+    The runner counts as a heavy job: it builds and type checks in the shared checks worktree."""
+    for lock in sorted(Path.home().glob('orca/workspaces/*/_checks.lock')):
+        if _lock_holder_live(str(lock)):
+            return str(lock)
+    return None
+
+
+def heavy_gate_slots_held():
+    """How many heavy-gate slots on this host a live job holds (#2068)."""
+    held = 0
+    for slot in Path.home().glob('.cache/heavy-gate/slot-*'):
+        try:
+            pid = int((slot / 'pid').read_text().strip())
+            os.kill(pid, 0)
+        except (OSError, ValueError):
+            continue
+        held += 1
+    return held
 
 
 def _lock_holder_live(lock):
@@ -12168,8 +12525,19 @@ def _main():
     parser.add_argument('--release-worker', metavar='FRAGMENT', default=None,
                         help='Stop, release and close the terminal of the one worker whose id contains FRAGMENT')
     parser.add_argument('--live', action='store_true', help='With --release-worker, allow a live worker')
+    parser.add_argument('--heavy-resources', choices=('list', 'teardown'), default=None,
+                        help='On this host: list booted simulators, emulators, dev servers and heavy jobs, or with --worktree stop '
+                             'the ones that belong to that worktree (#2068)')
+    parser.add_argument('--worktree', default=None, help='With --heavy-resources teardown, the worktree path')
     parser.add_argument('--trial-summary', action='store_true', help='Print the standing vs fresh verifier trial report and exit')
     args = parser.parse_args()
+
+    if args.heavy_resources:
+        if args.heavy_resources == 'list':
+            print('\n'.join(format_heavy_resources(heavy_resources_local())))
+        else:
+            print('\n'.join(teardown_heavy_resources(args.worktree or '')))
+        return 0
 
     if args.metrics_digest is not None:
         for line in metrics_digest(read_log_tail(), args.metrics_digest):
@@ -12486,6 +12854,13 @@ def _main():
             print('fleet-watch: agy probe skipped: %s' % (repr(error),), file=sys.stderr)
             return []
 
+    def heavy_jobs_phase():
+        try:
+            heavy_jobs_pass(config, state, now, workers, rpc)
+        except Exception as error:
+            print('fleet-watch: heavy job report skipped: %s' % (repr(error),), file=sys.stderr)
+        return []
+
     def sim_stall_phase():
         try:
             return sim_stall_pass(config, state, now, workers, rpc)
@@ -12563,6 +12938,7 @@ def _main():
     notices += stall_extra
     if inventory_ok:
         notices += run_phase('sim_stall', sim_stall_phase, [])
+        notices += run_phase('heavy_jobs', heavy_jobs_phase, [])
     signal_extra, signal_log = run_phase('signal', lambda: worker_signal_pass(
         config, state, now, workers, term_times, terminal_branches=term_branches,
         inventory_ok=inventory_ok, terminal_list_ok=terminal_list_ok), ([], []))
