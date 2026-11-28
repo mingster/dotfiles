@@ -18,7 +18,7 @@ def main(argv):
     cache = {}
     keep = []
     for issue in json.loads(raw):
-        open_refs, unknown = fw.issue_open_blockers(issue, repo, fw.fetch_issue_state, cache)
+        open_refs, unknown = fw.issue_open_blockers(issue, repo, fw.fetch_ref_state, cache)
         if not open_refs and not unknown:
             keep.append(issue)
     print(json.dumps(keep))

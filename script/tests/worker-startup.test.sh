@@ -2446,6 +2446,7 @@ printf '%s\n' "$*" >>"$GH_STUB_LOG"
 view_default='{"labels":[],"title":"feat: x"}'
 case "$1 $2" in
   "issue list") printf '%s\n' "$GH_STUB_ISSUES" ;;
+  "api repos/"*) case "$*" in *"--jq .state"*) printf '%s\n' "${GH_STUB_BLOCKER_STATE:-CLOSED}" ;; *) exit 1 ;; esac ;;
   "issue view") [ "${GH_STUB_VIEW_FAIL:-}" != 1 ] || exit 1
     case "$*" in *"--json state"*) printf '%s\n' "${GH_STUB_BLOCKER_STATE:-CLOSED}" ;; *) printf '%s\n' "${GH_STUB_VIEW:-$view_default}" ;; esac ;;
   "pr list") printf '[]\n' | jq -r "${@: -1}" ;;
