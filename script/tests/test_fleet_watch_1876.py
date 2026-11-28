@@ -129,7 +129,8 @@ class StaleBlocked(unittest.TestCase):
         states = {(REPO, 8): 'CLOSED', ('other/repo', 3): 'CLOSED', (REPO, 9): 'OPEN'}
         bits, acts = self.clear(rows, states)
         self.assertEqual(bits, ['unblock=10'])
-        self.assertEqual(acts[0], ['gh', 'issue', 'edit', '10', '--repo', REPO, '--remove-label', 'blocked'])
+        self.assertEqual(acts[0], ['gh', 'issue', 'edit', '10', '--repo', REPO, '--remove-label', 'blocked',
+                                   '--add-label', 'needs-triage'])
         self.assertEqual(acts[1][:4], ['gh', 'issue', 'comment', '10'])
         self.assertIn('#8, other/repo#3', acts[1][-1])
         self.assertEqual(len(acts), 2)
@@ -144,6 +145,40 @@ class StaleBlocked(unittest.TestCase):
         ]
         bits, acts = self.clear(rows, {(REPO, 8): 'CLOSED'})  # #5 unreadable
         self.assertEqual((bits, acts), ([], []))
+
+    def edit_for(self, row, states=None):
+        _bits, acts = self.clear([dict({'number': 40, 'body': 'Blocked by #8'}, **row)], dict({(REPO, 8): 'CLOSED'}, **(states or {})))
+        return acts[0][acts[0].index('--remove-label'):]
+
+    def test_unblocked_issue_with_acceptance_gets_ready_for_agent(self):
+        self.assertEqual(self.edit_for({'body': 'Blocked by #8\n\n## Acceptance criteria\n- works'}),
+                         ['--remove-label', 'blocked', '--add-label', 'ready-for-agent'])
+
+    def test_acceptance_in_a_comment_counts_too(self):
+        row = {'comments': [{'body': 'ping'}, {'body': '**Acceptance:** it works'}]}
+        self.assertEqual(self.edit_for(row), ['--remove-label', 'blocked', '--add-label', 'ready-for-agent'])
+
+    def test_unblocked_issue_without_acceptance_gets_needs_triage(self):
+        self.assertEqual(self.edit_for({'labels': [{'name': 'blocked'}, {'name': 'bug'}]}),
+                         ['--remove-label', 'blocked', '--add-label', 'needs-triage'])
+
+    def test_another_hold_state_or_claim_label_means_only_remove_blocked(self):
+        for keep in ('deferred', 'owner', 'tracking', 'ready-for-human', 'ready-for-agent', 'needs-triage', 'status:進行中'):
+            row = {'body': 'Blocked by #8\n\n## Acceptance\n- x', 'labels': [{'name': 'blocked'}, {'name': keep}]}
+            self.assertEqual(self.edit_for(row), ['--remove-label', 'blocked'], keep)
+
+    def test_fetch_blocked_issues_requests_labels_and_comments(self):
+        seen = []
+
+        class Proc:
+            stdout = '[]'
+
+        def run(command, **_k):
+            seen.append(command)
+            return Proc()
+
+        fw.fetch_blocked_issues(REPO, run=run)
+        self.assertEqual(seen[0][seen[0].index('--json') + 1], 'number,body,blockedBy,labels,comments')
 
     def test_failed_edit_does_not_comment(self):
         bits, acts = self.clear([{'number': 30, 'body': 'Blocked by #8'}], {(REPO, 8): 'CLOSED'}, edit_rc=1)
@@ -161,7 +196,8 @@ class StaleBlocked(unittest.TestCase):
         acts = []
         _s, bits = run_pass(state, blocked=[{'number': 7, 'body': 'Blocked by #6'}], ref_states={(REPO, 6): 'CLOSED'}, acts=acts)
         self.assertIn('unblock=7', bits)
-        self.assertIn(['gh', 'issue', 'edit', '7', '--repo', REPO, '--remove-label', 'blocked'], acts)
+        self.assertIn(['gh', 'issue', 'edit', '7', '--repo', REPO, '--remove-label', 'blocked',
+                       '--add-label', 'needs-triage'], acts)
 
 
 class SupplyBrief(unittest.TestCase):
