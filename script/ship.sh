@@ -458,13 +458,30 @@ same_pair_gate() { # <body> <verifier agent> <verifier model> <where> [same-fami
   fi
   # #1882: a sixth argument (the PR's own diff) turns on the Readers: rule. --verdict-from checks a merged
   # source PR's body, which never saw this diff, so it passes none.
-  local gate_diff=""
+  local gate_diff="" gate_conf="" gate_target=() gate_err=""
   if [ -n "${6:-}" ]; then
     gate_diff=$(mktemp) || refuse "cannot create a temp file"
     printf '%s\n' "$6" >"$gate_diff"
+    # #2070: the Perf: rule reads the --repo target's .agents/head-checks.conf, as pr-review.sh does: this checkout when
+    # its origin is $repo, else the file on GitHub. #2079: a 404 means the target has no conf (the rule is off); any other
+    # fetch error (network, auth, 5xx) refuses the ship, so the Perf: rule is never skipped by accident.
+    shopt -s nocasematch
+    if [[ "${origin_url%.git}" == *[:/]"$repo" ]]; then
+      gate_target=(--repo-dir "$top")
+    else
+      gate_conf=$(mktemp) || refuse "cannot create a temp file"
+      if ! gate_err=$(gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' 2>&1 >"$gate_conf"); then
+        grep -q 'HTTP 404' <<<"$gate_err" \
+          || { rm -f "$gate_diff" "$gate_conf"; refuse "cannot read $repo .agents/head-checks.conf to check the Perf: rule: $(head -n 1 <<<"$gate_err")"; }
+        : >"$gate_conf"
+      fi
+      gate_target=(--conf "$gate_conf")
+    fi
+    shopt -u nocasematch
   fi
-  body_reason=$(python3 "$ship_dir/pr-body-gate.py" ${gate_diff:+--diff "$gate_diff"} <<<"$1") || { rm -f "$gate_diff"; refuse "$4 $body_reason"; }
-  rm -f "$gate_diff"
+  body_reason=$(python3 "$ship_dir/pr-body-gate.py" ${gate_diff:+--diff "$gate_diff"} ${gate_target[@]+"${gate_target[@]}"} <<<"$1") \
+    || { rm -f "$gate_diff" ${gate_conf:+"$gate_conf"}; refuse "$4 $body_reason"; }
+  rm -f "$gate_diff" ${gate_conf:+"$gate_conf"}
 }
 verdict_re='^Verdict: (PASS\+NOTES|PASS|FAIL) head=([0-9a-f]{40}) verifier=([a-zA-Z0-9_-]+) author=([a-zA-Z0-9_-]+)( agent=([A-Za-z0-9._-]+) model=([A-Za-z0-9._:-]+))?$'
 

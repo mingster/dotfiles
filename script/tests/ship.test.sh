@@ -347,6 +347,68 @@ else
   bad "a Readers: section naming the changed function passes the body gate" "rc=$SHIP_RC out=$SHIP_OUT"
 fi
 
+# 2070: the Perf: rule reads the --repo target's .agents/head-checks.conf, not the conf of the folder ship runs in.
+# This folder's conf asks for docs/, the target's (served by gh, as the origin is not the target) asks for web/.
+perf_case() { # <pr> <extra body>; sets SHIP_RC and SHIP_OUT
+  local n=$1 h
+  mf_pr_add "$n" "feat-perf-$n" "Closes #9" "web/app.ts"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"
+  if [ -n "$2" ]; then
+    jq --arg l "$2" '.body = (.body + "\n" + $l + "\n")' "$MF_GH_DIR/pr-$n.json" > "$MF_GH_DIR/pr-$n.tmp" && mv "$MF_GH_DIR/pr-$n.tmp" "$MF_GH_DIR/pr-$n.json"
+  fi
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$h"
+  mkdir -p "$MF_DIR/perf-$n" "$MF_GH_DIR/contents/.agents" "$MF_REPO/.agents"
+  printf '# perf-paths: web/\n' >"$MF_GH_DIR/contents/.agents/head-checks.conf"
+  printf '# perf-paths: docs/\n' >"$MF_REPO/.agents/head-checks.conf"
+  printf '#!/usr/bin/env bash\nif [ "$1 $2" = "pr diff" ]; then printf %%s "$PERF_DIFF"; exit 0; fi\nexec "%s/gh" "$@"\n' "$MF_BIN" >"$MF_DIR/perf-$n/gh"; chmod +x "$MF_DIR/perf-$n/gh"
+  : >"$MF_GH_LOG"
+  SHIP_OUT=$(PERF_DIFF=$'diff --git a/web/app.ts b/web/app.ts\n--- a/web/app.ts\n+++ b/web/app.ts\n@@ -1 +1 @@\n-a\n+b\n' \
+    PATH="$MF_DIR/perf-$n:$PATH" bash "$here/ship.sh" --repo example/repo --pr "$n" 2>&1); SHIP_RC=$?
+  rm -f "$MF_REPO/.agents/head-checks.conf"
+}
+perf_case 3035 ""
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "because the diff touches web/app.ts" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "the target's perf-paths refuse a web/ change without Perf:, though this folder's conf does not name web/"
+else
+  bad "the target's perf-paths refuse a web/ change without Perf:" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+perf_case 3036 $'Perf: n/a: no data reads changed'
+if ! grep -Fq "because the diff touches" <<<"$SHIP_OUT"; then
+  ok "a Perf: line passes the target's perf path"
+else
+  bad "a Perf: line passes the target's perf path" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
+# 2079: the fallback fetch of the target's head-checks.conf fails closed. A non-404 error refuses the ship; a 404 is an
+# empty conf, so the rule is off and the same web/ change passes the Perf: rule.
+conf_fetch_case() { # <pr> <gh error text>; sets SHIP_RC and SHIP_OUT
+  local n=$1 h
+  mf_pr_add "$n" "feat-conf-$n" "Closes #9" "web/app.ts"
+  h=$(jq -r .headRefOid "$MF_GH_DIR/pr-$n.json")
+  mf_self_review "$n" "$h"
+  set_checks "$n" "$green_checks"
+  post_verdict "$n" PASS "$h"
+  mkdir -p "$MF_DIR/conf-$n"
+  printf '#!/usr/bin/env bash\nif [ "$1 $2" = "pr diff" ]; then printf %%s "$CONF_DIFF"; exit 0; fi\nif [ "$1" = api ] && [ "$2" = "repos/example/repo/contents/.agents/head-checks.conf" ]; then echo "gh: $CONF_ERR" >&2; exit 1; fi\nexec "%s/gh" "$@"\n' "$MF_BIN" >"$MF_DIR/conf-$n/gh"; chmod +x "$MF_DIR/conf-$n/gh"
+  : >"$MF_GH_LOG"
+  SHIP_OUT=$(CONF_ERR="$2" CONF_DIFF=$'diff --git a/web/app.ts b/web/app.ts\n--- a/web/app.ts\n+++ b/web/app.ts\n@@ -1 +1 @@\n-a\n+b\n' \
+    PATH="$MF_DIR/conf-$n:$PATH" bash "$here/ship.sh" --repo example/repo --pr "$n" 2>&1); SHIP_RC=$?
+}
+conf_fetch_case 3037 "HTTP 502"
+if [ "$SHIP_RC" -ne 0 ] && grep -Fq "head-checks.conf to check the Perf: rule" <<<"$SHIP_OUT" && ! grep -q "pr merge" "$MF_GH_LOG"; then
+  ok "a non-404 error fetching the target's head-checks.conf refuses the ship"
+else
+  bad "a non-404 error fetching the target's head-checks.conf refuses the ship" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+conf_fetch_case 3038 "Not Found (HTTP 404)"
+if ! grep -Fq "head-checks.conf" <<<"$SHIP_OUT" && ! grep -Fq "because the diff touches" <<<"$SHIP_OUT"; then
+  ok "a 404 for the target's head-checks.conf means no conf, so the Perf: rule is off"
+else
+  bad "a 404 for the target's head-checks.conf means no conf, so the Perf: rule is off" "rc=$SHIP_RC out=$SHIP_OUT"
+fi
+
 # 1952: a stacked PR (base is another branch) merges only while an open PR still has that base as its head.
 stack_case() { # <pr> <branch> <base branch>; sets SHIP_RC and SHIP_OUT
   local n=$1 b=$2 base=$3 h
