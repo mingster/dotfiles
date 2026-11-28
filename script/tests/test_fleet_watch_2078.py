@@ -14,65 +14,84 @@ HOST = 'remote-a'
 SIM_LINE = 'HR|sim|||1200|/w/app/issue-40|simulator|AAAA-UDID|EOR'
 
 
-class RemoteList(unittest.TestCase):
-    """The probe terminal's output and the Orca replies have the shapes the live CLI returns (see orphan_reaper test)."""
+class RemoteShell:
+    """A fake Orca for one remote probe. Like the live CLI, the terminal stays `running` after the command ends (its
+    shell is still open), the tail echoes the typed command, and the output appears once the probe has finished
+    (after `reads_until_done` reads; None means never)."""
 
-    def setUp(self):
+    def __init__(self, output, reads_until_done=0):
+        self.output = output
+        self.reads_until_done = reads_until_done
         self.calls = []
-        self.reads = [{'terminal': {'handle': 'term_x', 'status': 'exited',
-                                    'tail': ['$ python3 "$HOME/dotfiles/script/fleet-watch.py" --heavy-resources list ', 'HR-END', '$ ']}}]
+        self.command = ''
 
-    def rpc(self, *args):
+    def __call__(self, *args):
         self.calls.append(args)
         if args[:2] == ('worktree', 'list'):
             return {'worktrees': [{'path': '/w/main', 'isMainWorktree': True}]}
         if args[:2] == ('terminal', 'create'):
+            self.command = args[args.index('--command') + 1]
             return {'terminal': {'handle': 'term_x'}}
         if args[:2] == ('terminal', 'read'):
-            return self.reads.pop(0) if len(self.reads) > 1 else self.reads[0]
+            tail = ['$ ' + self.command]
+            if self.reads_until_done is not None and self.reads_until_done <= 0:
+                tail += self.output + [fw.PROBE_END_LINE, '$ ']
+            elif self.reads_until_done is not None:
+                self.reads_until_done -= 1
+            return {'terminal': {'handle': 'term_x', 'status': 'running', 'tail': tail}}
         return {}
 
+
+class RemoteList(unittest.TestCase):
+
     def test_a_host_with_no_heavy_jobs_reports_an_empty_list(self):
-        self.assertEqual(fw.heavy_resources_on(self.rpc, HOST), [])
+        rpc = RemoteShell(['HR-END'])
+        self.assertEqual(fw.heavy_resources_on(rpc, HOST), [])
 
     def test_a_host_with_a_running_simulator_reports_it(self):
-        self.reads = [{'terminal': {'handle': 'term_x', 'status': 'exited',
-                                    'tail': ['$ python3 "$HOME/dotfiles/script/fleet-watch.py" --heavy-resources list ', SIM_LINE, 'HR-END', '$ ']}}]
-        found = fw.heavy_resources_on(self.rpc, HOST)
+        rpc = RemoteShell([SIM_LINE, 'HR-END'])
+        found = fw.heavy_resources_on(rpc, HOST)
         self.assertEqual([(r['type'], r['id']) for r in found], [('sim', 'AAAA-UDID')])
 
-    def test_a_probe_that_outlasts_the_orca_call_cap_is_still_read(self):
-        # rpc() caps each Orca call at 15 s. A `terminal wait` that outlasts it raised OrcaReadError and the host read as unread.
+    def test_the_probe_is_sent_with_the_end_line_after_it(self):
+        rpc = RemoteShell(['HR-END'])
+        fw.heavy_resources_on(rpc, HOST)
+        self.assertTrue(rpc.command.endswith('; echo ' + fw.PROBE_END_LINE))
+
+    def test_a_probe_that_takes_longer_than_the_orca_call_cap_is_still_read(self):
+        # rpc() caps each Orca call at 15 s. The old `terminal wait` never returned on a remote shell, so the cap
+        # raised OrcaReadError and the host read as unread. No wait is made now.
+        shell = RemoteShell(['HR-END'], reads_until_done=3)
+
         def capped(*args):
             if args[:2] == ('terminal', 'wait'):
                 raise fw.OrcaReadError('orca CLI failed')
-            return self.rpc(*args)
-        self.reads = [{'terminal': {'handle': 'term_x', 'status': 'running', 'tail': ['$ ']}}] * 3 + [
-            {'terminal': {'handle': 'term_x', 'status': 'exited', 'tail': ['HR-END']}}]
+            return shell(*args)
         with patch.object(fw.time, 'sleep'):
             self.assertEqual(fw.heavy_resources_on(capped, HOST), [])
+        self.assertFalse([c for c in shell.calls if c[:2] == ('terminal', 'wait')])
 
     def test_a_probe_that_never_finishes_is_unread(self):
-        self.reads = [{'terminal': {'handle': 'term_x', 'status': 'running', 'tail': ['$ ']}}]
+        rpc = RemoteShell(['HR-END'], reads_until_done=None)
         with patch.object(fw, 'PROBE_DEADLINE_SECONDS', 0), patch.object(fw.time, 'sleep'):
-            self.assertIsNone(fw.heavy_resources_on(self.rpc, HOST))
+            self.assertIsNone(fw.heavy_resources_on(rpc, HOST))
 
-    def test_a_real_failure_still_reports_unread(self):
+    def test_a_failed_create_still_reports_unread(self):
         def failing(*args):
             if args[:2] == ('terminal', 'create'):
                 raise fw.OrcaReadError('orca CLI failed')
-            return self.rpc(*args)
+            return RemoteShell([])(*args)
         self.assertIsNone(fw.heavy_resources_on(failing, HOST))
 
-    def test_output_without_the_end_marker_reports_unread(self):
+    def test_output_without_the_heavy_list_end_marker_reports_unread(self):
         # e.g. the remote fleet-watch.py exits with an argparse error before it prints the list
-        self.reads = [{'terminal': {'handle': 'term_x', 'status': 'exited',
-                                    'tail': ['usage: fleet-watch.py [-h]', 'fleet-watch.py: error: argument --heavy-resources']}}]
-        self.assertIsNone(fw.heavy_resources_on(self.rpc, HOST))
+        rpc = RemoteShell(['usage: fleet-watch.py [-h]', 'fleet-watch.py: error: argument --heavy-resources'])
+        self.assertIsNone(fw.heavy_resources_on(rpc, HOST))
 
     def test_the_probe_terminal_is_closed_after_the_read(self):
-        fw.heavy_resources_on(self.rpc, HOST)
-        self.assertIn(('terminal', 'close', '--environment', HOST, '--terminal', 'term_x'), self.calls)
+        rpc = RemoteShell(['HR-END'])
+        fw.heavy_resources_on(rpc, HOST)
+        self.assertIn(('terminal', 'close', '--environment', HOST, '--terminal', 'term_x'), rpc.calls)
 
 
 if __name__ == '__main__':

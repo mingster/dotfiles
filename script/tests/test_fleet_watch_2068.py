@@ -155,7 +155,7 @@ class TeardownOnRelease(unittest.TestCase):
             if args[:2] == ('terminal', 'create'):
                 return {'terminal': {'handle': 'term_x'}}
             if args[:2] == ('terminal', 'read'):
-                return {'terminal': {'tail': ['stopped simulator verify-10779-se']}}
+                return {'terminal': {'tail': ['stopped simulator verify-10779-se', fw.PROBE_END_LINE]}}
             return {}
 
         with patch.object(fw, 'close_worker_terminal', return_value='closed'):

@@ -34,7 +34,7 @@ class OrphanReaper(unittest.TestCase):
         if args[:2] == ('terminal', 'create'):
             return {'terminal': {'handle': 'term_x'}}
         if args[:2] == ('terminal', 'read'):
-            return {'terminal': {'tail': [REMOTE_LINE, '$ ']}}
+            return {'terminal': {'tail': [REMOTE_LINE, fw.PROBE_END_LINE, '$ ']}}
         return {}
 
     def test_runs_on_each_host_and_reports_kill_lines(self):
