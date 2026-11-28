@@ -1,6 +1,6 @@
 # Credential folder: root owned, one gate, receivers never trust the worker account
 
-Read this before changing `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-sync.sh`, `script/secrets-refs.sh`, or anything that reads the credential folder. Decision: issue 922 (owner answers Q1 A, Q2 A, Q3 B). This is the second design, after two FAIL Verdicts on PR 936. The fixed helper runner (`run`) is issue 1888 (owner answer Q1 A).
+Read this before changing `script/secrets-gate.sh`, `script/secrets-gate-setup.sh`, `script/secrets-sync.sh`, `script/secrets-refs.sh`, `script/set-env-key.py`, or anything that reads the credential folder. Decision: issue 922 (owner answers Q1 A, Q2 A, Q3 B). This is the second design, after two FAIL Verdicts on PR 936. The fixed helper runner (`run`) is issue 1888 (owner answer Q1 A).
 
 ## The rule
 
@@ -97,6 +97,12 @@ Undo on a host: `sudo chown -R "$USER" <folder> && sudo chmod -R u+rwX,go-rwx <f
 
 `script/secrets-refs.sh <dir> <pattern>` lists `file:line` for every match under `<dir>` and never prints the matched text. It skips any directory named `secrets`. The Bash guard lets this one script, called directly, take the folder name as its pattern. Everything else that names the folder stays denied. Use it to survey the deploy and host scripts of a project.
 
+## Editing one host in a credential file
+
+Owner decision 2026-11-28 (#2083): a one line fix that is not a secret, such as a retired database host inside a connection string, asks for permission instead of waiting for the owner to type it. `script/set-env-key.py <file> <KEY> --replace-host <old> <new>` swaps the host inside one key's URL value in place. It keeps the mode, the owner and every other byte, and prints only the key, the two hosts and the file, never a value. It refuses a key that is missing, set twice or not a URL, a host that does not match, and anything that is not a plain host name.
+
+The Bash guard answers "ask", not "deny", only when the whole command is that script (the dotfiles copy, by real path, optionally after `python3`) with plain words, or a whole command that matches a `secrets_edit_ask` pattern in the project's `guard-config.json` (a fixed root action on a host, for a file another OS user owns). A second command, pipe, redirect, expansion, quote or glob keeps the deny, and a `secrets_edit_ask` pattern found inside a larger command is denied. The worker relays the exact command to the coordinator, who gets the owner's yes for it. Headless runs (`claude -p`) refuse an "ask", so nothing runs there without a person.
+
 ## Tests
 
-`script/tests/secrets-gate.test.sh`, `secrets-gate-setup.test.sh`, `secrets-sync.test.sh`, `secrets-refs.test.sh`, and the guard cases in `templates/agent-team/.claude/hooks/tests/test_guard_bash.py`. They use fake folders in a temp dir, a fake `sudo`, and a fake `ssh` that acts as sshd with a forced command. They replay every attack from the two Verdicts on PR 936: option injection into receive, two pushes with a symlink then keep dirlinks, a link planted before setup, leading dash and glob names, a hostile user ssh config, and the environment before the root reset.
+`script/tests/secrets-gate.test.sh`, `secrets-gate-setup.test.sh`, `secrets-sync.test.sh`, `secrets-refs.test.sh`, `set-env-key.test.sh`, and the guard cases in `templates/agent-team/.claude/hooks/tests/test_guard_bash.py`. They use fake folders in a temp dir, a fake `sudo`, and a fake `ssh` that acts as sshd with a forced command. They replay every attack from the two Verdicts on PR 936: option injection into receive, two pushes with a symlink then keep dirlinks, a link planted before setup, leading dash and glob names, a hostile user ssh config, and the environment before the root reset.
