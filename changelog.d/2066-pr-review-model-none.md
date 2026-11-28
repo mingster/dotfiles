@@ -1,0 +1,1 @@
+- pr-review.sh no longer treats a `Review: PASS` with `model=none` as reviewed, so a rerun runs the cold review that ship.sh asks for (#2066).
