@@ -12282,6 +12282,16 @@ def _dispatch_asked(messages, dispatch, worker):
     return False if len(messages) < INBOX_LIMIT else None
 
 
+def _perf_conf_dir(config, repo, worker):
+    """Checkout whose head-checks.conf names the repo's perf paths: the configured root, else the worker's
+    checkout. '' (rule off) when neither is on this host, so fleet-watch's own cwd is never read (#2070)."""
+    roots = [((config or {}).get(block) or {}).get('repo_roots') or {} for block in ('issue_scan', 'babysit')]
+    for path in [r.get(repo) for r in roots if isinstance(r, dict)] + [worker_checkout_path(worker)]:
+        if isinstance(path, str) and path and Path(path).is_dir():
+            return path
+    return ''
+
+
 def bounce_builder_dones(messages, workers, body_of, notify, state, config, diff_of=None):
     """Tell a builder its worker_done does not count when the PR body fails the finish gate.
 
@@ -12326,7 +12336,7 @@ def bounce_builder_dones(messages, workers, body_of, notify, state, config, diff
             continue
         reason = gate.finish_block_reason(
             body, issue=_worker_issue_number(worker), diff=diff_of(repo, number) if diff_of else None,
-            asked=_dispatch_asked(messages, dispatch, worker))
+            asked=_dispatch_asked(messages, dispatch, worker), repo_dir=_perf_conf_dir(config, repo, worker))
         if not reason:
             continue
         mail_worker(notify, worker, 'worker_done bounced: ' + reason, allow_settled=True)

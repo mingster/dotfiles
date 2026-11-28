@@ -109,6 +109,13 @@ if [ "$rc" -eq 1 ] && grep -qF "because the diff touches web/src/a.ts" <<<"$out"
 { cat "$TMP/good.md"; printf '\nPerf: n/a: no data reads changed\n'; } >"$TMP/perf.md"
 out=$(cd "$TMP/repo" && bash "$SCRIPT" --diff "$TMP/web.diff" "$TMP/perf.md" 2>&1); rc=$?
 [ "$rc" -eq 0 ] && ok "a Perf: line passes a perf path" || bad "perf pass (rc=$rc, $out)"
+# #2070: run from outside the target checkout.
+run --repo-dir "$TMP/repo" --diff "$TMP/web.diff" "$TMP/good.md"
+if [ "$rc" -eq 1 ] && grep -qF "because the diff touches web/src/a.ts" <<<"$out"; then ok "--repo-dir from outside the checkout refuses a missing Perf:"; else bad "repo-dir perf (rc=$rc, $out)"; fi
+run --repo-dir "$TMP/repo" "$TMP/good.md"
+if [ "$rc" -eq 1 ] && grep -qF "Readers:" <<<"$out"; then ok "--repo-dir without --diff reads the target checkout's branch diff"; else bad "repo-dir diff (rc=$rc, $out)"; fi
+run --repo-dir "$TMP/nowhere" "$TMP/good.md"
+[ "$rc" -eq 2 ] && ok "a missing --repo-dir is a usage error" || bad "repo-dir missing (rc=$rc)"
 
 run "$TMP/missing.md"
 [ "$rc" -eq 2 ] && ok "a missing file is a usage error" || bad "missing file (rc=$rc)"

@@ -11,7 +11,8 @@ naming each changed name, every item with a test or a reason.
 --asked no: the worker sent no ask, so the body has a Decisions: section (Decisions: none is fine).
 
 One per-repo rule (#2065), on with --diff: a "# perf-paths: <prefix> ..." line in .agents/head-checks.conf of the
-current checkout, and a diff touching one of those prefixes, need a "Perf: <text>" line in the body.
+target checkout, and a diff touching one of those prefixes, need a "Perf: <text>" line in the body.
+The target is --repo-dir <dir> (default the current directory; an empty value turns the rule off) or --conf <file>.
 """
 import re
 import subprocess
@@ -216,19 +217,26 @@ def decisions_block_reason(body, asked):
     return None
 
 
-def perf_paths():
-    """Path prefixes the current checkout marks perf relevant. Empty outside a checkout or with no line."""
+def perf_paths(repo_dir=None, conf_path=None):
+    """Path prefixes the target checkout marks perf relevant. Empty outside a checkout or with no line.
+
+    repo_dir None means the current directory; '' means the caller knows no checkout."""
+    if repo_dir == '' and not conf_path:
+        return []
     try:
-        top = subprocess.run(['git', 'rev-parse', '--show-toplevel'], capture_output=True, text=True, check=True)
-        with open(top.stdout.strip() + '/.agents/head-checks.conf', encoding='utf-8', errors='replace') as handle:
+        if not conf_path:
+            top = subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=repo_dir,
+                                 capture_output=True, text=True, check=True)
+            conf_path = top.stdout.strip() + '/.agents/head-checks.conf'
+        with open(conf_path, encoding='utf-8', errors='replace') as handle:
             conf = handle.read()
     except (OSError, subprocess.CalledProcessError):
         return []
     return [prefix for line in _PERF_CONF.findall(conf) for prefix in line.split()]
 
 
-def perf_block_reason(body, diff):
-    prefixes = tuple(perf_paths())
+def perf_block_reason(body, diff, repo_dir=None, conf_path=None):
+    prefixes = tuple(perf_paths(repo_dir, conf_path))
     if not prefixes or _PERF_LINE.search(body or ''):
         return None
     for pair in _DIFF_PATHS.findall(diff):
@@ -239,7 +247,7 @@ def perf_block_reason(body, diff):
     return None
 
 
-def finish_block_reason(body, issue=None, diff=None, asked=None):
+def finish_block_reason(body, issue=None, diff=None, asked=None, repo_dir=None, conf_path=None):
     """None when the body may finish. Otherwise the one-line reason.
 
     diff (unified diff text) turns on the Readers: and Perf: rules; asked=False turns on the Decisions: rule."""
@@ -253,7 +261,7 @@ def finish_block_reason(body, issue=None, diff=None, asked=None):
     if not has_valid_builder_line(body):
         return "PR body needs a 'Builder: agent=<provider> model=<model>' line (provider claude, antigravity, grok or cursor, never a role or host)"
     if diff is not None:
-        reason = readers_block_reason(body, diff) or perf_block_reason(body, diff)
+        reason = readers_block_reason(body, diff) or perf_block_reason(body, diff, repo_dir, conf_path)
         if reason:
             return reason
     return decisions_block_reason(body, asked)
@@ -262,8 +270,8 @@ def finish_block_reason(body, issue=None, diff=None, asked=None):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     opts = dict(zip(argv[::2], argv[1::2])) if len(argv) % 2 == 0 else {}
-    if len(argv) % 2 or set(opts) - {'--issue', '--diff', '--asked'} or opts.get('--asked', 'no') not in ('yes', 'no'):
-        print('usage: pr-body-gate.py [--issue <n>] [--diff <file>] [--asked yes|no] < body')
+    if len(argv) % 2 or set(opts) - {'--issue', '--diff', '--asked', '--repo-dir', '--conf'} or opts.get('--asked', 'no') not in ('yes', 'no'):
+        print('usage: pr-body-gate.py [--issue <n>] [--diff <file>] [--asked yes|no] [--repo-dir <dir>] [--conf <file>] < body')
         return 2
     issue = opts['--issue'] if opts.get('--issue', '').isdigit() else None
     diff = None
@@ -272,7 +280,8 @@ def main(argv=None):
             diff = handle.read()
     asked = {'yes': True, 'no': False}.get(opts.get('--asked'))
     text = sys.stdin.read()
-    reason = finish_block_reason(text, issue, diff=diff, asked=asked)
+    reason = finish_block_reason(text, issue, diff=diff, asked=asked,
+                                 repo_dir=opts.get('--repo-dir'), conf_path=opts.get('--conf'))
     if reason:
         print(reason)
         return 1

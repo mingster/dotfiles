@@ -182,14 +182,28 @@ current=$(jq -r .headRefOid <<<"$pr_head_json")
 
 # #1480: a body that fails pr-body-gate stops here, so the builder fixes it before worker_done, not at ship.sh.
 # #1882: the PR diff turns on the Readers: rule.
+# #2070: the Perf: rule reads the target repo's conf: this checkout when its origin is $repo, else GitHub.
+gate_conf=""
+gate_top=$(git rev-parse --show-toplevel 2>/dev/null || true)
+gate_origin=$(git remote get-url origin 2>/dev/null || true)
+gate_origin=${gate_origin%.git}
+shopt -s nocasematch
+if [ -n "$gate_top" ] && [[ "$gate_origin" == *[:/]"$repo" ]]; then
+  gate_target=(--repo-dir "$gate_top")
+else
+  gate_conf=$(mktemp)
+  gh api "repos/$repo/contents/.agents/head-checks.conf" -H 'Accept: application/vnd.github.raw' >"$gate_conf" 2>/dev/null || : >"$gate_conf"
+  gate_target=(--conf "$gate_conf")
+fi
+shopt -u nocasematch
 gate_diff=$(mktemp)
 gh pr diff "$pr" --repo "$repo" >"$gate_diff"
-if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py" --diff "$gate_diff"); then
-  rm -f "$gate_diff"
+if ! body_reason=$(gh pr view "$pr" --repo "$repo" --json body --jq .body | python3 "$PR_REVIEW_DIR/pr-body-gate.py" --diff "$gate_diff" "${gate_target[@]}"); then
+  rm -f "$gate_diff" ${gate_conf:+"$gate_conf"}
   echo "PR body fails pr-body-gate: ${body_reason:-no reason given}. Fix the PR body, then rerun." >&2
   exit 1
 fi
-rm -f "$gate_diff"
+rm -f "$gate_diff" ${gate_conf:+"$gate_conf"}
 # #1688: a title that names issues the body does not close or refer to, or a body closing numbers missing from this repo.
 pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq .title)
 pr_body_file=$(mktemp)

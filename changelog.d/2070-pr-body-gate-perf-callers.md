@@ -1,0 +1,1 @@
+- The `Perf:` line rule now reads `# perf-paths:` from the target project when fleet-watch, `check-pr-body.sh --repo-dir` or `pr-review.sh` run outside its checkout. (#2070)
