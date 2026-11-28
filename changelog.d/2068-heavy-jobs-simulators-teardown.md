@@ -1,0 +1,1 @@
+Simulators, emulators, Next builds and the head checks runner now count as heavy jobs: placement allows one heavy job per host, a settled worker's booted simulator, emulator and dev server are shut down, and `elon-tick` lists every running heavy job and every orphan (#2068).

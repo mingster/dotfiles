@@ -15,6 +15,8 @@ Read `.agents/skills/poteto-mode/SKILL.md` in full, including its Principles ind
 - pstack `shipping` (verify before anything lands), `runtime-forensics` for a failed deploy and `worktree-cleanup`, with the overlays in `orca-adapter/playbooks/`. Deploy commands stay in `docs/agents/deploy-facts.md`.
 - Work notes: `~/dotfiles/templates/agent-team/docs/agents/release-manager-work.md`.
 
+Before `worker_done`, shut down any simulator, emulator or dev server you started (`xcrun simctl shutdown <udid>`, stop the emulator, kill the dev server). A heavy job is one at a time per host, and fleet-watch stops what you leave behind when you end, but it lists it for the coordinator as a miss (#2068).
+
 ## Standing authority
 - Push a merged schema (your checkout is at or behind `origin/main`) to the shared dev databases (dev and regression shards) before tests, per `team.md`, Shared dev databases. Never push an unmerged schema.
 - Schema changes stay backward compatible. Production always backs up first (`RESTORE VERIFYONLY` before any SQL), and a failed backup stops the deploy. Verify the once-only ledger, the approval file's integrity (record its content hash before the first step and report it), and host SHA plus HTTP and mobile evidence.

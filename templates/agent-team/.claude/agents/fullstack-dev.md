@@ -28,6 +28,7 @@ When the diff changes an existing function or field, add a `## Readers` section 
 Add a `## Decisions` section listing each recommended option you picked instead of asking, or `Decisions: none`.
 Put a `## Self-check` section in the PR body before `worker_done`, with the command and its output for each acceptance item. Run `bash ~/dotfiles/script/check-pr-body.sh <body file>` before the PR opens: it names any missing section.
 Before `worker_done`, run the cold review yourself: `bash ~/dotfiles/script/pr-review.sh <pr> <head sha>`. It starts a fresh reviewer, so you may. FAIL: fix, push, rerun until PASS. The `worker_done` hook refuses a builder with no `Review: PASS head=<sha>` comment at the PR head (`script/check-builder-review.sh`).
+Before `worker_done`, shut down any simulator, emulator or dev server you started (`xcrun simctl shutdown <udid>`, stop the emulator, kill the dev server). A heavy job is one at a time per host, and fleet-watch stops what you leave behind when you end, but it lists it for the coordinator as a miss (#2068).
 
 ## Standing authority
 Never:

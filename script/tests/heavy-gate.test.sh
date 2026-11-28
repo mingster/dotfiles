@@ -1434,6 +1434,14 @@ class LightOnlyHostTests(unittest.TestCase):
             self.assertIn('heavy-gate: refused: light-host is a light-only host', err)
             self.assertIn('push and let a heavy host run it', err)
 
+    def test_refuses_simulator_emulator_next_build_and_regression_on_a_light_only_host(self):
+        # #2068: a simulator, an emulator, a next build and a regression run are heavy jobs like a build.
+        for command in (['xcrun', 'simctl', 'boot', 'ABCD'], ['xcodebuild', 'test'], ['bash', 'bin/build-and-test.sh'],
+                        ['emulator', '-avd', 'Pixel_8'], ['/opt/android/emulator/emulator', '@Pixel_8'],
+                        ['avdmanager', 'create', 'avd'], ['bunx', 'next', 'build'], ['bash', 'run-regression.sh']):
+            code, err, ran = self.run_gate(command, ['light-host'])
+            self.assertEqual((code, ran), (3, False), command)
+
     def test_allows_one_test_file_on_a_light_only_host(self):
         code, err, ran = self.run_gate(['bun', 'test', 'src/one.test.ts'], ['light-host'])
         self.assertEqual((code, ran), (0, True))
@@ -1492,6 +1500,10 @@ class SimulatorSlotTests(unittest.TestCase):
         for command in (['bash', 'bin/build-and-test.sh'], ['xcodebuild', '-scheme', 'App', 'test'],
                         ['xcodebuild', 'test-without-building']):
             self.assertEqual(module.simulator_kind(command), 'shared', command)
+        for command in (['xcrun', 'simctl', 'boot', 'ABCD'], ['emulator', '-avd', 'Pixel_8'],
+                        ['/sdk/emulator/emulator', '-no-window']):
+            self.assertEqual(module.simulator_kind(command), 'shared', command)  # #2068
+        self.assertEqual(module.simulator_kind(['bunx', 'playwright', 'test', '@scope/pkg']), '')
         self.assertEqual(module.simulator_kind(['xcodebuild', '-scheme', 'App', 'build']), '')
         self.assertEqual(module.simulator_kind(['bun', 'test']), '')
         with mock.patch.dict(os.environ, {'HEAVY_GATE_SIMULATOR_CLONE': '1'}):
