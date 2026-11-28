@@ -1,4 +1,5 @@
 """#1204: fleet-watch runs from the coordinator terminal, so its own starts carry no --from and name the repo by id."""
+import sys
 import importlib.util
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ _env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(
 fleet_env = importlib.util.module_from_spec(_env_spec)
 _env_spec.loader.exec_module(fleet_env)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_park import REPO, issue_row, scan_config  # noqa: E402
 
 REPOS = {'repos': [{'id': 'repo-1', 'path': '/work/app'}]}

@@ -1,7 +1,9 @@
 """Owner rule 2026-11-20: dotfiles issues go to the front of the issue_scan queue."""
+import sys
 import importlib.util
 import unittest
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')

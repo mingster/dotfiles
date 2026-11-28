@@ -1,4 +1,5 @@
 """Recorded Orca replies stay free of handles, and the contract compares shape."""
+import sys
 import json
 import os
 import stat
@@ -7,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from fleet_watch_replies import (
     default_patterns, leak_kinds, load_reply, redact, reply_shape, same_shape, shape, version_dir,
 )

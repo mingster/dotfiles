@@ -1,4 +1,5 @@
 """#1170: Orca fences a worker start from fleet-watch's terminal. The start is handed to the coordinator."""
+import sys
 import importlib.util
 import tempfile
 import unittest
@@ -12,6 +13,7 @@ _env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(
 fleet_env = importlib.util.module_from_spec(_env_spec)
 _env_spec.loader.exec_module(fleet_env)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import test_fleet_watch_park as park  # noqa: E402
 from test_fleet_watch_park import HEAD, REPO, issue_row, scan_config  # noqa: E402
 

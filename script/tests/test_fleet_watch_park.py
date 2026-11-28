@@ -1,4 +1,5 @@
 """A failed dispatcher start is tried once and parked. Gate refusals retry."""
+import sys
 import importlib.util
 import json
 import subprocess
@@ -14,6 +15,7 @@ _env_spec = importlib.util.spec_from_file_location('fleet_watch_test_env', Path(
 fleet_env = importlib.util.module_from_spec(_env_spec)
 _env_spec.loader.exec_module(fleet_env)
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from test_fleet_watch_stall import OLD_MS, T0, base_worker, mark_own, stall_test_config  # noqa: E402
 
 REPO = 'o/r'

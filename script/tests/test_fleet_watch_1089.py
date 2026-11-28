@@ -1,10 +1,12 @@
 """fleet-watch sends no mail to a settled or released worker (#1089)."""
+import sys
 import importlib.util
 import io
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -1,8 +1,10 @@
 """#1221: a verifier that dies at startup is retried once, and a dead 'New messages' follow-up is released."""
+import sys
 import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 spec = importlib.util.spec_from_file_location('fleet_watch', Path(__file__).parent.parent / 'fleet-watch.py')

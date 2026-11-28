@@ -1,4 +1,5 @@
 """#1832: a signed out antigravity issue start undoes itself in worker-startup.sh and exits 10; the issue scan holds it."""
+import sys
 import copy
 import importlib.util
 import json
@@ -6,6 +7,7 @@ import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'

@@ -1,3 +1,4 @@
+import sys
 import importlib.util
 import json
 import subprocess
@@ -6,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 from fleet_watch_replies import load_reply
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 

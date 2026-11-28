@@ -1,12 +1,14 @@
 """#1838: a pass ends by PASS_HARD_END (250 s), before the automation's 280 s precheck timeout kills it.
 
 The check is cooperative: at phase, babysit row and scan row boundaries. A worker start already begun is never cut."""
+import sys
 import importlib.util
 import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 SCRIPT = Path(__file__).parent.parent / 'fleet-watch.py'

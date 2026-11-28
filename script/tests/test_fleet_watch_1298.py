@@ -1,8 +1,10 @@
 """fleet-watch tells the coordinator a PM "needs owner" issue is already answered (#1298)."""
+import sys
 import importlib.util
 import types
 import unittest
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 ROOT = Path(__file__).resolve().parent.parent
