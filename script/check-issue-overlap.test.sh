@@ -90,9 +90,9 @@ run --spec "$TMP/brief2.md" 16
 
 # owner-reviewed files mixed with code: a warning, not a refusal
 echo '[]' >"$FAKE/inflight.json"; echo '[]' >"$FAKE/prs.json"
-printf 'x\n\n## Allowed files\n- script/mix.sh\n- .claude/agents/fullstack-dev.md\n' >"$FAKE/issue-30.md"
+printf 'x\n\n## Allowed files\n- script/mix.sh\n- .claude/hooks/guard-bash.py\n' >"$FAKE/issue-30.md"
 run 30
-if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out" && grep -qF "two issues" <<<"$out"; then ok "owner-reviewed files mixed with code warn and still exit 0"; else bad "mixed warn (rc=$rc, $out)"; fi
+if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out" && grep -qF "two issues" <<<"$out"; then ok "a hook mixed with code warns and still exits 0"; else bad "mixed warn (rc=$rc, $out)"; fi
 printf 'x\n\n## Allowed files\n- script/only.sh\n- script/tests/only.test.sh\n' >"$FAKE/issue-31.md"
 run 31
 if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "code only: no warning"; else bad "code only (rc=$rc, $out)"; fi
@@ -102,7 +102,13 @@ if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "owner-reviewed do
 
 printf 'x\n\n## Allowed files\n- script/foo.sh\n- templates/agent-team/docs/agents/elon-dispatch.md\n' >"$FAKE/issue-33.md"
 run 33
-if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out"; then ok "a template docs/agents file counts as owner-reviewed"; else bad "template docs (rc=$rc, $out)"; fi
+if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "a template docs/agents file mixed with code does not warn"; else bad "template docs (rc=$rc, $out)"; fi
+printf 'x\n\n## Allowed files\n- script/foo.sh\n- .claude/agents/fullstack-dev.md\n- .claude/model-routing.md\n- docs/agents/team-facts.md\n' >"$FAKE/issue-35.md"
+run 35
+if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "role file, model-routing.md and docs/agents mixed with code do not warn"; else bad "role file (rc=$rc, $out)"; fi
+printf 'x\n\n## Allowed files\n- script/foo.sh\n- docs/intent/x/intent.md\n' >"$FAKE/issue-36.md"
+run 36
+if [ "$rc" -eq 0 ] && grep -qF "mix owner-reviewed" <<<"$out"; then ok "an intent file mixed with code warns"; else bad "intent (rc=$rc, $out)"; fi
 printf 'x\n\n## Allowed files\n- AGENTS.md\n- docs/agents/\n' >"$FAKE/issue-34.md"
 run 34
 if [ "$rc" -eq 0 ] && ! grep -qF "warning" <<<"$out"; then ok "a directory entry is not code"; else bad "dir entry (rc=$rc, $out)"; fi
