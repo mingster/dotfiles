@@ -10,8 +10,8 @@ Blocks these kinds of accident:
 2. Printing a secret into the session log: reading `.env` files, `secrets/`, key
    files, or echoing secret environment variables. Use `python3 "$HOME/.claude/bin/env-peek.py"`
    to check a value without printing it. One edit asks instead of denying (#2083): the whole command
-   `~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host <old> <new>`, or a command matching a
-   `secrets_edit_ask` pattern in guard-config.json. It swaps one URL host in place and prints no value.
+   `~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host|--replace-db <old> <new>`, or a command matching a
+   `secrets_edit_ask` pattern in guard-config.json. It swaps one URL host or database name in place and prints no value.
    A `secrets_edit_ask` pattern found inside a larger command is denied.
 3. A PayPal API call other than GET and the token request.
 4. Risky production commands without the owner's go (`check_risky`): a push to a
@@ -674,13 +674,14 @@ def is_refs_invocation(prog, args, cwd=None):
 SET_ENV_KEY = "~/dotfiles/script/set-env-key.py"
 ENV_KEY_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 HOST_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+DB_NAME = re.compile(r"[A-Za-z0-9_]{1,63}")
 EDIT_ASK_REASON = ("This edits one key in a credential file: {what}. It prints no value. Approve only this exact "
                    "command; a worker relays it to Elon word for word first, and Elon asks the owner.")
 
 
 def credential_edit_ask(command, cwd=None):
     """The reason to ask when the whole command is one approvable credential edit, else "" (#2083).
-    Either `[python3] ~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host <old> <new>` (the dotfiles
+    Either `[python3] ~/dotfiles/script/set-env-key.py <file> <KEY> --replace-host|--replace-db <old> <new>` (the dotfiles
     script by real path, plain words only), or a full match of a `secrets_edit_ask` pattern from guard-config.json.
     Shell syntax (a second command, pipe, redirect, expansion, quote, glob or comment) is never this shape."""
     text = command.strip()
@@ -691,10 +692,12 @@ def credential_edit_ask(command, cwd=None):
     tokens = text.split(" ")
     if tokens and os.path.basename(tokens[0]) in {"python3", "python"}:
         tokens = tokens[1:]
-    if len(tokens) != 6 or tokens[3] != "--replace-host" or tokens[1].startswith("-"):
+    if len(tokens) != 6 or tokens[3] not in ("--replace-host", "--replace-db") or tokens[1].startswith("-"):
         return ""
-    prog, path, key, _, old, new = tokens
-    if not ENV_KEY_NAME.fullmatch(key) or not HOST_NAME.fullmatch(old) or not HOST_NAME.fullmatch(new):
+    prog, path, key, mode, old, new = tokens
+    name = DB_NAME if mode == "--replace-db" else HOST_NAME
+    what = "database" if mode == "--replace-db" else "host"
+    if not ENV_KEY_NAME.fullmatch(key) or not name.fullmatch(old) or not name.fullmatch(new):
         return ""
     try:
         canonical = os.path.realpath(os.path.expanduser(SET_ENV_KEY))
@@ -705,7 +708,7 @@ def credential_edit_ask(command, cwd=None):
             return ""
     except (OSError, ValueError):
         return ""
-    return EDIT_ASK_REASON.format(what=f"the host in {key} in {path} goes from {old} to {new}")
+    return EDIT_ASK_REASON.format(what=f"the {what} in {key} in {path} goes from {old} to {new}")
 
 
 def check_secrets_dir(segment, base, args, prog=None, cwd=None):
@@ -741,8 +744,8 @@ def check_secrets_dir(segment, base, args, prog=None, cwd=None):
     message = (" When the secrets dir is only named in a message, pass the message with `git commit -F -` or "
                "`gh ... --body-file -` and a quoted heredoc." if base in {"git", "gh"} else "")
     deny(f"{base} would read a file under the secrets dir into the session log. Agents never read the "
-         f"secrets dir.{exception} To change one URL host in a file there, run `{SET_ENV_KEY} <file> <KEY> "
-         f"--replace-host <old> <new>` as the whole command: it asks for permission and prints no value. "
+         f"secrets dir.{exception} To change one URL host or database name in a file there, run `{SET_ENV_KEY} <file> <KEY> "
+         f"--replace-host|--replace-db <old> <new>` as the whole command: it asks for permission and prints no value. "
          f"Anything else, ask Elon.{message}")
 
 

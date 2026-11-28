@@ -97,9 +97,11 @@ Undo on a host: `sudo chown -R "$USER" <folder> && sudo chmod -R u+rwX,go-rwx <f
 
 `script/secrets-refs.sh <dir> <pattern>` lists `file:line` for every match under `<dir>` and never prints the matched text. It skips any directory named `secrets`. The Bash guard lets this one script, called directly, take the folder name as its pattern. Everything else that names the folder stays denied. Use it to survey the deploy and host scripts of a project.
 
-## Editing one host in a credential file
+## Editing one host or database name in a credential file
 
 Owner decision 2026-11-28 (#2083): a one line fix that is not a secret, such as a retired database host inside a connection string, asks for permission instead of waiting for the owner to type it. `script/set-env-key.py <file> <KEY> --replace-host <old> <new>` swaps the host inside one key's URL value in place. It keeps the mode, the owner and every other byte, and prints only the key, the two hosts and the file, never a value. It refuses a key that is missing, set twice or not a URL, a host that does not match, and anything that is not a plain host name.
+
+`--replace-db <old> <new>` (#2091) does the same for the database name, the URL path: it refuses when `<old>` is not the current name or a name does not match `^[A-Za-z0-9_]{1,63}$`, and prints no value. The guard asks for it like `--replace-host`.
 
 The Bash guard answers "ask", not "deny", only when the whole command is that script (the dotfiles copy, by real path, optionally after `python3`) with plain words, or a whole command that matches a `secrets_edit_ask` pattern in the project's `guard-config.json` (a fixed root action on a host, for a file another OS user owns). A second command, pipe, redirect, expansion, quote or glob keeps the deny, and a `secrets_edit_ask` pattern found inside a larger command is denied. The worker relays the exact command to the coordinator, who gets the owner's yes for it. Headless runs (`claude -p`) refuse an "ask", so nothing runs there without a person.
 

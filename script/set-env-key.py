@@ -2,9 +2,12 @@
 """Replace the host inside one key's URL value in an env file, in place, printing no value (#2083).
 
   set-env-key.py <file> <KEY> --replace-host <old> <new>
+  set-env-key.py <file> <KEY> --replace-db <old> <new>
 
 The key must appear exactly once as `KEY=<scheme>://...` (an `export ` prefix and quotes are kept), and the URL's
 host must equal <old>. Only the host changes; user, password, port, path and every other line stay byte for byte.
+--replace-db swaps the database name (the first path segment, before any `?`) the same way; <old> must be the
+current name. Names match [A-Za-z0-9_]{1,63}.
 The file keeps its mode and owner. Output and errors name the file and the key, never a value.
 The guard asks the owner before an agent runs this on a file in the credential folder.
 """
@@ -14,8 +17,9 @@ import sys
 import tempfile
 
 HOST = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?")
+DB = re.compile(r"[A-Za-z0-9_]{1,63}")
 KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-USAGE = "usage: set-env-key.py <file> <KEY> --replace-host <old> <new>"
+USAGE = "usage: set-env-key.py <file> <KEY> --replace-host|--replace-db <old> <new>"
 
 
 def fail(msg, code=1):
@@ -24,12 +28,17 @@ def fail(msg, code=1):
 
 
 def main(argv):
-    if len(argv) != 5 or argv[2] != "--replace-host":
+    if len(argv) != 5 or argv[2] not in ("--replace-host", "--replace-db"):
         fail(USAGE, 2)
-    path, key, _, old, new = argv
+    path, key, mode, old, new = argv
+    db = mode == "--replace-db"
+    what = "database" if db else "host"
     if not KEY.fullmatch(key):
         fail("the key must be a plain env name", 2)
-    if not HOST.fullmatch(old) or not HOST.fullmatch(new):
+    if db:
+        if not DB.fullmatch(old) or not DB.fullmatch(new):
+            fail("each database name must match [A-Za-z0-9_]{1,63}", 2)
+    elif not HOST.fullmatch(old) or not HOST.fullmatch(new):
         fail("each host must be a plain host name or IPv4 address", 2)
     try:
         st = os.stat(path)
@@ -49,9 +58,17 @@ def main(argv):
     m = line_re.match(lines[hits[0]])
     if not m:
         fail(f"{key} in {path} is not a URL")
-    if m.group(2).decode(errors="replace").lower() != old.lower():
-        fail(f"the {key} host in {path} is not {old}; nothing changed")
-    lines[hits[0]] = m.group(1) + new.encode() + m.group(3)
+    if db:
+        d = re.match(rb"^(:[0-9]*)?(/)([^/?#'\"\s]*)(.*)$", m.group(3), re.DOTALL)
+        if not d:
+            fail(f"the {key} URL in {path} has no database name; nothing changed")
+        if d.group(3).decode(errors="replace") != old:
+            fail(f"the {key} database in {path} is not {old}; nothing changed")
+        lines[hits[0]] = m.group(1) + m.group(2) + (d.group(1) or b"") + d.group(2) + new.encode() + d.group(4)
+    else:
+        if m.group(2).decode(errors="replace").lower() != old.lower():
+            fail(f"the {key} host in {path} is not {old}; nothing changed")
+        lines[hits[0]] = m.group(1) + new.encode() + m.group(3)
 
     folder = os.path.dirname(os.path.abspath(path))
     fd, tmp = tempfile.mkstemp(dir=folder, prefix=".set-env-key.")
@@ -65,7 +82,7 @@ def main(argv):
     except OSError as exc:
         os.unlink(tmp)
         fail(f"cannot write {path}: {exc.strerror}")
-    print(f"set-env-key: {key} host {old} -> {new} in {path}")
+    print(f"set-env-key: {key} {what} {old} -> {new} in {path}")
 
 
 if __name__ == "__main__":

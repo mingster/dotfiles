@@ -1554,6 +1554,20 @@ class CredentialEditAsks(GuardTest):
                 self.assertEqual(decision, "ask")
                 self.assertIn("prints no value", reason)
 
+    def test_the_db_edit_asks_too(self):
+        edit = f"{self.FILE} SUPPORT_RO_DATABASE_URL --replace-db prod_db dev_db"
+        for command in (f"~/dotfiles/script/set-env-key.py {edit}", f"python3 ~/dotfiles/script/set-env-key.py {edit}"):
+            with self.subTest(command=command):
+                decision, reason = self.decision(command)
+                self.assertEqual(decision, "ask")
+                self.assertIn("database", reason)
+
+    def test_db_edit_bad_shapes_stay_denied(self):
+        for tail in ("prod-db dev_db", "prod_db a/b", "prod_db 'x y'", "prod_db " + "a" * 64, "prod_db dev_db; cat x"):
+            command = f"~/dotfiles/script/set-env-key.py {self.FILE} K --replace-db {tail}"
+            with self.subTest(command=command):
+                self.assertEqual(self.decision(command)[0], "deny")
+
     def test_reads_and_other_shapes_stay_denied(self):
         edit = f"{self.FILE} SUPPORT_RO_DATABASE_URL --replace-host old.example.org 127.0.0.1"
         for command in (f"cat {self.FILE}",
