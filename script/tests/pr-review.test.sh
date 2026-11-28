@@ -495,7 +495,7 @@ grep -q 'model=none' "$tmp/posted-first" || fail "first docs-only run posts mode
 printf 'Review: PASS\nok\n' > "$tmp/answer"
 issue_comments_set "$(cat "$tmp/posted-first")"
 cp "$tmp/issue-comments.json" "$tmp/race-comments.json"
-FAKE_RACE_COMMENTS="$tmp/race-comments.json" run
+FAKE_RACE_COMMENTS="$tmp/race-comments.json" run # the race check ignores it too
 [ -e "$tmp/claude-args" ] || fail "a model=none PASS head gets a cold review"
 grep -qE "^Review: PASS head=$sha model=sonnet" "$tmp/posted" || fail "the cold review posts despite the model=none PASS"
 issue_comments_set "Review: PASS head=$sha"
@@ -504,9 +504,10 @@ run
 # a model=none PASS is never carried as a cold review
 pid=dddddddddddddddddddddddddddddddddddddddd
 echo web/src/a.ts > "$tmp/files"
-issue_comments_set "Review: PASS head=$sha model=none patch=$pid"
+issue_comments_set "Review: PASS head=0000000000000000000000000000000000000000 model=none patch=$pid"
 FAKE_PATCH_ID=$pid run
 [ -e "$tmp/claude-args" ] || fail "model=none PASS does not carry"
+! grep -q 'model=carried' "$tmp/posted" || fail "model=none PASS is never posted as carried"
 # it also does not hide an earlier real FAIL at the head
 issue_comments_set "Review: FAIL head=$sha model=sonnet" "Review: PASS head=$sha model=none"
 run

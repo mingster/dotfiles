@@ -337,7 +337,7 @@ done <<<"$names"
 skill_md='(^|/)(skills/[^/]+/SKILL\.md|.agents/skills/[^/]+/SKILL\.md)$'
 # A model=none PASS already at this head means this is a rerun asking for the cold review (#2066).
 none_at_head=0
-if gh api --paginate "repos/$repo/issues/$pr/comments" |
+if [ "$docs_only" -eq 1 ] && gh api --paginate "repos/$repo/issues/$pr/comments" |
   jq -e --arg login "$review_me" --arg h "$head" "$cold_review_def"'
     [.[] | select(.user.login == $login) | select(.created_at == .updated_at) | select(not_cold)
       | select(.body | split("\n")[0] | ascii_downcase | contains("head=" + ($h | ascii_downcase)))]
