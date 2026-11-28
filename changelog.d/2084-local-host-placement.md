@@ -1,0 +1,1 @@
+worker-placement: the local host ranks on the same keys as remote hosts (worker share of cap, then load per core), so an idle local host takes a light start over a busy remote one. Heavy starts still skip light_only_hosts (#2084).

@@ -677,9 +677,7 @@ def _pick_host(
         print('worker-placement: ' + reason, file=sys.stderr)
         return {'ok': False, 'reason': reason}
     if candidates:
-        has_remote = any(c[4] != local_host for c in candidates)
-        ranked = [(c[4] == local_host and has_remote,) + c[1:] for c in candidates]
-        _, _, _, _, host, load, ceiling, workers, cap = min(ranked)
+        _, _, _, _, host, load, ceiling, workers, cap = min(candidates)
         is_local = host == local_host
         result: dict = {
             'ok': True,
