@@ -115,10 +115,11 @@ cat > "$PROJ/.claude/hooks/guard-config.json" <<'JSON'
 JSON
 
 # #1126: a quoted heredoc fed to a text sink is data; one fed to a shell, ssh or an unquoted opener is still scanned.
+echo "edit" >> "$PROJ/README.md"  # #2023: an add is trusted only for a changed file
 HD_BODY=$'Fix the guard.\nbin/deploy-raw.sh runs only in the pipeline.\nbash bin/deploy-raw.sh was refused (it\'s odd).\nEOF'
 for sink in \
   "git commit -F - <<'EOF'" \
-  "git add -A && git commit -F - <<'EOF'" \
+  "git add README.md && git commit -F - <<'EOF'" \
   "cat > notes.md <<'EOF'" \
   "cat > ~/notes/issue-comment.md <<'EOF'" \
   'cat > "$NOTE_FILE" <<'"'EOF'" \

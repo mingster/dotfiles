@@ -190,7 +190,7 @@ class RoleFileGate(Gate):
     def test_commit_with_trailer_allowed(self):
         self.write("docs/agents/team-facts.md", "x\n")
         sh(self.repo, "git", "add", "-A")
-        self.assertAllowed(f'git commit -m "tweak team-facts{TRAILER}"', self.repo)
+        self.assertAllowed(f'git commit -m "tweak team-facts" -m "{TRAILER.strip()}"', self.repo)
 
     def test_commit_protected_docs_and_template_paths_denied_without_trailer(self):
         for rel in (
@@ -207,7 +207,7 @@ class RoleFileGate(Gate):
                 self.write(rel, "x\n")
                 sh(self.repo, "git", "add", "-A")
                 self.assertDenied('git commit -m "tweak protected"', "Owner-approved:", self.repo)
-                self.assertAllowed(f'git commit -m "tweak protected{TRAILER}"', self.repo)
+                self.assertAllowed(f'git commit -m "tweak protected" -m "{TRAILER.strip()}"', self.repo)
 
     def test_commit_unprotected_docs_agents_files_allowed_without_trailer(self):
         for rel in (
@@ -239,7 +239,7 @@ class RoleFileGate(Gate):
                 self.assertDenied('git commit -m "tweak protected"', "Owner-approved:", self.repo)
                 # AGENT_TEAM_SYNC=1 keeps the adopted project template gate out of the way.
                 with mock.patch.dict(os.environ, {"AGENT_TEAM_SYNC": "1"}):
-                    self.assertAllowed(f'git commit -m "tweak protected{TRAILER}"', self.repo)
+                    self.assertAllowed(f'git commit -m "tweak protected" -m "{TRAILER.strip()}"', self.repo)
 
     def merge_main_with_team_md(self):
         """origin/main gains docs/agents/team.md; work branches off the base, adopts the project, then merges main."""
@@ -402,7 +402,8 @@ class RoleFileGate(Gate):
         self.stage(".claude/agents/elon.md")
         for form in (f"--git-dir {self.repo}/.git --work-tree {self.repo}",
                      f"--git-dir={self.repo}/.git --work-tree={self.repo}"):
-            self.assertDenied(f'git {form} commit -m "x"', "Owner-approved:", self.home)
+            # #2023: --git-dir and --work-tree are outside the plain grammar, so the commit is refused.
+            self.assertDenied(f'git {form} commit -m "x"', "the guard cannot read it with certainty", self.home)
 
     def test_commit_file_trailer_is_read(self):
         self.stage(".claude/agents/elon.md")
