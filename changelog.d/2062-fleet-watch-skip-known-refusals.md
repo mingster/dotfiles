@@ -1,0 +1,1 @@
+fleet-watch no longer spends start time on issues worker-startup will refuse. An issue whose brief Refs a live worker's issue is skipped, and an overlap refusal is held until the brief or the open PR heads change (or 6 passes). Both are named in the pass log (`issue_live=N:ref=M`, `issue_deferred=N:overlap_held`).
