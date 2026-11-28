@@ -2280,7 +2280,7 @@ class BuilderCursorRoute(unittest.TestCase):
                     "provider": p, "verdict": "allowed", "ceiling": 95, "weekly_used": 10, "reserve": 0}), \
                 mock.patch.object(ug, "antigravity_models", return_value=None):
             picked = ug.pick("qa-sdet", "claude", None, None, None)["selected"]
-        self.assertEqual((picked["provider"], picked["model"]), ("grok", "grok-4.7"))
+        self.assertEqual((picked["provider"], picked["model"]), ("antigravity", "gemini-4-argon-high"))
 
     def test_a_cursor_entry_in_a_chain_is_never_picked(self):
         chain = [{"provider": "cursor", "model": "grok-4.7-high"},
@@ -2564,12 +2564,13 @@ class VerifierTable1305(unittest.TestCase):
         return selected["provider"] if selected else None
 
     # Row: claude builder. Usage left is not compared.
-    def test_claude_builder_gets_grok_when_the_host_has_a_free_slot(self):
+    def test_claude_builder_gets_antigravity_first_even_when_a_grok_slot_is_free(self):
+        # Owner 2026-11-28 (#2051): Antigravity verifies Claude built PRs first. Grok is the fallback.
         for agy in (10, 80, None):
             with self.subTest(agy=agy):
                 status, result = self.pick(agy=agy, grok_hosts=["Host-A"], host="host-a")
-                self.assertEqual((status, self.chosen(result)), (0, "grok"))
-                self.assertEqual(result["selected"]["model"], "grok-4.7")
+                self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
+                self.assertEqual(result["selected"]["model"], "gemini-4-argon-high")
 
     def test_claude_builder_with_one_live_grok_worker_gets_antigravity(self):
         status, result = self.pick(grok_live=1, grok_hosts=["host-a"], host="host-a")
@@ -2583,7 +2584,7 @@ class VerifierTable1305(unittest.TestCase):
                 self.assertEqual((status, self.chosen(result)), (0, "antigravity"))
 
     def test_with_no_target_host_any_listed_host_will_do(self):
-        status, result = self.pick(grok_hosts=["host-a"])
+        status, result = self.pick(agy="blocked", grok_hosts=["host-a"])
         self.assertEqual((status, self.chosen(result)), (0, "grok"))
 
     def test_claude_builder_antigravity_blocked_picks_grok(self):

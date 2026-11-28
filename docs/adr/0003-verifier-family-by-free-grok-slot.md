@@ -15,3 +15,7 @@ The rule from 2026-11-21 ([#1305](https://github.com/mingster/dotfiles/issues/13
 ## Consequences
 
 Verifier load splits across two providers, and a host whose Antigravity sign in has lapsed can still verify through Grok. Grok quota has no reading, so an exhausted Grok plan shows only as failed starts; on a Grok start that fails or stalls on the folder trust prompt, the pick falls back to Antigravity and one issue is filed. At most one Grok verifier runs per host, so Antigravity still takes the overflow.
+
+## Amendment 2026-11-28 (owner decision, [#2051](https://github.com/mingster/dotfiles/issues/2051))
+
+Owner-approved: mingster 2026-11-28 (owner decision 1:b on #2051). Antigravity is used on purpose, mainly as the verifier. For a Claude built PR the order is now Antigravity (`gemini-4-argon-high`) first, and Grok (`grok-4.7`) only when Antigravity is blocked. This supersedes point 1 of the Decision above. Gemini and Grok built PRs still get Claude first, and the reviewer table follows the same Claude order.

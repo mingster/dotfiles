@@ -16,9 +16,9 @@ its existing flags. every role takes the first allowed entry of the provider pri
 (owner 2026-11-20): Claude, then Antigravity, then Grok grok-4.7, nothing after
 (Cursor is no longer a provider). When all three are blocked, pick reports queue.
 The verifier of a PR (qa-sdet, reviewer) comes from VERIFIERS, one table of builder family to
-ordered verifier families (owner 2026-11-21, #1305; ADR 0003, qa-sdet only; the cold reviewer keeps
-Antigravity before Grok): a Claude builder gets Grok, else
-Antigravity; an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
+ordered verifier families (owner 2026-11-21, #1305; ADR 0003, qa-sdet only; owner 2026-11-28, #2051: the cold reviewer
+has the same order): a Claude builder gets Antigravity, else
+Grok when a Grok slot is free; an Antigravity builder gets Claude, then Grok only when Claude is blocked; a Grok
 builder gets Claude only. A Grok verifier needs a free slot: no live grok worker, and the target host
 (pick --host, else any host) listed in grok_hosts of the fleet pull config when it has that key. Usage left
 is not compared. Strong roles other than qa-sdet never select Grok.
@@ -75,11 +75,11 @@ GROK_MAX_LIVE = 1  # Grok has no usage API: its gate is one live worker per host
 # Verifier table (#1305, ADR 0003): builder family -> verifier families, first allowed one wins.
 # A family not listed is never a verifier for that builder.
 VERIFIERS = {
-    "claude": ("grok", "gemini"),
+    "claude": ("gemini", "grok"),
     "gemini": ("claude", "grok"),
     "grok": ("claude",),
 }
-# The cold reviewer (pr-review.sh) is not the verifier ADR 0003 moves: a Claude author keeps Antigravity first.
+# The cold reviewer (pr-review.sh) keeps its own table. Since 2026-11-28 (#2051) its Claude order matches VERIFIERS.
 REVIEWERS = {**VERIFIERS, "claude": ("gemini", "grok")}
 
 
