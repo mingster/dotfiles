@@ -66,5 +66,25 @@ printf '%s\n' "export DB_URL=\"postgres://old.example.org/db\"" > "$F"
 python3 "$TOOL" "$F" DB_URL --replace-host OLD.example.org new.example.org >/dev/null 2>&1
 [ "$(cat "$F")" = 'export DB_URL="postgres://new.example.org/db"' ] && ok "export and quotes kept" || bad "export and quotes: $(cat "$F")"
 
+# 5. --replace-db swaps the database name only (#2091).
+seed
+out=$(python3 "$TOOL" "$F" SUPPORT_RO_DATABASE_URL --replace-db db dev_db 2>&1); rc=$?
+want=$(printf '%s\n' "# support login" "SUPPORT_RO_DATABASE_URL=postgresql://ro_user:$SECRET@old.example.org:5432/dev_db?sslmode=require" \
+  "SUPPORT_GH_TOKEN=ghp_$SECRET")
+[ "$rc" = 0 ] && [ "$(cat "$F")" = "$want" ] && ok "db replaced, other bytes kept" || bad "db replaced (rc=$rc)"
+case "$out" in *"$SECRET"*|*ro_user*|*5432*) bad "db success output printed a value" ;; *) ok "db success output prints no value" ;; esac
+printf '%s\n' "export DB_URL=\"postgres://u:$SECRET@h/prod_db\"" > "$F"
+python3 "$TOOL" "$F" DB_URL --replace-db prod_db dev_db >/dev/null 2>&1
+[ "$(cat "$F")" = "export DB_URL=\"postgres://u:$SECRET@h/dev_db\"" ] && ok "db with export, quotes, no query" || bad "db export: $(cat "$F")"
+refuse "db wrong old name" "$F" SUPPORT_RO_DATABASE_URL --replace-db other dev_db
+refuse "db bad new name" "$F" SUPPORT_RO_DATABASE_URL --replace-db db 'a-b'
+refuse "db new name with slash" "$F" SUPPORT_RO_DATABASE_URL --replace-db db 'a/b'
+refuse "db name over 63 chars" "$F" SUPPORT_RO_DATABASE_URL --replace-db db "$(printf 'a%.0s' $(seq 64))"
+refuse "db on key that is not a URL" "$F" SUPPORT_GH_TOKEN --replace-db db dev_db
+printf '%s\n' "K=postgresql://u:p@h:5432" > "$F"
+before=$(cat "$F")
+python3 "$TOOL" "$F" K --replace-db db dev_db >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$(cat "$F")" = "$before" ] && ok "URL with no database refused" || bad "no database (rc=$rc)"
+
 echo "set-env-key: $pass passed, $fail failed"
 [ "$fail" = 0 ]
