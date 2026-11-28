@@ -2351,15 +2351,10 @@ def check_risky(segment, base, args, depth, segment_cwd=None):
 
 # Team gates (#6936): role file commits, the grill gate on dispatch, an owning lead on remote workers.
 PROTECTED_PATHS = (
-    ".claude/agents/",
-    ".claude/model-routing.md",
-    "docs/agents/issue-tracker.md",
-    "docs/agents/triage-labels.md",
-    "docs/agents/domain.md",
-    "docs/agents/team-facts.md",
-    "docs/agents/deploy-facts.md",
-    "templates/agent-team/docs/agents/",
-    "templates/agent-team/.claude/agents/",
+    ".claude/hooks/",
+    "templates/agent-team/.claude/hooks/",
+    "script/lib/protected-paths.sh",
+    "docs/intent/",
 )
 OWNER_TRAILER = re.compile(r"Owner-approved:\s*\S", re.I)
 GRILL_LINE = re.compile(
@@ -2470,11 +2465,11 @@ def commit_message_file(rest, repo):
 
 
 def deny_role_files(files, how):
-    deny(f"{how} touches {', '.join(sorted(files))}, which only the owner approves. Add an "
+    deny(f"{how} touches {', '.join(sorted(files))}, which only the owner approves (intents and the guard logic itself). Add an "
          "`Owner-approved: <name> <date>` trailer to the commit message once the owner has said yes "
-         "(never before; or by the coordinator when the change only copies owner-approved rules, "
-         "citing the source decisions per ~/dotfiles/templates/agent-team/docs/agents/team.md, Role changes), "
-         "or take those files out of the change. In an adopted project, edit "
+         "(never before; see ~/dotfiles/templates/agent-team/docs/agents/team.md, Role changes), "
+         "or take those files out of the change. Role files, model-routing.md and docs/agents/ need no trailer. "
+         "In an adopted project, edit "
          "`.claude/hooks/guard-config.json`, `.claude/settings.project.json`, `docs/agents/team-facts.md`, "
          "or `dotfiles/templates/agent-team/` instead.")
 

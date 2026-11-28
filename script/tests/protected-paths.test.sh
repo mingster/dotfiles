@@ -93,38 +93,14 @@ owner_needle='touches owner-gated paths without Owner-approved trailer'
 intent_diff=$(printf '%s\n' '+++ b/docs/intent/example.md' '+Status: Accepted')
 intent_needle='without an Owner-approved: trailer on every commit'
 
-reset_branch
-printf '%s' "$owner_msg_two" > "$tmp/msg"
-commit_path AGENTS.md
-expect_allow "two trailers on an owner-gated path pass" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md ""
-
-reset_branch
-printf '%s' "$owner_msg_one" > "$tmp/msg"
-commit_path AGENTS.md
-expect_allow "one trailer on an owner-gated path passes" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md ""
-
-reset_branch
-printf 'touch path\n' > "$tmp/msg"
-commit_path AGENTS.md
-expect_refuse "no trailer on an owner-gated path is refused" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "$owner_needle"
-
-reset_branch
-printf 'touch path\n\nOwner-approved:\n' > "$tmp/msg"
-commit_path AGENTS.md
-expect_refuse "an empty trailer is refused" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "$owner_needle"
-
-reset_branch
-printf 'touch path\n\nOwner-approved:   \n' > "$tmp/msg"
-commit_path AGENTS.md
-expect_refuse "a whitespace trailer is refused" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "$owner_needle"
-
-reset_branch
-printf 'touch path\n' > "$tmp/msg"
-commit_path AGENTS.md
-missing=$(git -C "$repo" rev-parse HEAD)
-printf '%s' "$owner_msg_two" > "$tmp/msg"
-commit_path AGENTS.md
-expect_refuse "a later approved commit still refuses an earlier commit with no trailer" "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "commit ${missing:0:12} $owner_needle"
+# Owner decision 2026-11-28: role files, model-routing.md and docs/agents/ pass with no trailer.
+for p in AGENTS.md .claude/agents/elon.md .claude/model-routing.md model-routing.md docs/agents/team.md \
+  docs/agents/team-facts.md templates/agent-team/docs/agents/team.md templates/agent-team/.claude/agents/elon.md; do
+  reset_branch
+  printf 'touch path\n' > "$tmp/msg"
+  commit_path "$p"
+  expect_allow "$p passes with no trailer" "$(git -C "$repo" rev-parse HEAD)" "$p" ""
+done
 
 reset_branch
 printf '%s' "$owner_msg_two" > "$tmp/msg"
@@ -135,6 +111,23 @@ reset_branch
 printf 'touch path\n' > "$tmp/msg"
 commit_path docs/intent/example.md
 expect_refuse "an accepted intent with no trailer is refused" "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
+
+reset_branch
+printf 'touch path\n\nOwner-approved:\n' > "$tmp/msg"
+commit_path docs/intent/example.md
+expect_refuse "an empty trailer on an accepted intent is refused" "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
+
+reset_branch
+printf 'touch path\n\nOwner-approved:   \n' > "$tmp/msg"
+commit_path docs/intent/example.md
+expect_refuse "a whitespace trailer on an accepted intent is refused" "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
+
+reset_branch
+printf 'touch path\n' > "$tmp/msg"
+commit_path docs/intent/example.md
+printf '%s' "$owner_msg_two" > "$tmp/msg"
+commit_path docs/intent/example.md
+expect_refuse "a later approved commit still refuses an earlier intent commit with no trailer" "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
 
 # Unfetched PR head (under refs/pull/<pr>/head on origin) and unfetched base (on origin/main) are fetched before checking receipts.
 remote=$tmp/remote.git
@@ -225,36 +218,6 @@ intent_msg() { printf 'touch path\n\nOwner-approved: intent example/repo#%s acce
 
 reset_branch
 intent_msg 77 2026-11-27 > "$tmp/msg"
-commit_path AGENTS.md
-expect_gh "an intent trailer passes when the file is in the cited spec's Owner steps" allow "$(git -C "$repo" rev-parse HEAD)" AGENTS.md ""
-
-reset_branch
-intent_msg 77 2026-11-27 > "$tmp/msg"
-commit_path docs/agents/team.md
-expect_gh "an intent trailer refuses a file outside the cited spec's Owner steps" refuse "$(git -C "$repo" rev-parse HEAD)" docs/agents/team.md "" "is not listed under Owner steps"
-
-reset_branch
-intent_msg 78 2026-11-27 > "$tmp/msg"
-commit_path AGENTS.md
-expect_gh "an intent trailer refuses when the cited PR is not merged" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "is not merged"
-
-reset_branch
-intent_msg 77 2026-11-20 > "$tmp/msg"
-commit_path AGENTS.md
-expect_gh "an intent trailer refuses when the date is not the intent's accepted date" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "not Accepted 2026-11-20"
-
-reset_branch
-intent_msg 79 2026-11-27 > "$tmp/msg"
-commit_path AGENTS.md
-expect_gh "an intent trailer refuses when the cited PR cannot be read" refuse "$(git -C "$repo" rev-parse HEAD)" AGENTS.md "" "cannot read"
-
-reset_branch
-{ intent_msg 77 2026-11-27; printf 'Owner-approved: mingster 2026-11-27 (chat)\n'; } > "$tmp/msg"
-commit_path docs/agents/team.md
-expect_gh "an intent trailer outside Owner steps refuses even beside a plain trailer" refuse "$(git -C "$repo" rev-parse HEAD)" docs/agents/team.md "" "is not listed under Owner steps"
-
-reset_branch
-intent_msg 77 2026-11-27 > "$tmp/msg"
 commit_path docs/intent/example.md
 expect_gh "an intent trailer does not accept an intent" refuse "$(git -C "$repo" rev-parse HEAD)" docs/intent/example.md "$intent_diff" "$intent_needle"
 
@@ -301,7 +264,7 @@ expect_waiver() { # <name> <allow|refuse> <head> <path> [needle]
   else bad "$1" "rc=$rc out=$out"; fi
 }
 
-for p in .claude/hooks/guard-bash.py .claude/settings.json; do
+for p in .claude/hooks/guard-bash.py .claude/settings.json script/lib/protected-paths.sh templates/agent-team/.claude/hooks/guard-bash.py; do
   reset_branch
   intent_msg 77 2026-11-27 > "$tmp/msg"
   commit_path "$p"
@@ -312,11 +275,12 @@ for p in .claude/hooks/guard-bash.py .claude/settings.json; do
   expect_waiver "a plain Owner-approved trailer passes $p under the pre go-live waiver" allow "$(git -C "$repo" rev-parse HEAD)" "$p"
 done
 
-for p in .claude/model-routing.md templates/agent-team/.claude/model-routing.md model-routing.md web/AGENTS.md AGENTS.md; do
-  if text_lane_role_path "$p"; then ok "$p is owner-gated"; else bad "$p is owner-gated" "not matched"; fi
+for p in .claude/hooks/guard-bash.py templates/agent-team/.claude/hooks/guard-bash.py script/lib/protected-paths.sh docs/intent/a/intent.md; do
+  if owner_only_path "$p" || protected_path "$p"; then ok "$p is owner-gated"; else bad "$p is owner-gated" "not matched"; fi
 done
-for p in changelog.d/mattpocock-sync-model-routing.md changelog.d/1-fix-AGENTS.md docs/notes-model-routing.md; do
-  if text_lane_role_path "$p"; then bad "$p is not owner-gated" "matched"; else ok "$p is not owner-gated"; fi
+for p in .claude/model-routing.md templates/agent-team/.claude/model-routing.md model-routing.md web/AGENTS.md AGENTS.md \
+  .claude/agents/elon.md docs/agents/team.md docs/agents/elon-dispatch.md docs/agents/issue-tracker.md templates/agent-team/docs/agents/team.md; do
+  if owner_only_path "$p" || protected_path "$p"; then bad "$p is not owner-gated" "matched"; else ok "$p is not owner-gated"; fi
 done
 
 echo "passed $pass, failed $fail"

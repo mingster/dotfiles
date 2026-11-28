@@ -789,6 +789,38 @@ class BounceReadersDecisions(unittest.TestCase):
 
 class OwnerReceiptGate(unittest.TestCase):
     def test_pr_owner_only_reason_checks_owner_receipt_in_repo_root(self):
+        intent = 'docs/intent/a/intent.md'
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(['git', 'init', '-q', '-b', 'main', tmp], check=True)
+            subprocess.run(['git', '-C', tmp, 'config', 'user.email', 't@example.invalid'], check=True)
+            subprocess.run(['git', '-C', tmp, 'config', 'user.name', 'Test'], check=True)
+            (Path(tmp) / 'docs/intent/a').mkdir(parents=True)
+            (Path(tmp) / intent).write_text('Status: Proposed\n', encoding='utf-8')
+            (Path(tmp) / 'AGENTS.md').write_text('base\n', encoding='utf-8')
+            subprocess.run(['git', '-C', tmp, 'add', '-A'], check=True)
+            subprocess.run(['git', '-C', tmp, 'commit', '-q', '-m', 'init'], check=True)
+            base = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
+            subprocess.run(['git', '-C', tmp, 'checkout', '-q', '-b', 'feat'], check=True)
+            (Path(tmp) / intent).write_text('Status: Accepted 2026-11-28\n', encoding='utf-8')
+            subprocess.run(['git', '-C', tmp, 'commit', '-qam', 'accept intent'], check=True)
+            head_unapproved = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
+            pr = {
+                'number': 12,
+                'baseRefOid': base,
+                'headRefOid': head_unapproved,
+                'files': [{'path': intent}],
+            }
+            reason = fw.pr_owner_only_reason(pr, repo_root=tmp)
+            self.assertIsNotNone(reason)
+            self.assertIn('without an Owner-approved: trailer', reason)
+            subprocess.run(
+                ['git', '-C', tmp, 'commit', '--amend', '-q', '-m', 'accept intent\n\nOwner-approved: owner 2026-11-15 (chat)'],
+                check=True,
+            )
+            pr['headRefOid'] = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
+            self.assertIsNone(fw.pr_owner_only_reason(pr, repo_root=tmp))
+
+    def test_pr_owner_only_reason_lets_a_role_file_through_without_a_trailer(self):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(['git', 'init', '-q', '-b', 'main', tmp], check=True)
             subprocess.run(['git', '-C', tmp, 'config', 'user.email', 't@example.invalid'], check=True)
@@ -800,21 +832,8 @@ class OwnerReceiptGate(unittest.TestCase):
             subprocess.run(['git', '-C', tmp, 'checkout', '-q', '-b', 'feat'], check=True)
             (Path(tmp) / 'AGENTS.md').write_text('changed\n', encoding='utf-8')
             subprocess.run(['git', '-C', tmp, 'commit', '-qam', 'edit agents'], check=True)
-            head_unapproved = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
-            pr = {
-                'number': 12,
-                'baseRefOid': base,
-                'headRefOid': head_unapproved,
-                'files': [{'path': 'AGENTS.md'}],
-            }
-            reason = fw.pr_owner_only_reason(pr, repo_root=tmp)
-            self.assertIsNotNone(reason)
-            self.assertIn('without Owner-approved trailer', reason)
-            subprocess.run(
-                ['git', '-C', tmp, 'commit', '--amend', '-q', '-m', 'edit agents\n\nOwner-approved: owner 2026-11-15 (chat)'],
-                check=True,
-            )
-            pr['headRefOid'] = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
+            head = subprocess.check_output(['git', '-C', tmp, 'rev-parse', 'HEAD'], text=True).strip()
+            pr = {'number': 12, 'baseRefOid': base, 'headRefOid': head, 'files': [{'path': 'AGENTS.md'}]}
             self.assertIsNone(fw.pr_owner_only_reason(pr, repo_root=tmp))
 
 

@@ -5,7 +5,7 @@
 
 owner_only_path() { # <path>
   case "$1" in
-    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|templates/agent-team/.claude/hooks/*|templates/agent-team/.claude/settings.json) return 0 ;;
+    .claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|templates/agent-team/.claude/hooks/*|templates/agent-team/.claude/settings.json|script/lib/protected-paths.sh) return 0 ;;
   esac
   return 1
 }
@@ -77,12 +77,13 @@ check_owner_only_paths() {
   intent_acceptance_receipt
 }
 
-# True for a path that waits for the owner or an owner receipt: hooks, settings, rules, role files, intents.
+# True for a path that waits for the owner or an owner receipt: hooks, settings, rules, intents.
+# Role files, model-routing.md and docs/agents/ merge on a passing Verdict (owner decision 2026-11-28).
 protected_path() { # <path>
   case "$1" in
-    .claude/hooks/*|*/.claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|docs/intent/*) return 0 ;;
+    .claude/hooks/*|*/.claude/hooks/*|.claude/settings.json|bin/owner-approve.sh|*.rules|docs/intent/*|script/lib/protected-paths.sh) return 0 ;;
   esac
-  text_lane_role_path "$1"
+  return 1
 }
 
 # %(trailers) puts each value on its own line, so %x1e ends the commit and keeps those lines together.
@@ -187,38 +188,6 @@ intent_acceptance_receipt() {
   done <<<"$accepted"
 }
 
-text_lane_role_path() { # <path>
-  case "$1" in
-    docs/agents/elon-dispatch.md|docs/agents/team.md) return 0 ;;
-  esac
-  [[ "$1" == */.claude/agents/* || "$1" == .claude/agents/* ]] && return 0
-  case "${1##*/}" in
-    AGENTS.md|model-routing.md) return 0 ;;
-  esac
-  return 1
-}
-
-collect_owner_receipt_paths() {
-  local f
-  owner_receipt_paths=()
-  while IFS= read -r f; do
-    if text_lane_role_path "$f"; then owner_receipt_paths+=("$f"); fi
-  done < <(jq -r '.[]' <<<"$files")
-}
-
-text_lane_owner_receipt() {
-  [ "${#owner_receipt_paths[@]}" -gt 0 ] || return 0
-  local ancestor base_sha
-  base_sha=$(field .baseRefOid)
-  ensure_commit_in_store "$head" || die "cannot read head $head for owner receipt"
-  ensure_commit_in_store "$base_sha" || die "cannot read base $base_sha for owner receipt"
-  ancestor=$(git merge-base "$base_sha" "$head") || die "cannot find merge base for owner receipt"
-  load_owner_receipts intent "$ancestor..$head" "${owner_receipt_paths[@]}" \
-    || die "cannot list commits for owner receipt"
-  [ -z "$owner_receipt_reason" ] || refuse "commit ${owner_receipt_missing:0:12} cites an intent that does not cover it: $owner_receipt_reason"
-  [ -z "$owner_receipt_missing" ] || refuse "commit ${owner_receipt_missing:0:12} touches owner-gated paths without Owner-approved trailer"
-}
-
 countersigned() { # <head>
   jq -e --arg prefix "Countersign: Elon head=$1 reason=" \
     'any(.comments[].body; startswith($prefix) and (.[($prefix|length):] | test("[^[:space:]]") and (startswith("supersedes ") | not)))' <<<"$info" >/dev/null
@@ -253,7 +222,5 @@ check_countersign_gate() {
 
 check_protected_paths() {
   check_owner_only_paths
-  collect_owner_receipt_paths
-  text_lane_owner_receipt
   check_countersign_gate
 }

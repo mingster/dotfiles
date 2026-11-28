@@ -82,8 +82,8 @@ flowchart TD
 * The PR is open and mergeable, and every check passed.
 * The newest Verdict is PASS or PASS+NOTES, from a real verifier who is not the author.
 * The Verdict covers this head, or a rebase of it with the same patch id.
-* Changes to protected paths carry an `Owner-approved:` trailer: the coordinator's approval, or the owner's when the change loosens a safety limit.
-* Owner-only paths (hooks, `.claude/settings.json`, `*.rules` and their template copies) wait for the owner. Before `go_live_date` (`ship.config.example.json`, default 2026-11-30) they pass instead when a cold `Review: PASS` and a Verdict PASS cover the head, the verifier is another model family than the builder, and every commit touching them carries a non-empty `Owner-approved:` trailer; `ship.sh` prints `ship: owner-only path waived until <date> (pre go-live rule)`. On or after that date the refusal returns, and `bin/owner-approve.sh` is never waived.
+* Changes to intents and the guard logic carry the owner's `Owner-approved:` trailer. Role files, `model-routing.md` and `docs/agents/` merge on a passing Verdict with no trailer (owner decision 2026-11-28).
+* Owner-only paths (hooks, `.claude/settings.json`, `*.rules`, `script/lib/protected-paths.sh` and their template copies) wait for the owner. Before `go_live_date` (`ship.config.example.json`, default 2026-11-30) they pass instead when a cold `Review: PASS` and a Verdict PASS cover the head, the verifier is another model family than the builder, and every commit touching them carries a non-empty `Owner-approved:` trailer; `ship.sh` prints `ship: owner-only path waived until <date> (pre go-live rule)`. On or after that date the refusal returns, and `bin/owner-approve.sh` is never waived.
 
 It squash merges, reads the PR back as merged and ends. If any condition fails, it prints one line saying why and merges nothing.
 
@@ -177,7 +177,7 @@ The team files give agents their jobs, working rules and repeatable steps. The c
 
 `script/agent-team.sh project <dir> [--project-name <name>] [--labels]` installs from [templates/agent-team](../../templates/agent-team/): facts file skeletons, synced team docs, compiled settings, guard config, model routing, tracker files and the Token budget block for `AGENTS.md`. Review the project copies and fill in their facts before using the team.
 
-Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt (using the main checkout's absolute path so a branch worktree never reads a stale copy), including workers on other providers. Every role edit merges on a passing non-author Verdict with the coordinator's approval; only a change that loosens a safety limit needs the owner (`team.md`, Role changes). Each carries an `Owner-approved: <owner> <date> (<where approved>)` commit trailer.
+Role instructions live at `<project>/.claude/agents/<role>.md`. Give workers their role file path in the task prompt (using the main checkout's absolute path so a branch worktree never reads a stale copy), including workers on other providers. Every role edit merges on a passing non-author Verdict with no `Owner-approved:` trailer (`team.md`, Role changes).
 
 | Role | Owns |
 | --- | --- |
