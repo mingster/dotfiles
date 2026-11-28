@@ -4569,7 +4569,7 @@ COMMIT_REFUSE = ("This command commits, but the guard cannot read it with certai
 MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--subject", "--spec", "--question", "--reason",
                  "--comment", "--description"}
 VALUE_END = r"(?=[ \t\n;&|]|\Z)"
-HEREDOC_VALUE = re.compile(r"\"\$\(cat <<(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\n(?:.*?\n)?\2\n[ \t]*\)\"" + VALUE_END, re.S)
+HEREDOC_VALUE = re.compile(r"\"\$\(cat <<(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\n(?:(?!\2\n)[^\n]*\n)*\2\n[ \t]*\)\"" + VALUE_END)
 QUOTED_VALUE = re.compile(r"(?:'[^']*'|\"(?:[^\"\\`$]|\\.|\$(?!\())*\")" + VALUE_END, re.S)
 LONG_FLAG_EQ = re.compile(r"(--[a-z-]+)=")
 COMMIT_WORD = re.compile(r"(?<![a-z0-9_-])commit(?![a-z0-9_])")
@@ -4749,7 +4749,7 @@ def _plain_word(text, i):
 def _plain_segments(text):
     """The words of each segment and the operators between them, or _NotPlain. Output redirects are dropped."""
     if "\n" in text:
-        raise _NotPlain("a newline")
+        raise _NotPlain("a newline; put each message paragraph in its own `-m`")
     segs, ops, i = [[]], [], 0
     while i < len(text):
         c = text[i]

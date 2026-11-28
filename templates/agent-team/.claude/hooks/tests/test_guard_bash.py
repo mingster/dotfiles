@@ -2361,7 +2361,6 @@ REFUSED = {
     "F1_5_glued_variable_folder": f'git add {P} && git -C"$d" commit {M}',
     "F1_5_glued_folder": f"git -Cdocs add agents/team-facts.md && git -Cdocs commit {M}",
     "F2_1_continuation": f"g\\\nit add {P} && g\\\nit commit {M}",
-    "F2_1_continuation_lone_commit": f"g\\\nit commit {M}",
     "F2_1_ansi_c_program": f"$'\\x67it' add {P} && $'\\x67it' commit {M}",
     "F2_1_continuation_unclosed": f'git add {P} && git com\\\nmit -m "unclosed',
     "F2_2_built_verbs": f"a=add; c=commit; git $a {P} && git $c {M}",
@@ -2383,6 +2382,11 @@ REFUSED = {
     "newline_between_steps": f"git add {P}\ngit commit {M}",
     "newline_in_message": f'git add {U} && git commit -m "tweak\n\nbody"',
     "heredoc_to_a_non_text_sink": f"sort <<'EOF'\ngit add {P} && git commit {M}\nEOF",
+    # The mask ends at the first delimiter line, as bash does; commands after it are not masked away.
+    "heredoc_runs_past_delimiter_gh": (f"gh issue comment 1 --body \"$(cat <<'EOF'\nx\nEOF\ngit add {P} && "
+                                       "git commit -m tweak\ncat <<'EOF'\nEOF\n)\""),
+    "heredoc_runs_past_delimiter_git": (f"git commit -m \"$(cat <<'EOF'\nx\nEOF\ngit add {P} && "
+                                        "git commit -m tweak\ncat <<'EOF'\nEOF\n)\""),
 }
 
 # Allowed with P modified and unstaged.
@@ -2471,6 +2475,19 @@ class ChainedGateEdges(ChainedRepo):
             json.dump({"blocked_scripts": ["deploy-raw.sh"]}, f)
         self.git("add", self.U)
         self.assertNotCommitDenied(f'git commit -m "mention deploy-raw.sh" && git add {self.P}')
+
+    def test_F2_1_continuation_lone_commit(self):
+        self.git("add", self.P)
+        self.assertRefused(f"g\\\nit commit {self.M}")
+
+    def test_refusal_message_in_full(self):
+        reason = self.bash(f'git add {self.U} && git commit -m "tweak\n\nbody"')
+        self.assertEqual(reason, (
+            "This command commits, but the guard cannot read it with certainty (a newline; put each message "
+            "paragraph in its own `-m`). Run `git add <paths>` and `git commit -m ...` as plain commands: literal "
+            "program names, no variables or substitutions in the program or folder, no `eval`, `<shell> -c`, "
+            "wrappers, subshells, functions, globs or line continuations. A heredoc message as "
+            "`-m \"$(cat <<'EOF' ... EOF)\"` is fine."))
 
     def test_mask_keeps_commit_outside_the_value(self):
         for command in (f"echo \"gh issue comment --body '\" && git commit {self.M} && echo \"'\" &",
