@@ -13,7 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from test_fleet_watch_scan import REPO, OTHER_REPO, NOW, fw, issue
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
+from test_fleet_watch_scan import REPO, OTHER_REPO, NOW, fw, issue  # noqa: E402
 
 CONFIG = {
     'issue_scan': {
@@ -276,7 +277,7 @@ class DotfilesUnblockedReadsPullRequests(unittest.TestCase):
 
     def test_merged_pr_under_blocked_by_keeps_the_issue(self):
         self.assertEqual(self.run_unblocked(blocked_body('Blocked by #10077'), {10077: 'CLOSED'}), [10079])
-        # Only the REST route reads a PR. The old `gh issue view` lookup also keeps the issue here, so the call is what goes red.
+        # `gh issue view` fails on a PR number and drops the issue as unknown; REST `issues/<n>` answers CLOSED and keeps it.
         self.assertIn('api repos/%s/issues/10077 --jq .state' % REPO, self.gh_calls)
         self.assertFalse(any(c.startswith('issue view') for c in self.gh_calls), self.gh_calls)
 

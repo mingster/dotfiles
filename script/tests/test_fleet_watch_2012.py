@@ -4,9 +4,11 @@ The issue scan placed on remote hosts only when local admission itself was refus
 but the local cap ran out partway through the pass (occupied, including retained workers, plus this pass's starts),
 the scan deferred every remaining ready issue as host_cap, even with free seats on the remote hosts."""
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 import test_fleet_watch_1042 as base  # noqa: E402  shared fixtures (issue body, scan config, gh guard)
 
