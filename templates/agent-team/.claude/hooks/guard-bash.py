@@ -4570,8 +4570,10 @@ MESSAGE_FLAGS = {"-m", "--message", "-b", "--body", "-t", "--title", "--subject"
                  "--comment", "--description"}
 VALUE_END = r"(?=[ \t\n;&|]|\Z)"
 HEREDOC_VALUE = re.compile(r"\"\$\(cat <<(['\"])([A-Za-z_][A-Za-z0-9_]*)\1\n(?:(?!\2\n)[^\n]*\n)*\2\n[ \t]*\)\"" + VALUE_END)
-QUOTED_VALUE = re.compile(r"(?:'[^']*'|\"(?:[^\"\\`$]|\\.|\$(?!\())*\")" + VALUE_END, re.S)
+QUOTED_VALUE = re.compile(r"(?:'[^']*'|\"(?:[^\"\\`$]|\\.|\$(?![({]))*\")" + VALUE_END, re.S)
 LONG_FLAG_EQ = re.compile(r"(--[a-z-]+)=")
+ANSI_C_WITH_ESCAPE = re.compile(r"\$'[^']*\\")
+GIT_WORD = re.compile(r"(?<![a-z0-9_.-])git(?![a-z0-9_-])")
 COMMIT_WORD = re.compile(r"(?<![a-z0-9_-])commit(?![a-z0-9_])")
 BUILT_GIT_SUBCOMMAND = re.compile(r"(?<![a-z0-9_.-])git(?:\s+(?:-[cC]\s+\S+|-\S+))*\s+[$`]")
 PLAIN_CHAR = re.compile(r"[A-Za-z0-9_./~=:@%+,-]")
@@ -4599,13 +4601,14 @@ class _Word:
 
 
 def _mask_word_end(text, i):
-    """End of the word at `i` for the mask scan, or None at a `$(`, backtick, `$'` or `<` (the rest stays unmasked)."""
+    """End of the word at `i` for the mask scan, or None at a `$(`, `${`, backtick, `$'` or `<` (the rest stays
+    unmasked). Bash nests quotes inside `${...}`, so the scan cannot tell where such a word ends."""
     n = len(text)
     while i < n:
         c = text[i]
         if c in " \t\n;&|()":
             return i
-        if c in "`<" or text.startswith(("$(", "$'"), i):
+        if c in "`<" or text.startswith(("$(", "${", "$'"), i):
             return None
         if c == "\\":
             i += 2
@@ -4622,7 +4625,7 @@ def _mask_word_end(text, i):
                 if text[i] == "\\":
                     i += 2
                     continue
-                if text[i] == "`" or text.startswith("$(", i):
+                if text[i] == "`" or text.startswith(("$(", "${"), i):
                     return None
                 i += 1
                 if text[i - 1] == '"':
@@ -4683,6 +4686,11 @@ def mask_inert_text(text):
 def commit_trigger(masked):
     """True when the command may commit: the word `commit`, or `git` and its options followed by a built word."""
     try:
+        bare = re.sub(r"\\\n|[\\'\"]", "", masked.lower())
+        if COMMIT_WORD.search(bare) or BUILT_GIT_SUBCOMMAND.search(bare):
+            return True
+        if ANSI_C_WITH_ESCAPE.search(masked) and GIT_WORD.search(bare):
+            return True
         flat = _unquoted_text(masked)
         return bool(COMMIT_WORD.search(flat) or BUILT_GIT_SUBCOMMAND.search(flat))
     except Exception:
@@ -4869,6 +4877,8 @@ def _names(text):
 
 def _all_changed(folder):
     """(top level, the modified, deleted, staged and untracked files of the whole repo) seen from `folder`."""
+    if not os.path.isdir(folder):
+        raise _NotPlain("a folder that does not exist yet")
     top = (gate_run(["git", "rev-parse", "--show-toplevel"], folder) or "").strip()
     if not top:
         return None, set()
@@ -4944,6 +4954,8 @@ def check_commit_step(step, pending):
     """Step 4 of #2023: the owner gate for one plain commit. Staged is the index at the step's folder, the worktree
     for `-a`, every changed file for a path or `$` word, and `pending`, the paths earlier adds stage. Only a file
     that comes from the index alone may be exempt through matches_main."""
+    if not os.path.isdir(step.folder):
+        raise _NotPlain("a folder that does not exist yet")
     rest = [w.text for w in step.args]
     git = ["git", "-C", step.folder]
     worktree, every = _commit_reads(step.args)
@@ -4981,12 +4993,13 @@ def check_commit_gate(command):
         return
     try:
         steps, piped = plain_commit_steps(masked)
+        last = max((n for n, step in enumerate(steps) if step.verb == "commit"), default=-1)
         pending = set()
-        if piped:
+        if piped and last >= 0:
             for step in steps:
                 if step.verb == "add":
                     pending |= pending_add_paths(step)
-        for step in steps:
+        for step in steps[:last + 1]:
             if step.verb == "commit":
                 check_commit_step(step, pending)
             elif not piped:

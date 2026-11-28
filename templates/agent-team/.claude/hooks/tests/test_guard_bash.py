@@ -2382,6 +2382,15 @@ REFUSED = {
     "newline_between_steps": f"git add {P}\ngit commit {M}",
     "newline_in_message": f'git add {U} && git commit -m "tweak\n\nbody"',
     "heredoc_to_a_non_text_sink": f"sort <<'EOF'\ngit add {P} && git commit {M}\nEOF",
+    # Cold review of 10f68dc: a folder missing at hook time, `${` in a masked value, a misread quote.
+    "tilde_plus_cd": f"cd ~+ && git add {P} && git commit {M}",
+    "tilde_plus_dash_c": f"git -C ~+ add {P} && git commit {M}",
+    "folder_made_first": f"mkdir sub && git -C sub add ../{P} && git commit {M}",
+    "brace_hides_gh_segment": f"echo \"${{x:-\"; gh --body '}}\" && git add {P} && git commit {M} #'",
+    "brace_in_gh_value": f"gh issue comment 1 --body \"${{x:-\" --title '}}\" && git add {P} && git commit {M} #'",
+    "brace_quote_hides_continuation": f"echo \"${{x:-\"'\"}}\" && git add {P} && git com\\\nmit {M} #'",
+    "brace_quote_hides_ansi_c": f"echo \"${{x:-\"'\"}}\" && git add {P} && $'\\x67it' $'\\x63ommit' {M} #'",
+    "case_hides_continuation": f"echo \"$(case x in a) echo '\"' ;; esac; git add {P} && git com\\\nmit {M})\"",
     # The mask ends at the first delimiter line, as bash does; commands after it are not masked away.
     "heredoc_runs_past_delimiter_gh": (f"gh issue comment 1 --body \"$(cat <<'EOF'\nx\nEOF\ngit add {P} && "
                                        "git commit -m tweak\ncat <<'EOF'\nEOF\n)\""),
