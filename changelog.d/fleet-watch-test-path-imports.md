@@ -1,0 +1,1 @@
+- Six `test_fleet_watch_*.py` files now run by file path from the repository root, and a wrong comment in the #1788 test is fixed (#2076).

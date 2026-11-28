@@ -1,10 +1,12 @@
 """Live count (#1781): a gone remote dispatch is not live, and a worker question nobody answered is raised."""
 import importlib.util
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling test modules, for path invocation
 import fleet_watch_test_env  # noqa: F401  keeps log lines off ~/.orca/logs (#1864)
 
 spec = importlib.util.spec_from_file_location('fleet_watch_live_count', Path(__file__).parent.parent / 'fleet-watch.py')
